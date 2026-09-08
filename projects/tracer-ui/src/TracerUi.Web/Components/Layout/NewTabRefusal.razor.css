@@ -1,0 +1,8 @@
+/*
+    The words about the tab that the browser would not open. They take the width
+    of the prose beside them and no more, because one sentence across a whole
+    view reads as a banner and not as the answer to a press.
+*/
+.new-tab-refusal {
+    max-width: var(--tracer-measure-prose);
+}

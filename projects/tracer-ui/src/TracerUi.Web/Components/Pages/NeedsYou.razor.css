@@ -1,0 +1,30 @@
+::deep .needs-you-row {
+    cursor: pointer;
+}
+
+.needs-you-path {
+    font-size: var(--tracer-text-small);
+    font-weight: normal;
+    margin-left: var(--tracer-space-2);
+}
+
+/* A project that did not answer stands out, as one more failure message. */
+.failure-message {
+    margin-bottom: var(--tracer-space-3);
+}
+
+/*
+    The project of one row, as a chip. The rows of many repositories run
+    together in one table, so the project must read at a glance and not as one
+    more word in a line of prose.
+*/
+.needs-you-project-chip {
+    display: inline-block;
+    background-color: var(--tracer-canvas-inset);
+    border: 1px solid var(--tracer-border);
+    border-radius: var(--tracer-radius-pill);
+    color: var(--tracer-fg-muted);
+    font-size: var(--tracer-text-small);
+    padding: 0 var(--tracer-space-2);
+    white-space: nowrap;
+}

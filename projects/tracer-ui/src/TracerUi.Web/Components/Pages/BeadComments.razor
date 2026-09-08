@@ -1,0 +1,80 @@
+@*
+    The comments of one bead, and the box that writes a new one. The box stands at
+    the foot of the comments, because a person writes a comment where they read
+    the ones before it.
+*@
+
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
+@using AReadOfTheComments = TracerUi.Core.Boards.Read<System.Collections.Generic.IReadOnlyList<TracerUi.Core.Boards.BeadComment>>
+@inherits CapabilityAware
+
+<h2 class="h4 bead-section">Comments</h2>
+
+@if (Detail.Comments is AReadOfTheComments.Unread unread)
+{
+    <p class="text-danger bead-message">@unread.Reason</p>
+}
+else if (Detail.Comments is AReadOfTheComments.Given { Value: var told })
+{
+    @if (told.Count == 0)
+    {
+        <p class="text-muted">This bead carries no comment.</p>
+    }
+
+    @foreach (var comment in told)
+    {
+        <div class="bead-comment">
+            <div class="text-muted bead-comment-head">
+                <strong>@(comment.Author.Length > 0 ? comment.Author : "somebody")</strong>
+                @comment.Timestamp
+            </div>
+            <div class="bead-comment-text">@comment.Text</div>
+        </div>
+    }
+}
+
+<BeadWriteMessage Message="@WriteMessage" Wrote="Wrote" />
+
+@if (!Probed)
+{
+    <ProbePending />
+}
+
+<div class="bead-writes" title="@Why(UiVerbs.AddAComment)">
+    <label class="form-label" for="write-comment">A comment of your own</label>
+    <textarea class="form-control form-control-sm" id="write-comment" rows="3"
+              placeholder="What a later reader needs to know" @bind="comment"></textarea>
+    <button class="btn btn-sm btn-primary mt-1"
+            disabled="@(!Probed || !Can(UiVerbs.AddAComment) || comment.Trim().Length == 0)"
+            @onclick="AddTheComment">Add the comment</button>
+</div>
+
+@code {
+    /// <summary>The bead that this box comments on.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>The bead as the page read it. It gives the comments, or the reason bd read none.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadDetail Detail { get; set; }
+
+    /// <summary>Runs after a write, so that the page reads the bead again and shows the result.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    private string comment = string.Empty;
+
+    protected override ProjectPath OfProject => Address.Project;
+
+    private async Task AddTheComment()
+    {
+        if (await WriteAsync(() => Bd.CommentAsync(Address, comment), OnWritten))
+        {
+            comment = string.Empty;
+        }
+    }
+}

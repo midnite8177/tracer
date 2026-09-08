@@ -1,0 +1,24 @@
+@*
+    One bead in a list of beads on the detail page: a status dot, the title as a
+    link to that bead, then the type and the id as quiet machine text. The held
+    beads box and both directions of the dependencies draw this, so a bead reads
+    the same wherever the page names one.
+*@
+
+@using TracerUi.Core.Boards
+
+<span class="bead-dot bead-status-@Link.Status.Appearance" aria-hidden="true"></span>
+<span class="visually-hidden">@Link.Status.Text</span>
+<a class="bead-row-title" href="bead/@Uri.EscapeDataString(Link.Id)">@Link.Title</a>
+@if (Link.Type.Length > 0)
+{
+    <code class="machine-text machine-text-quiet">@Link.Type</code>
+}
+<BeadId Id="@Link.Id" Quiet="true" />
+
+@code {
+    /// <summary>The bead that this row names.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadLink Link { get; set; }
+}

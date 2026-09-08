@@ -1,0 +1,28 @@
+@*
+    The one way that the app reaches the storage of a browser.
+
+    A browser can refuse its storage, and each caller then keeps the choice for
+    this page alone. That rule lives here, so no caller states it twice.
+
+    It stands first in the head, because the theme script reads a key before
+    the first paint.
+*@
+
+<script>
+    window.tracerStorage = {
+        read: function (key) {
+            try {
+                return window.localStorage.getItem(key);
+            } catch (unreachableStorage) {
+                return null;
+            }
+        },
+        write: function (key, value) {
+            try {
+                window.localStorage.setItem(key, value);
+            } catch (unreachableStorage) {
+                /* The choice holds for this page alone. */
+            }
+        }
+    };
+</script>

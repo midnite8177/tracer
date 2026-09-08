@@ -1,0 +1,78 @@
+@*
+    The title of the bead, which is the control that changes it. A press turns the
+    head of the page into a one-line box, because a typo in a title is the common
+    edit and it must not open the two-column box of the description. bd takes the
+    title and the description in one verb, so the write sends the description that
+    the page read, unchanged. The heading stands in every state, open or closed,
+    so the page never loses the head of its outline.
+*@
+
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
+@inherits ProseBox
+
+@if (Editing)
+{
+    <div class="bead-title-edit" tabindex="-1" @ref="Box" @onkeydown="CloseOnEscape">
+        @if (Refusal.Length > 0)
+        {
+            <h1>@Bead.Title</h1>
+            <p class="bead-title-refusal">@Refusal</p>
+        }
+        else
+        {
+            <BeadWriteMessage Message="@WhyTheLastWriteFailed" Wrote="false" />
+            <h1>
+                <input class="form-control bead-title-box"
+                       @ref="Field"
+                       aria-label="Title"
+                       @bind="title"
+                       @bind:event="oninput" />
+            </h1>
+            <div class="bead-title-writes">
+                <button type="button" class="btn btn-sm btn-primary bead-title-save"
+                        disabled="@(title.Trim().Length == 0)"
+                        @onclick="Save">Save the title</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary ms-1"
+                        @onclick="Close">Cancel</button>
+            </div>
+        }
+    </div>
+}
+else
+{
+    <h1><button type="button" class="bead-title-press"
+                @ref="Press"
+                aria-label="@($"Title, {Bead.Title}")"
+                @onclick="Open">@Bead.Title</button></h1>
+}
+
+@code {
+    /// <summary>The bead that this control writes to.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>The bead as the page read it. It gives the title that the box starts with.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required Bead Bead { get; set; }
+
+    /// <summary>Runs after a write that landed, so that the page reads the bead again.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    private string title = string.Empty;
+
+    protected override ProjectPath OfProject => Address.Project;
+
+    protected override UiVerb Verb => UiVerbs.EditTheProse;
+
+    protected override void StartFromTheBead() => title = Bead.Title;
+
+    // Writes the title alone. bd takes the title and the description in one verb, so the write
+    // sends the description that the page read and changes nothing else.
+    private Task Save() =>
+        SaveThen(() => Bd.EditProseAsync(Address, title, Bead.Prose.Description), OnWritten);
+}

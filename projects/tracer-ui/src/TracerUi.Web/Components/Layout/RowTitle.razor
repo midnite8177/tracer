@@ -1,0 +1,38 @@
+@*
+    The title of a row, which opens the bead of that row.
+
+    It is a link, so a browser reads its address and offers what it offers on
+    any link. It answers no press of its own: it stops the walk that the
+    browser would make and lets the press reach the row, so one press opens
+    one bead. The middle button is the browser's alone, because a browser
+    opens a link beside the page by itself.
+*@
+
+<a class="@Class" href="@Address" title="@Tooltip"
+   @onclick:preventDefault="true"
+   @onmouseup:stopPropagation="true">@Text</a>
+
+@code {
+    /// <summary>The class of the title, which the view that draws it names.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string Class { get; set; }
+
+    /// <summary>The address of the bead, which the browser reads off the link.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string Address { get; set; }
+
+    /// <summary>
+    /// What a hover over the title says. A view that says nothing more than the title itself
+    /// states none.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required string? Tooltip { get; set; }
+
+    /// <summary>The title of the bead, as the person reads it.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string Text { get; set; }
+}

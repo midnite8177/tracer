@@ -1,0 +1,25 @@
+@*
+    The one way that the app writes to the clipboard.
+
+    It names what happened, and the three names are the ones that CopyOutcome
+    carries: a page without a secure context reaches no clipboard at all, and a
+    browser that has one can still say no. The caller says a different thing for
+    each, thus no caller claims a clipboard that stayed empty and none blames
+    the wrong cause.
+*@
+
+<script>
+    window.tracerClipboard = {
+        write: async function (text) {
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                return "no-clipboard";
+            }
+            try {
+                await navigator.clipboard.writeText(text);
+                return "took";
+            } catch (refusedClipboard) {
+                return "refused";
+            }
+        }
+    };
+</script>

@@ -1,0 +1,15 @@
+@using TracerUi.Core.Look
+
+@*
+    A browser can refuse to open the tab, because it guards against a page that
+    opens tabs on its own. This says so, and the caller then leaves the person
+    where they stand.
+*@
+
+<script>
+    window["@NewTabCall.Holder"] = {
+        "@NewTabCall.Open": function (address) {
+            return window.open(address, "_blank", "noopener") !== null;
+        }
+    };
+</script>

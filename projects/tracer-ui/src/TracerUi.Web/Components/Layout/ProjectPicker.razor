@@ -1,0 +1,111 @@
+@using TracerUi.Core.Projects
+@implements IDisposable
+@inject ProjectCatalog Catalog
+@inject ActiveProjectSelection Selection
+@inject NavigationManager Navigation
+@inject IJSRuntime Js
+
+@*
+    The project picker, which the top bar carries on every page.
+
+    It names the active project, and it drops a menu of every project of the
+    registry. A pick makes that project active, wherever the person stands, so
+    a switch costs no trip to the Projects page.
+
+    The catalog says which entry shares its directory name with another. The
+    picker shows the project path of such an entry, because a name that two
+    projects carry names neither of them.
+
+    It reads the entries again at each page, because a person can add a project
+    on the Projects page and then come back here.
+
+    The browser holds the path of the active project, so a reload of the page
+    and a second tab both find the choice again. The picker asks the browser
+    for that path at its first render, because the storage of a browser is out
+    of reach until the page is interactive.
+*@
+
+<select class="project-picker" aria-label="Active project" @bind="chosenPath" @bind:after="Pick">
+    @if (Selection.Current is null)
+    {
+        <option value="">Select a project</option>
+    }
+    @foreach (var entry in entries)
+    {
+        <option value="@entry.Path.Value">@entry.Name</option>
+    }
+</select>
+
+@code {
+    private IReadOnlyList<ProjectEntry> entries = [];
+    private string chosenPath = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        Selection.Changed += OnActiveProjectChanged;
+        Navigation.LocationChanged += OnLocationChanged;
+        Read();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || Selection.Current is not null)
+        {
+            return;
+        }
+
+        var stored = await Js.InvokeAsync<string?>("tracerActiveProject.read");
+        Selection.Restore(stored);
+    }
+
+    private void Read()
+    {
+        entries = Catalog.Entries();
+        chosenPath = Selection.Current?.Value ?? string.Empty;
+    }
+
+    private void Pick()
+    {
+        var picked = entries.FirstOrDefault(entry => entry.Path.Value == chosenPath);
+        if (picked is not null)
+        {
+            Selection.Select(picked.Path);
+        }
+    }
+
+    // Names the project that is active now, and gives its path to the browser to hold. Both
+    // sources of a change pass here: a switch that a person makes, and the restore at the first
+    // render. The browser thus holds the path that the bar shows.
+    private void OnActiveProjectChanged(ActiveProjectChange change)
+    {
+        chosenPath = change.Project.Value;
+        _ = InvokeAsync(() => ShowAndHold(change.Project));
+    }
+
+    // Draws the project in the bar and asks the browser to hold its path. A circuit that ends
+    // while the call is in flight loses the browser, and the person keeps the project of the
+    // browser instead of this one.
+    private async Task ShowAndHold(ProjectPath project)
+    {
+        StateHasChanged();
+        try
+        {
+            await Js.InvokeVoidAsync("tracerActiveProject.write", project.Value);
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs arguments)
+    {
+        Read();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Selection.Changed -= OnActiveProjectChanged;
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+}

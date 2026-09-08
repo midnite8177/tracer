@@ -1,0 +1,83 @@
+@*
+    The acceptance criteria and the notes, which stand or fall together. A bead
+    that states neither takes one absent line for the two of them, and each press
+    of that line adds one of them in a single press. A bead that states either one
+    draws both boxes. One component owns the pair, so no edit can leave the page
+    showing a box and a line that both speak for the same absence.
+*@
+
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
+@inherits CapabilityAware
+
+@if (Bead.Prose.StatesNoAcceptanceAndNoNotes && adding is Adding.Nothing)
+{
+    <BeadAbsentLine Words="This bead states no acceptance criteria and carries no notes.">
+        <Presses>
+            <button type="button" class="btn btn-sm btn-link p-0 bead-acceptance-add"
+                    disabled="@(!Probed || !Can(UiVerbs.EditTheAcceptanceCriteria))"
+                    title="@Why(UiVerbs.EditTheAcceptanceCriteria)"
+                    @onclick="AddTheAcceptanceCriteria">Add acceptance criteria</button>
+            <button type="button" class="btn btn-sm btn-link p-0 bead-notes-add"
+                    disabled="@(!Probed || !Can(UiVerbs.RewriteTheNotes))"
+                    title="@Why(UiVerbs.RewriteTheNotes)"
+                    @onclick="AddTheNotes">Add notes</button>
+        </Presses>
+    </BeadAbsentLine>
+}
+else
+{
+    <section class="bead-box">
+        <BeadAcceptanceEdit Address="Address"
+                            Bead="Bead"
+                            OpenAtOnce="@(adding is Adding.TheAcceptanceCriteria)"
+                            OnWritten="OnWritten"
+                            OnClosed="DrawTheLineAgain" />
+    </section>
+
+    <section class="bead-box">
+        <BeadNotesRewrite Address="Address"
+                          Bead="Bead"
+                          OpenAtOnce="@(adding is Adding.TheNotes)"
+                          OnWritten="OnWritten"
+                          OnClosed="DrawTheLineAgain" />
+    </section>
+}
+
+@code {
+    // Which of the two a press of the line asked for, or neither.
+    private enum Adding
+    {
+        Nothing,
+        TheAcceptanceCriteria,
+        TheNotes,
+    }
+
+    /// <summary>The bead that the two boxes write to.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>The bead as the page read it, which says what each of the two holds.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required Bead Bead { get; set; }
+
+    /// <summary>Runs after a write that landed, so that the page reads the bead again.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    private Adding adding = Adding.Nothing;
+
+    protected override ProjectPath OfProject => Address.Project;
+
+    private void AddTheAcceptanceCriteria() => adding = Adding.TheAcceptanceCriteria;
+
+    private void AddTheNotes() => adding = Adding.TheNotes;
+
+    // Takes the page back to the line when a person closed the box that a press of it opened and
+    // wrote nothing. The bead states as little as it did before the press, so the line is what it
+    // has to say about the two of them.
+    private void DrawTheLineAgain() => adding = Adding.Nothing;
+}

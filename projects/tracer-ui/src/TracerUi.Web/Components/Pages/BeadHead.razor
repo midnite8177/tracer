@@ -1,0 +1,33 @@
+@*
+    The head of the detail page: the way back to the board, the title of the
+    page, and the quiet id of the bead with its copy button. The title is a
+    fragment, because the page that drew a bead makes it the control that
+    changes it, and a page that names a bead it could not read prints the words
+    alone. A page that names no bead at all carries none, and it carries the
+    head without the id, because the way back is what a person needs there.
+*@
+
+<div class="bead-head">
+    <p><a href="board">← Back to the board</a></p>
+
+    @if (Title is not null)
+    {
+        @Title
+    }
+
+    @if (Id.Length > 0)
+    {
+        <p><BeadId Id="@Id" Quiet="true" /></p>
+    }
+</div>
+
+@code {
+    /// <summary>The head of the page, or none while the page names no bead.</summary>
+    [Parameter]
+    public RenderFragment? Title { get; set; }
+
+    /// <summary>The id of the bead that the page drew, or an empty string.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string Id { get; set; }
+}

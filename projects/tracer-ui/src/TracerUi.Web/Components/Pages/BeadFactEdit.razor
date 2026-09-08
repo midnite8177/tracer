@@ -1,0 +1,230 @@
+@*
+    One row of the fact strip that a person presses to change it. The value is the
+    control, so it is a button, and its accessible name states the field and the
+    value that the button carries. A press replaces the row with its picker, a pick
+    writes at once, and the row then shows what the page read back. A press says
+    nothing after a write that landed, because the value already says it. An entry
+    that asks a question takes the place of the entries until the person answers it
+    or leaves the picker. A picker of a field that the bead carries several values
+    of stays open after a write, because the next press of it is another value of
+    the same field.
+*@
+
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Projects
+@inherits CapabilityAware
+
+<h2 class="bead-fact-name" id="@Fact.HeadingId">@Fact.Name</h2>
+
+@if (open)
+{
+    <div class="bead-fact-picker" tabindex="-1" @ref="picker" @onkeydown="CloseOnEscape">
+        @if (Refusal.Length > 0)
+        {
+            <p class="bead-fact-refusal">@Refusal</p>
+        }
+        else
+        {
+            <BeadWriteMessage Message="@WhyTheLastWriteFailed" Wrote="false" />
+            @if (asked is { Question: { } question })
+            {
+                <div class="bead-fact-question">
+                    <input class="form-control form-control-sm bead-fact-answer"
+                           @ref="field"
+                           aria-label="@question.Prompt"
+                           placeholder="@question.Prompt"
+                           @bind="answer"
+                           @bind:event="oninput" />
+                    <button type="button" class="btn btn-sm btn-outline-danger bead-fact-commit"
+                            disabled="@(answer.Trim().Length == 0)"
+                            @onclick="Commit">@question.Press</button>
+                </div>
+            }
+            else
+            {
+                <div class="bead-fact-choices" role="group" aria-labelledby="@Fact.HeadingId">
+                    @foreach (var choice in Fact.Picker.Choices)
+                    {
+                        <button type="button"
+                                class="bead-fact-choice @(choice.Marked ? "bead-fact-choice-current" : string.Empty)"
+                                aria-current="@(TheFieldHoldsOneValue && choice.Marked ? "true" : null)"
+                                aria-pressed="@(TheFieldHoldsOneValue ? null : choice.Marked ? "true" : "false")"
+                                @onclick="() => Pick(choice)">@if (!TheFieldHoldsOneValue && choice.Marked)
+                                                             {
+                                                                 <span class="bead-fact-tick" aria-hidden="true">&#10003;</span>
+                                                             }<span class="bead-fact-words">@choice.Text</span></button>
+                    }
+                </div>
+                @if (Fact.Picker.Addition is { } addition)
+                {
+                    <div class="bead-fact-addition">
+                        <input class="form-control form-control-sm bead-fact-new"
+                               aria-label="@addition.Question.Prompt"
+                               placeholder="@addition.Question.Prompt"
+                               @bind="added"
+                               @bind:event="oninput" />
+                        <button type="button" class="btn btn-sm btn-outline-secondary bead-fact-add"
+                                disabled="@(added.Trim().Length == 0)"
+                                @onclick="() => Add(addition)">@addition.Question.Press</button>
+                    </div>
+                }
+            }
+        }
+    </div>
+}
+else
+{
+    <p class="bead-fact-value @Fact.ValueClass">
+        <button type="button" class="bead-fact-press"
+                @ref="press"
+                aria-label="@($"{Fact.Name}, {Fact.Value}")"
+                @onclick="Open">@Fact.Value</button>
+        @if (Fact.Page.Length > 0)
+        {
+            <a class="bead-fact-page" href="@Fact.Page" aria-label="@($"Open {Fact.Value}")">open</a>
+        }
+    </p>
+}
+
+@code {
+    /// <summary>The project whose bd this row asks and writes to.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required ProjectPath Project { get; set; }
+
+    /// <summary>The fact that this row states, and what a press of it offers.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required PressableFact Fact { get; set; }
+
+    /// <summary>Runs after a write that landed, so that the page reads the bead again.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    private ElementReference press;
+    private ElementReference picker;
+    private ElementReference field;
+    private bool open;
+    private FactChoice? asked;
+    private string answer = string.Empty;
+    private string added = string.Empty;
+    private WhatToFocus focus = WhatToFocus.Nothing;
+
+    // Where the keyboard stands after the next render, which a press or a close moves.
+    private enum WhatToFocus
+    {
+        Nothing,
+        ThePicker,
+        TheField,
+        ThePress,
+    }
+
+    protected override ProjectPath OfProject => Project;
+
+    // The first action that this bd lacks speaks for the whole field, because one entry that cannot
+    // land makes the field a question that the person cannot answer. A value that ignores a press
+    // reads as broken, so every press opens and answers.
+    private string Refusal =>
+        Probed
+            ? Fact.Verbs.Select(Why).FirstOrDefault(missing => missing.Length > 0) ?? string.Empty
+            : "The app is still asking bd what it can do.";
+
+    // Empty when the last write landed, because the value that the page read back already says it.
+    private string WhyTheLastWriteFailed => Wrote ? string.Empty : WriteMessage;
+
+    private bool TheFieldHoldsOneValue => Fact.Picker.Marks is FactMarks.TheOneItIsIn;
+
+    private void Open()
+    {
+        ForgetTheLastWrite();
+        open = true;
+        asked = null;
+        answer = string.Empty;
+        added = string.Empty;
+        focus = WhatToFocus.ThePicker;
+    }
+
+    private void Close()
+    {
+        open = false;
+        asked = null;
+        answer = string.Empty;
+        added = string.Empty;
+        focus = WhatToFocus.ThePress;
+    }
+
+    private void CloseOnEscape(KeyboardEventArgs key)
+    {
+        if (string.Equals(key.Key, "Escape", StringComparison.Ordinal))
+        {
+            Close();
+        }
+    }
+
+    // Takes one entry. An entry that asks a question writes nothing yet: it puts its field in the
+    // place of the entries, and the write waits for the answer.
+    private async Task Pick(FactChoice choice)
+    {
+        if (choice.Question is not null)
+        {
+            ForgetTheLastWrite();
+            asked = choice;
+            focus = WhatToFocus.TheField;
+            return;
+        }
+
+        await WriteThen(() => choice.Write(string.Empty));
+    }
+
+    // Runs the write of the box at the foot, with the value that the person typed.
+    private async Task Add(FactAddition addition)
+    {
+        var typed = added.Trim();
+        added = string.Empty;
+        await WriteThen(() => addition.Write(typed));
+    }
+
+    // Runs one write of this picker and leaves the picker where the field wants it. A field of one
+    // value is answered by the pick that landed, so the picker closes. A field of several stays
+    // open with the new marks, because a person who ticks one label often ticks a second.
+    private async Task WriteThen(Func<Task<BdWriteOutcome>> write)
+    {
+        if (await WriteAsync(write, OnWritten) && TheFieldHoldsOneValue)
+        {
+            Close();
+        }
+    }
+
+    // Runs the write of the entry that asked, with the answer that the person typed.
+    private async Task Commit()
+    {
+        if (asked is not { } choice)
+        {
+            return;
+        }
+
+        await WriteThen(() => choice.Write(answer));
+    }
+
+    // Moves the keyboard to the picker that a press opened, on to the field of an entry that asks,
+    // and back to the value when the picker closes, so that a person who never touches a pointer
+    // keeps their place on the page.
+    // firstRender goes unread: the press opens the picker on a later render, not the first.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        var what = focus;
+        focus = WhatToFocus.Nothing;
+        switch (what)
+        {
+            case WhatToFocus.ThePicker:
+                await picker.FocusAsync();
+                break;
+            case WhatToFocus.TheField:
+                await field.FocusAsync();
+                break;
+            case WhatToFocus.ThePress:
+                await press.FocusAsync();
+                break;
+        }
+    }
+}

@@ -1,0 +1,114 @@
+@*
+    The quick create of a bead that this bead holds. bd has no add-a-child verb: it
+    sets the parent of the other bead, which is a write to a bead this page does not
+    show. A create from here sidesteps that, because the new bead names this bead as
+    its parent at birth.
+*@
+
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
+@inherits CapabilityAware
+
+<div class="bead-writes bead-held-create" title="@Why(UiVerbs.CreateInAnEpic)">
+    <BeadWriteMessage Message="@WriteMessage" Wrote="Wrote" />
+
+    @if (creating)
+    {
+        <div class="row g-2 align-items-end bead-write-row" @onkeydown="CloseOnEscape">
+            <QuickCreateFields @ref="fields"
+                               Names="TheNamesOfTheCapture"
+                               @bind-Title="title"
+                               @bind-Type="type" />
+
+            <div class="col-auto">
+                <button class="btn btn-sm btn-primary bead-held-create-write"
+                        disabled="@(title.Trim().Length == 0 || busy)"
+                        @onclick="CreateTheBead">Create the bead</button>
+            </div>
+        </div>
+        <div class="form-text">@BeadWriteChoices.WhatAQuickCreateMakes</div>
+    }
+    else
+    {
+        <button class="btn btn-sm btn-link p-0 bead-held-add"
+                disabled="@(!Probed || !Can(UiVerbs.CreateInAnEpic))"
+                @onclick="OpenTheBox">Add a bead</button>
+    }
+</div>
+
+@code {
+    /// <summary>The bead that is to hold every bead this control makes.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>
+    /// Runs when bd made the bead, so that the page reads this one again and the new bead stands in
+    /// its list. A create that bd refused raises nothing.
+    /// </summary>
+    [Parameter]
+    public EventCallback OnCreated { get; set; }
+
+    private static readonly QuickCreateNames TheNamesOfTheCapture =
+        new("held-create", "A bead inside this one", "What the bead is called");
+
+    private bool creating;
+
+    private string title = string.Empty;
+    private string type = "task";
+    private bool busy;
+
+    private QuickCreateFields? fields;
+
+    private bool focusTheBox;
+
+    protected override ProjectPath OfProject => Address.Project;
+
+    private void OpenTheBox()
+    {
+        creating = true;
+        focusTheBox = true;
+        ForgetTheLastWrite();
+    }
+
+    private void CloseTheBox()
+    {
+        creating = false;
+        title = string.Empty;
+    }
+
+    private void CloseOnEscape(KeyboardEventArgs key)
+    {
+        if (string.Equals(key.Key, "Escape", StringComparison.Ordinal))
+        {
+            CloseTheBox();
+        }
+    }
+
+    // Moves the keyboard into the box that a press opened, so that a person who never touches a
+    // pointer names the new bead where the press stood. firstRender goes unread: the press opens
+    // the box on a later render, not the first.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (focusTheBox && fields is not null)
+        {
+            focusTheBox = false;
+            await fields.FocusTheTitle();
+        }
+    }
+
+    private async Task CreateTheBead()
+    {
+        busy = true;
+        StateHasChanged();
+        var made = await CreateAsync(
+            () => Bd.CreateAsync(Address.Project, title, type, Address.Id),
+            OnCreated);
+        busy = false;
+        if (made)
+        {
+            CloseTheBox();
+        }
+    }
+}

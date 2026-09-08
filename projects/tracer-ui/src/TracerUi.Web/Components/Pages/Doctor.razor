@@ -1,0 +1,165 @@
+@page "/doctor"
+@using TracerUi.Core.Beads
+@inject BdAdapter Bd
+@inject ActiveProjectSelection Selection
+@implements IDisposable
+
+<PageTitle>Doctor</PageTitle>
+
+<h1>Doctor</h1>
+
+@if (Selection.Current is null)
+{
+    <p>@NoActiveProject.Ask The doctor page reports the bd that the active project uses.</p>
+    <a class="btn btn-primary" href="">Go to the projects</a>
+}
+else if (capabilities is null)
+{
+    <p>The app is asking bd what it can do…</p>
+}
+else
+{
+    <p class="text-muted machine-text doctor-path">@Selection.Current.Value</p>
+
+    @if (capabilities.Problem.Length > 0)
+    {
+        <p class="failure-message">@capabilities.Problem</p>
+    }
+
+    <h2>Version</h2>
+    <p>
+        @if (capabilities.Version.Length > 0)
+        {
+            <strong class="machine-text">@capabilities.Version</strong>
+        }
+        else
+        {
+            <strong>not detected</strong>
+        }
+    </p>
+
+    <h2>Verb map</h2>
+    @if (!capabilities.VerbsKnown)
+    {
+        <p>The app could not ask this bd what it can do, so it knows no verb here.</p>
+    }
+    else
+    {
+        <table class="table table-sm">
+        <thead>
+            <tr><th>Action</th><th>Command</th><th>State</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var verb in UiVerbs.All)
+            {
+                <tr>
+                    <td>@verb.Name</td>
+                    <td><code class="machine-text">@verb.CommandLine</code></td>
+                    <td>
+                        @if (capabilities.Supports(verb))
+                        {
+                            <span class="text-success">available</span>
+                        }
+                        else
+                        {
+                            <span class="text-danger">@capabilities.MissingCapability(verb)</span>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+        </table>
+
+        <h2>Commands that this bd offers</h2>
+        <p class="doctor-verbs machine-text">@string.Join(", ", capabilities.Verbs)</p>
+    }
+
+    <h2>Field map</h2>
+    <table class="table table-sm">
+        <thead>
+            <tr><th>Field</th><th>Name that this bd emits</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var field in BeadFields.All)
+            {
+                <tr>
+                    <td>@field.Label</td>
+                    <td>
+                        @if (capabilities.Fields[field.Key] is { Length: > 0 } name)
+                        {
+                            <code class="machine-text">@name</code>
+                        }
+                        else
+                        {
+                            <span class="text-muted">no bead in this project sets this field</span>
+                        }
+                    </td>
+                </tr>
+            }
+            <tr>
+                <td>Comments</td>
+                <td><span class="text-muted">not a field of a bead — see the comment map below</span></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>Comment map</h2>
+    <p class="text-muted">bd holds the comments of a bead behind <code class="machine-text">bd comments &lt;id&gt; --json</code>, so no bead in a list carries them.</p>
+    @if (!capabilities.Comments.Answered)
+    {
+        <p>@capabilities.Comments.Problem</p>
+    }
+    else
+    {
+        <table class="table table-sm">
+            <thead>
+                <tr><th>Field</th><th>Name that this bd emits</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var field in BeadFields.OfAComment)
+                {
+                    <tr>
+                        <td>@field.Label</td>
+                        <td>
+                            @if (capabilities.Comments.Fields[field.Key] is { Length: > 0 } name)
+                            {
+                                <code class="machine-text">@name</code>
+                            }
+                            else
+                            {
+                                <span class="text-muted">no comment in this project sets this field</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    private BdCapabilities? capabilities;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Selection.Changed += OnActiveProjectChanged;
+        if (Selection.Current is not null)
+        {
+            capabilities = await Bd.CapabilitiesAsync(Selection.Current);
+        }
+    }
+
+    // Asks the bd of another project what it can do, after that project becomes the active one.
+    private void OnActiveProjectChanged(ActiveProjectChange change)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            capabilities = null;
+            StateHasChanged();
+            capabilities = await Bd.CapabilitiesAsync(change.Project);
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose() => Selection.Changed -= OnActiveProjectChanged;
+}

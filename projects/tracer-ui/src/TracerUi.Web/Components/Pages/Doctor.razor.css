@@ -1,0 +1,21 @@
+/*
+    The report of the installed bd.
+
+    Everything that bd itself gives — its version, its command names, the field
+    names that it emits — reads as machine text, so that a person tells a
+    command name from the prose around it. A long path gives up the line rather
+    than push the page wider.
+*/
+
+.doctor-path {
+    font-size: var(--tracer-text-quiet);
+}
+
+/* The whole command set of this bd, as one block of machine text. */
+.doctor-verbs {
+    background-color: var(--tracer-canvas-inset);
+    border: 1px solid var(--tracer-border-muted);
+    border-radius: var(--tracer-radius);
+    font-size: var(--tracer-text-quiet);
+    padding: var(--tracer-space-2) var(--tracer-space-3);
+}

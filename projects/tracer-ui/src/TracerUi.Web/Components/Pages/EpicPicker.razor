@@ -1,0 +1,46 @@
+@using TracerUi.Core.Boards
+
+<select class="@Class" id="@Id" disabled="@Disabled" value="@Value"
+        @onchange="Pick">
+    <option value="">@WhenNone</option>
+    @foreach (var epic in Epics.Where(epic => epic.Id != Except).OrderBy(epic => epic.Title, StringComparer.Ordinal))
+    {
+        <option value="@epic.Id">@epic.Title</option>
+    }
+</select>
+
+@code {
+    /// <summary>The epics to offer, in whatever order the caller holds them.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<Bead> Epics { get; set; }
+
+    /// <summary>The epic that the person picked, or an empty string for none of them.</summary>
+    [Parameter]
+    public string Value { get; set; } = string.Empty;
+
+    /// <summary>Runs when the person picks another epic.</summary>
+    [Parameter]
+    public EventCallback<string> ValueChanged { get; set; }
+
+    /// <summary>What the empty choice reads as, because a picker means one of two things by it.</summary>
+    [Parameter]
+    public string WhenNone { get; set; } = "Pick an epic";
+
+    /// <summary>An epic to leave out, so that a bead is never offered itself.</summary>
+    [Parameter]
+    public string Except { get; set; } = string.Empty;
+
+    /// <summary>The id of the control, so that a label reaches it.</summary>
+    [Parameter]
+    public string Id { get; set; } = string.Empty;
+
+    [Parameter]
+    public string Class { get; set; } = "form-select form-select-sm";
+
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    private Task Pick(ChangeEventArgs changed) =>
+        ValueChanged.InvokeAsync(changed.Value?.ToString() ?? string.Empty);
+}

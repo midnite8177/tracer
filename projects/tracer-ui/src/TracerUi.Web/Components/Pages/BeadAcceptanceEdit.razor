@@ -1,0 +1,109 @@
+@*
+    The acceptance criteria of the bead, which is the control that changes them. A
+    press opens the box with the live preview beside it, as the description does,
+    because the markdown that a person types is not what a reader of the bead sees.
+    bd takes the acceptance criteria on their own, so this write sends no other
+    part of the prose.
+*@
+
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
+@inherits ProseBox
+
+<h2 class="h4 bead-section">Acceptance criteria</h2>
+
+@if (!Editing)
+{
+    <div class="bead-prose-pressable" @onclick="Open">
+        @if (Bead.Prose.HasAcceptance)
+        {
+            <div class="bead-prose">@(new MarkupString(Bead.Prose.AcceptanceHtml))</div>
+        }
+        else
+        {
+            <p class="text-muted">This bead states no acceptance criteria.</p>
+        }
+    </div>
+
+    <button type="button" class="btn btn-sm btn-outline-secondary bead-writes bead-acceptance-press"
+            @ref="Press"
+            @onclick="Open">Edit the acceptance criteria</button>
+}
+else
+{
+    <div class="bead-acceptance-edit" tabindex="-1" @ref="Box" @onkeydown="CloseOnEscape">
+        @if (Refusal.Length > 0)
+        {
+            <p class="bead-prose-refusal">@Refusal</p>
+        }
+        else
+        {
+            <BeadWriteMessage Message="@WhyTheLastWriteFailed" Wrote="false" />
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label" for="prose-acceptance">Acceptance criteria</label>
+                    <textarea class="form-control form-control-sm bead-prose-editor" id="prose-acceptance"
+                              @ref="Field"
+                              @bind="acceptance"
+                              @bind:event="oninput"></textarea>
+                </div>
+                <div class="col-md-6">
+                    <span class="form-label">Preview</span>
+                    <div class="bead-prose bead-prose-preview">@(new MarkupString(BeadMarkdown.ToHtml(acceptance)))</div>
+                </div>
+            </div>
+
+            <div class="bead-writes">
+                <button type="button" class="btn btn-sm btn-primary bead-acceptance-save"
+                        @onclick="Save">Save the acceptance criteria</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary ms-1"
+                        @onclick="Close">Cancel</button>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    /// <summary>The bead that this control writes to.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>The bead as the page read it. It gives the text that the box starts with.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required Bead Bead { get; set; }
+
+    /// <summary>
+    /// True when the press that put this section on the page asked for its box at once, so that the
+    /// press on an absent line adds the acceptance criteria in one press and not in two.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required bool OpenAtOnce { get; set; }
+
+    /// <summary>Runs after a write that landed, so that the page reads the bead again.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    private string acceptance = string.Empty;
+
+    protected override ProjectPath OfProject => Address.Project;
+
+    protected override UiVerb Verb => UiVerbs.EditTheAcceptanceCriteria;
+
+    protected override void OnInitialized()
+    {
+        if (OpenAtOnce)
+        {
+            Open();
+        }
+    }
+
+    protected override void StartFromTheBead() => acceptance = Bead.Prose.Acceptance;
+
+    private Task Save() =>
+        SaveThen(() => Bd.EditAcceptanceAsync(Address, acceptance), OnWritten);
+}

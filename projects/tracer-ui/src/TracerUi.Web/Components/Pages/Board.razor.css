@@ -1,0 +1,256 @@
+/*
+    The compact board.
+
+    A row is one line of the height that --tracer-board-row-height sets, with
+    one thin line under it and no zebra stripe, so that a backlog of eighty
+    beads fits one screen. A row that carries many label chips grows past that
+    height, because every chip shows.
+
+    The eye finds two things in a row: the label chips, which are filled, and
+    the resolved status, which is an outlined pill. Every other cell is quiet.
+*/
+
+.board-table {
+    margin-bottom: 0;
+}
+
+.board-table th {
+    color: var(--tracer-fg-muted);
+    font-size: var(--tracer-text-small);
+    font-weight: 600;
+    padding: var(--tracer-space-1) var(--tracer-space-2);
+    text-transform: lowercase;
+}
+
+.board-table td {
+    border-bottom: 1px solid var(--tracer-border-muted);
+    font-size: var(--tracer-text-quiet);
+    padding: var(--tracer-space-1) var(--tracer-space-2);
+    vertical-align: middle;
+}
+
+::deep .board-row {
+    height: var(--tracer-board-row-height);
+}
+
+/*
+    The cell states no width of its own, because the indent of the ticks decides
+    it: one level of tree needs the width of two ticks, and a deep tree needs
+    more. A width of one pixel asks the table for the narrowest column that
+    holds the widest cell, which is that width.
+*/
+.board-cell-tick {
+    white-space: nowrap;
+    width: 1px;
+}
+
+/*
+    The ticks of one row, which draw the tree. The row indents them by a step of
+    its own, one tick and one gap wide, so the tick of a bead stands one step
+    right of the tick of the epic that holds it. The second tick of an epic row
+    stands one step right of its first, which is the head of the column of ticks
+    that it takes, and the place of a tick alone says which beads it reaches.
+
+    The step is not the step of the title, which is wider: it can only be the
+    width of the thing that it aligns. It reads that width as 1em, which is what
+    Bootstrap gives a tick, so the step and the ticks cannot fall out of
+    agreement, and the gap of the flex row is the same length again.
+*/
+.board-ticks {
+    align-items: center;
+    display: flex;
+    gap: var(--tracer-space-1);
+    padding-left: calc(var(--row-depth, 0) * (1em + var(--tracer-space-1)));
+}
+
+.board-cell-quiet {
+    color: var(--tracer-fg-muted);
+    white-space: nowrap;
+}
+
+/*
+    One step of the indent for each epic above the row, so the eye reads the
+    depth of a bead in the title cell alone.
+*/
+.board-table td.board-cell-title {
+    padding-left: calc(var(--row-depth, 0) * var(--tracer-space-4) + var(--tracer-space-2));
+    width: 45%;
+}
+
+/*
+    The row that names the loose beads. No bead sits behind it, so it carries
+    the quiet color and none of the columns of a bead.
+*/
+.board-unparented {
+    color: var(--tracer-fg-muted);
+    font-size: var(--tracer-text-small);
+}
+
+/*
+    The title of a row and the count of the beads under it, on one line. The
+    title takes the width that is left, so the count stays beside its end.
+*/
+.board-title-line {
+    align-items: baseline;
+    display: flex;
+    gap: var(--tracer-space-1);
+}
+
+/*
+    A long title wraps to two lines and ends with an ellipsis there, so that one
+    bead never costs the height of four rows.
+*/
+::deep .board-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.board-close-reason {
+    font-size: var(--tracer-text-small);
+    max-width: var(--tracer-measure-prose);
+}
+
+/*
+    A filter press: the type of a row, one of its labels, and the marker that
+    says the bead states no Demo line. Each one is a link, because its address
+    carries the filter, but it takes the shape of the text or the chip that
+    stood there before, so a row reads as it always did.
+
+    This rule stands above the chip rules on purpose. It drops what a link
+    brings of its own, and the chip rules below it then paint the chip presses,
+    so one press never loses the ground and the border of its chip.
+*/
+.board-filter-press {
+    color: inherit;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.board-labels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--tracer-space-1);
+}
+
+/* The shape that the label chip, the status pill, the Demo marker and the count share. */
+.board-chip {
+    border: 1px solid currentcolor;
+    display: inline-block;
+    font-size: var(--tracer-text-small);
+    padding: 0 var(--tracer-space-1);
+    white-space: nowrap;
+}
+
+/*
+    A label chip is filled and bold, and its border is the loudest of the three
+    chips, because a label is the thing that a person scans a board for.
+*/
+.board-label {
+    background-color: var(--tracer-canvas-hover);
+    border-color: var(--tracer-fg-muted);
+    border-radius: var(--tracer-radius-small);
+    color: var(--tracer-fg);
+    font-weight: 600;
+}
+
+.board-status {
+    border-radius: var(--tracer-radius-pill);
+    max-width: 14rem;
+    overflow: hidden;
+    padding: 0 var(--tracer-space-2);
+    text-overflow: ellipsis;
+}
+
+.board-status-needs-you {
+    color: var(--tracer-danger-fg);
+}
+
+.board-status-blocked {
+    color: var(--tracer-attention-fg);
+}
+
+.board-status-ready {
+    color: var(--tracer-success-fg);
+}
+
+.board-status-in-progress {
+    color: var(--tracer-accent-fg);
+}
+
+.board-status-deferred,
+.board-status-stored {
+    color: var(--tracer-fg-muted);
+}
+
+/* The Demo line marker: a word with a border of its own color, never a glyph. */
+.board-demo {
+    border-radius: var(--tracer-radius-small);
+}
+
+.board-demo-yes {
+    color: var(--tracer-success-fg);
+}
+
+.board-demo-no {
+    color: var(--tracer-attention-fg);
+}
+
+/*
+    The count of the beads under a row. It steps back from the title beside it,
+    because the title carries the line and the count only gives its size.
+*/
+.board-count {
+    border-radius: var(--tracer-radius-pill);
+    color: var(--tracer-fg-muted);
+}
+
+.board-message {
+    white-space: pre-wrap;
+}
+
+/*
+    The control that hides the beads under a row and shows them again. It is a
+    chevron alone, with no border and no ground, because the title beside it
+    carries the line. It points down while the row is open, and to the right
+    while the row is collapsed, so the shape alone says the state.
+*/
+.board-collapse {
+    align-self: center;
+    background: none;
+    border: 0;
+    border-radius: var(--tracer-radius-small);
+    color: var(--tracer-fg-muted);
+    cursor: pointer;
+    display: inline-flex;
+    padding: 0;
+}
+
+.board-collapse:hover {
+    color: var(--tracer-fg);
+}
+
+.board-collapse:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 var(--tracer-focus-ring-width) var(--tracer-focus-ring);
+}
+
+.board-collapse-collapsed {
+    transform: rotate(-90deg);
+}
+
+/*
+    A filter press under the pointer, and one that the keyboard reached. Neither
+    one states a color, because each press keeps the color of its own chip.
+*/
+.board-filter-press:hover {
+    text-decoration: underline;
+}
+
+.board-filter-press:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 var(--tracer-focus-ring-width) var(--tracer-focus-ring);
+}

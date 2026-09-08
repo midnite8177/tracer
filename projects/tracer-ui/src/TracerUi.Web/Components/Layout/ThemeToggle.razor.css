@@ -1,0 +1,46 @@
+/*
+    The document carries the theme, so the stylesheet alone decides which icon
+    shows. No script writes the button, thus the first paint shows the right
+    icon and no icon flashes.
+*/
+
+.theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--tracer-radius);
+    background: none;
+    color: var(--tracer-topbar-fg-muted);
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+}
+
+.theme-toggle:hover {
+    background-color: var(--tracer-topbar-hover);
+    color: var(--tracer-topbar-fg);
+}
+
+.theme-toggle:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 var(--tracer-focus-ring-width) var(--tracer-topbar-focus-ring);
+}
+
+.to-light {
+    display: none;
+}
+
+.to-dark {
+    display: inline-flex;
+}
+
+html[data-bs-theme="dark"] .to-light {
+    display: inline-flex;
+}
+
+html[data-bs-theme="dark"] .to-dark {
+    display: none;
+}

@@ -1,0 +1,30 @@
+@using TracerUi.Core.Look
+@inject IJSRuntime Js
+
+@*
+    The control that changes the theme.
+
+    It holds no rule. It reads the theme that the document carries, it asks the
+    Theme type for the other one, and it writes that name back. The browser
+    keeps the choice, so the choice outlives a reload and beats the operating
+    system.
+
+    Which icon a person sees is a question for the stylesheet, not for this
+    component: the document already carries the theme, and the button shows the
+    icon of the theme that a click gives.
+*@
+
+<button type="button" class="theme-toggle" @onclick="Toggle"
+        aria-label="Change the theme" title="Change the theme">
+    <span class="to-dark"><Icon Name="IconName.Dark" /></span>
+    <span class="to-light"><Icon Name="IconName.Light" /></span>
+</button>
+
+@code {
+    private async Task Toggle()
+    {
+        var carried = await Js.InvokeAsync<string?>("tracerTheme.read");
+        var next = Theme.FromDocument(carried).Other;
+        await Js.InvokeVoidAsync("tracerTheme.write", next.Name);
+    }
+}

@@ -1,0 +1,75 @@
+@*
+    The fields of a quick create: the title of the bead, its type, and the epic that is
+    to hold it. Every surface that captures a bead draws them the same way, so they live
+    here, and the caller keeps the row that holds them.
+*@
+
+@using TracerUi.Core.Beads
+
+<div class="col">
+    <label class="form-label" for="@TitleId">@Names.Label</label>
+    <input class="form-control form-control-sm" id="@TitleId"
+           @ref="titleBox"
+           placeholder="@Names.Placeholder"
+           value="@Title" @oninput="TypeTheTitle" />
+</div>
+
+<div class="col-auto">
+    <label class="form-label" for="@TypeId">Type</label>
+    <select class="form-select form-select-sm" id="@TypeId" value="@Type" @onchange="PickTheType">
+        @foreach (var offered in BeadWriteChoices.QuickCreateTypes)
+        {
+            <option value="@offered">@offered</option>
+        }
+    </select>
+</div>
+
+@Epic
+
+@code {
+    /// <summary>
+    /// What this surface calls the two fields. The id of each control grows from the stem, so a
+    /// caller that changes it renames handles that the tests and the stylesheet reach for.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required QuickCreateNames Names { get; set; }
+
+    /// <summary>
+    /// The epic that is to hold the new bead, as this surface draws it: a picker where the person
+    /// chooses one, and nothing at all where the surface is itself the epic.
+    /// </summary>
+    [Parameter]
+    public RenderFragment? Epic { get; set; }
+
+    [Parameter]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>Runs on each keystroke in the title box, and not on the change that ends the typing.</summary>
+    [Parameter]
+    public EventCallback<string> TitleChanged { get; set; }
+
+    [Parameter]
+    public string Type { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback<string> TypeChanged { get; set; }
+
+    private ElementReference titleBox;
+
+    private string TitleId => $"{Names.IdPrefix}-title";
+
+    private string TypeId => $"{Names.IdPrefix}-type";
+
+    /// <summary>
+    /// Puts the cursor in the title box. The browser knows the box only once it has drawn it, so a
+    /// caller asks for this from OnAfterRenderAsync and never while it renders.
+    /// </summary>
+    public ValueTask FocusTheTitle() => titleBox.FocusAsync();
+
+    private Task TypeTheTitle(ChangeEventArgs typed) =>
+        TitleChanged.InvokeAsync(typed.Value?.ToString() ?? string.Empty);
+
+    private Task PickTheType(ChangeEventArgs picked) =>
+        TypeChanged.InvokeAsync(picked.Value?.ToString() ?? string.Empty);
+}

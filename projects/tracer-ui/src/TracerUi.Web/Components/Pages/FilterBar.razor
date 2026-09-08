@@ -1,0 +1,212 @@
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
+
+<div class="mb-3 board-filter-bar">
+    <div class="row g-2 align-items-end">
+        <div class="col-auto">
+            <label class="form-label" for="filter-status">Status</label>
+            <select class="form-select form-select-sm" id="filter-status" @bind="Status">
+                <option value="">Any status</option>
+                @foreach (var status in StoredStatus.All)
+                {
+                    <option value="@status">@StoredStatus.InWords(status)</option>
+                }
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label" for="filter-type">Type</label>
+            <select class="form-select form-select-sm" id="filter-type" @bind="Type">
+                <option value="">Any type</option>
+                @foreach (var type in Types)
+                {
+                    <option value="@type">@type</option>
+                }
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label" for="filter-priority">Priority</label>
+            <select class="form-select form-select-sm" id="filter-priority" @bind="Priority">
+                <option value="">Any priority</option>
+                @foreach (var priority in Priorities)
+                {
+                    <option value="@Bead.PriorityAsText(priority)">p@(priority)</option>
+                }
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label" for="filter-label">Label</label>
+            <select class="form-select form-select-sm" id="filter-label" @bind="Label">
+                <option value="">Any label</option>
+                @foreach (var label in Labels)
+                {
+                    <option value="@label">@label</option>
+                }
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label" for="filter-epic">Epic</label>
+            <select class="form-select form-select-sm" id="filter-epic" @bind="Epic">
+                <option value="">Any epic</option>
+                @foreach (var epic in Epics.OrderBy(epic => epic.Title, StringComparer.Ordinal))
+                {
+                    <option value="@epic.Id">@epic.Title</option>
+                }
+            </select>
+        </div>
+        <div class="col">
+            <label class="form-label" for="filter-text">Search</label>
+            <input class="form-control form-control-sm" id="filter-text" type="search"
+                   placeholder="Title, description or label"
+                   @bind="Text" @bind:event="oninput" />
+        </div>
+    </div>
+
+    <div class="mt-2">
+        <button class="btn btn-sm @(Filter.RequiresHumanLabel ? "btn-danger" : "btn-outline-danger")"
+                @onclick="ToggleNeedsYou">
+            Needs you
+        </button>
+        <button class="btn btn-sm @(Filter.RequiresNoDemoLine ? "btn-warning" : "btn-outline-warning")"
+                @onclick="ToggleNoDemoLine">
+            No demo line
+        </button>
+        <button class="btn btn-sm @(Filter.ShowDeferred ? "btn-secondary" : "btn-outline-secondary")"
+                @onclick="ToggleDeferred">
+            Deferred beads
+        </button>
+        <button class="btn btn-sm @(Filter.ShowClosed ? "btn-secondary" : "btn-outline-secondary")"
+                @onclick="ToggleClosed">
+            Closed beads
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" disabled="@(Filter == BoardFilter.Everything)"
+                @onclick="Clear">
+            Clear the filter
+        </button>
+    </div>
+
+    <div class="mt-2 d-flex flex-wrap align-items-center gap-2">
+        <input class="form-control form-control-sm board-filter-name" type="text"
+               placeholder="Name this filter" @bind="filterName" @bind:event="oninput" />
+        <button class="btn btn-sm btn-outline-primary"
+                disabled="@(filterName.Trim().Length == 0)" @onclick="SaveTheFilter">
+            Save the filter
+        </button>
+        @foreach (var saved in Saved)
+        {
+            <span class="btn-group btn-group-sm">
+                <button class="btn btn-outline-secondary" @onclick="() => Apply(saved)">@saved.Name</button>
+                <button class="btn btn-outline-secondary" title="Forget this filter"
+                        @onclick="() => Forget(saved)">✕</button>
+            </span>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>The filter that the bar shows and edits.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BoardFilter Filter { get; set; }
+
+    /// <summary>Raised with the new filter whenever a person changes any part of it.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required EventCallback<BoardFilter> FilterChanged { get; set; }
+
+    /// <summary>The types that the beads of the active project use.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<string> Types { get; set; }
+
+    /// <summary>The priorities that the beads of the active project state.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<long> Priorities { get; set; }
+
+    /// <summary>The labels that the beads of the active project carry.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<string> Labels { get; set; }
+
+    /// <summary>The epics of the active project.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<Bead> Epics { get; set; }
+
+    /// <summary>The filters that the person saved in the active project.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<SavedFilter> Saved { get; set; }
+
+    /// <summary>Raised with the name that a person gave the filter that the bar shows.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required EventCallback<string> OnSave { get; set; }
+
+    /// <summary>Raised with the filter that a person asked the app to forget.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required EventCallback<SavedFilter> OnForget { get; set; }
+
+    private string filterName = string.Empty;
+
+    private string Status
+    {
+        get => Filter.Status;
+        set => Change(Filter with { Status = value });
+    }
+
+    private string Type
+    {
+        get => Filter.Type;
+        set => Change(Filter with { Type = value });
+    }
+
+    private string Priority
+    {
+        get => Filter.Priority;
+        set => Change(Filter with { Priority = value });
+    }
+
+    private string Label
+    {
+        get => Filter.Label;
+        set => Change(Filter with { Label = value });
+    }
+
+    private string Epic
+    {
+        get => Filter.Epic;
+        set => Change(Filter with { Epic = value });
+    }
+
+    private string Text
+    {
+        get => Filter.Text;
+        set => Change(Filter with { Text = value });
+    }
+
+    private Task ToggleNeedsYou() =>
+        Change(Filter with { RequiresHumanLabel = !Filter.RequiresHumanLabel });
+
+    private Task ToggleNoDemoLine() =>
+        Change(Filter with { RequiresNoDemoLine = !Filter.RequiresNoDemoLine });
+
+    private Task ToggleDeferred() => Change(Filter with { ShowDeferred = !Filter.ShowDeferred });
+
+    private Task ToggleClosed() => Change(Filter with { ShowClosed = !Filter.ShowClosed });
+
+    private Task Clear() => Change(BoardFilter.Everything);
+
+    private Task Apply(SavedFilter saved) => Change(saved.Filter);
+
+    private async Task SaveTheFilter()
+    {
+        await OnSave.InvokeAsync(filterName.Trim());
+        filterName = string.Empty;
+    }
+
+    private Task Forget(SavedFilter saved) => OnForget.InvokeAsync(saved);
+
+    private Task Change(BoardFilter filter) => FilterChanged.InvokeAsync(filter);
+}

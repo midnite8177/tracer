@@ -1,0 +1,23 @@
+@*
+    One thin line where a box would stand, for a thing that the bead does not
+    have. The words name every absence that the line covers, and the presses that
+    add one of them stand on the same line. Every absent line of the detail page
+    is drawn here, so the shape of one is the shape of all.
+*@
+
+<div class="bead-absent">
+    <span>@Words</span>
+    @Presses
+</div>
+
+@code {
+    /// <summary>What the line says, which names every thing that the bead does not have.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string Words { get; set; }
+
+    /// <summary>The controls that add one of those things, which stand on the line.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required RenderFragment Presses { get; set; }
+}

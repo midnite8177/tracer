@@ -1,0 +1,99 @@
+@*
+    The description of the bead, which is the control that changes it. A press
+    opens its box with the live preview beside it, because the markdown that a
+    person types is not what a reader of the bead sees. The prose itself takes a
+    pointer press, and the button under it is the door that the keyboard and a
+    reader take, because the prose holds links of its own and no button may hold
+    one. A press on one of those links walks to that page and opens no box; the
+    script that carries the app stops the press from reaching the prose. bd takes
+    the title and the description in one verb, so the write sends the title that
+    the page read, unchanged.
+*@
+
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
+@inherits ProseBox
+
+<h2 class="h4 bead-section">Description</h2>
+
+@if (!Editing)
+{
+    <div class="bead-prose-pressable" @onclick="Open">
+        @if (Bead.Prose.HasDescription)
+        {
+            <div class="bead-prose">@(new MarkupString(Bead.Prose.DescriptionHtml))</div>
+        }
+        else
+        {
+            <p class="bead-prose-missing">This bead has no description.</p>
+        }
+    </div>
+
+    <button type="button" class="btn btn-sm btn-outline-secondary bead-writes bead-prose-press"
+            @ref="Press"
+            @onclick="Open">Edit the description</button>
+}
+else
+{
+    <div class="bead-description-edit" tabindex="-1" @ref="Box" @onkeydown="CloseOnEscape">
+        @if (Refusal.Length > 0)
+        {
+            <p class="bead-prose-refusal">@Refusal</p>
+        }
+        else
+        {
+            <BeadWriteMessage Message="@WhyTheLastWriteFailed" Wrote="false" />
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label" for="prose-description">Description</label>
+                    <textarea class="form-control form-control-sm bead-prose-editor" id="prose-description"
+                              @ref="Field"
+                              @bind="description"
+                              @bind:event="oninput"></textarea>
+                </div>
+                <div class="col-md-6">
+                    <span class="form-label">Preview</span>
+                    <div class="bead-prose bead-prose-preview">@(new MarkupString(BeadMarkdown.ToHtml(description)))</div>
+                </div>
+            </div>
+
+            <div class="bead-writes">
+                <button type="button" class="btn btn-sm btn-primary bead-prose-save"
+                        @onclick="Save">Save the description</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary ms-1"
+                        @onclick="Close">Cancel</button>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    /// <summary>The bead that this control writes to.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>The bead as the page read it. It gives the text that the box starts with.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required Bead Bead { get; set; }
+
+    /// <summary>Runs after a write that landed, so that the page reads the bead again.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    private string description = string.Empty;
+
+    protected override ProjectPath OfProject => Address.Project;
+
+    protected override UiVerb Verb => UiVerbs.EditTheProse;
+
+    protected override void StartFromTheBead() => description = Bead.Prose.Description;
+
+    // Writes the description alone. bd takes the title and the description in one verb, so the
+    // write sends the title that the page read and changes nothing else.
+    private Task Save() =>
+        SaveThen(() => Bd.EditProseAsync(Address, Bead.Title, description), OnWritten);
+}

@@ -1,0 +1,56 @@
+/*
+    The registry, as one row per project.
+
+    A row carries the button that names the project and makes it active, and it
+    prints the full path of that project as machine text. The active row takes
+    the accent at its left edge, so a person finds the current project without
+    a read of every button.
+*/
+
+.project-active {
+    color: var(--tracer-fg-muted);
+}
+
+.project-active strong {
+    color: var(--tracer-fg);
+}
+
+.project-active-path {
+    font-size: var(--tracer-text-quiet);
+    margin-left: var(--tracer-space-2);
+}
+
+.project-list {
+    border: 1px solid var(--tracer-border);
+    border-radius: var(--tracer-radius);
+    margin-bottom: var(--tracer-space-4);
+    overflow: hidden;
+}
+
+.project-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--tracer-space-3);
+    border-bottom: 1px solid var(--tracer-border-muted);
+    border-left: var(--tracer-space-1) solid transparent;
+    padding: var(--tracer-space-2) var(--tracer-space-3);
+    transition: background-color 120ms ease;
+}
+
+.project-row:last-child {
+    border-bottom: 0;
+}
+
+.project-row:hover {
+    background-color: var(--tracer-canvas-hover);
+}
+
+.project-row-active {
+    background-color: var(--tracer-canvas-subtle);
+    border-left-color: var(--tracer-accent-emphasis);
+}
+
+.project-path {
+    font-size: var(--tracer-text-quiet);
+}

@@ -1,0 +1,26 @@
+@using TracerUi.Core.Projects
+
+@*
+    Gives the project picker the two steps that only the browser can do: read
+    the path of the active project that this browser holds, and write a new
+    one. The storage script holds the reach into the browser, and the rule that
+    guards a stored path lives in ActiveProjectSelection.
+
+    The key comes from ActiveProjectSelection, so that this script and the
+    selection agree on one word.
+*@
+
+<script>
+    (function () {
+        var key = "@ActiveProjectSelection.StorageKey";
+
+        window.tracerActiveProject = {
+            read: function () {
+                return window.tracerStorage.read(key);
+            },
+            write: function (path) {
+                window.tracerStorage.write(key, path);
+            }
+        };
+    })();
+</script>

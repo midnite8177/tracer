@@ -1,0 +1,68 @@
+@using TracerUi.Core.Look
+@inject IJSRuntime Js
+@inject CopyFeedback Copied
+@implements IDisposable
+
+@*
+    The control that puts one piece of machine text on the clipboard.
+
+    The press stops here. A row of the board opens a bead when a person
+    presses it, so without the stopPropagation a copy from a row would also
+    leave the board for the detail page.
+*@
+
+@{
+    var outcome = Copied.Outcome(Text);
+}
+
+<button type="button" class="copy-button @CssClass(outcome)"
+        title="@Copied.Says(Text)" aria-label="@Copied.Says(Text)"
+        @onclick="Copy" @onclick:stopPropagation="true">
+    <Icon Name="@IconFor(outcome)" />
+</button>
+@if (Copied.Reason(Text) is string reason)
+{
+    @* Hidden from assistive tech, or a screen reader reads the reason twice: the live region
+       below already says it. *@
+    <span class="copy-reason" aria-hidden="true">@reason</span>
+}
+<span class="copy-announcement" role="status" aria-live="polite">@(outcome == CopyOutcome.None ? "" : Copied.Says(Text))</span>
+
+@code {
+    /// <summary>The machine text that a press puts on the clipboard.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string Text { get; set; }
+
+    protected override void OnInitialized() => Copied.Changed += Redraw;
+
+    public void Dispose() => Copied.Changed -= Redraw;
+
+    private void Redraw() => _ = InvokeAsync(StateHasChanged);
+
+    private async Task Copy()
+    {
+        switch (await Js.InvokeAsync<string>("tracerClipboard.write", Text))
+        {
+            case "took":
+                Copied.Took(Text);
+                break;
+            case "no-clipboard":
+                Copied.FoundNoClipboard(Text);
+                break;
+            default:
+                Copied.Refused(Text);
+                break;
+        }
+    }
+
+    private static string CssClass(CopyOutcome outcome) =>
+        outcome == CopyOutcome.Took ? "copy-button-done" : "";
+
+    private static IconName IconFor(CopyOutcome outcome) => outcome switch
+    {
+        CopyOutcome.Took => IconName.Accept,
+        CopyOutcome.NoClipboard or CopyOutcome.Refused => IconName.Warning,
+        _ => IconName.Copy,
+    };
+}

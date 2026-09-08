@@ -1,0 +1,275 @@
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
+@inherits CapabilityAware
+@inject BulkWriter Bulk
+
+@if (Count > 0 || report is not null)
+{
+<div class="board-bulk-bar">
+    @if (Count > 0)
+    {
+    <div class="row g-2 align-items-end">
+        <div class="col-auto">
+            <strong>@Count selected</strong>
+        </div>
+
+        <div class="col-auto">
+            <label class="form-label" for="bulk-category">Action</label>
+            <select class="form-select form-select-sm" id="bulk-category" title="@Why(Category.Write)"
+                    @bind="categoryName" @bind:after="Restart">
+                @foreach (var offered in BulkCategory.All)
+                {
+                    <option value="@offered.Name">@offered.Name</option>
+                }
+            </select>
+        </div>
+
+        @if (Category.Verbs.Count > 1)
+        {
+            <div class="col-auto">
+                <label class="form-label" for="bulk-verb">Add or remove</label>
+                <select class="form-select form-select-sm" id="bulk-verb" @bind="verb">
+                    @foreach (var offered in Category.Verbs)
+                    {
+                        <option value="@offered">@BulkVerbs.Of(offered).Name</option>
+                    }
+                </select>
+            </div>
+        }
+
+        @if (Category.Needs == BulkValue.ALabel)
+        {
+            <div class="col-auto">
+                <label class="form-label" for="bulk-label">Label</label>
+                <input class="form-control form-control-sm" id="bulk-label" list="bulk-labels"
+                       placeholder="A label" @bind="value" @bind:event="oninput" />
+                <datalist id="bulk-labels">
+                    @foreach (var label in Labels)
+                    {
+                        <option value="@label"></option>
+                    }
+                </datalist>
+            </div>
+        }
+        else if (Category.Needs == BulkValue.AReason)
+        {
+            <div class="col">
+                <label class="form-label" for="bulk-reason">The shared reason</label>
+                <input class="form-control form-control-sm" id="bulk-reason"
+                       placeholder="Why the work ended" @bind="value" @bind:event="oninput" />
+            </div>
+        }
+        else if (Category.Needs == BulkValue.AnEpic)
+        {
+            <div class="col-auto">
+                <label class="form-label" for="bulk-epic">Epic</label>
+                <EpicPicker Id="bulk-epic" Epics="Epics" @bind-Value="value" />
+            </div>
+        }
+        else if (Category.Needs == BulkValue.APriority)
+        {
+            <div class="col-auto">
+                <label class="form-label" for="bulk-priority">Priority</label>
+                <select class="form-select form-select-sm" id="bulk-priority" @bind="value">
+                    <option value="">Pick a priority</option>
+                    @foreach (var priority in BeadWriteChoices.Priorities)
+                    {
+                        <option value="@priority">p@(priority)</option>
+                    }
+                </select>
+            </div>
+        }
+        else if (Category.Needs == BulkValue.AType)
+        {
+            <div class="col-auto">
+                <label class="form-label" for="bulk-type">Type</label>
+                <select class="form-select form-select-sm" id="bulk-type" @bind="value">
+                    <option value="">Pick a type</option>
+                    @foreach (var type in BeadWriteChoices.Types)
+                    {
+                        <option value="@type">@type</option>
+                    }
+                </select>
+            </div>
+        }
+
+        <div class="col-auto">
+            <button class="btn btn-sm btn-primary" disabled="@(!Can(Category.Write))" @onclick="Review">Review</button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="ClearTheSelection">
+                Clear the selection
+            </button>
+        </div>
+    </div>
+
+    @if (!Can(Category.Write))
+    {
+        <p class="text-danger board-bulk-message">@Why(Category.Write)</p>
+    }
+    }
+
+    @if (report is not null)
+    {
+        <div class="mt-2">
+            <p class="@(report.Whole ? "text-success" : "text-danger") board-bulk-message">@report.Summary</p>
+            @if (report.Failures.Count > 0)
+            {
+                <ul class="board-bulk-failures">
+                    @foreach (var failure in report.Failures)
+                    {
+                        <li><BeadId Id="@failure.BeadId" Quiet="false" /> @failure.Title — @failure.Message</li>
+                    }
+                </ul>
+                <button class="btn btn-sm btn-outline-danger" @onclick="SelectTheFailures">
+                    Select the beads that failed
+                </button>
+            }
+        </div>
+    }
+
+    @if (plan is not null)
+    {
+        <div class="mt-2 board-bulk-plan">
+            <p class="board-bulk-summary"><strong>@plan.Summary</strong></p>
+
+            <table class="table table-sm align-middle">
+                <thead>
+                    <tr>
+                        <th>Id</th>
+                        <th>Title</th>
+                        @if (plan.Action.Verb == BulkVerb.CloseWithAReason)
+                        {
+                            <th>The reason this bead closes with</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var step in plan.Steps)
+                    {
+                        <tr>
+                            <td><BeadId Id="@step.BeadId" Quiet="false" /></td>
+                            <td>@step.Title</td>
+                            @if (plan.Action.Verb == BulkVerb.CloseWithAReason)
+                            {
+                                <td>
+                                    <input class="form-control form-control-sm"
+                                           value="@step.Reason"
+                                           @onchange="changed => SetTheReason(step.BeadId, changed)" />
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            @if (!plan.IsReady)
+            {
+                <p class="text-danger board-bulk-message">@plan.Problem</p>
+            }
+
+            <button class="btn btn-sm btn-danger" disabled="@(!plan.IsReady || committing)"
+                    @onclick="Commit">Commit this action</button>
+            <button class="btn btn-sm btn-outline-secondary" disabled="@committing"
+                    @onclick="Cancel">Cancel</button>
+        </div>
+    }
+</div>
+}
+
+@code {
+    /// <summary>The project that holds every bead of the selection.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required ProjectPath Project { get; set; }
+
+    /// <summary>The beads that the person picked, as the board orders them.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<Bead> Selected { get; set; }
+
+    /// <summary>The labels of this backlog, so that the label control offers what already exists.</summary>
+    [Parameter]
+    public IReadOnlyList<string> Labels { get; set; } = [];
+
+    /// <summary>The epics of this backlog, so that a move offers them by title.</summary>
+    [Parameter]
+    public IReadOnlyList<Bead> Epics { get; set; } = [];
+
+    /// <summary>Empties the selection.</summary>
+    [Parameter]
+    public EventCallback OnCleared { get; set; }
+
+    /// <summary>Keeps only the beads that a commit failed on, so that the person retries those.</summary>
+    [Parameter]
+    public EventCallback<IReadOnlyList<string>> OnRetry { get; set; }
+
+    private string categoryName = BulkCategory.Label.Name;
+    private BulkVerb verb = BulkVerb.AddALabel;
+    private string value = string.Empty;
+    private BulkPlan? plan;
+    private BulkReport? report;
+    private bool committing;
+
+    private int Count => Selected.Count;
+
+    private BulkCategory Category => BulkCategory.Named(categoryName);
+
+    protected override ProjectPath OfProject => Project;
+
+    // Drops a plan that the selection outgrew. The row checkboxes stay live while a plan stands, so
+    // a plan that no longer names the beads of the selection would act on the wrong beads.
+    protected override void OnParametersSet()
+    {
+        if (plan is not null && !plan.Steps.Select(step => step.BeadId).SequenceEqual(Selected.Select(bead => bead.Id)))
+        {
+            plan = null;
+        }
+    }
+
+    // A new category asks a new question, so the old plan and the old report go away.
+    private void Restart()
+    {
+        verb = Category.Verbs[0];
+        value = string.Empty;
+        plan = null;
+        report = null;
+    }
+
+    private void Review()
+    {
+        report = null;
+        plan = BulkPlan.For(new BulkAction(verb, value), Selected);
+    }
+
+    private void SetTheReason(string beadId, ChangeEventArgs changed) =>
+        plan = plan?.WithReasonFor(beadId, changed.Value?.ToString() ?? string.Empty);
+
+    private void Cancel() => plan = null;
+
+    private async Task Commit()
+    {
+        if (plan is null)
+        {
+            return;
+        }
+
+        committing = true;
+        report = await Bulk.RunAsync(Project, plan);
+        committing = false;
+        plan = null;
+    }
+
+    private async Task SelectTheFailures()
+    {
+        if (report is not null)
+        {
+            await OnRetry.InvokeAsync(report.FailedIds);
+        }
+    }
+
+    private async Task ClearTheSelection()
+    {
+        Restart();
+        await OnCleared.InvokeAsync();
+    }
+}

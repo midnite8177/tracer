@@ -1,0 +1,133 @@
+@page "/needs-you"
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Look
+@using TracerUi.Core.Projects
+@inject NeedsYouReader Reader
+@inject BacklogCache Backlogs
+@inject ProjectCatalog Catalog
+@inject BeadOpener Opener
+@implements IDisposable
+
+<PageTitle>Needs you</PageTitle>
+
+<h1>Needs you</h1>
+
+<p class="text-muted">Every bead that waits on you, in all of your projects.</p>
+
+@if (view is null)
+{
+    <p>The app is reading the beads of your projects…</p>
+}
+else
+{
+    @if (gone.Length > 0)
+    {
+        <p class="failure-message">@gone</p>
+    }
+
+    <NewTabRefusal Feedback="newTab" />
+
+    @foreach (var unread in view.Projects.Where(project => project.IsUnread))
+    {
+        <p class="failure-message">
+            <strong>@unread.Project.DirectoryName</strong> — @unread.Reason
+        </p>
+    }
+
+    @if (view.IsEmpty)
+    {
+        <p class="text-muted">No bead waits on you.</p>
+    }
+
+    @foreach (var project in view.Projects.Where(project => project.Beads.Count > 0))
+    {
+        <h2>
+            @project.Project.DirectoryName
+            <span class="text-muted machine-text needs-you-path">@project.Project.Value</span>
+        </h2>
+
+        <table class="table table-sm table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>Project</th>
+                    <th>Id</th>
+                    <th>Type</th>
+                    <th>Priority</th>
+                    <th>Labels</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var bead in project.Beads)
+                {
+                    var address = new BeadAddress(project.Project, bead.Id);
+                    <PressableRow Class="needs-you-row" Style="@null" OnOpen="up => Open(address, up)">
+                        <td>
+                            <RowTitle Class="needs-you-title btn btn-link p-0 align-baseline"
+                                      Address="@BeadPageAddress.Of(address)"
+                                      Tooltip="@null"
+                                      Text="@bead.Title" />
+                        </td>
+                        <td><span class="machine-text needs-you-project-chip">@project.Project.DirectoryName</span></td>
+                        <td><BeadId Id="@bead.Id" Quiet="true" /></td>
+                        <td>@bead.Type</td>
+                        <td>@(bead.Priority == Bead.NoPriority ? "—" : $"p{bead.Priority}")</td>
+                        <td>
+                            @foreach (var label in bead.Labels)
+                            {
+                                <span class="badge text-bg-light me-1">@label</span>
+                            }
+                        </td>
+                    </PressableRow>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    private NeedsYouView? view;
+    private string gone = string.Empty;
+    private readonly NewTabFeedback newTab = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        Backlogs.Changed += OnBacklogChanged;
+        view = await Reader.ReadAsync();
+    }
+
+    public void Dispose() => Backlogs.Changed -= OnBacklogChanged;
+
+    // Reads the project that changed again. Every other project keeps the beads that this view
+    // already holds, so a write in one repository costs no run of bd in the others.
+    private void OnBacklogChanged(ProjectPath project) => _ = InvokeAsync(() => Reread(project));
+
+    private async Task Reread(ProjectPath project)
+    {
+        if (view is null)
+        {
+            return;
+        }
+
+        view = view.With(await Reader.ReadAsync(project));
+        StateHasChanged();
+    }
+
+    // Opens the bead that a press on a row asks for. A press that leads nowhere reads the projects
+    // again and says why, because the registry lost that project after this view read it. It clears
+    // the answer of an older press, so two messages never stack.
+    private async Task Open(BeadAddress bead, MouseEventArgs release)
+    {
+        var destination = BeadDestination.Of(Catalog, bead);
+        if (!destination.Reaches)
+        {
+            gone = destination.Message;
+            newTab.Take(NewTabOutcome.None);
+            view = await Reader.ReadAsync();
+            return;
+        }
+
+        newTab.Take(await Opener.OpenAsync(destination.Path, release));
+    }
+}

@@ -1,0 +1,70 @@
+@*
+    The icons of the app, as inline SVG.
+
+    They ship in this one component. No package draws them and no network gives
+    them, because the app must work with no internet. Each icon is a stroke of
+    the current color, so the token that colors the text colors the icon.
+
+    An icon here is decorative. The control that holds it carries the name that
+    a screen reader reads.
+*@
+
+<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+    @switch (Name)
+    {
+        case IconName.Board:
+            <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+            break;
+        case IconName.NeedsYou:
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+            break;
+        case IconName.Doctor:
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+            break;
+        case IconName.Projects:
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            break;
+        case IconName.Add:
+            <path d="M12 5v14M5 12h14" />
+            break;
+        case IconName.Accept:
+            <path d="M20 6 9 17l-5-5" />
+            break;
+        case IconName.Close:
+            <path d="M18 6 6 18M6 6l12 12" />
+            break;
+        case IconName.Light:
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+            break;
+        case IconName.Dark:
+            <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+            break;
+        case IconName.Chevron:
+            <path d="m6 9 6 6 6-6" />
+            break;
+        case IconName.Search:
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35" />
+            break;
+        case IconName.Warning:
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <path d="M12 9v4M12 17h.01" />
+            break;
+        case IconName.Copy:
+            <rect x="9" y="9" width="12" height="12" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            break;
+        default:
+            throw new ArgumentOutOfRangeException(nameof(Name), Name, "This component draws no such icon.");
+    }
+</svg>
+
+@code {
+    /// <summary>The icon to draw.</summary>
+    [Parameter]
+    [EditorRequired]
+    public IconName Name { get; set; }
+}

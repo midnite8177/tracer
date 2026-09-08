@@ -1,0 +1,16 @@
+<!--
+    The mark of the app: two beads on one trace.
+
+    A favicon is an image, and a browser gives it no stylesheet, so it states
+    its two colors here. ADR 0006 allows this for an asset that the browser
+    loads without CSS, and asks the file to name the token that each color
+    copies: #0969da is --tracer-accent-fg of the light theme, and #ffffff is
+    --tracer-fg-on-emphasis. They read on a light tab strip and on a dark one.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+    <rect width="32" height="32" rx="7" fill="#0969da" />
+    <path d="M7 22 14 12l5 7 6-11" fill="none" stroke="#ffffff" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round" />
+    <circle cx="7" cy="22" r="3.5" fill="#ffffff" />
+    <circle cx="25" cy="8" r="3.5" fill="#ffffff" />
+</svg>

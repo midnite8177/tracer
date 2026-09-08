@@ -1,0 +1,70 @@
+@page "/projects/add"
+@inject ProjectCatalog Catalog
+@inject NavigationManager Navigation
+
+<PageTitle>Add a project</PageTitle>
+
+<h1>Add a project</h1>
+
+<p class="text-muted">Browse to a repository that holds a .beads directory.</p>
+
+<div class="browser-here machine-text">@listing.CurrentPath</div>
+
+<p class="@(validation.IsValid ? "text-success" : "text-danger")">
+    @(validation.IsValid ? "This directory is a beads project." : validation.Message)
+</p>
+
+<ul class="browser-list list-unstyled">
+    @if (listing.ParentPath is not null)
+    {
+        <li class="browser-row">
+            <button type="button" class="btn btn-link p-0 machine-text browser-name" @onclick="() => Browse(listing.ParentPath)">.. (up one level)</button>
+        </li>
+    }
+    @foreach (var entry in listing.Directories)
+    {
+        <li class="browser-row">
+            <button type="button" class="btn btn-link p-0 machine-text browser-name" @onclick="() => Browse(entry.Path)">@entry.Name</button>
+            @if (entry.IsProject)
+            {
+                <span class="badge bg-success ms-2">beads project</span>
+            }
+        </li>
+    }
+</ul>
+
+<button class="btn btn-primary" disabled="@(!validation.IsValid)" @onclick="Add">Add this directory</button>
+<a class="btn btn-secondary ms-2" href="">Cancel</a>
+
+@if (refusal.Length > 0)
+{
+    <p class="text-danger browser-refusal">@refusal</p>
+}
+
+@code {
+    private DirectoryListing listing = null!;
+    private ProjectPathValidation validation = null!;
+    private string refusal = string.Empty;
+
+    protected override void OnInitialized() =>
+        Browse(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+
+    private void Browse(string path)
+    {
+        listing = DirectoryBrowser.Browse(path);
+        validation = ProjectPathValidator.Validate(listing.CurrentPath);
+        refusal = string.Empty;
+    }
+
+    private async Task Add()
+    {
+        var result = await Catalog.AddAsync(listing.CurrentPath);
+        if (result.IsValid)
+        {
+            Navigation.NavigateTo("");
+            return;
+        }
+
+        refusal = result.Message;
+    }
+}

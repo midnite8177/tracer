@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TracerUi.Core/TracerUi.Core.csproj" />
+    <Project Path="src/TracerUi.Web/TracerUi.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TracerUi.Tests/TracerUi.Tests.csproj" />
+  </Folder>
+</Solution>

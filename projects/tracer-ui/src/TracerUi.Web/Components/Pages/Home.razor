@@ -1,0 +1,57 @@
+@page "/"
+@inject ProjectCatalog Catalog
+@inject ActiveProjectSelection Selection
+@implements IDisposable
+
+<PageTitle>tracer-ui</PageTitle>
+
+<h1>Projects</h1>
+
+@if (entries.Count == 0)
+{
+    <p class="text-muted">No project is in the registry yet.</p>
+}
+else
+{
+    <p class="project-active">
+        Active project:
+        <strong>@(Selection.Current?.DirectoryName ?? "none")</strong>
+        @if (Selection.Current is not null)
+        {
+            <span class="text-muted machine-text project-active-path">@Selection.Current.Value</span>
+        }
+    </p>
+
+    <ul class="project-list list-unstyled">
+        @foreach (var entry in entries)
+        {
+            <li class="project-row @(IsActive(entry.Path) ? "project-row-active" : string.Empty)">
+                <button type="button"
+                        class="btn btn-sm @(IsActive(entry.Path) ? "btn-primary" : "btn-outline-primary")"
+                        @onclick="() => Selection.Select(entry.Path)">
+                    @entry.Name
+                </button>
+                <span class="text-muted machine-text project-path">@entry.Path.Value</span>
+            </li>
+        }
+    </ul>
+}
+
+<a class="btn btn-success" href="projects/add">Add a project</a>
+
+@code {
+    private IReadOnlyList<ProjectEntry> entries = [];
+
+    protected override void OnInitialized()
+    {
+        Selection.Changed += OnActiveProjectChanged;
+        entries = Catalog.Entries();
+    }
+
+    // Marks the project that is active now, so this page and the top bar agree.
+    private void OnActiveProjectChanged(ActiveProjectChange change) => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Selection.Changed -= OnActiveProjectChanged;
+
+    private bool IsActive(ProjectPath project) => project.Equals(Selection.Current);
+}

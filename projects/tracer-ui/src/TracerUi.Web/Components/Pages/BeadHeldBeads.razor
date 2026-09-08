@@ -1,0 +1,62 @@
+@*
+    The held beads box: the beads that this bead holds directly, one level and no
+    deeper. The open ones stand in the box, because they are the work that is
+    left, and one press adds the closed ones, because what an epic finished is
+    part of what it is.
+*@
+
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+
+<h2 class="h4 bead-section">Held beads</h2>
+
+<ul class="list-unstyled bead-held">
+    @foreach (var link in Shown)
+    {
+        <li class="bead-row @(link.Status.IsClosed ? "bead-row-closed" : "")">
+            <BeadRow Link="link" />
+        </li>
+    }
+</ul>
+
+@if (!closedAdded && Closed.Count > 0)
+{
+    <button class="btn btn-sm btn-link p-0 bead-held-press" @onclick="AddTheClosedOnes">
+        @TheWordsOfThePress
+    </button>
+}
+
+<BeadHeldCreate Address="Address" OnCreated="OnCreated" />
+
+@code {
+    /// <summary>The beads that this bead holds, in the order that the board draws them.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<BeadLink> Held { get; set; }
+
+    /// <summary>The bead that holds them, which is the epic that a new bead of this box names.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>
+    /// Runs when bd made a bead inside this one, so that the page reads the bead again and the new
+    /// one stands in this list. A create that bd refused raises nothing.
+    /// </summary>
+    [Parameter]
+    public EventCallback OnCreated { get; set; }
+
+    private bool closedAdded;
+
+    private IReadOnlyList<BeadLink> Closed => [.. Held.Where(link => link.Status.IsClosed)];
+
+    // The beads that the box lists now: the open ones, and the closed ones after a press. The
+    // open ones come first in either reading, because the held beads reach the box in that order.
+    private IEnumerable<BeadLink> Shown =>
+        Held.Where(link => closedAdded || !link.Status.IsClosed);
+
+    private string TheWordsOfThePress =>
+        Closed.Count == 1 ? "Add the closed bead" : $"Add the {Closed.Count} closed beads";
+
+    private void AddTheClosedOnes() => closedAdded = true;
+}

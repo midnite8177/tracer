@@ -1,0 +1,43 @@
+@using TracerUi.Core.Look
+
+@*
+    Sets the theme on the document element before the body renders, so that no
+    page flashes the wrong theme at the first paint. It is inline for that
+    reason: a file of its own costs a request, and the paint does not wait.
+
+    It also gives the toggle the two steps that only the browser can do: read
+    the theme that the document carries, and write a new one. The rule that
+    turns the first into the second lives in the Theme type, not here, and the
+    storage script holds the reach into the browser.
+
+    The two names, the storage key and the attribute come from the Theme type,
+    so that this script and every control that reads a theme agree on the same
+    words.
+*@
+
+<script>
+    (function () {
+        var light = "@Theme.Light.Name";
+        var dark = "@Theme.Dark.Name";
+        var key = "@Theme.StorageKey";
+        var attribute = "@Theme.DocumentAttribute";
+
+        var choice = window.tracerStorage.read(key);
+        var systemAsksForDark = window.matchMedia
+            && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var theme = choice === light || choice === dark
+            ? choice
+            : (systemAsksForDark ? dark : light);
+        document.documentElement.setAttribute(attribute, theme);
+
+        window.tracerTheme = {
+            read: function () {
+                return document.documentElement.getAttribute(attribute);
+            },
+            write: function (name) {
+                document.documentElement.setAttribute(attribute, name);
+                window.tracerStorage.write(key, name);
+            }
+        };
+    })();
+</script>

@@ -1,0 +1,50 @@
+/*
+    The directory browser.
+
+    A directory name and a path are machine text, so a person reads them
+    character by character. The list stands in a box of its own, so that a
+    person tells the entries of this directory from the rest of the page.
+*/
+
+.browser-here {
+    background-color: var(--tracer-canvas-subtle);
+    border: 1px solid var(--tracer-border);
+    border-radius: var(--tracer-radius);
+    font-size: var(--tracer-text-quiet);
+    margin-bottom: var(--tracer-space-2);
+    padding: var(--tracer-space-2) var(--tracer-space-3);
+}
+
+.browser-list {
+    border: 1px solid var(--tracer-border);
+    border-radius: var(--tracer-radius);
+    margin-bottom: var(--tracer-space-4);
+}
+
+.browser-row {
+    border-bottom: 1px solid var(--tracer-border-muted);
+    padding: var(--tracer-space-1) var(--tracer-space-3);
+    transition: background-color 120ms ease;
+}
+
+.browser-row:last-child {
+    border-bottom: 0;
+}
+
+.browser-row:hover {
+    background-color: var(--tracer-canvas-hover);
+}
+
+/*
+    A directory name. It keeps the link color of the button, because the name
+    is the control that opens that directory.
+*/
+.browser-name {
+    font-size: var(--tracer-text-quiet);
+}
+
+/* The refusal of bd, which arrives as more than one line. */
+.browser-refusal {
+    margin-top: var(--tracer-space-4);
+    white-space: pre-line;
+}

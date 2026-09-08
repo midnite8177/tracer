@@ -1,0 +1,21 @@
+@*
+    The id of one bead, with the button that copies it.
+
+    Every place that names a bead draws this, so the id and its button never
+    part. The quiet reading belongs to a line of prose or a cell beside the
+    title of the row; the plain reading belongs to a cell of its own.
+*@
+
+<code class="machine-text @(Quiet ? "machine-text-quiet" : "")">@Id</code><CopyButton Text="@Id" />
+
+@code {
+    /// <summary>The bead to name.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string Id { get; set; }
+
+    /// <summary>True where the words beside the id carry the line, so the id steps back from them.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required bool Quiet { get; set; }
+}

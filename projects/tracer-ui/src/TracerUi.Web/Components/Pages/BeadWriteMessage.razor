@@ -1,0 +1,16 @@
+@if (Message.Length > 0)
+{
+    <p class="@(Wrote ? "text-success" : "text-danger") bead-write-message">@Message</p>
+}
+
+@code {
+    /// <summary>What the last write said, or an empty string when none has run.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string Message { get; set; }
+
+    /// <summary>True when that write succeeded, because good news and bad news read differently.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required bool Wrote { get; set; }
+}

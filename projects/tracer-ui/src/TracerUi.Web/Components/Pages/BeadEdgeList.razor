@@ -1,0 +1,95 @@
+@*
+    One direction of the dependencies, as a list of bead rows. The control that
+    cuts an edge rests on its row and shows itself when a pointer or the keyboard
+    reaches that row, so a list a person only reads is a list of beads. A press on
+    it puts the question in the place of the row: nothing restores a cut edge, and
+    this list is the one place the UI breaks one, so it is worth one press. Cancel
+    writes nothing and gives the row back.
+*@
+
+@using TracerUi.Core.Boards
+
+<h3 class="h6 bead-writes">@Title</h3>
+@if (Links.Count > 0)
+{
+    <ul class="list-unstyled">
+        @foreach (var link in Links)
+        {
+            <li class="bead-edge bead-row">
+                @if (string.Equals(asked, link.Id, StringComparison.Ordinal))
+                {
+                    <span class="bead-edge-question">Cut this edge?</span>
+                    <button class="btn btn-sm btn-outline-danger bead-edge-yes"
+                            aria-label="@($"{CutTitle} {link.Title}")"
+                            @onclick="() => Cut(link.Id)">Yes</button>
+                    <button class="btn btn-sm btn-outline-secondary bead-edge-cancel"
+                            @onclick="Keep">Cancel</button>
+                }
+                else
+                {
+                    <BeadRow Link="link" />
+                    <button class="btn btn-sm btn-link p-0 ms-1 bead-edge-cut"
+                            disabled="@(!Cuttable)"
+                            aria-label="@($"{CutTitle} {link.Title}")"
+                            title="@(Cuttable ? CutTitle : WhyNoCut)"
+                            @onclick="() => Ask(link.Id)">×</button>
+                }
+            </li>
+        }
+    </ul>
+}
+else
+{
+    <p class="text-muted">@WhenEmpty</p>
+}
+
+@code {
+    /// <summary>What this direction of the dependencies is called on the page.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string Title { get; set; }
+
+    /// <summary>The beads to name, each with its title.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<BeadLink> Links { get; set; }
+
+    /// <summary>What the list says when no bead belongs in it.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string WhenEmpty { get; set; }
+
+    /// <summary>True when the installed bd offers the write that cuts an edge of this list.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required bool Cuttable { get; set; }
+
+    /// <summary>What the tooltip says when the installed bd cannot cut an edge.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string WhyNoCut { get; set; }
+
+    /// <summary>What a cut of this list does, because each direction cuts a different edge.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string CutTitle { get; set; }
+
+    /// <summary>Runs with the id of the bead at the far end of the edge that the person cut.</summary>
+    [Parameter]
+    public EventCallback<string> OnCut { get; set; }
+
+    // The bead whose row holds the question now, or empty while every row is a bead.
+    private string asked = string.Empty;
+
+    private void Ask(string id) => asked = id;
+
+    private void Keep() => asked = string.Empty;
+
+    // Takes the answer that cuts the edge. The row goes back to its bead first, because the page
+    // reads the bead again after the write and this list is then a list of other beads.
+    private Task Cut(string id)
+    {
+        asked = string.Empty;
+        return OnCut.InvokeAsync(id);
+    }
+}

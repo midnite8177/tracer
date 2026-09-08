@@ -1,0 +1,75 @@
+/*
+    The button stands beside machine text, thus it takes the size of that text
+    and the muted color around it. It steps forward under a pointer, and it
+    takes the accent color while it holds the mark of a copy.
+*/
+
+.copy-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    margin-left: 0.25rem;
+    vertical-align: middle;
+    border: 1px solid transparent;
+    border-radius: var(--tracer-radius);
+    background: none;
+    color: var(--tracer-fg-muted);
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+}
+
+.copy-button:hover {
+    background-color: var(--tracer-canvas-hover);
+    color: var(--tracer-fg);
+}
+
+.copy-button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 var(--tracer-focus-ring-width) var(--tracer-focus-ring);
+}
+
+.copy-button-done {
+    color: var(--tracer-success-fg);
+}
+
+.copy-button-done:hover {
+    color: var(--tracer-success-fg);
+}
+
+.copy-button ::deep .icon {
+    width: 0.875rem;
+    height: 0.875rem;
+}
+
+/*
+    The live region that says the copy to a screen reader. It carries words, so
+    it leaves the page in the way that keeps a screen reader on it.
+*/
+
+.copy-announcement {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+/*
+    The reason that the clipboard holds nothing, in words that the eye reads.
+    It takes the danger color and the smaller size, and it stands beside the
+    button, because the machine text that the press asked for stands there too.
+    It wraps, because a cell that holds machine text keeps that text on one
+    line and a sentence on one line leaves a narrow screen.
+*/
+
+.copy-reason {
+    margin-left: var(--tracer-space-1);
+    color: var(--tracer-danger-fg);
+    font-size: var(--tracer-text-quiet);
+    vertical-align: middle;
+    white-space: normal;
+}

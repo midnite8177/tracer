@@ -1,0 +1,21 @@
+@*
+    What a view says about the tab that the browser would not open.
+
+    The board and the needs-you view both open a bead beside the page, so both
+    of them answer a refusal, and one component says it in one voice. A view
+    that holds no refusal draws nothing at all.
+*@
+
+@using TracerUi.Core.Look
+
+@if (Feedback.Reason is not null)
+{
+    <p class="failure-message new-tab-refusal" role="alert">@Feedback.Reason</p>
+}
+
+@code {
+    /// <summary>What the browser did with the last ask of this view for a new tab.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required NewTabFeedback Feedback { get; set; }
+}

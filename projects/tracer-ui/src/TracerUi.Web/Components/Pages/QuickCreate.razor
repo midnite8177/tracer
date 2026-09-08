@@ -1,0 +1,98 @@
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
+@inherits CapabilityAware
+
+<div class="board-quick-create">
+    <BeadWriteMessage Message="@WriteMessage" Wrote="Wrote" />
+
+    <div class="row g-2 align-items-end">
+        <QuickCreateFields Names="TheNamesOfTheCapture"
+                           @bind-Title="title"
+                           @bind-Type="type">
+            <Epic>
+                <div class="col-auto" title="@Why(UiVerbs.CreateInAnEpic)">
+                    <label class="form-label" for="create-epic">Epic</label>
+                    <EpicPicker Id="create-epic"
+                                Epics="Epics"
+                                WhenNone="No epic"
+                                Disabled="@(!Can(UiVerbs.CreateInAnEpic))"
+                                @bind-Value="epicId" />
+                </div>
+            </Epic>
+        </QuickCreateFields>
+
+        <div class="col-auto" title="@Why(CreateVerb)">
+            <button class="btn btn-sm btn-primary"
+                    disabled="@(!Can(CreateVerb) || title.Trim().Length == 0 || busy)"
+                    @onclick="CreateTheBead">Create the bead</button>
+        </div>
+    </div>
+    <div class="form-text">@BeadWriteChoices.WhatAQuickCreateMakes</div>
+
+    <div class="row g-2 align-items-end mt-1">
+        <div class="col">
+            <label class="form-label" for="create-epic-title">Make an epic</label>
+            <input class="form-control form-control-sm" id="create-epic-title"
+                   placeholder="What the epic is called" @bind="epicTitle" @bind:event="oninput" />
+        </div>
+
+        <div class="col-auto" title="@Why(UiVerbs.CreateAnEpic)">
+            <button class="btn btn-sm btn-outline-primary"
+                    disabled="@(!Can(UiVerbs.CreateAnEpic) || epicTitle.Trim().Length == 0 || busy)"
+                    @onclick="CreateTheEpic">Create the epic</button>
+        </div>
+    </div>
+    <div class="form-text">A new epic is in progress at once, so it never reads as ready work.</div>
+</div>
+
+@code {
+    /// <summary>The project that every new bead of this section belongs to.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required ProjectPath Project { get; set; }
+
+    /// <summary>The epics of this backlog, so that a new bead goes into one by title.</summary>
+    [Parameter]
+    public IReadOnlyList<Bead> Epics { get; set; } = [];
+
+    private static readonly QuickCreateNames TheNamesOfTheCapture =
+        new("create", "Capture a bead", "What you just thought of");
+
+    private string title = string.Empty;
+    private string type = "task";
+    private string epicId = string.Empty;
+    private string epicTitle = string.Empty;
+    private bool busy;
+
+    protected override ProjectPath OfProject => Project;
+
+    private UiVerb CreateVerb => InTheEpic is null ? UiVerbs.CreateABead : UiVerbs.CreateInAnEpic;
+
+    private string? InTheEpic => epicId.Length == 0 ? null : epicId;
+
+    private async Task CreateTheBead()
+    {
+        if (await Create(() => Bd.CreateAsync(Project, title, type, InTheEpic)))
+        {
+            title = string.Empty;
+        }
+    }
+
+    private async Task CreateTheEpic()
+    {
+        if (await Create(() => Bd.CreateEpicAsync(Project, epicTitle)))
+        {
+            epicTitle = string.Empty;
+        }
+    }
+
+    private async Task<bool> Create(Func<Task<BdCreateOutcome>> create)
+    {
+        busy = true;
+        StateHasChanged();
+        var whole = await CreateAsync(create, EventCallback.Empty);
+        busy = false;
+        return whole;
+    }
+}

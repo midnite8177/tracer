@@ -1,0 +1,68 @@
+@*
+    A row that answers a row press.
+
+    The board and the needs-you view both open the bead of a row on a press
+    anywhere in it, so one component says what a press means and both pages
+    read it. It draws the cells that a page gives it and nothing else.
+
+    It holds no stylesheet of its own, so the row it draws carries the scope of
+    no page. A page whose stylesheet drops the ::deep in front of this row
+    styles nothing, and no test says so.
+*@
+
+@using TracerUi.Core.Boards
+
+<tr class="@Class" style="@Style"
+    @onmousedown="down => press.StartedAt(down.ClientX, down.ClientY)"
+    @onclick="Open"
+    @onmouseup="OpenOnTheMiddleButton">
+    @ChildContent
+</tr>
+
+@code {
+    /// <summary>The class of the row, which the page that draws it names.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string Class { get; set; }
+
+    /// <summary>
+    /// The style of the row. A row that states its depth to the stylesheet carries one, and a row
+    /// of a flat table states none.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required string? Style { get; set; }
+
+    /// <summary>The cells of the row, which each page draws for itself.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required RenderFragment ChildContent { get; set; }
+
+    /// <summary>
+    /// What the page does with a press that opens the bead of this row. It carries the release,
+    /// because the release says where the bead opens.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required EventCallback<MouseEventArgs> OnOpen { get; set; }
+
+    // Where the press on this row went down, which the release reads.
+    private readonly RowPress press = new();
+
+    // Opens the bead of the row, so a person never has to aim at the title. A drag across the
+    // text of a row ends in a click too, so a press that traveled opens nothing and leaves the
+    // text it swept selected.
+    private async Task Open(MouseEventArgs release)
+    {
+        if (press.Dragged(release.ClientX, release.ClientY))
+        {
+            return;
+        }
+
+        await OnOpen.InvokeAsync(release);
+    }
+
+    // Answers the release of the middle button, which raises no click for the row to read.
+    private Task OpenOnTheMiddleButton(MouseEventArgs release) =>
+        release.Button == RowRelease.MiddleButton ? Open(release) : Task.CompletedTask;
+}

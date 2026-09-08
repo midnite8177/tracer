@@ -1,0 +1,129 @@
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
+@inherits CapabilityAware
+
+<h2 class="h4 bead-section">Notes</h2>
+
+<BeadWriteMessage Message="@WriteMessage" Wrote="Wrote" />
+
+@if (!rewriting)
+{
+    @if (Bead.Prose.HasNotes)
+    {
+        <div class="bead-prose bead-notes">@(new MarkupString(Bead.Prose.NotesHtml))</div>
+    }
+    else
+    {
+        <p class="text-muted">This bead carries no notes.</p>
+    }
+
+    <button class="btn btn-sm btn-outline-danger bead-writes bead-notes-press"
+            disabled="@(!Probed || !Can(UiVerbs.RewriteTheNotes))"
+            title="@Why(UiVerbs.RewriteTheNotes)"
+            @onclick="StartTheRewrite">@TheWordsOfThePress</button>
+    @if (Bead.Prose.HasNotes)
+    {
+        <div class="form-text">A comment is the safe way to add context. A rewrite replaces the notes.</div>
+    }
+}
+else
+{
+    @if (Bead.Prose.HasNotes)
+    {
+        <div class="alert alert-warning bead-notes-caution">
+            <strong>Caution: this replaces the notes.</strong>
+            bd keeps no earlier copy of them.
+        </div>
+    }
+
+    <div class="bead-writes">
+        <label class="form-label" for="notes-text">@TheWordsOfTheField</label>
+        <textarea class="form-control form-control-sm bead-prose-editor" id="notes-text"
+                  @bind="notes"></textarea>
+    </div>
+
+    <div class="bead-writes">
+        <button class="btn btn-sm btn-danger bead-notes-save" @onclick="ReplaceTheNotes">@TheWordsOfTheSave</button>
+        <button class="btn btn-sm btn-outline-secondary ms-1" @onclick="StopTheRewrite">Cancel</button>
+    </div>
+}
+
+@code {
+    /// <summary>The bead whose notes this control replaces.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>The bead as the page read it. It gives the notes that the box starts with.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required Bead Bead { get; set; }
+
+    /// <summary>
+    /// True when the press that put this section on the page asked for its box at once, so that the
+    /// press on an absent line adds the notes in a single press.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required bool OpenAtOnce { get; set; }
+
+    /// <summary>Runs after a write, so that the page reads the bead again and shows the result.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    /// <summary>
+    /// Runs when a person closed the box and wrote nothing, so that whatever put this section on
+    /// the page can take it off again.
+    /// </summary>
+    [Parameter]
+    public EventCallback OnClosed { get; set; }
+
+    private bool rewriting;
+    private string notes = string.Empty;
+
+    protected override ProjectPath OfProject => Address.Project;
+
+    // A rewrite replaces the notes, and the person who asked for it wants to read that.
+    protected override string WhenWritten => "bd replaced the notes.";
+
+    // What each control says. A bead that carries no notes has nothing to replace, so the words of
+    // a first write name what it does, and no caution stands over a box that overwrites nothing.
+    private string TheWordsOfThePress => Bead.Prose.HasNotes ? "Rewrite the notes" : "Add notes";
+
+    private string TheWordsOfTheField => Bead.Prose.HasNotes ? "The notes that replace them" : "The notes";
+
+    private string TheWordsOfTheSave => Bead.Prose.HasNotes ? "Replace the notes" : "Save the notes";
+
+    protected override void OnInitialized()
+    {
+        if (OpenAtOnce)
+        {
+            StartTheRewrite();
+        }
+    }
+
+    // Opens the box on the notes that the bead carries now, so that a person who means to keep a
+    // part of them does not type it again.
+    private void StartTheRewrite()
+    {
+        notes = Bead.Prose.Notes;
+        ForgetTheLastWrite();
+        rewriting = true;
+    }
+
+    private async Task StopTheRewrite()
+    {
+        rewriting = false;
+        ForgetTheLastWrite();
+        await OnClosed.InvokeAsync();
+    }
+
+    private async Task ReplaceTheNotes()
+    {
+        if (await WriteAsync(() => Bd.RewriteNotesAsync(Address, notes), OnWritten))
+        {
+            rewriting = false;
+        }
+    }
+}

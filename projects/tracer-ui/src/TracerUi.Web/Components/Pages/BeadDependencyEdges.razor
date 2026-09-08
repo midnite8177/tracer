@@ -1,0 +1,183 @@
+@using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
+@inherits CapabilityAware
+
+@if (Facts.NamesNoBead)
+{
+    <BeadWriteMessage Message="@WriteMessage" Wrote="Wrote" />
+
+    <BeadAbsentLine Words="No bead blocks this one, it blocks no other bead, and it holds none."
+                    Presses="@ThePressesOfTheLine" />
+}
+else
+{
+    <section class="bead-box">
+        <h2 class="h4 bead-section">Dependencies</h2>
+
+        <BeadWriteMessage Message="@WriteMessage" Wrote="Wrote" />
+
+        <BeadEdgeList Title="Blocked by"
+                      Links="Facts.Blockers"
+                      WhenEmpty="No bead blocks this one."
+                      Cuttable="@(Probed && Can(UiVerbs.EditADependencyEdge))"
+                      WhyNoCut="@Why(UiVerbs.EditADependencyEdge)"
+                      CutTitle="Stop this bead waiting for"
+                      OnCut="CutTheBlocker" />
+
+        @ThePressThatAddsABlocker
+
+        <BeadEdgeList Title="Blocks"
+                      Links="Facts.Dependents"
+                      WhenEmpty="This bead blocks no other bead."
+                      Cuttable="@(Probed && Can(UiVerbs.EditADependencyEdge))"
+                      WhyNoCut="@Why(UiVerbs.EditADependencyEdge)"
+                      CutTitle="Stop this bead blocking"
+                      OnCut="StopBlocking" />
+    </section>
+}
+
+@code {
+    // What the absent line carries: the press of this section, then the press for the absence it
+    // names that this section does not own.
+    private RenderFragment ThePressesOfTheLine => @<text>
+        @ThePressThatAddsABlocker
+        @HeldPress
+    </text>;
+
+    // The press that adds a blocker, and the picker that stands in its place. The boxes and the
+    // one line that replaces them both carry it, so the two readings offer one control.
+    private RenderFragment ThePressThatAddsABlocker => @<div class="bead-writes" title="@Why(UiVerbs.EditADependencyEdge)">
+        @if (picking)
+        {
+            <label class="form-label" for="write-blocker">A bead that must close first</label>
+            <select class="form-select form-select-sm bead-write-row" id="write-blocker"
+                    @ref="picker"
+                    @onkeydown="CloseOnEscape"
+                    @onchange="AddTheBlocker">
+                <option value="">Pick a bead</option>
+                @foreach (var bead in Offered)
+                {
+                    <option value="@bead.Id">@bead.Title (@bead.Id)</option>
+                }
+            </select>
+        }
+        else
+        {
+            <button class="btn btn-sm btn-link p-0 bead-blocker-press"
+                    disabled="@(!Probed || !Can(UiVerbs.EditADependencyEdge))"
+                    @onclick="OpenThePicker">Add a blocker</button>
+        }
+    </div>;
+
+    /// <summary>The bead whose dependency edges this section writes.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>
+    /// What the backlog says this bead names, in both directions and inside it. The page draws this
+    /// section only when the backlog answered, so the facts are here whenever the section is.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required BacklogFacts Facts { get; set; }
+
+    /// <summary>Every bead of this backlog, so that the picker offers a blocker by title.</summary>
+    [Parameter]
+    public IReadOnlyList<Bead> Beads { get; set; } = [];
+
+    /// <summary>Runs after a write, so that the page reads the bead again and shows the result.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    /// <summary>
+    /// The press that makes the first bead this one holds. The absent line names that absence beside
+    /// the two this section owns, and this section never makes a held bead itself.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required RenderFragment HeldPress { get; set; }
+
+    private bool picking;
+
+    private ElementReference picker;
+
+    // True when the keyboard must move to the picker after the next render.
+    private bool focusThePicker;
+
+    protected override ProjectPath OfProject => Address.Project;
+
+    // The beads that the picker offers as a blocker: every open bead but this one, the ones that
+    // block it already, and the ones that it blocks. A closed bead blocks nothing, and an edge back
+    // to a bead this one blocks is a cycle, so bd would refuse either one.
+    private IEnumerable<Bead> Offered
+    {
+        get
+        {
+            var named = Facts.Blockers
+                .Concat(Facts.Dependents)
+                .Select(link => link.Id)
+                .Append(Address.Id)
+                .ToHashSet(StringComparer.Ordinal);
+            return Beads
+                .Where(bead => !named.Contains(bead.Id) && !bead.IsClosed)
+                .OrderBy(bead => bead.Title, StringComparer.Ordinal);
+        }
+    }
+
+    private void OpenThePicker()
+    {
+        picking = true;
+        focusThePicker = true;
+    }
+
+    private void CloseThePicker() => picking = false;
+
+    private void CloseOnEscape(KeyboardEventArgs key)
+    {
+        if (string.Equals(key.Key, "Escape", StringComparison.Ordinal))
+        {
+            CloseThePicker();
+        }
+    }
+
+    // Takes the bead that the person picked and writes the edge at once. The picker closes on a
+    // write that landed, because one pick answers the question that the press asked, and stays
+    // open on one that bd refused, so that the person keeps the list and picks again.
+    private async Task AddTheBlocker(ChangeEventArgs picked)
+    {
+        var blockerId = picked.Value?.ToString() ?? string.Empty;
+        if (blockerId.Length == 0)
+        {
+            return;
+        }
+
+        if (await WriteAsync(() => Bd.AddBlockerAsync(Address, blockerId), OnWritten))
+        {
+            CloseThePicker();
+        }
+    }
+
+    // Moves the keyboard to the picker that a press opened, so that a person who never touches a
+    // pointer picks a blocker where the press stood.
+    // firstRender goes unread: the press opens the picker on a later render, not the first.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (focusThePicker)
+        {
+            focusThePicker = false;
+            await picker.FocusAsync();
+        }
+    }
+
+    private Task CutTheBlocker(string blockerId) =>
+        WriteAsync(() => Bd.RemoveBlockerAsync(Address, blockerId), OnWritten);
+
+    // Cuts the edge that makes this bead block another one. bd names the blocked bead first, so the
+    // write addresses that other bead and names this one as the blocker.
+    private Task StopBlocking(string dependentId) =>
+        WriteAsync(
+            () => Bd.RemoveBlockerAsync(new BeadAddress(Address.Project, dependentId), Address.Id),
+            OnWritten);
+}

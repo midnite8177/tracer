@@ -1,0 +1,262 @@
+/*
+    Bootstrap's own controls, mapped onto the design tokens.
+
+    A rule here names no shade: it hands a Bootstrap variable the value of a
+    token that tokens.css defines. The one keyword it states is transparent,
+    which is the absence of a fill and not a shade. A control the app uses and
+    this file does not map keeps the shade that Bootstrap ships.
+
+    App.razor loads this file after bootstrap.min.css. Load it first and the
+    dark block below ties with Bootstrap's own, which then wins on order and
+    paints the dark theme in Bootstrap's greys.
+*/
+
+/*
+    The selector names the dark theme as well as the root, so that it outranks
+    the dark block that Bootstrap itself ships.
+*/
+:root,
+:root[data-bs-theme="light"],
+:root[data-bs-theme="dark"] {
+    --bs-body-bg: var(--tracer-canvas);
+    --bs-body-color: var(--tracer-fg);
+    --bs-emphasis-color: var(--tracer-fg);
+    --bs-heading-color: var(--tracer-fg);
+    --bs-secondary-color: var(--tracer-fg-muted);
+    --bs-secondary-bg: var(--tracer-canvas-subtle);
+    --bs-tertiary-color: var(--tracer-fg-muted);
+    --bs-tertiary-bg: var(--tracer-canvas-subtle);
+    --bs-border-color: var(--tracer-border);
+    --bs-border-color-translucent: var(--tracer-border);
+    --bs-border-radius: var(--tracer-radius);
+    --bs-border-radius-sm: var(--tracer-radius-small);
+    --bs-link-color: var(--tracer-accent-fg);
+    --bs-link-hover-color: var(--tracer-accent-fg);
+    --bs-code-color: var(--tracer-danger-fg);
+    --bs-highlight-bg: var(--tracer-attention-subtle);
+    --bs-body-font-family: var(--tracer-font-body);
+    --bs-font-monospace: var(--tracer-font-mono);
+    --bs-form-valid-color: var(--tracer-success-fg);
+    --bs-form-valid-border-color: var(--tracer-success-emphasis);
+    --bs-form-invalid-color: var(--tracer-danger-fg);
+    --bs-form-invalid-border-color: var(--tracer-danger-emphasis);
+    --bs-focus-ring-color: var(--tracer-focus-ring);
+}
+
+/*
+    These utilities read the tokens through the color itself, because Bootstrap
+    builds them from an rgb triple that a token cannot give.
+*/
+.text-danger {
+    color: var(--tracer-danger-fg) !important;
+}
+
+.text-success {
+    color: var(--tracer-success-fg) !important;
+}
+
+.bg-success {
+    background-color: var(--tracer-success-emphasis) !important;
+    color: var(--tracer-fg-on-emphasis) !important;
+}
+
+.text-bg-light {
+    background-color: var(--tracer-canvas-subtle) !important;
+    color: var(--tracer-fg) !important;
+}
+
+/* Bootstrap writes each button variant with its own values, so each one reads tokens here. */
+.btn-primary {
+    --bs-btn-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-bg: var(--tracer-accent-emphasis);
+    --bs-btn-border-color: var(--tracer-accent-emphasis);
+    --bs-btn-hover-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--tracer-accent-fg);
+    --bs-btn-hover-border-color: var(--tracer-accent-fg);
+    --bs-btn-active-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-active-bg: var(--tracer-accent-fg);
+    --bs-btn-active-border-color: var(--tracer-accent-fg);
+    --bs-btn-disabled-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-disabled-bg: var(--tracer-accent-emphasis);
+    --bs-btn-disabled-border-color: var(--tracer-accent-emphasis);
+}
+
+.btn-secondary {
+    --bs-btn-color: var(--tracer-fg);
+    --bs-btn-bg: var(--tracer-canvas-subtle);
+    --bs-btn-border-color: var(--tracer-border);
+    --bs-btn-hover-color: var(--tracer-fg);
+    --bs-btn-hover-bg: var(--tracer-canvas-hover);
+    --bs-btn-hover-border-color: var(--tracer-border);
+    --bs-btn-active-color: var(--tracer-fg);
+    --bs-btn-active-bg: var(--tracer-canvas-hover);
+    --bs-btn-active-border-color: var(--tracer-border);
+    --bs-btn-disabled-color: var(--tracer-fg-muted);
+    --bs-btn-disabled-bg: var(--tracer-canvas-subtle);
+    --bs-btn-disabled-border-color: var(--tracer-border);
+}
+
+.btn-success {
+    --bs-btn-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-bg: var(--tracer-success-emphasis);
+    --bs-btn-border-color: var(--tracer-success-emphasis);
+    --bs-btn-hover-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--tracer-success-fg);
+    --bs-btn-hover-border-color: var(--tracer-success-fg);
+    --bs-btn-active-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-active-bg: var(--tracer-success-fg);
+    --bs-btn-active-border-color: var(--tracer-success-fg);
+    --bs-btn-disabled-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-disabled-bg: var(--tracer-success-emphasis);
+    --bs-btn-disabled-border-color: var(--tracer-success-emphasis);
+}
+
+.btn-danger {
+    --bs-btn-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-bg: var(--tracer-danger-emphasis);
+    --bs-btn-border-color: var(--tracer-danger-emphasis);
+    --bs-btn-hover-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--tracer-danger-fg);
+    --bs-btn-hover-border-color: var(--tracer-danger-fg);
+    --bs-btn-active-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-active-bg: var(--tracer-danger-fg);
+    --bs-btn-active-border-color: var(--tracer-danger-fg);
+    --bs-btn-disabled-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-disabled-bg: var(--tracer-danger-emphasis);
+    --bs-btn-disabled-border-color: var(--tracer-danger-emphasis);
+}
+
+.btn-link {
+    --bs-btn-color: var(--tracer-accent-fg);
+    --bs-btn-hover-color: var(--tracer-accent-fg);
+    --bs-btn-active-color: var(--tracer-accent-fg);
+    --bs-btn-disabled-color: var(--tracer-fg-muted);
+}
+
+.btn-outline-primary {
+    --bs-btn-color: var(--tracer-accent-fg);
+    --bs-btn-border-color: var(--tracer-accent-emphasis);
+    --bs-btn-hover-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--tracer-accent-emphasis);
+    --bs-btn-hover-border-color: var(--tracer-accent-emphasis);
+    --bs-btn-active-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-active-bg: var(--tracer-accent-emphasis);
+    --bs-btn-active-border-color: var(--tracer-accent-emphasis);
+    --bs-btn-disabled-color: var(--tracer-fg-muted);
+    --bs-btn-disabled-border-color: var(--tracer-border);
+}
+
+.btn-outline-secondary {
+    --bs-btn-color: var(--tracer-fg);
+    --bs-btn-border-color: var(--tracer-border);
+    --bs-btn-hover-color: var(--tracer-fg);
+    --bs-btn-hover-bg: var(--tracer-canvas-hover);
+    --bs-btn-hover-border-color: var(--tracer-border);
+    --bs-btn-active-color: var(--tracer-fg);
+    --bs-btn-active-bg: var(--tracer-canvas-hover);
+    --bs-btn-active-border-color: var(--tracer-border);
+    --bs-btn-disabled-color: var(--tracer-fg-muted);
+    --bs-btn-disabled-border-color: var(--tracer-border);
+}
+
+/*
+    The warning variants hold one background through hover and press, where
+    every other variant moves its background to its own text token. They cannot
+    follow that rule: the attention text token is a light amber in the dark
+    theme, and
+    white text on it reads at 2.52:1. The emphasis color is the only
+    attention value that carries white text in both themes.
+*/
+.btn-warning {
+    --bs-btn-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-bg: var(--tracer-attention-emphasis);
+    --bs-btn-border-color: var(--tracer-attention-emphasis);
+    --bs-btn-hover-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--tracer-attention-emphasis);
+    --bs-btn-hover-border-color: var(--tracer-attention-border);
+    --bs-btn-active-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-active-bg: var(--tracer-attention-emphasis);
+    --bs-btn-active-border-color: var(--tracer-attention-border);
+    --bs-btn-disabled-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-disabled-bg: var(--tracer-attention-emphasis);
+    --bs-btn-disabled-border-color: var(--tracer-attention-emphasis);
+}
+
+.btn-outline-warning {
+    --bs-btn-color: var(--tracer-attention-fg);
+    --bs-btn-border-color: var(--tracer-attention-emphasis);
+    --bs-btn-hover-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--tracer-attention-emphasis);
+    --bs-btn-hover-border-color: var(--tracer-attention-emphasis);
+    --bs-btn-active-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-active-bg: var(--tracer-attention-emphasis);
+    --bs-btn-active-border-color: var(--tracer-attention-emphasis);
+    --bs-btn-disabled-color: var(--tracer-fg-muted);
+    --bs-btn-disabled-border-color: var(--tracer-border);
+}
+
+.btn-outline-danger {
+    --bs-btn-color: var(--tracer-danger-fg);
+    --bs-btn-border-color: var(--tracer-danger-emphasis);
+    --bs-btn-hover-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--tracer-danger-emphasis);
+    --bs-btn-hover-border-color: var(--tracer-danger-emphasis);
+    --bs-btn-active-color: var(--tracer-fg-on-emphasis);
+    --bs-btn-active-bg: var(--tracer-danger-emphasis);
+    --bs-btn-active-border-color: var(--tracer-danger-emphasis);
+    --bs-btn-disabled-color: var(--tracer-fg-muted);
+    --bs-btn-disabled-border-color: var(--tracer-border);
+}
+
+.table {
+    --bs-table-color: var(--tracer-fg);
+    --bs-table-bg: transparent;
+    --bs-table-border-color: var(--tracer-border-muted);
+    --bs-table-striped-color: var(--tracer-fg);
+    --bs-table-striped-bg: var(--tracer-canvas-subtle);
+    --bs-table-hover-color: var(--tracer-fg);
+    --bs-table-hover-bg: var(--tracer-canvas-hover);
+}
+
+.badge {
+    --bs-badge-color: var(--tracer-fg-on-emphasis);
+}
+
+.alert-warning {
+    --bs-alert-color: var(--tracer-attention-fg);
+    --bs-alert-bg: var(--tracer-attention-subtle);
+    --bs-alert-border-color: var(--tracer-attention-border);
+    --bs-alert-link-color: var(--tracer-attention-fg);
+}
+
+.form-control,
+.form-select {
+    background-color: var(--tracer-canvas);
+    border-color: var(--tracer-border);
+    color: var(--tracer-fg);
+}
+
+.form-control::placeholder {
+    color: var(--tracer-fg-muted);
+}
+
+.form-control:focus,
+.form-select:focus {
+    background-color: var(--tracer-canvas);
+    border-color: var(--tracer-accent-emphasis);
+    color: var(--tracer-fg);
+}
+
+.form-check-input {
+    background-color: var(--tracer-canvas);
+    border-color: var(--tracer-border);
+}
+
+.form-check-input:checked {
+    background-color: var(--tracer-accent-emphasis);
+    border-color: var(--tracer-accent-emphasis);
+}
+
+.form-text {
+    color: var(--tracer-fg-muted);
+}

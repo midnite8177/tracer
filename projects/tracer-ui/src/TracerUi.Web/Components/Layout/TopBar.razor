@@ -1,0 +1,45 @@
+@using TracerUi.Web.Startup
+@inject BindAddress BindAddress
+
+@*
+    The top bar, which the layout gives to every page.
+
+    It names the app at the left, then the project picker, then the nav links.
+    At the right it holds the LAN mode marker and the theme toggle. The app name
+    reaches the Projects page, so that page needs no nav link of its own.
+
+    The marker is a dot and two words, because the bar holds one line. What LAN
+    mode costs a person is too long for that line, so the sentence sits beside
+    the marker where a screen reader reads it and the eye does not.
+*@
+
+<header class="top-bar">
+    <a class="app-name" href="">tracer-ui</a>
+
+    <ProjectPicker />
+
+    <nav class="top-bar-nav">
+        <NavLink class="top-bar-link" href="board">
+            <Icon Name="IconName.Board" /> Board
+        </NavLink>
+        <NavLink class="top-bar-link" href="needs-you">
+            <Icon Name="IconName.NeedsYou" /> Needs you
+        </NavLink>
+        <NavLink class="top-bar-link" href="doctor">
+            <Icon Name="IconName.Doctor" /> Doctor
+        </NavLink>
+    </nav>
+
+    <div class="top-bar-end">
+        @if (BindAddress.ReachesEveryInterface)
+        {
+            <span class="lan-mode" role="status" aria-describedby="lan-mode-cost">
+                <span class="lan-mode-dot" aria-hidden="true"></span>LAN mode
+            </span>
+            <span id="lan-mode-cost" class="read-aloud-only">
+                Every machine that reaches this computer reaches this board, and it asks for no password.
+            </span>
+        }
+        <ThemeToggle />
+    </div>
+</header>

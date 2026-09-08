@@ -1,0 +1,44 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Every project under projects/ carries its own solution, so the build
+      # finds them instead of naming them. See docs/adr/0001-one-directory-per-project.md.
+      - name: Build and test every solution
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          solutions=(projects/*/*.slnx)
+          if [ ${#solutions[@]} -eq 0 ]; then
+            echo "No solution found under projects/." >&2
+            exit 1
+          fi
+          for solution in "${solutions[@]}"; do
+            echo "::group::$solution"
+            dotnet build "$solution" --configuration Release
+            dotnet test "$solution" --configuration Release --no-build
+            echo "::endgroup::"
+          done

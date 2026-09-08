@@ -1,0 +1,39 @@
+/*
+    The picker sits in the top bar and reads as a part of it, so it carries the
+    colors of the bar and no border until the pointer or the focus arrives.
+
+    A long project path must not push the nav links off the line, so the picker
+    stops at a share of the window and the browser shortens what it shows.
+*/
+
+.project-picker {
+    max-width: 18rem;
+    padding: var(--tracer-space-1) var(--tracer-space-2);
+    border: 1px solid transparent;
+    border-radius: var(--tracer-radius);
+    background-color: transparent;
+    color: var(--tracer-topbar-fg);
+    font-family: inherit;
+    font-size: var(--tracer-text-quiet);
+    text-overflow: ellipsis;
+}
+
+.project-picker:hover {
+    border-color: var(--tracer-topbar-border);
+    background-color: var(--tracer-topbar-hover);
+}
+
+.project-picker:focus-visible {
+    outline: none;
+    border-color: var(--tracer-topbar-border);
+    box-shadow: 0 0 0 var(--tracer-focus-ring-width) var(--tracer-topbar-focus-ring);
+}
+
+/*
+    The menu itself is the browser's, and it draws on the page canvas and not on
+    the bar, so its options take the colors of the page.
+*/
+.project-picker option {
+    background-color: var(--tracer-canvas);
+    color: var(--tracer-fg);
+}

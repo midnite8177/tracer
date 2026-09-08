@@ -1,0 +1,612 @@
+/*
+    The look of the parts that the app itself draws.
+
+    Every value here comes from a design token that tokens.css defines. A color
+    in this file is a defect: see ADR 0006.
+*/
+
+html, body {
+    font-family: var(--tracer-font-body);
+}
+
+.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus,
+.form-select:focus, .form-check-input:focus {
+    box-shadow: 0 0 0 var(--tracer-focus-ring-width) var(--tracer-focus-ring);
+}
+
+/*
+    A link takes the same ring as a control, so that the keyboard gives one
+    answer on every element. The top bar states its own ring, because a link
+    there sits on the bar and not on the page.
+*/
+a:focus-visible {
+    outline: none;
+    border-radius: var(--tracer-radius-small);
+    box-shadow: 0 0 0 var(--tracer-focus-ring-width) var(--tracer-focus-ring);
+}
+
+/*
+    Text for a screen reader alone. It describes a control that says the same
+    thing in fewer words, and it takes no room on the page.
+*/
+.read-aloud-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+h1:focus {
+    outline: none;
+}
+
+.board-filter-name {
+    width: 12rem;
+}
+
+.board-row {
+    cursor: pointer;
+}
+
+.bead-section {
+    margin-top: var(--tracer-space-5);
+}
+
+/*
+    Machine text: a command line, a project path, a directory name, a field name
+    that bd emits. It reads in the monospace stack, and it takes the color of
+    the text around it, because Bootstrap paints a bare code element in the
+    danger color and a command name is not an error. It carries no size, so
+    each place that uses it keeps the size of the text around it. The quiet
+    modifier below is the one exception to the color and the size. A long path
+    gives up the line rather than push the page wider.
+*/
+.machine-text {
+    color: inherit;
+    font-family: var(--tracer-font-mono);
+    overflow-wrap: anywhere;
+}
+
+/*
+    Machine text that steps back from the words beside it: the id of a bead
+    under a title, in a line of prose that the title carries, or in a cell
+    beside the title of its row. It takes the muted color and the quiet size.
+    The selector names both classes, because a rule that names one class alone
+    beats the color of the machine-text class through the order of this file,
+    and a move of either block then changes the look.
+*/
+.machine-text.machine-text-quiet {
+    color: var(--tracer-fg-muted);
+    font-size: var(--tracer-text-quiet);
+}
+
+/*
+    The message of a failure that a person must not miss: a request that the
+    app could not answer, a probe of bd that failed, a project that did not
+    answer. It stands on a ground of its own, with a rule at the left in the
+    danger color, because such a message inside a line of prose is a message
+    that a person reads past.
+*/
+.failure-message {
+    background-color: var(--tracer-canvas-subtle);
+    border-left: var(--tracer-space-1) solid var(--tracer-danger-emphasis);
+    border-radius: 0 var(--tracer-radius) var(--tracer-radius) 0;
+    color: var(--tracer-danger-fg);
+    padding: var(--tracer-space-2) var(--tracer-space-3);
+}
+
+/*
+    A section heading. Every page reads the same size here, and a page that
+    needs another one says so with a class of its own.
+*/
+h2 {
+    font-size: var(--tracer-text-title);
+    margin-top: var(--tracer-space-5);
+}
+
+/* The prose of the bead. Its first and last line meet the box that holds them. */
+.bead-prose > :first-child {
+    margin-top: 0;
+}
+
+.bead-prose > :last-child {
+    margin-bottom: 0;
+}
+
+.bead-prose h1, .bead-prose h2, .bead-prose h3, .bead-prose h4 {
+    font-size: var(--tracer-text-body);
+    font-weight: 600;
+    margin-top: var(--tracer-space-4);
+}
+
+/*
+    A code span keeps the text color of the page and takes a border, because a
+    color of its own reads as an error, and because the inset ground alone
+    hides it inside the notes, which stand on that same ground.
+*/
+.bead-prose code {
+    background-color: var(--tracer-canvas-inset);
+    border: 1px solid var(--tracer-border-muted);
+    border-radius: var(--tracer-radius-small);
+    color: var(--tracer-fg);
+    font-size: var(--tracer-text-quiet);
+    padding: 0 var(--tracer-space-1);
+}
+
+.bead-prose pre {
+    background-color: var(--tracer-canvas-inset);
+    border: 1px solid var(--tracer-border-muted);
+    border-radius: var(--tracer-radius);
+    overflow-x: auto;
+    padding: var(--tracer-space-2) var(--tracer-space-3);
+}
+
+/* A code span inside a code block: the block already carries the ground. */
+.bead-prose pre code {
+    background-color: transparent;
+    border: 0;
+    padding: 0;
+}
+
+.bead-prose blockquote {
+    border-left: var(--tracer-space-1) solid var(--tracer-border);
+    color: var(--tracer-fg-muted);
+    padding-left: var(--tracer-space-3);
+}
+
+.bead-prose hr {
+    border-top: 1px solid var(--tracer-border-muted);
+    opacity: 1;
+}
+
+/*
+    The notes, as a quoted block. The ground and the rule at the left tell them
+    from the description at a glance, in both themes.
+*/
+.bead-notes {
+    background-color: var(--tracer-canvas-inset);
+    border-left: var(--tracer-space-1) solid var(--tracer-border);
+    border-radius: 0 var(--tracer-radius) var(--tracer-radius) 0;
+    padding: var(--tracer-space-3);
+}
+
+/* One comment of the work journal, in a box of its own inside the comments box. */
+.bead-comment {
+    border: 1px solid var(--tracer-border-muted);
+    border-radius: var(--tracer-radius);
+    margin-top: var(--tracer-space-3);
+    padding: var(--tracer-space-3);
+}
+
+.bead-comment-head {
+    font-size: var(--tracer-text-quiet);
+    margin-bottom: var(--tracer-space-1);
+}
+
+.bead-comment-text {
+    white-space: pre-wrap;
+}
+
+/* The controls that write to the bead. */
+.bead-writes {
+    margin-top: var(--tracer-space-3);
+}
+
+.bead-write-row {
+    max-width: 32rem;
+}
+
+/*
+    The editor of the description and the preview beside it. The two boxes carry
+    the same ground, the same border, the same corner and one height, so that a
+    person reads one thing in two forms. Neither box grows and neither takes a
+    drag, because a box that grows leaves the other one behind. The editor holds
+    the markdown that a person types, so it reads in the monospace stack; the
+    preview holds the prose that the markdown makes.
+*/
+textarea.bead-prose-editor {
+    font-family: var(--tracer-font-mono);
+    height: var(--tracer-prose-box-height);
+    resize: none;
+}
+
+.bead-prose-preview {
+    background-color: var(--tracer-canvas);
+    border: 1px solid var(--tracer-border);
+    border-radius: var(--tracer-radius-small);
+    height: var(--tracer-prose-box-height);
+    overflow-y: auto;
+    padding: var(--tracer-space-1) var(--tracer-space-2);
+}
+
+.bead-edge {
+    padding: 0.125rem 0;
+}
+
+/*
+    The control that cuts one dependency edge. It rests unseen, so a list that a
+    person only reads is a list of beads, and it shows itself when a pointer rests
+    on its row or the keyboard reaches it. It keeps its place in either reading,
+    because a row that changes width under the pointer moves the row below it.
+    Visibility and not opacity, so that a resting row offers no target to a
+    pointer and names no control to a reader.
+*/
+.bead-edge-cut {
+    line-height: 1;
+    text-decoration: none;
+    vertical-align: baseline;
+    visibility: hidden;
+}
+
+.bead-edge:hover .bead-edge-cut,
+.bead-edge:focus-within .bead-edge-cut {
+    visibility: visible;
+}
+
+/*
+    The question that a press on that control puts in the place of the row. It
+    takes the danger color, because the answer it waits for is the one write of
+    this page that nothing undoes.
+*/
+.bead-edge-question {
+    color: var(--tracer-danger-fg);
+}
+
+.board-bulk-bar {
+    background-color: var(--tracer-canvas-subtle);
+    border: 1px solid var(--tracer-border);
+    border-radius: var(--tracer-radius);
+    margin-bottom: var(--tracer-space-4);
+    padding: var(--tracer-space-3);
+}
+
+.board-bulk-plan {
+    background-color: var(--tracer-canvas);
+    border-top: 1px solid var(--tracer-border);
+    padding-top: var(--tracer-space-3);
+}
+
+.board-quick-create {
+    background-color: var(--tracer-canvas-subtle);
+    border: 1px solid var(--tracer-border);
+    border-radius: var(--tracer-radius);
+    margin-bottom: var(--tracer-space-4);
+    padding: var(--tracer-space-3);
+}
+
+/*
+    The two columns of the detail page. The prose column carries the words of the
+    bead, and the fact strip beside it carries its short facts. The strip
+    stands first in the markup, because the facts are what a person opens the
+    page for, and a narrow window therefore stacks it above the prose.
+*/
+.bead-head,
+.bead-columns,
+.bead-unread-backlog {
+    display: block;
+    max-width: var(--tracer-detail-page);
+}
+
+.bead-columns {
+    display: grid;
+    gap: var(--tracer-space-4);
+    grid-template-columns: minmax(0, var(--tracer-detail-prose)) var(--tracer-detail-facts);
+}
+
+.bead-prose-column {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+}
+
+.bead-fact-strip {
+    display: flex;
+    flex-direction: column;
+    gap: var(--tracer-space-3);
+    grid-column: 2;
+    grid-row: 1;
+}
+
+/*
+    The narrow window, where the strip stands above the prose. The width is a
+    plain length, because a media query reads no design token, and it is the
+    same width that Bootstrap calls medium.
+*/
+@media (max-width: 768px) {
+    .bead-columns {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .bead-fact-strip {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .bead-prose-column {
+        grid-column: 1;
+        grid-row: 2;
+    }
+}
+
+/* One fact box of the strip: a heading and one fact under it. */
+.bead-fact {
+    border: 1px solid var(--tracer-border);
+    border-radius: var(--tracer-radius);
+    padding: var(--tracer-space-2) var(--tracer-space-3);
+}
+
+.bead-fact-name {
+    color: var(--tracer-fg-muted);
+    font-size: var(--tracer-text-small);
+    font-weight: 600;
+    margin: 0;
+}
+
+.bead-fact-value {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.bead-fact-label {
+    margin-right: var(--tracer-space-1);
+}
+
+/*
+    Press to edit. The value of a fact is the control that changes it, so it is a
+    button that reads as the text around it: no border, no ground, and the same
+    color, until a pointer or the keyboard reaches it. The picker takes the place
+    of the row, and its entries stand in a line that wraps inside the narrow box.
+*/
+.bead-fact-press {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--tracer-radius-small);
+    color: inherit;
+    font: inherit;
+    margin-left: calc(-1 * var(--tracer-space-1));
+    padding: 0 var(--tracer-space-1);
+    text-align: left;
+}
+
+.bead-fact-press:hover {
+    border-color: var(--tracer-border);
+}
+
+.bead-fact-picker {
+    display: flex;
+    flex-direction: column;
+    gap: var(--tracer-space-1);
+}
+
+.bead-fact-choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--tracer-space-1);
+}
+
+.bead-fact-choice {
+    background-color: var(--tracer-canvas-subtle);
+    border: 1px solid var(--tracer-border);
+    border-radius: var(--tracer-radius-small);
+    color: inherit;
+    font: inherit;
+    padding: 0 var(--tracer-space-2);
+}
+
+.bead-fact-choice:hover {
+    border-color: var(--tracer-accent-emphasis);
+}
+
+/*
+    The entry that the bead is in now. The row above the picker prints the resolved
+    status, which is not always one of the four stored ones, so the picker says
+    which of its own entries the bead stands in.
+*/
+.bead-fact-choice-current {
+    border-color: var(--tracer-accent-emphasis);
+    font-weight: 600;
+}
+
+/*
+    The link beside a value that names a page of its own. The value itself is the
+    control that changes the fact, so the way to the epic is a small quiet word
+    after it.
+*/
+.bead-fact-page {
+    font-size: var(--tracer-text-small);
+    margin-left: var(--tracer-space-1);
+}
+
+/*
+    The mark on an entry of a field that takes several of them at once. The bead
+    carries the ticked labels, and a press on one takes it off again, so the mark
+    is a tick and not the weight that marks the one value of a status.
+*/
+.bead-fact-tick {
+    margin-right: var(--tracer-space-1);
+}
+
+/*
+    The question that one entry of a picker asks before it writes: the pick of
+    closed asks why the work ended. It stands where the entries stood, so the box
+    grows by one field and the row keeps its place in the strip.
+*/
+.bead-fact-question,
+.bead-fact-addition {
+    display: flex;
+    flex-direction: column;
+    gap: var(--tracer-space-1);
+}
+
+.bead-fact-refusal {
+    color: var(--tracer-danger-fg);
+    font-size: var(--tracer-text-small);
+    margin: 0;
+}
+
+/*
+    Press to edit on the title and on the description. The title is the control
+    that changes it, so the h1 holds a button that reads as the heading: no
+    border, no ground, and the same type, until a pointer or the keyboard reaches
+    it. The description carries its links, and no button may hold one, so the
+    prose takes a pointer press and the button under it is the door that the
+    keyboard and a reader take. Both boxes say the same thing as the strip when
+    the installed bd cannot write them.
+*/
+.bead-title-press {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--tracer-radius-small);
+    color: inherit;
+    font: inherit;
+    margin-left: calc(-1 * var(--tracer-space-1));
+    padding: 0 var(--tracer-space-1);
+    text-align: left;
+}
+
+.bead-title-press:hover,
+.bead-prose-pressable:hover {
+    border-color: var(--tracer-border);
+}
+
+.bead-prose-pressable {
+    border: 1px solid transparent;
+    border-radius: var(--tracer-radius-small);
+    margin: calc(-1 * var(--tracer-space-1));
+    padding: var(--tracer-space-1);
+}
+
+.bead-title-edit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--tracer-space-2);
+}
+
+.bead-title-refusal,
+.bead-prose-refusal {
+    color: var(--tracer-danger-fg);
+    font-size: var(--tracer-text-small);
+    margin: 0;
+}
+
+/*
+    One section of the prose column. The border is what tells a section from the
+    one under it, and the heading inside meets the top of the box.
+*/
+.bead-box {
+    border: 1px solid var(--tracer-border);
+    border-radius: var(--tracer-radius);
+    margin-bottom: var(--tracer-space-4);
+    padding: var(--tracer-space-3) var(--tracer-space-4);
+}
+
+.bead-box > :first-child,
+.bead-box > :first-child > :first-child {
+    margin-top: 0;
+}
+
+/*
+    What the description box says when the bead has none. A bead without a
+    description is a bead that needs one, so this absence alone takes the danger
+    color and the weight of a heading, and never the muted grey that every other
+    absent thing takes.
+*/
+.bead-prose-missing {
+    color: var(--tracer-danger-fg);
+    font-weight: 600;
+    margin: 0;
+}
+
+/*
+    An absent thing, as one thin line where a box would stand. The words say what
+    the bead names none of, and the press that adds one of them stands on the same
+    line, so a page of a bead that names little is a page of its prose.
+*/
+.bead-absent {
+    align-items: baseline;
+    color: var(--tracer-fg-muted);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: var(--tracer-text-small);
+    gap: var(--tracer-space-2);
+    margin-bottom: var(--tracer-space-4);
+}
+
+/* The press of an absent line sits on the line, so it takes no space above it. */
+.bead-absent .bead-writes {
+    margin-top: 0;
+}
+
+/*
+    The close reason of a closed bead, as the first box of the prose column. It
+    takes the subtle ground, so that a closed bead reads as closed at a glance.
+*/
+.bead-close-reason {
+    background-color: var(--tracer-canvas-subtle);
+}
+
+/*
+    One bead in a list of beads: the status dot, the title, then the type and the
+    id. The parts keep one gap between them, and a narrow window wraps the row
+    instead of cutting the title.
+*/
+.bead-row {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--tracer-space-1);
+    margin-bottom: var(--tracer-space-1);
+}
+
+/*
+    The dot takes the color of the status class beside it. A color stated here
+    overrides that one, and the dot stops tracking the status.
+*/
+.bead-dot {
+    background-color: currentcolor;
+    border-radius: 50%;
+    display: inline-block;
+    flex: none;
+    height: 0.5rem;
+    width: 0.5rem;
+}
+
+/*
+    A held bead that bd closed. It stays in the list, because what an epic
+    finished is part of what it is, and it steps back from the open ones.
+*/
+.bead-row-closed .bead-row-title {
+    color: var(--tracer-fg-muted);
+    text-decoration: line-through;
+}
+
+.bead-held {
+    margin-bottom: var(--tracer-space-2);
+}
+
+.bead-status-needs-you {
+    color: var(--tracer-danger-fg);
+}
+
+.bead-status-blocked {
+    color: var(--tracer-attention-fg);
+}
+
+.bead-status-ready {
+    color: var(--tracer-success-fg);
+}
+
+.bead-status-in-progress {
+    color: var(--tracer-accent-fg);
+}
+
+.bead-status-deferred,
+.bead-status-stored,
+.bead-status-unknown {
+    color: var(--tracer-fg-muted);
+}

@@ -1,0 +1,18 @@
+@*
+    The one rule that keeps a press on a link out of the prose that holds it.
+
+    The description of a bead is press to edit: a press on the prose opens its
+    box. The prose is rendered markdown, so it carries links of its own, and a
+    press on one of those means the page it names and not the box. The browser
+    is where the pressed element is known, so the rule lives here, in the
+    capture phase, before the press reaches the prose.
+*@
+
+<script>
+    document.addEventListener("click", function (press) {
+        var link = press.target.closest("a");
+        if (link !== null && link.closest(".bead-prose-pressable") !== null) {
+            press.stopPropagation();
+        }
+    }, true);
+</script>

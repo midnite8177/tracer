@@ -1,0 +1,31 @@
+@page "/Error"
+@using System.Diagnostics
+
+<PageTitle>Error</PageTitle>
+
+<h1>Something failed</h1>
+
+<p class="failure-message">The app could not answer this request.</p>
+
+@if (ShowRequestId)
+{
+    <p>
+        <strong>Request id:</strong> <code class="machine-text machine-text-quiet">@RequestId</code>
+    </p>
+}
+
+<p class="text-muted">
+    Go back to the board and try again. If the failure repeats, start the app from a
+    terminal and read what it prints there.
+</p>
+
+@code{
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+    private bool ShowRequestId => !string.IsNullOrEmpty(RequestId);
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}
