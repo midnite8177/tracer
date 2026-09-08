@@ -17,9 +17,13 @@ public sealed class BeadRecord
 
     /// <summary>The number in one field, or <paramref name="whenAbsent"/> when no such field holds a number.</summary>
     public long Number(IReadOnlyList<string> candidateNames, long whenAbsent) =>
+        NullableNumber(candidateNames) ?? whenAbsent;
+
+    /// <summary>The number in one field, or null when no such field holds a number.</summary>
+    public long? NullableNumber(IReadOnlyList<string> candidateNames) =>
         TryFirst(candidateNames, JsonValueKind.Number, out var value) && value.TryGetInt64(out var number)
             ? number
-            : whenAbsent;
+            : null;
 
     /// <summary>
     /// The texts in one array field, or an empty list when this bead has no such field. bd writes an

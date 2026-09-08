@@ -101,8 +101,12 @@
         _ => FactChoice.ThatWrites(
             StoredStatus.InWords(status),
             marked: TheBeadIsIn(status),
-            () => Bd.SetStatusAsync(Address, status)),
+            () => WriteTheStatus(status)),
     };
+
+    private Task<BdWriteOutcome> WriteTheStatus(string status) =>
+        CheckedWrite.Async<StoredStatusWord>(
+            status, StoredStatus.TryParse, word => Bd.SetStatusAsync(Address, word), $"{status} is not a stored status.");
 
     private bool TheBeadIsIn(string status) =>
         string.Equals(status, Detail.Bead.Status, StringComparison.Ordinal);
@@ -139,8 +143,12 @@
                 FactChoice.ThatWrites(
                     type,
                     marked: string.Equals(type, Detail.Bead.Type, StringComparison.Ordinal),
-                    () => Bd.SetTypeAsync(Address, type))),
+                    () => WriteTheType(type))),
         ]));
+
+    private Task<BdWriteOutcome> WriteTheType(string type) =>
+        CheckedWrite.Async<BeadTypeWord>(
+            type, BeadType.TryParse, word => Bd.SetTypeAsync(Address, word), $"{type} is not a bead type.");
 
     // The labels row. Its picker offers the whole vocabulary of the project, with the labels of this
     // bead ticked, because a label that two beads spell differently is two labels. The box at the
@@ -169,9 +177,7 @@
         return FactChoice.ThatWrites(
             label,
             marked: carried is not null,
-            () => carried is null
-                ? Bd.AddLabelAsync(Address, label)
-                : Bd.RemoveLabelAsync(Address, carried));
+            () => carried is null ? AddTheLabel(label) : RemoveTheLabel(carried));
     }
 
     // Puts on the label that the person typed into the box at the foot of the picker. A box that
@@ -184,11 +190,11 @@
             string.Equals(label, typed, StringComparison.OrdinalIgnoreCase));
         if (known is null)
         {
-            return Bd.AddLabelAsync(Address, typed);
+            return AddTheLabel(typed);
         }
 
         return TheSpellingOnTheBead(known) is null
-            ? Bd.AddLabelAsync(Address, known)
+            ? AddTheLabel(known)
             : Task.FromResult(BdWriteOutcome.Failure(
                 $"This bead already carries {known}, which the list above ticks."));
     }
@@ -198,6 +204,12 @@
     private string? TheSpellingOnTheBead(string label) =>
         Detail.Bead.Labels.FirstOrDefault(one =>
             string.Equals(one, label, StringComparison.OrdinalIgnoreCase));
+
+    private Task<BdWriteOutcome> AddTheLabel(string label) =>
+        CheckedWrite.Async(label, word => Bd.AddLabelAsync(Address, word), "A label needs a word.");
+
+    private Task<BdWriteOutcome> RemoveTheLabel(string label) =>
+        CheckedWrite.Async(label, word => Bd.RemoveLabelAsync(Address, word), "A label needs a word.");
 
     // The epic row, whose picker offers every epic of the backlog and the entry that takes the bead
     // out of all of them. bd clears the parent with the flag that sets it, so that entry asks for no

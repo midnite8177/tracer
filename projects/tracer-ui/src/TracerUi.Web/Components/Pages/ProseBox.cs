@@ -47,15 +47,24 @@ public abstract class ProseBox : CapabilityAware
 
     /// <summary>
     /// What the open box says in place of the field: the refusal of a write that this bd cannot
-    /// do, or a word that the probe has not answered yet. Empty while this bd takes the write.
+    /// do, or a word that the probe has not answered yet. Null while this bd takes the write.
     /// </summary>
-    protected string Refusal =>
-        Probed
-            ? Why(Verb)
-            : "The app is still asking bd what it can do.";
+    protected string? Refusal
+    {
+        get
+        {
+            if (!Probed)
+            {
+                return "The app is still asking bd what it can do.";
+            }
 
-    /// <summary>Empty when the last write landed, or when none has run.</summary>
-    protected string WhyTheLastWriteFailed => Wrote ? string.Empty : WriteMessage;
+            var missing = Why(Verb);
+            return missing.Length > 0 ? missing : null;
+        }
+    }
+
+    /// <summary>Null when the last write landed, or when none has run.</summary>
+    protected string? WhyTheLastWriteFailed => Wrote ? null : WriteMessage;
 
     /// <summary>
     /// Fills the field with what bd holds now. The page reads the bead again after every write, so
@@ -69,7 +78,7 @@ public abstract class ProseBox : CapabilityAware
         StartFromTheBead();
         ForgetTheLastWrite();
         Editing = true;
-        focus = Refusal.Length > 0 ? WhatToFocus.TheBox : WhatToFocus.TheField;
+        focus = Refusal is not null ? WhatToFocus.TheBox : WhatToFocus.TheField;
     }
 
     /// <summary>Closes the box and writes nothing.</summary>

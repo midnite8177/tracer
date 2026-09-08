@@ -86,13 +86,13 @@ public static class BulkVerbs
                 UiVerbs.LabelABead,
                 true,
                 plan => $"Add the label {plan.Action.Value} to {plan.Beads}.",
-                (bd, bead, action, _) => bd.AddLabelAsync(bead, action.Value)),
+                (bd, bead, action, _) => AddTheLabelAsync(bd, bead, action.Value)),
             [BulkVerb.RemoveALabel] = new(
                 "Remove a label",
                 UiVerbs.LabelABead,
                 true,
                 plan => $"Remove the label {plan.Action.Value} from {plan.Beads}.",
-                (bd, bead, action, _) => bd.RemoveLabelAsync(bead, action.Value)),
+                (bd, bead, action, _) => RemoveTheLabelAsync(bd, bead, action.Value)),
             [BulkVerb.CloseWithAReason] = new(
                 "Close with a reason",
                 UiVerbs.CloseWithAReason,
@@ -122,7 +122,7 @@ public static class BulkVerbs
                 UiVerbs.SetTheType,
                 true,
                 plan => $"Set the type of {plan.Beads} to {plan.Action.Value}.",
-                (bd, bead, action, _) => bd.SetTypeAsync(bead, action.Value)),
+                (bd, bead, action, _) => SetTheTypeAsync(bd, bead, action.Value)),
         };
 
     /// <summary>
@@ -137,6 +137,16 @@ public static class BulkVerbs
         long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var priority)
             ? bd.SetPriorityAsync(bead, priority)
             : Task.FromResult(BdWriteOutcome.Failure($"{value} is not a priority number."));
+
+    private static Task<BdWriteOutcome> SetTheTypeAsync(BdAdapter bd, BeadAddress bead, string value) =>
+        CheckedWrite.Async<BeadTypeWord>(
+            value, BeadType.TryParse, type => bd.SetTypeAsync(bead, type), $"{value} is not a bead type.");
+
+    private static Task<BdWriteOutcome> AddTheLabelAsync(BdAdapter bd, BeadAddress bead, string value) =>
+        CheckedWrite.Async(value, label => bd.AddLabelAsync(bead, label), "A label needs a word.");
+
+    private static Task<BdWriteOutcome> RemoveTheLabelAsync(BdAdapter bd, BeadAddress bead, string value) =>
+        CheckedWrite.Async(value, label => bd.RemoveLabelAsync(bead, label), "A label needs a word.");
 }
 
 /// <summary>

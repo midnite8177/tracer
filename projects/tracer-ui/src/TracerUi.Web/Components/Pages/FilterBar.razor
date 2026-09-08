@@ -158,27 +158,33 @@
 
     private string Type
     {
-        get => Filter.Type;
-        set => Change(Filter with { Type = value });
+        get => AsOptionValue(Filter.Type);
+        set => Change(Filter with { Type = FromOptionValue(value) });
     }
 
     private string Priority
     {
-        get => Filter.Priority;
-        set => Change(Filter with { Priority = value });
+        get => AsOptionValue(Filter.Priority);
+        set => Change(Filter with { Priority = FromOptionValue(value) });
     }
 
     private string Label
     {
-        get => Filter.Label;
-        set => Change(Filter with { Label = value });
+        get => AsOptionValue(Filter.Label);
+        set => Change(Filter with { Label = FromOptionValue(value) });
     }
 
     private string Epic
     {
-        get => Filter.Epic;
-        set => Change(Filter with { Epic = value });
+        get => AsOptionValue(Filter.Epic);
+        set => Change(Filter with { Epic = FromOptionValue(value) });
     }
+
+    // An HTML select has no value for its unset option beyond the empty string, so this is where
+    // that string and an unset part of the filter turn into each other.
+    private static string AsOptionValue(string? part) => part ?? string.Empty;
+
+    private static string? FromOptionValue(string value) => value.Length > 0 ? value : null;
 
     private string Text
     {

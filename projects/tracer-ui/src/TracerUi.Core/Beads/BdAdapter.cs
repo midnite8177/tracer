@@ -147,11 +147,11 @@ public sealed class BdAdapter
     public Task<BdWriteOutcome> CommentAsync(BeadAddress bead, string text) =>
         WriteAsync(bead, UiVerbs.AddAComment, ["comment", bead.Id, text]);
 
-    public Task<BdWriteOutcome> AddLabelAsync(BeadAddress bead, string label) =>
-        WriteAsync(bead, UiVerbs.LabelABead, ["label", "add", bead.Id, label]);
+    public Task<BdWriteOutcome> AddLabelAsync(BeadAddress bead, BeadLabel label) =>
+        WriteAsync(bead, UiVerbs.LabelABead, ["label", "add", bead.Id, label.Word]);
 
-    public Task<BdWriteOutcome> RemoveLabelAsync(BeadAddress bead, string label) =>
-        WriteAsync(bead, UiVerbs.LabelABead, ["label", "remove", bead.Id, label]);
+    public Task<BdWriteOutcome> RemoveLabelAsync(BeadAddress bead, BeadLabel label) =>
+        WriteAsync(bead, UiVerbs.LabelABead, ["label", "remove", bead.Id, label.Word]);
 
     /// <summary>Sets the priority of a bead. bd takes a number from 0 to 4, where 0 is the most urgent.</summary>
     public Task<BdWriteOutcome> SetPriorityAsync(BeadAddress bead, long priority) =>
@@ -160,8 +160,8 @@ public sealed class BdAdapter
             UiVerbs.SetThePriority,
             ["update", bead.Id, "--priority", priority.ToString(CultureInfo.InvariantCulture)]);
 
-    public Task<BdWriteOutcome> SetTypeAsync(BeadAddress bead, string type) =>
-        WriteAsync(bead, UiVerbs.SetTheType, ["update", bead.Id, "--type", type]);
+    public Task<BdWriteOutcome> SetTypeAsync(BeadAddress bead, BeadTypeWord type) =>
+        WriteAsync(bead, UiVerbs.SetTheType, ["update", bead.Id, "--type", type.Word()]);
 
     /// <summary>Moves a bead into an epic.</summary>
     public Task<BdWriteOutcome> SetParentAsync(BeadAddress bead, string epicId) =>
@@ -221,8 +221,8 @@ public sealed class BdAdapter
             : WriteAsync(bead, UiVerbs.EditADependencyEdge, ["dep", subcommand, bead.Id, blocker]);
     }
 
-    public Task<BdWriteOutcome> SetStatusAsync(BeadAddress bead, string status) =>
-        WriteAsync(bead, UiVerbs.SetTheStatus, ["update", bead.Id, "--status", status]);
+    public Task<BdWriteOutcome> SetStatusAsync(BeadAddress bead, StoredStatusWord status) =>
+        WriteAsync(bead, UiVerbs.SetTheStatus, ["update", bead.Id, "--status", status.Word()]);
 
     /// <summary>
     /// Closes a bead with the reason that the person gave. A close without a reason leaves a hole in
@@ -277,7 +277,7 @@ public sealed class BdAdapter
             return made;
         }
 
-        var started = await SetStatusAsync(new BeadAddress(project, made.Id), StoredStatus.InProgress);
+        var started = await SetStatusAsync(new BeadAddress(project, made.Id), StoredStatusWord.InProgress);
         return started.Wrote
             ? made
             : BdCreateOutcome.MadeButNotStarted(

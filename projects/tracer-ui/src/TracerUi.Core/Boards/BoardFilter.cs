@@ -2,14 +2,21 @@ namespace TracerUi.Core.Boards;
 
 /// <summary>
 /// Which beads of a backlog the board keeps. Every part that carries a value narrows the board, and
-/// the parts combine. An empty part states nothing and keeps every bead. The filter also holds what
-/// the board shows beyond the live beads, because that choice narrows the board in the same way.
+/// the parts combine. A part that names nothing keeps every bead: the status and the text state
+/// nothing as the empty string, and the type, the priority, the label and the epic state nothing as
+/// no value at all. The filter also holds what the board shows beyond the live beads, because that
+/// choice narrows the board in the same way.
 /// </summary>
 /// <param name="Status">The stored status that a bead must have. It supersedes the two show parts.</param>
-/// <param name="Type">The type that a bead must have.</param>
-/// <param name="Priority">The priority number, as text, that a bead must have.</param>
-/// <param name="Label">A label that a bead must carry.</param>
-/// <param name="Epic">The id of an epic that must hold a bead, at any depth, or be the bead.</param>
+/// <param name="Type">The type that a bead must have, or null when the filter states no type.</param>
+/// <param name="Priority">
+/// The priority number, as text, that a bead must have, or null when the filter states no priority.
+/// </param>
+/// <param name="Label">A label that a bead must carry, or null when the filter states no label.</param>
+/// <param name="Epic">
+/// The id of an epic that must hold a bead, at any depth, or be the bead, or null when the filter
+/// states no epic.
+/// </param>
 /// <param name="Text">Text that the title, the description or a label of a bead must hold.</param>
 /// <param name="RequiresHumanLabel">True when the board keeps only the beads that wait on a person.</param>
 /// <param name="RequiresNoDemoLine">True when the board keeps only the beads that have no Demo line.</param>
@@ -17,10 +24,10 @@ namespace TracerUi.Core.Boards;
 /// <param name="ShowClosed">True when the board shows the closed beads.</param>
 public sealed record BoardFilter(
     string Status,
-    string Type,
-    string Priority,
-    string Label,
-    string Epic,
+    string? Type,
+    string? Priority,
+    string? Label,
+    string? Epic,
     string Text,
     bool RequiresHumanLabel,
     bool RequiresNoDemoLine,
@@ -33,10 +40,10 @@ public sealed record BoardFilter(
     /// </summary>
     public static BoardFilter Everything { get; } = new(
         Status: string.Empty,
-        Type: string.Empty,
-        Priority: string.Empty,
-        Label: string.Empty,
-        Epic: string.Empty,
+        Type: null,
+        Priority: null,
+        Label: null,
+        Epic: null,
         Text: string.Empty,
         RequiresHumanLabel: false,
         RequiresNoDemoLine: false,
@@ -53,15 +60,15 @@ public sealed record BoardFilter(
     /// The filter after a filter press on the type of a row. The press adds the type to the filter
     /// that is already set, so the parts a person chose before it stay.
     /// </summary>
-    public BoardFilter AfterAPressOnType(string type) => this with { Type = PartAfterAPress(Type, type) };
+    public BoardFilter AfterAPressOnType(string type) => this with { Type = Toggled(Type, type) };
 
     /// <summary>The filter after a filter press on the priority of a row.</summary>
     public BoardFilter AfterAPressOnPriority(string priority) =>
-        this with { Priority = PartAfterAPress(Priority, priority) };
+        this with { Priority = Toggled(Priority, priority) };
 
     /// <summary>The filter after a filter press on one label of a row.</summary>
     public BoardFilter AfterAPressOnLabel(string label) =>
-        this with { Label = PartAfterAPress(Label, label) };
+        this with { Label = Toggled(Label, label) };
 
     /// <summary>
     /// The filter after a filter press on the marker of a row that states no Demo line. Only that
@@ -70,11 +77,10 @@ public sealed record BoardFilter(
     public BoardFilter AfterAPressOnTheNoDemoLineMarker() =>
         this with { RequiresNoDemoLine = !RequiresNoDemoLine };
 
-    // What one part of the filter holds after a press on a row named a value for it. A press on the
-    // value that the part already holds clears the part, so the same press that set it takes it off
-    // again and a person needs no trip to the filter bar.
-    private static string PartAfterAPress(string part, string pressed) =>
-        string.Equals(part, pressed, StringComparison.OrdinalIgnoreCase) ? string.Empty : pressed;
+    // Clearing on a repeat press, rather than just overwriting, means a person can undo a filter
+    // press without a trip to the filter bar.
+    private static string? Toggled(string? part, string pressed) =>
+        string.Equals(part, pressed, StringComparison.OrdinalIgnoreCase) ? null : pressed;
 
     /// <summary>
     /// True when the board shows a bead in this stored status. A named status supersedes the two
@@ -105,22 +111,29 @@ public sealed record BoardFilter(
     };
 
     private bool MatchesType(Bead bead) =>
-        Type.Length == 0 || string.Equals(bead.Type, Type, StringComparison.OrdinalIgnoreCase);
+        Type is null || string.Equals(bead.Type, Type, StringComparison.OrdinalIgnoreCase);
 
-    // True when this bead carries the priority that the part names. The part holds the number as
-    // text, because that is what the address of the board carries.
+    // Compared as text, and not as a number, because that is the form the address of the board
+    // carries.
     private bool MatchesPriority(Bead bead) =>
-        Priority.Length == 0 || string.Equals(Priority, bead.PriorityText, StringComparison.Ordinal);
+        Priority is null || string.Equals(Priority, bead.PriorityText, StringComparison.Ordinal);
 
     private bool MatchesLabel(Bead bead) =>
-        Label.Length == 0 || bead.Labels.Contains(Label, StringComparer.OrdinalIgnoreCase);
+        Label is null || bead.Labels.Contains(Label, StringComparer.OrdinalIgnoreCase);
 
-    // True when this bead is in the tree that the epic part names. The epic itself is in its own
-    // tree, so a filter on an epic keeps the epic, and an epic that holds no bead stays visible.
-    private bool MatchesEpic(Bead bead, IReadOnlyList<string> epicsAbove) =>
-        Epic.Length == 0
-        || string.Equals(bead.Id, Epic, StringComparison.Ordinal)
-        || epicsAbove.Contains(Epic, StringComparer.Ordinal);
+    private bool MatchesEpic(Bead bead, IReadOnlyList<string> epicsAbove)
+    {
+        if (Epic is null)
+        {
+            return true;
+        }
+
+        // An epic that holds no bead still passes here, on the strength of naming itself, so it stays
+        // visible instead of disappearing when its own filter would otherwise leave it with nothing.
+        var isTheEpicItself = string.Equals(bead.Id, Epic, StringComparison.Ordinal);
+        var isBelowTheEpic = epicsAbove.Contains(Epic, StringComparer.Ordinal);
+        return isTheEpicItself || isBelowTheEpic;
+    }
 
     private bool MatchesText(Bead bead)
     {

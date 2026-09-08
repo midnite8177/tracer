@@ -1,3 +1,5 @@
+using TracerUi.Core.Beads;
+
 namespace TracerUi.Core.Boards;
 
 /// <summary>
@@ -22,4 +24,29 @@ public static class StoredStatus
     /// that offers a status reads this, so no two of them word the same status differently.
     /// </summary>
     public static string InWords(string status) => status.Replace('_', ' ');
+
+    /// <summary>The word of one stored status, the machine form that a write of the status carries.</summary>
+    public static string Word(this StoredStatusWord status) => status switch
+    {
+        StoredStatusWord.Open => Open,
+        StoredStatusWord.InProgress => InProgress,
+        StoredStatusWord.Deferred => Deferred,
+        StoredStatusWord.Closed => Closed,
+        _ => throw new ArgumentOutOfRangeException(nameof(status), status, "This status has no word."),
+    };
+
+    /// <summary>The stored status that this word names, or none when it names none of the four.</summary>
+    public static bool TryParse(string word, out StoredStatusWord status) =>
+        EnumWord.TryParse(word, Word, out status);
+}
+
+/// <summary>
+/// One of the four stored statuses that bd itself accepts on a write, so a write can carry no other.
+/// </summary>
+public enum StoredStatusWord
+{
+    Open,
+    InProgress,
+    Deferred,
+    Closed,
 }

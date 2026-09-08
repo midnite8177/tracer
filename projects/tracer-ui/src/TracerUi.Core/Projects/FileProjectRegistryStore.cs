@@ -73,10 +73,10 @@ public sealed class FileProjectRegistryStore : IProjectRegistryStore
             ? BoardFilter.Everything
             : new BoardFilter(
                 Status: filter.Status ?? string.Empty,
-                Type: filter.Type ?? string.Empty,
-                Priority: filter.Priority ?? string.Empty,
-                Label: filter.Label ?? string.Empty,
-                Epic: filter.Epic ?? string.Empty,
+                Type: filter.Type,
+                Priority: filter.Priority,
+                Label: filter.Label,
+                Epic: filter.Epic,
                 Text: filter.Text ?? string.Empty,
                 RequiresHumanLabel: filter.RequiresHumanLabel,
                 RequiresNoDemoLine: filter.RequiresNoDemoLine,

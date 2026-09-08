@@ -15,10 +15,10 @@
 @if (Editing)
 {
     <div class="bead-title-edit" tabindex="-1" @ref="Box" @onkeydown="CloseOnEscape">
-        @if (Refusal.Length > 0)
+        @if (Refusal is { } refusal)
         {
             <h1>@Bead.Title</h1>
-            <p class="bead-title-refusal">@Refusal</p>
+            <p class="bead-title-refusal">@refusal</p>
         }
         else
         {

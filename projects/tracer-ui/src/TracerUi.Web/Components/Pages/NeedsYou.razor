@@ -72,7 +72,7 @@ else
                         <td><span class="machine-text needs-you-project-chip">@project.Project.DirectoryName</span></td>
                         <td><BeadId Id="@bead.Id" Quiet="true" /></td>
                         <td>@bead.Type</td>
-                        <td>@(bead.Priority == Bead.NoPriority ? "—" : $"p{bead.Priority}")</td>
+                        <td>@(bead.HasPriority ? $"p{bead.PriorityText}" : "—")</td>
                         <td>
                             @foreach (var label in bead.Labels)
                             {

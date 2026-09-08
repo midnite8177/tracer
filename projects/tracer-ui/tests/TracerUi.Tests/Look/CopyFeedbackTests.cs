@@ -24,13 +24,13 @@ public sealed class CopyFeedbackTests
     }
 
     [Fact]
-    public void MarksNoEmptyTextBecauseTheClipboardTakesNothingFromIt()
+    public void MarksTheEmptyTextTheSameWayItMarksAnyOtherText()
     {
         var feedback = new CopyFeedback();
 
         feedback.Took("");
 
-        Assert.Equal(CopyOutcome.None, feedback.Outcome(""));
+        Assert.Equal(CopyOutcome.Took, feedback.Outcome(""));
     }
 
     [Fact]
@@ -115,14 +115,14 @@ public sealed class CopyFeedbackTests
     }
 
     [Fact]
-    public void MarksNoEmptyTextThatFoundNoClipboardBecauseNoButtonAsksForOne()
+    public void AsksForASecureConnectionForTheEmptyTextTheSameWayItDoesForAnyOtherText()
     {
         var feedback = new CopyFeedback();
 
         feedback.FoundNoClipboard("");
 
-        Assert.Equal(CopyOutcome.None, feedback.Outcome(""));
-        Assert.Equal("Copy ", feedback.Says(""));
+        Assert.Equal(CopyOutcome.NoClipboard, feedback.Outcome(""));
+        Assert.Equal("Cannot copy . The browser needs a secure connection.", feedback.Says(""));
     }
 
     [Fact]

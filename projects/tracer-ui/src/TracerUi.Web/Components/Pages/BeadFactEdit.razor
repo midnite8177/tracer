@@ -19,9 +19,9 @@
 @if (open)
 {
     <div class="bead-fact-picker" tabindex="-1" @ref="picker" @onkeydown="CloseOnEscape">
-        @if (Refusal.Length > 0)
+        @if (Refusal is { } refusal)
         {
-            <p class="bead-fact-refusal">@Refusal</p>
+            <p class="bead-fact-refusal">@refusal</p>
         }
         else
         {
@@ -124,13 +124,13 @@ else
     // The first action that this bd lacks speaks for the whole field, because one entry that cannot
     // land makes the field a question that the person cannot answer. A value that ignores a press
     // reads as broken, so every press opens and answers.
-    private string Refusal =>
+    private string? Refusal =>
         Probed
-            ? Fact.Verbs.Select(Why).FirstOrDefault(missing => missing.Length > 0) ?? string.Empty
+            ? Fact.Verbs.Select(Why).FirstOrDefault(missing => missing.Length > 0)
             : "The app is still asking bd what it can do.";
 
-    // Empty when the last write landed, because the value that the page read back already says it.
-    private string WhyTheLastWriteFailed => Wrote ? string.Empty : WriteMessage;
+    // Null when the last write landed, because the value that the page read back already says it.
+    private string? WhyTheLastWriteFailed => Wrote ? null : WriteMessage;
 
     private bool TheFieldHoldsOneValue => Fact.Picker.Marks is FactMarks.TheOneItIsIn;
 

@@ -1,4 +1,5 @@
 using TracerUi.Core.Beads;
+using TracerUi.Core.Boards;
 using TracerUi.Core.Projects;
 
 namespace TracerUi.Tests.Beads;
@@ -7,6 +8,11 @@ public sealed class BdWriteTests
 {
     private static readonly BeadAddress Bead =
         new(ProjectPath.From(Path.GetTempPath()), "x-1");
+
+    private static BeadLabel Label(string word) =>
+        BeadLabel.TryFrom(word, out var label)
+            ? label
+            : throw new InvalidOperationException($"{word} is not a label in this test.");
 
     [Fact]
     public async Task WritesACommentThroughTheCommentCommandOfBd()
@@ -57,7 +63,7 @@ public sealed class BdWriteTests
         var bd = BdThatWrites().Prints("label add x-1 human", string.Empty);
         var adapter = new BdAdapter(bd);
 
-        var outcome = await adapter.AddLabelAsync(Bead, "human");
+        var outcome = await adapter.AddLabelAsync(Bead, Label("human"));
 
         Assert.True(outcome.Wrote);
         Assert.Contains("label add x-1 human", bd.Invocations);
@@ -69,7 +75,7 @@ public sealed class BdWriteTests
         var bd = BdThatWrites().Prints("label remove x-1 human", string.Empty);
         var adapter = new BdAdapter(bd);
 
-        var outcome = await adapter.RemoveLabelAsync(Bead, "human");
+        var outcome = await adapter.RemoveLabelAsync(Bead, Label("human"));
 
         Assert.True(outcome.Wrote);
         Assert.Contains("label remove x-1 human", bd.Invocations);
@@ -93,7 +99,7 @@ public sealed class BdWriteTests
         var bd = BdThatWrites().Prints("update x-1 --type bug", string.Empty);
         var adapter = new BdAdapter(bd);
 
-        var outcome = await adapter.SetTypeAsync(Bead, "bug");
+        var outcome = await adapter.SetTypeAsync(Bead, BeadTypeWord.Bug);
 
         Assert.True(outcome.Wrote);
         Assert.Contains("update x-1 --type bug", bd.Invocations);
@@ -105,7 +111,7 @@ public sealed class BdWriteTests
         var bd = BdThatWrites().Prints("update x-1 --status in_progress", string.Empty);
         var adapter = new BdAdapter(bd);
 
-        var outcome = await adapter.SetStatusAsync(Bead, "in_progress");
+        var outcome = await adapter.SetStatusAsync(Bead, StoredStatusWord.InProgress);
 
         Assert.True(outcome.Wrote);
         Assert.Contains("update x-1 --status in_progress", bd.Invocations);
@@ -175,7 +181,7 @@ public sealed class BdWriteTests
                 """);
         var adapter = new BdAdapter(bd);
 
-        var outcome = await adapter.RemoveLabelAsync(Bead, "human");
+        var outcome = await adapter.RemoveLabelAsync(Bead, Label("human"));
 
         Assert.False(outcome.Wrote);
         Assert.Equal("bd label has no remove subcommand.", outcome.Message);

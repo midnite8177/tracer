@@ -3,12 +3,11 @@ namespace TracerUi.Core.Look;
 /// <summary>
 /// The machine text that a person pressed the copy button for last, and what the browser did with
 /// it. One browser session holds one of these, thus a page of many buttons marks one text at a
-/// time. It starts empty, and a page that opens claims no press.
+/// time. A page that opens has no mark, because no press has happened yet.
 /// </summary>
 public sealed class CopyFeedback
 {
-    private string marked = "";
-    private CopyOutcome outcome = CopyOutcome.None;
+    private MarkedText? marked;
 
     /// <summary>
     /// Runs when the mark moves. Each copy button listens, because a press moves the mark off
@@ -18,11 +17,11 @@ public sealed class CopyFeedback
 
     /// <summary>
     /// What the copy button beside this text must say about the last press. At most one text
-    /// carries the mark, and the empty text never does, so it stays silent while the mark is empty.
+    /// carries the mark, so every other text stays silent.
     /// </summary>
     public CopyOutcome Outcome(string text) =>
-        text.Length > 0 && string.Equals(text, marked, StringComparison.Ordinal)
-            ? outcome
+        marked is { } mark && string.Equals(text, mark.Text, StringComparison.Ordinal)
+            ? mark.Outcome
             : CopyOutcome.None;
 
     /// <summary>
@@ -62,8 +61,9 @@ public sealed class CopyFeedback
 
     private void Mark(string text, CopyOutcome what)
     {
-        marked = text;
-        outcome = what;
+        marked = new MarkedText(text, what);
         Changed?.Invoke();
     }
+
+    private sealed record MarkedText(string Text, CopyOutcome Outcome);
 }

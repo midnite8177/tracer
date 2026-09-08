@@ -4,14 +4,14 @@ using TracerUi.Core.Beads;
 namespace TracerUi.Core.Boards;
 
 /// <summary>One bead of a project, with the field names of the installed bd already resolved.</summary>
-/// <param name="Priority">The priority number. An absent priority sorts after every stated one.</param>
+/// <param name="Priority">The priority number, or null when the bead states none.</param>
 /// <param name="ParentId">The id of the epic that holds this bead, or an empty string.</param>
 /// <param name="Blockers">The ids of the beads that must close before this one, as its own edges name them.</param>
 public sealed record Bead(
     string Id,
     string Title,
     string Type,
-    long Priority,
+    long? Priority,
     string Assignee,
     IReadOnlyList<string> Labels,
     string ParentId,
@@ -20,20 +20,11 @@ public sealed record Bead(
     string Status,
     string CloseReason)
 {
-    /// <summary>The priority of a bead that states none. It sorts after every stated priority.</summary>
-    /// <remarks>
-    /// The sentinel sits in the same value space as a real priority, and 9 is safe there only
-    /// because bd accepts 0 through 4. A bd that widened its range to reach 9 would make
-    /// <see cref="HasPriority"/> answer false for a bead that plainly states one, and the board
-    /// would draw that bead as stating no priority at all.
-    /// </remarks>
-    public const long NoPriority = 9;
-
     /// <summary>The label that marks a bead as one that waits on a person.</summary>
     public const string HumanLabel = "human";
 
     /// <summary>True when this bead states a priority of its own.</summary>
-    public bool HasPriority => Priority != NoPriority;
+    public bool HasPriority => Priority is not null;
 
     /// <summary>
     /// A priority as text: the number alone, which the board draws and a part of the board filter
@@ -42,8 +33,8 @@ public sealed record Bead(
     /// </summary>
     public static string PriorityAsText(long priority) => priority.ToString(CultureInfo.InvariantCulture);
 
-    /// <summary>The priority of this bead as text.</summary>
-    public string PriorityText => PriorityAsText(Priority);
+    /// <summary>The priority of this bead as text, or an empty string when it states none.</summary>
+    public string PriorityText => Priority is { } priority ? PriorityAsText(priority) : string.Empty;
 
     public bool IsEpic => Type == "epic";
 
@@ -67,7 +58,7 @@ public sealed record Bead(
             record.Text(BeadFields.IdNames),
             record.Text(BeadFields.Candidates("title")),
             record.Text(BeadFields.Candidates("type")),
-            record.Number(BeadFields.Candidates("priority"), NoPriority),
+            record.NullableNumber(BeadFields.Candidates("priority")),
             record.Text(BeadFields.Candidates("assignee")),
             record.Strings(BeadFields.Candidates("labels")),
             EpicOf(record, edges),

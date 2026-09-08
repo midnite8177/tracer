@@ -192,6 +192,16 @@ public sealed class BoardTests
     }
 
     [Fact]
+    public void SortsABeadThatStatesNoPriorityAfterEveryBeadThatStatesOne()
+    {
+        var backlog = Of(
+            ABead.Called("x-1", "None") with { Priority = null },
+            ABead.Called("x-2", "Least urgent") with { Priority = 4 });
+
+        Assert.Equal(["Least urgent", "None"], Titles(backlog, Default));
+    }
+
+    [Fact]
     public void OrdersTheBeadsUnderOneEpicByTheSameRuleAsTheEpicsThemselves()
     {
         var backlog = new Backlog(
@@ -284,7 +294,7 @@ public sealed class BoardTests
             ABead.Called("x-1", "First") with { Priority = 2 },
             ABead.Called("x-2", "Second") with { Priority = 0 },
             ABead.Called("x-3", "Third") with { Priority = 2 },
-            ABead.Called("x-4", "Fourth") with { Priority = Bead.NoPriority });
+            ABead.Called("x-4", "Fourth") with { Priority = null });
 
         Assert.Equal([0, 2], backlog.Priorities);
     }

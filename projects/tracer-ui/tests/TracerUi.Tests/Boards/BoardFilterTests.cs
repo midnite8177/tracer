@@ -182,7 +182,7 @@ public sealed class BoardFilterTests
     {
         var filter = BoardFilter.Everything.AfterAPressOnType("bug").AfterAPressOnType("bug");
 
-        Assert.Equal(string.Empty, filter.Type);
+        Assert.Null(filter.Type);
     }
 
     [Fact]
@@ -210,7 +210,7 @@ public sealed class BoardFilterTests
     {
         var filter = BoardFilter.Everything.AfterAPressOnPriority("2").AfterAPressOnPriority("2");
 
-        Assert.Equal(string.Empty, filter.Priority);
+        Assert.Null(filter.Priority);
     }
 
     [Fact]
@@ -236,7 +236,7 @@ public sealed class BoardFilterTests
     {
         var filter = BoardFilter.Everything.AfterAPressOnLabel("human").AfterAPressOnLabel("human");
 
-        Assert.Equal(string.Empty, filter.Label);
+        Assert.Null(filter.Label);
     }
 
     [Fact]
@@ -260,6 +260,6 @@ public sealed class BoardFilterTests
     {
         var filter = (BoardFilter.Everything with { Type = "Bug" }).AfterAPressOnType("bug");
 
-        Assert.Equal(string.Empty, filter.Type);
+        Assert.Null(filter.Type);
     }
 }

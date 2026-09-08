@@ -56,13 +56,23 @@ public sealed class BeadTests
     }
 
     [Fact]
-    public void HoldsNoEpicAndNoLabelsForABeadThatStatesNeither()
+    public void HoldsNoEpicNoLabelsAndNoPriorityForABeadThatStatesNone()
     {
         var bead = Read("""{"id": "x-1", "title": "Alone"}""");
 
         Assert.Equal(string.Empty, bead.ParentId);
         Assert.Empty(bead.Labels);
-        Assert.Equal(Bead.NoPriority, bead.Priority);
+        Assert.False(bead.HasPriority);
+        Assert.Null(bead.Priority);
+    }
+
+    [Fact]
+    public void StatesAPriorityThatFallsOutsideBdsUsualRangeInsteadOfReadingItAsNone()
+    {
+        var bead = Read("""{"id": "x-1", "priority": 9}""");
+
+        Assert.True(bead.HasPriority);
+        Assert.Equal(9, bead.Priority);
     }
 
     [Fact]

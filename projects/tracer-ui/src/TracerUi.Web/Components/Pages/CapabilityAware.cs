@@ -30,8 +30,8 @@ public abstract class CapabilityAware : ComponentBase
     /// <summary>Empty when this bd offers the verb; otherwise what this bd lacks.</summary>
     protected string Why(UiVerb verb) => capabilities?.MissingCapability(verb) ?? string.Empty;
 
-    /// <summary>Empty until a write of this component reported; then what the person reads about it.</summary>
-    protected string WriteMessage { get; private set; } = string.Empty;
+    /// <summary>Null until a write of this component reported; then what the person reads about it.</summary>
+    protected string? WriteMessage { get; private set; }
 
     /// <summary>True when the last write of this component succeeded, so the message reads as good news.</summary>
     protected bool Wrote { get; private set; }
@@ -43,7 +43,7 @@ public abstract class CapabilityAware : ComponentBase
     protected virtual string WhenWritten => "bd made the change.";
 
     /// <summary>Drops the report of the last write, so that a new form opens with no stale message.</summary>
-    protected void ForgetTheLastWrite() => WriteMessage = string.Empty;
+    protected void ForgetTheLastWrite() => WriteMessage = null;
 
     /// <summary>
     /// Runs one create and reports it. A create takes more than one write, so a bead can exist and

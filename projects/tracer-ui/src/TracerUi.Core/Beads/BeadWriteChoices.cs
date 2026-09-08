@@ -19,7 +19,7 @@ public static class BeadWriteChoices
     /// error of the app.
     /// </summary>
     public static IReadOnlyList<string> Types { get; } =
-        ["bug", "feature", "task", "epic", "chore", "decision"];
+        [.. Enum.GetValues<BeadTypeWord>().Select(BeadType.Word)];
 
     /// <summary>
     /// The types that quick create offers. It leaves out the epic, because an epic takes a second
@@ -30,7 +30,7 @@ public static class BeadWriteChoices
         [.. Types.Where(type => type != EpicType)];
 
     /// <summary>The type that bd gives a bead which holds other beads.</summary>
-    public const string EpicType = "epic";
+    public const string EpicType = BeadType.Epic;
 
     /// <summary>
     /// Every surface that offers a quick create says this, so the promise reads the same wherever a

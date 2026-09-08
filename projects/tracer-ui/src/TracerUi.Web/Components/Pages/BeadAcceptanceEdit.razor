@@ -33,9 +33,9 @@
 else
 {
     <div class="bead-acceptance-edit" tabindex="-1" @ref="Box" @onkeydown="CloseOnEscape">
-        @if (Refusal.Length > 0)
+        @if (Refusal is { } refusal)
         {
-            <p class="bead-prose-refusal">@Refusal</p>
+            <p class="bead-prose-refusal">@refusal</p>
         }
         else
         {

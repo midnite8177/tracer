@@ -14,6 +14,19 @@ public sealed record Backlog(
 {
     private const string NoAssignee = "?";
 
+    private static readonly IComparer<long?> ByPriorityWithAbsentLast =
+        Comparer<long?>.Create(ComparePriorityWithAbsentLast);
+
+    private static int ComparePriorityWithAbsentLast(long? a, long? b)
+    {
+        if (a is null || b is null)
+        {
+            return a is null && b is null ? 0 : a is null ? 1 : -1;
+        }
+
+        return a.Value.CompareTo(b.Value);
+    }
+
     private readonly HashSet<string> ready = [.. ReadyIds];
 
     private readonly Dictionary<string, Bead> byId =
@@ -46,10 +59,7 @@ public sealed record Backlog(
     /// that states none carries no priority a person can press, so it names none here either.
     /// </summary>
     public IReadOnlyList<long> Priorities =>
-        [.. Beads.Where(bead => bead.HasPriority)
-            .Select(bead => bead.Priority)
-            .Distinct()
-            .Order()];
+        [.. Beads.Select(bead => bead.Priority).OfType<long>().Distinct().Order()];
 
     /// <summary>The epics of this backlog, in the order that bd gave them.</summary>
     public IReadOnlyList<Bead> Epics => [.. Beads.Where(bead => bead.IsEpic)];
@@ -61,7 +71,7 @@ public sealed record Backlog(
     public IReadOnlyList<Bead> BeadsThatMatch(BoardFilter filter) =>
         [.. Beads
             .Where(bead => filter.Shows(bead.Status) && filter.Matches(bead, EpicsAbove(bead)))
-            .OrderBy(bead => bead.Priority)
+            .OrderBy(bead => bead.Priority, ByPriorityWithAbsentLast)
             .ThenBy(bead => bead.Title, StringComparer.Ordinal)];
 
     /// <summary>
@@ -136,7 +146,7 @@ public sealed record Backlog(
     private IEnumerable<Bead> Sorted(IEnumerable<Bead> beads) =>
         beads
             .OrderBy(bead => ready.Contains(bead.Id) ? 0 : 1)
-            .ThenBy(bead => bead.Priority)
+            .ThenBy(bead => bead.Priority, ByPriorityWithAbsentLast)
             .ThenBy(bead => bead.Title, StringComparer.Ordinal);
 
     // The beads that each bead of one backlog holds, and the answer to which of them the board draws.

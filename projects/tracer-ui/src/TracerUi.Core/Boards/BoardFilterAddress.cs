@@ -55,10 +55,10 @@ public static class BoardFilterAddress
 
         return new BoardFilter(
             Status: query.GetValueOrDefault(Status, string.Empty),
-            Type: query.GetValueOrDefault(Type, string.Empty),
-            Priority: query.GetValueOrDefault(Priority, string.Empty),
-            Label: query.GetValueOrDefault(Label, string.Empty),
-            Epic: query.GetValueOrDefault(Epic, string.Empty),
+            Type: query.GetValueOrDefault(Type),
+            Priority: query.GetValueOrDefault(Priority),
+            Label: query.GetValueOrDefault(Label),
+            Epic: query.GetValueOrDefault(Epic),
             Text: query.GetValueOrDefault(Text, string.Empty),
             RequiresHumanLabel: IsTrue(query, NeedsYou),
             RequiresNoDemoLine: IsTrue(query, NoDemo),
@@ -66,9 +66,9 @@ public static class BoardFilterAddress
             ShowClosed: IsTrue(query, Closed));
     }
 
-    private static void Add(List<string> parts, string name, string value)
+    private static void Add(List<string> parts, string name, string? value)
     {
-        if (value.Length > 0)
+        if (value is { Length: > 0 })
         {
             parts.Add($"{name}={Uri.EscapeDataString(value)}");
         }

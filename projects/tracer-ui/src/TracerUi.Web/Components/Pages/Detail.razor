@@ -11,10 +11,10 @@
 
 <PageTitle>@TheTitleOfThisPage</PageTitle>
 
-@if (lost.Length > 0)
+@if (addressedProject is AddressedProject.Lost lostProject)
 {
     <BeadHead Id=""><Title><h1>@Id</h1></Title></BeadHead>
-    <p class="text-danger bead-message">@lost</p>
+    <p class="text-danger bead-message">@lostProject.Reason</p>
 }
 else if (Selection.Current is null)
 {
@@ -32,7 +32,7 @@ else if (read.Detail is AReadOfTheBead.Unread unreadBead)
     <BeadHead Id=""><Title><h1>@Id</h1></Title></BeadHead>
     <p class="text-danger bead-message">@unreadBead.Reason</p>
 }
-else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && readProject is { } project)
+else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && addressedProject is AddressedProject.Found { Project: var project })
 {
     var bead = new BeadAddress(project, detail.Bead.Id);
     var facts = detail.BacklogFacts;
@@ -119,11 +119,8 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && readProjec
     public string Id { get; set; } = string.Empty;
 
     private BeadDetailRead? read;
-    private ProjectPath? readProject;
-    private string lost = string.Empty;
+    private AddressedProject? addressedProject;
 
-    // The title of the bead, which the browser tab carries. A page that has read no bead yet, or
-    // that read none at all, names it by the id that the address gave.
     private string TheTitleOfThisPage =>
         read?.Detail is AReadOfTheBead.Given { Value: var detail } ? detail.Bead.Title : Id;
 
@@ -145,8 +142,9 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && readProjec
 
         if (!Selection.Select(project))
         {
-            lost = $"{project.DirectoryName} is not in the registry any more, "
-                + "so this address names no project that holds this bead.";
+            addressedProject = new AddressedProject.Lost(
+                $"{project.DirectoryName} is not in the registry any more, "
+                + "so this address names no project that holds this bead.");
         }
     }
 
@@ -160,7 +158,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && readProjec
             return;
         }
 
-        if (lost.Length > 0)
+        if (addressedProject is AddressedProject.Lost)
         {
             return;
         }
@@ -174,7 +172,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && readProjec
 
     protected override async Task OnParametersSetAsync()
     {
-        if (lost.Length > 0 || Selection.Current is null)
+        if (addressedProject is AddressedProject.Lost || Selection.Current is null)
         {
             return;
         }
@@ -192,15 +190,14 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && readProjec
         StateHasChanged();
     }
 
-    // Reads the bead again, so that the page shows what bd holds after a write.
     private async Task Reload()
     {
-        if (Selection.Current is null)
+        if (Selection.Current is not { } project)
         {
             return;
         }
 
-        readProject = Selection.Current;
-        read = await Details.ReadAsync(readProject, Id);
+        addressedProject = new AddressedProject.Found(project);
+        read = await Details.ReadAsync(project, Id);
     }
 }
