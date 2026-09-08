@@ -5,9 +5,13 @@ public static class DirectoryBrowser
 {
     public static DirectoryListing Browse(string path)
     {
-        var current = new DirectoryInfo(path);
-        return new DirectoryListing(current.FullName, current.Parent?.FullName, SubdirectoriesOf(current));
+        DirectoryInfo current = new(path);
+        return new DirectoryListing(current.FullName, current.Parent?.FullName, SubdirectoriesOf(current), Roots());
     }
+
+    // Gives one root for each drive on Windows, or a single root elsewhere.
+    private static IReadOnlyList<string> Roots() =>
+        OperatingSystem.IsWindows() ? Directory.GetLogicalDrives() : [Path.DirectorySeparatorChar.ToString()];
 
     // Gives an empty list when the person is not permitted to read the directory.
     private static IReadOnlyList<DirectoryEntry> SubdirectoriesOf(DirectoryInfo current)

@@ -6,12 +6,32 @@
     person tells the entries of this directory from the rest of the page.
 */
 
-.browser-here {
+/* The row of filesystem roots that a person can jump to, such as the drives on Windows. */
+.browser-roots {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--tracer-space-3);
+    margin-bottom: var(--tracer-space-2);
+}
+
+.browser-root {
+    font-size: var(--tracer-text-quiet);
+}
+
+/* The path box and its Go button, which let a person type a path and jump to it. */
+.browser-path-row {
+    display: flex;
+    gap: var(--tracer-space-2);
+    margin-bottom: var(--tracer-space-2);
+}
+
+.browser-path-input {
     background-color: var(--tracer-canvas-subtle);
     border: 1px solid var(--tracer-border);
     border-radius: var(--tracer-radius);
+    flex: 1;
     font-size: var(--tracer-text-quiet);
-    margin-bottom: var(--tracer-space-2);
     padding: var(--tracer-space-2) var(--tracer-space-3);
 }
 

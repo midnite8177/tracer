@@ -1,8 +1,9 @@
 namespace TracerUi.Tests;
 
 /// <summary>
-/// A fact that only a Unix system can prove, because it uses a Unix file mode.
-/// Windows has no such mode, so Windows skips the fact.
+/// A fact that only a non-Windows system can prove, such as one that uses a
+/// Unix file mode or that assumes a single filesystem root. Windows skips
+/// the fact.
 /// </summary>
 public sealed class UnixFactAttribute : FactAttribute
 {

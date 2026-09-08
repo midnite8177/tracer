@@ -65,6 +65,27 @@ public class DirectoryBrowserTests
         Assert.Equal([".config", "visible"], listing.Directories.Select(entry => entry.Name));
     }
 
+    [WindowsFact]
+    public void GivesTheDriveLettersAsRootsOnWindows()
+    {
+        using var temp = new TempDirectory();
+
+        var listing = DirectoryBrowser.Browse(temp.Path);
+
+        Assert.Contains(Path.GetPathRoot(temp.Path), listing.Roots);
+    }
+
+    [UnixFact]
+    [UnsupportedOSPlatform("windows")]
+    public void GivesASingleRootOnASingleRootedSystem()
+    {
+        using var temp = new TempDirectory();
+
+        var listing = DirectoryBrowser.Browse(temp.Path);
+
+        Assert.Equal([Path.DirectorySeparatorChar.ToString()], listing.Roots);
+    }
+
     [UnixFact]
     [UnsupportedOSPlatform("windows")]
     public void ShowsAnEmptyListForADirectoryThatThePersonCannotRead()

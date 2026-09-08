@@ -8,7 +8,21 @@
 
 <p class="text-muted">Browse to a repository that holds a .beads directory.</p>
 
-<div class="browser-here machine-text">@listing.CurrentPath</div>
+@if (listing.Roots.Count > 1)
+{
+    <div class="browser-roots">
+        <span class="text-muted">Drives:</span>
+        @foreach (string root in listing.Roots)
+        {
+            <button type="button" class="btn btn-link p-0 machine-text browser-root" @onclick="() => Browse(root)">@root</button>
+        }
+    </div>
+}
+
+<div class="browser-path-row">
+    <input class="form-control machine-text browser-path-input" @bind="pathInput" @bind:event="oninput" @onkeydown="OnPathKeyDown" aria-label="Path" />
+    <button type="button" class="btn btn-secondary" @onclick="GoToTypedPath">Go</button>
+</div>
 
 <p class="@(validation.IsValid ? "text-success" : "text-danger")">
     @(validation.IsValid ? "This directory is a beads project." : validation.Message)
@@ -45,6 +59,7 @@
     private DirectoryListing listing = null!;
     private ProjectPathValidation validation = null!;
     private string refusal = string.Empty;
+    private string pathInput = string.Empty;
 
     protected override void OnInitialized() =>
         Browse(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
@@ -54,6 +69,27 @@
         listing = DirectoryBrowser.Browse(path);
         validation = ProjectPathValidator.Validate(listing.CurrentPath);
         refusal = string.Empty;
+        pathInput = listing.CurrentPath;
+    }
+
+    private void OnPathKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            GoToTypedPath();
+        }
+    }
+
+    private void GoToTypedPath()
+    {
+        if (ProjectPath.TryFrom(pathInput, out ProjectPath? path))
+        {
+            Browse(path.Value);
+        }
+        else
+        {
+            validation = ProjectPathValidation.Invalid("This path is not valid.");
+        }
     }
 
     private async Task Add()

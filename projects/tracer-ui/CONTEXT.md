@@ -216,6 +216,12 @@ The absolute directory of a project, after validation. It is the identity
 of a project: two projects are the same project when their paths match.
 _Avoid_: Location, root, directory
 
+**Filesystem root**:
+One top of a directory tree that the directory browser can jump to
+directly: each drive on Windows, or `/` on other systems. It is not a
+Project path, because a root is rarely a project itself.
+_Avoid_: Root, drive, volume
+
 **Project registry**:
 The stored list of project paths. It lives in the user configuration
 directory, not in any repository.
