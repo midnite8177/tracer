@@ -1,6 +1,6 @@
 # tracer — Matt Pocock's skills on a beads tracker
 
-Seed revision 26 (2026-09-07). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
+Seed revision 28 (2026-09-09). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
 
 ## If you were handed this document
 
@@ -51,8 +51,15 @@ When asked to adopt or align a project to it:
    bash). No `jq`, no GitHub CLI. **Detect the Python command once**:
    `python3 --version`, else `python --version`; record which works as
    `<py>` and use it wherever this document writes `python3` (the three
-   skill bodies, the status line command). Windows usually has `python`
-   only; macOS and Linux usually have `python3`.
+   skill bodies, the status line command). Try `python3 --version`,
+   `python --version`, `py -3 --version`, in that order. Windows usually
+   has `python` or `py -3` only; macOS and Linux usually have `python3`.
+   On Windows, `python` may be the Microsoft Store stub that opens the
+   Store instead of running; if it prints nothing or opens a window,
+   treat it as not found. If none of the three work, do not search the
+   disk (no `find`, `where`, `Get-ChildItem`, no poking through pyenv,
+   conda, uv or Homebrew); ask the human for the path or to install
+   Python 3.8+, and stop until they answer.
 6. **Fetch upstream.** Pinned version: **`v1.2.3`** of
    `https://github.com/mattpocock/skills` (the pin is the one line that
    changes when taking upstream updates). Clone it shallow at that tag into
@@ -88,7 +95,7 @@ When asked to adopt or align a project to it:
 
    ```json
    { "name": "tracer",
-     "version": "1.2.3+tracer.26",
+     "version": "1.2.3+tracer.28",
      "description": "Matt Pocock's skills on a beads tracker",
      "author": { "name": "<the human's name>" } }
    ```
@@ -1321,10 +1328,7 @@ if __name__ == "__main__":
 
 Skills from other MIT-licensed sets, carried verbatim because they are
 small and self-contained; a second upstream pin would cost more than it
-saves. Each records its source and the commit it was copied from. MIT asks
-that the copyright line and the permission notice travel with the text, so
-a repository that publishes this document publishes them too, in a
-`THIRD-PARTY-NOTICES.md` beside its own license. On a
+saves. Each records its source and the commit it was copied from. On a
 re-adopt, write the file exactly as below; to take an upstream change,
 update the text here and bump the seed.
 
@@ -1784,7 +1788,7 @@ A comment carries what the code cannot. If the code could carry it, change the c
 | **Sticky Note** | `TODO`, `FIXME`, `HACK`, `XXX` | Work hidden in code instead of the tracker. Never swept | Create a tracked item; delete the comment. Zero tolerance |
 | **Zombie Code** | Commented-out code | Nobody deletes it; it rots forever | Delete. VCS remembers |
 | **Ship's Log** | Change history at the top of a file | VCS's job. Always incomplete | Delete |
-| **Autograph** | `// added by Sam` · `@author` | VCS's job. Invites ownership silos | Delete |
+| **Autograph** | `// added by Jeff` · `@author` | VCS's job. Invites ownership silos | Delete |
 | **Fence Post** | `#region` · `#pragma region` · `// ---- Helpers ----` · `# ===== Utils =====` | Fences inside a room mean the room is too big or mixes responsibilities | Extract Class, Move Function. Exception: generated code |
 | **Breadcrumb** | `} // end while` · `} // namespace foo` · `# end if` | The block is too long to see its end | Shorten it. No exceptions; editors show the matching brace |
 | **Gossip** | Describes what another file or class does | Won't be updated when that file changes | Move the comment to where the constraint lives. If it is a coupling, prefer a test or assert that fails when the coupling breaks |
@@ -1846,7 +1850,7 @@ slashes everywhere.
 
 ```
 Opus 4.1 · xhigh │ ctx 162k / 200k ▂▃▄▆▇ ⚠ >150k │ $4.87 · $4.12/h
-cache 158k read · 4k write · 85k total · 🔥 3:42                    campfire
+cache 158k read · 4k write · 85k total · 🔥 3:42 (2:47pm)           campfire
 ```
 
 | Segment | Source | Rule |
@@ -1859,7 +1863,7 @@ cache 158k read · 4k write · 85k total · 🔥 3:42                    campfir
 | Cost | `cost.total_cost_usd`, `.total_duration_ms` | `$x.xx · $y.yy/h`; the rate appears after 60 s of wall clock |
 | Cache read / write | `current_usage.cache_read_input_tokens` / `.cache_creation_input_tokens` | last call; write amber at 8k, red at 30k |
 | Cache total | `prompt_cache.cache_write_tokens` | session-wide writes, dim |
-| Cache timer | `prompt_cache.warm`, `.expires_at` | `🔥 m:ss` green, amber under 60 s; `cold` when expired |
+| Cache timer | `prompt_cache.warm`, `.expires_at` | macOS/Linux: `🔥 m:ss (h:mmpm)`, countdown plus the local clock time it goes cold. Native Windows: `🔥 until h:mmpm`, no countdown (no refresh timer there). Green, amber under 60 s; `cold` when expired or `warm=false` |
 | Label | `workspace.repo.name`, else `P4CLIENT`, else `.p4config` walk-up, else folder name | dim, right-aligned via `COLUMNS` |
 
 `total_input_tokens` is the whole prompt of the last call, cache reads and
@@ -1871,7 +1875,19 @@ intended reading. Verified against Claude Code 2.1.263: `cost.total_cost_usd`
 includes subagents and Claude Code's own small housekeeping calls;
 `prompt_cache.expires_at` is epoch seconds; the script re-runs on each
 assistant message, after `/compact`, on mode changes, when the cache
-expiry is reached, and on the `refreshInterval` timer.
+expiry is reached, and on the `refreshInterval` timer. **Windows launches
+the command through Git's `bash.exe`** even for plain `python`. With
+several Claude windows open, timer-driven spawns piled up and
+crash-stormed bash, sh and git machine-wide, at intervals of 1, 15, and
+30 seconds, and hit coworkers too. Working theory: the spawns queue
+behind slow shell work Claude runs during coding tasks (a `find /` under
+MSYS is a huge I/O hit), and the interval only sets how fast the backlog
+grows. Decision: **no `refreshInterval` on native Windows.** Event-driven
+refresh still fires on each message and at cache expiry, and the script
+detects Windows and switches the cache segment to the clock-time form so
+nothing sits stale. (Related, not done: a Bash deny rule or CLAUDE.md
+line steering Claude away from `find /` on Windows would address the
+root cause.)
 
 **Deliberately absent:** rate limits, PR state, git dirty/ahead/behind,
 Perforce opened files, cache hit percent (absolute tokens instead), and
@@ -1892,7 +1908,8 @@ constants at the top of the script.
 | `CC_STATUS_SMART_ZONE` | `150000` | amber threshold, absolute tokens |
 | `CC_STATUS_WRITE_WARN` | `8000` | last-call cache-write tokens for amber |
 | `CC_STATUS_WRITE_BAD` | `30000` | last-call cache-write tokens for red |
-| `CC_STATUS_SPARK` | `1` | `0` hides the sparkline |
+| `CC_STATUS_SPARK` | `1` | `0` hides the sparkline (the state file is still written so compaction counting keeps working) |
+| `CC_STATUS_COUNTDOWN` | `1`; `0` on native Windows | `0` renders `until h:mmpm` instead of a countdown |
 
 Flags: `--demo` renders four built-in payloads (home, work, post-compact
 nulls, garbage) for a no-install smoke test; `--dump` appends every raw
@@ -1909,19 +1926,34 @@ traceback before touching settings. Then read the target settings file,
 parse it, add or replace only the top-level `statusLine` key, keep every
 other key as it was, and write it back with two-space indentation; if a
 `statusLine` was already there, tell the human what it was and keep the
-old value in the report. The value:
+old value in the report. The value depends on the OS.
+
+macOS and Linux (including WSL):
 
 ```json
 { "statusLine": { "type": "command", "command": "python3 /absolute/path/to/statusline.py", "refreshInterval": 1 } }
 ```
 
+Native Windows, **no `refreshInterval` key at all**:
+
+```json
+{ "statusLine": { "type": "command", "command": "python C:/Users/jeff/.claude/statusline.py" } }
+```
+
+The Windows rule is a hard constraint, for the reason above. Do not add
+the key there; if the human asks for a live countdown, say why not. The
+bar still updates on every message, `/compact`, mode change, and cache
+expiry, and the script shows the expiry as a clock time
+(`🔥 until 2:47pm`) so it never looks stale.
+
 The path **must be absolute** (Claude Code runs it from the session's
 current directory, which moves; a relative path goes blank with no
 error) and uses **forward slashes on every platform**
-(`"python C:/Users/you/.claude/statusline.py"` on Windows). Write the
-real home path, not `~`. `refreshInterval: 1` makes the cache timer tick
-every second; it costs nothing (local, about 25 ms, no API tokens); omit
-it if the human would rather the bar update only per message.
+(`"python C:/Users/jeff/.claude/statusline.py"` on Windows). Write the
+real home path, not `~`. On macOS/Linux the timer costs nothing (local,
+about 25 ms, no API tokens); omit `refreshInterval` if the human would
+rather the bar update only per message, and they can set
+`CC_STATUS_COUNTDOWN=0` to get the clock-time form there too.
 
 **Verify end to end.** Pipe this through the exact configured command
 with `COLUMNS=120` set, and expect a first line starting
@@ -1953,7 +1985,10 @@ Rules this script keeps:
 
 Install (absolute path, forward slashes on every platform):
   { "statusLine": { "type": "command", "command": "python3 /abs/path/statusline.py" } }
-Add "refreshInterval": 1 to the statusLine object if you want the cache timer to tick live.
+On macOS/Linux add "refreshInterval": 1 for a live cache countdown. On native Windows do NOT set
+refreshInterval: Claude Code launches this command through git's bash.exe, and timer-driven spawns pile up
+behind slow shell work (e.g. a `find /`) until bash/sh/git crash machine-wide. Windows renders the cache
+expiry as a clock time instead of a countdown, and the bar still updates on every message.
 
 Debug:
   python3 statusline.py --demo          # render the built-in sample payloads
@@ -1970,6 +2005,9 @@ CACHE_WRITE_BAD   = int(os.environ.get("CC_STATUS_WRITE_BAD", 30_000))    # ...a
 LINES             = int(os.environ.get("CC_STATUS_LINES", 2))             # 1 or 2
 SPARKLINE         = os.environ.get("CC_STATUS_SPARK", "1") != "0"         # context history sparkline (needs state file)
 ASCII             = os.environ.get("CC_STATUS_ASCII", "0") == "1"         # no emoji, no box-drawing
+# Native Windows gets no refreshInterval (see the docstring), so a countdown would sit stale between
+# messages. There the cache segment shows only the wall-clock expiry time. WSL is posix and keeps the countdown.
+COUNTDOWN         = os.environ.get("CC_STATUS_COUNTDOWN", "0" if os.name == "nt" else "1") == "1"
 SPARK_POINTS      = 12
 STATE_DIR         = os.path.join(os.path.expanduser("~"), ".claude", "statusline-state")
 
@@ -2028,6 +2066,15 @@ def epoch(v):
 def mmss(seconds):
     seconds = max(0, int(seconds))
     return f"{seconds // 60}:{seconds % 60:02d}"
+
+def clock12(ts):
+    """Epoch seconds -> local 12-hour time like 2:47pm. Portable (no %-I on Windows)."""
+    try:
+        lt = time.localtime(ts)
+        h = lt.tm_hour % 12 or 12
+        return f"{h}:{lt.tm_min:02d}{'am' if lt.tm_hour < 12 else 'pm'}"
+    except Exception:
+        return "?"
 
 # ----------------------------------------------------------------------------- state (sparkline + turn tracking)
 def load_state(session_id):
@@ -2176,7 +2223,7 @@ def seg_cache(d, now):
     if warm and exp:
         left = exp - now
         if left > 0:
-            t = f"{FLAME} {mmss(left)}"
+            t = f"{FLAME} {mmss(left)} ({clock12(exp)})" if COUNTDOWN else f"{FLAME} until {clock12(exp)}"
             parts.append(green(t) if left > 60 else amber(t))
         else:
             parts.append(dim("cold"))
@@ -2232,7 +2279,7 @@ def render(d, now=None):
 DEMOS = {
     "home, warm cache, past smart zone": {
         "model": {"display_name": "Opus 4.1"}, "effort": {"level": "xhigh"}, "thinking": {"enabled": True},
-        "session_id": "demo-1", "workspace": {"current_dir": "/Users/you/src/campfire", "repo": {"name": "campfire"}},
+        "session_id": "demo-1", "workspace": {"current_dir": "/Users/jeff/src/campfire", "repo": {"name": "campfire"}},
         "context_window": {"total_input_tokens": 162_400, "context_window_size": 200_000, "used_percentage": 81,
                            "current_usage": {"cache_read_input_tokens": 158_000, "cache_creation_input_tokens": 4_400}},
         "prompt_cache": {"warm": True, "expires_at": None, "cache_write_tokens": 84_921, "hit_ratio": 0.91},
@@ -2241,7 +2288,7 @@ DEMOS = {
     },
     "work, p4, cold cache, big write": {
         "model": {"display_name": "Sonnet 5"}, "effort": {"level": "high"}, "thinking": {"enabled": True},
-        "session_id": "demo-2", "workspace": {"current_dir": "C:/p4/your_ws/tools/pipeline"},
+        "session_id": "demo-2", "workspace": {"current_dir": "C:/p4/jeff_ws/tools/pipeline"},
         "context_window": {"total_input_tokens": 84_000, "context_window_size": 1_000_000, "used_percentage": 8,
                            "current_usage": {"cache_read_input_tokens": 0, "cache_creation_input_tokens": 84_000}},
         "prompt_cache": {"warm": False, "cache_write_tokens": 190_000},
@@ -2342,6 +2389,8 @@ back in, that is the signal to reread this document.
 Read this first on a re-adopt. Each entry is what changed since the
 previous revision, so a same-pin re-adopt knows where to look.
 
+- **28**: Status bar draft 3: no `refreshInterval` at all on native Windows (timer-driven spawns through `bash.exe` crash-stormed at 1, 15, and 30 s); the script detects Windows and renders the cache expiry as `🔥 until h:mmpm`; `CC_STATUS_COUNTDOWN` added to the tuning table; install shows the macOS/Linux and Windows settings values side by side.
+- **27**: Status bar draft 2: cache timer shows the local clock time it goes cold; `refreshInterval` is 1 on macOS/Linux and 15 on Windows (bash.exe spawn storm); step 5 Python detection tries `py -3`, treats the Store stub as absent, and never searches the disk.
 - **26**: Block 5 replaced with the shared status bar from `statusline.md` / `statusbar-seed.md`: two lines, cost per hour, cache timer, sparkline and compaction count, Perforce-aware label, no subprocesses, `--demo` and `--dump`, environment-variable tuning, user-wide or project install.
 - **25**: American spellings throughout the seed's own prose and in `smells.md` (catalog, behavior, labeled); third-party verbatim blocks untouched.
 - **24**: `code-review` rewritten (P4): three lanes in separate subagents (Comments, Standards, Spec) against a shipped `smells.md` catalog (Block 4e: full Fowler set with language notes, twenty comment smells, allowed set, Deodorant test, mechanical vs judgment); findings carry Why, Fix and Confidence; one verdict per lane; the review-fix menu in P1 gains a Comments axis.
