@@ -133,8 +133,10 @@ a marker while LAN mode holds. See
   history. The notes stay read-only until you ask for the
   rewrite that replaces them, because `bd` keeps no earlier copy of them.
   The page reads the bead again after each write, and the board shows the
-  result when you go back to it. A verb that your `bd` does not have is
-  disabled, and its tooltip names what is missing.
+  result when you go back to it. The bead stays on the screen through
+  that read, dimmed and marked once it takes a moment, so a press never
+  looks like it missed. A verb that your `bd` does not have is disabled,
+  and its tooltip names what is missing.
 - **Triage on many beads.** Tick the beads on the board, an epic among
   them, and the action bar appears. It offers six categories: add or
   remove a label, close with a reason, defer, move into an epic, set the
@@ -178,6 +180,10 @@ a marker while LAN mode holds. See
   writes from a terminal, and a write of your own, both drop that copy,
   and the board reads the beads again with no click from you. One project
   changes at a time: a write in one repository leaves the others alone.
+  A write of your own marks that read: the rows stay on the screen,
+  dimmed, until it lands. A write from a terminal reads the beads again
+  just as quietly as before, with no mark, because nobody here pressed
+  anything.
 - **The work that waits on you.** One view gathers the beads that carry
   the `human` label from every project in your registry, in groups by
   project. It asks the same question that the built-in filter asks on one

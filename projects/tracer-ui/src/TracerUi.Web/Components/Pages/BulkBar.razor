@@ -4,11 +4,15 @@
 @inherits CapabilityAware
 @inject BulkWriter Bulk
 
-@if (Count > 0 || report is not null)
+@if (Count > 0 || plan is not null)
 {
 <div class="board-bulk-bar">
     @if (Count > 0)
     {
+    @if (!Probed)
+    {
+        <ProbePending />
+    }
     <div class="row g-2 align-items-end">
         <div class="col-auto">
             <strong>@Count selected</strong>
@@ -95,7 +99,7 @@
         }
 
         <div class="col-auto">
-            <button class="btn btn-sm btn-primary" disabled="@(!Can(Category.Write))" @onclick="Review">Review</button>
+            <button id="bulk-review" class="btn btn-sm btn-primary" disabled="@(!Can(Category.Write))" @onclick="Review">Review</button>
             <button class="btn btn-sm btn-outline-secondary" @onclick="ClearTheSelection">
                 Clear the selection
             </button>
@@ -106,25 +110,6 @@
     {
         <p class="text-danger board-bulk-message">@Why(Category.Write)</p>
     }
-    }
-
-    @if (report is not null)
-    {
-        <div class="mt-2">
-            <p class="@(report.Whole ? "text-success" : "text-danger") board-bulk-message">@report.Summary</p>
-            @if (report.Failures.Count > 0)
-            {
-                <ul class="board-bulk-failures">
-                    @foreach (var failure in report.Failures)
-                    {
-                        <li><BeadId Id="@failure.BeadId" Quiet="false" /> @failure.Title — @failure.Message</li>
-                    }
-                </ul>
-                <button class="btn btn-sm btn-outline-danger" @onclick="SelectTheFailures">
-                    Select the beads that failed
-                </button>
-            }
-        </div>
     }
 
     @if (plan is not null)
@@ -141,12 +126,13 @@
                         {
                             <th>The reason this bead closes with</th>
                         }
+                        <th>State</th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach (var step in plan.Steps)
                     {
-                        <tr>
+                        <tr class="board-bulk-row board-bulk-row-@RowWord(step.BeadId)">
                             <td><BeadId Id="@step.BeadId" Quiet="false" /></td>
                             <td>@step.Title</td>
                             @if (plan.Action.Verb == BulkVerb.CloseWithAReason)
@@ -154,23 +140,47 @@
                                 <td>
                                     <input class="form-control form-control-sm"
                                            value="@step.Reason"
+                                           disabled="@(committing || Ended)"
                                            @onchange="changed => SetTheReason(step.BeadId, changed)" />
                                 </td>
                             }
+                            <td class="board-bulk-row-state">
+                                <span class="board-bulk-row-word">@RowWord(step.BeadId)</span>
+                                <WorkingMark Writing="@(RowState(step.BeadId).State == BulkRowState.Writing)" Immediate="true" />
+                                @if (RowState(step.BeadId).State == BulkRowState.Failed)
+                                {
+                                    <span class="board-bulk-row-message">@RowState(step.BeadId).Message</span>
+                                }
+                            </td>
                         </tr>
                     }
                 </tbody>
             </table>
 
-            @if (!plan.IsReady)
+            @if (!Ended && !plan.IsReady)
             {
                 <p class="text-danger board-bulk-message">@plan.Problem</p>
             }
 
-            <button class="btn btn-sm btn-danger" disabled="@(!plan.IsReady || committing)"
-                    @onclick="Commit">Commit this action</button>
-            <button class="btn btn-sm btn-outline-secondary" disabled="@committing"
-                    @onclick="Cancel">Cancel</button>
+            @if (!Ended)
+            {
+                <button id="bulk-commit" class="btn btn-sm btn-danger" disabled="@(!plan.IsReady || committing)"
+                        aria-busy="@CommittingAriaBusy"
+                        @onclick="Commit">Commit this action</button>
+                <button id="bulk-cancel" class="btn btn-sm btn-outline-secondary" disabled="@committing"
+                        @onclick="Cancel">Cancel</button>
+            }
+            else
+            {
+                <p class="@(report!.Whole ? "text-success" : "text-danger") board-bulk-message">@report.Summary</p>
+                @if (report.Failures.Count > 0)
+                {
+                    <button id="bulk-retry" class="btn btn-sm btn-outline-danger" @onclick="SelectTheFailures">
+                        Select the beads that failed
+                    </button>
+                }
+                <button id="bulk-close" class="btn btn-sm btn-outline-secondary" @onclick="Close">Close</button>
+            }
         </div>
     }
 </div>
@@ -209,42 +219,64 @@
     private BulkPlan? plan;
     private BulkReport? report;
     private bool committing;
+    private readonly Dictionary<string, BulkRowStatus> rowStates = new(StringComparer.Ordinal);
 
     private int Count => Selected.Count;
 
+    // aria-busy takes a string state, not a bool attribute, as CapabilityAware.AriaBusy does for a
+    // single write; a bulk commit runs no single write, so it carries the same rule on its own flag.
+    private string CommittingAriaBusy => committing ? "true" : "false";
+
     private BulkCategory Category => BulkCategory.Named(categoryName);
+
+    private bool Ended => report is not null;
 
     protected override ProjectPath OfProject => Project;
 
     // Drops a plan that the selection outgrew. The row checkboxes stay live while a plan stands, so
-    // a plan that no longer names the beads of the selection would act on the wrong beads.
+    // a plan that no longer names the beads of the selection would act on the wrong beads. A plan
+    // that already ended is exempt: its own run is what changes the selection, by taking a written
+    // bead out of the board's own filter, and the table must survive exactly that read.
     protected override void OnParametersSet()
     {
-        if (plan is not null && !plan.Steps.Select(step => step.BeadId).SequenceEqual(Selected.Select(bead => bead.Id)))
+        if (!Ended && plan is not null
+            && !plan.Steps.Select(step => step.BeadId).SequenceEqual(Selected.Select(bead => bead.Id)))
         {
-            plan = null;
+            Forget();
         }
     }
 
-    // A new category asks a new question, so the old plan and the old report go away.
     private void Restart()
     {
         verb = Category.Verbs[0];
         value = string.Empty;
-        plan = null;
-        report = null;
+        Forget();
     }
 
     private void Review()
     {
-        report = null;
         plan = BulkPlan.For(new BulkAction(verb, value), Selected);
+        report = null;
+        rowStates.Clear();
+        foreach (var step in plan.Steps)
+        {
+            rowStates[step.BeadId] = BulkRowStatus.Waiting;
+        }
     }
 
     private void SetTheReason(string beadId, ChangeEventArgs changed) =>
         plan = plan?.WithReasonFor(beadId, changed.Value?.ToString() ?? string.Empty);
 
-    private void Cancel() => plan = null;
+    private void Cancel() => Forget();
+
+    private void Close() => Forget();
+
+    private void Forget()
+    {
+        plan = null;
+        report = null;
+        rowStates.Clear();
+    }
 
     private async Task Commit()
     {
@@ -254,10 +286,29 @@
         }
 
         committing = true;
-        report = await Bulk.RunAsync(Project, plan);
+        report = await Bulk.RunAsync(Project, plan, ReportRow);
         committing = false;
-        plan = null;
     }
+
+    private void ReportRow(string beadId, BulkRowStatus status)
+    {
+        rowStates[beadId] = status;
+        StateHasChanged();
+    }
+
+    private BulkRowStatus RowState(string beadId) =>
+        rowStates.TryGetValue(beadId, out var status) ? status : BulkRowStatus.Waiting;
+
+    private string RowWord(string beadId) => Word(RowState(beadId).State);
+
+    private static string Word(BulkRowState state) => state switch
+    {
+        BulkRowState.Waiting => "waiting",
+        BulkRowState.Writing => "writing",
+        BulkRowState.Written => "written",
+        BulkRowState.Failed => "failed",
+        var other => throw new ArgumentOutOfRangeException(nameof(state), other, "not a row state this bar knows"),
+    };
 
     private async Task SelectTheFailures()
     {

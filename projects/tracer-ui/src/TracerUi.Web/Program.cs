@@ -28,6 +28,7 @@ builder.Services.AddSingleton<IProjectRegistryStore>(_ =>
     new FileProjectRegistryStore(
         RegistryFilePath.In(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData))));
 builder.Services.AddSingleton<IBdProcess>(new BdProcess("bd"));
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<BdAdapter>();
 builder.Services.AddSingleton<BacklogReader>();
 builder.Services.AddSingleton<BacklogCache>();

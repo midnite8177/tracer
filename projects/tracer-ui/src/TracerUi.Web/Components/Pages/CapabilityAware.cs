@@ -36,14 +36,37 @@ public abstract class CapabilityAware : ComponentBase
     /// <summary>True when the last write of this component succeeded, so the message reads as good news.</summary>
     protected bool Wrote { get; private set; }
 
+    /// <summary>True from the moment a press of this component starts a write until bd answers it.</summary>
+    protected bool Writing { get; private set; }
+
+    /// <summary>
+    /// True once the last write gave up on bd. A press of a fact verb still lands twice as it lands
+    /// once, so most surfaces still take a press; a subclass that must not risk a second write, such
+    /// as a comment box, reads this instead.
+    /// </summary>
+    protected bool Abandoned { get; private set; }
+
+    /// <summary>
+    /// <see cref="Writing"/>, in the words that aria-busy takes. Blazor renders a bool attribute by
+    /// presence, but aria-busy is a string state, so a control writes this instead of the flag.
+    /// </summary>
+    protected string AriaBusy => Writing ? "true" : "false";
+
     /// <summary>
     /// What the person reads after a write that succeeded. A component whose write replaces
     /// something says so, because "bd made the change" understates it.
     /// </summary>
     protected virtual string WhenWritten => "bd made the change.";
 
-    /// <summary>Drops the report of the last write, so that a new form opens with no stale message.</summary>
-    protected void ForgetTheLastWrite() => WriteMessage = null;
+    /// <summary>
+    /// Drops the report of the last write and its abandoned lock, so that a new form opens with no
+    /// stale message.
+    /// </summary>
+    protected void ForgetTheLastWrite()
+    {
+        WriteMessage = null;
+        Abandoned = false;
+    }
 
     /// <summary>
     /// Runs one create and reports it. A create takes more than one write, so a bead can exist and
@@ -53,8 +76,24 @@ public abstract class CapabilityAware : ComponentBase
     /// <returns>True when every write of the create ran, so the new bead is what the app meant.</returns>
     protected async Task<bool> CreateAsync(Func<Task<BdCreateOutcome>> create, EventCallback onCreated)
     {
-        var outcome = await create();
+        Writing = true;
+        StateHasChanged();
+        BdCreateOutcome outcome;
+        try
+        {
+            outcome = await create();
+        }
+        finally
+        {
+            Writing = false;
+
+            // Renders now, before the await below: onCreated can run a slow reload of its own, and
+            // with no render here the control would stay visually busy through that whole reload.
+            StateHasChanged();
+        }
+
         Wrote = outcome.Whole;
+        Abandoned = outcome.GaveUp;
         WriteMessage = outcome.Message.Length > 0 ? outcome.Message : $"bd made {outcome.Id}.";
         if (outcome.Created)
         {
@@ -71,8 +110,24 @@ public abstract class CapabilityAware : ComponentBase
     /// </summary>
     protected async Task<bool> WriteAsync(Func<Task<BdWriteOutcome>> write, EventCallback onWritten)
     {
-        var outcome = await write();
+        Writing = true;
+        StateHasChanged();
+        BdWriteOutcome outcome;
+        try
+        {
+            outcome = await write();
+        }
+        finally
+        {
+            Writing = false;
+
+            // Renders now, before the await below: onWritten can run a slow reload of its own, and
+            // with no render here the control would stay visually busy through that whole reload.
+            StateHasChanged();
+        }
+
         Wrote = outcome.Wrote;
+        Abandoned = outcome.GaveUp;
         WriteMessage = outcome.Wrote ? WhenWritten : outcome.Message;
         if (outcome.Wrote)
         {

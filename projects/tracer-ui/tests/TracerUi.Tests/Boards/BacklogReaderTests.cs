@@ -9,7 +9,7 @@ public sealed class BacklogReaderTests
 {
     private static readonly ProjectPath Project = ProjectPath.From(Path.GetTempPath());
 
-    private static BacklogReader ReaderOver(FakeBd bd) => new(new BdAdapter(bd));
+    private static BacklogReader ReaderOver(FakeBd bd) => new(new BdAdapter(bd, TimeProvider.System));
 
     private static FakeBd ABdThatPrints(string list, string ready, string blocked) =>
         new FakeBd()

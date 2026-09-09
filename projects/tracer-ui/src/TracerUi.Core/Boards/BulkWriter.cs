@@ -6,6 +6,27 @@ namespace TracerUi.Core.Boards;
 /// <summary>One bead of a bulk action that bd refused, with what bd said about it.</summary>
 public sealed record BulkFailure(string BeadId, string Title, string Message);
 
+/// <summary>Where one row of a bulk plan stands in the run, from the moment the plan is built.</summary>
+public enum BulkRowState
+{
+    Waiting,
+    Writing,
+    Written,
+    Failed,
+}
+
+/// <summary>What one row of a bulk plan is, as the run passes it. Only <see cref="BulkRowState.Failed"/> carries a message.</summary>
+public sealed record BulkRowStatus(BulkRowState State, string Message)
+{
+    public static BulkRowStatus Waiting { get; } = new(BulkRowState.Waiting, string.Empty);
+
+    public static BulkRowStatus Writing { get; } = new(BulkRowState.Writing, string.Empty);
+
+    public static BulkRowStatus Written { get; } = new(BulkRowState.Written, string.Empty);
+
+    public static BulkRowStatus Failed(string message) => new(BulkRowState.Failed, message);
+}
+
 /// <summary>
 /// What a bulk action did. bd takes one bead at a time, so a bulk action is many writes and some of
 /// them can fail. The report names the beads that failed, so that the person retries those alone.
@@ -49,30 +70,35 @@ public sealed class BulkWriter
         this.adapter = adapter;
     }
 
-    public Task<BulkReport> RunAsync(ProjectPath project, BulkPlan plan)
+    public Task<BulkReport> RunAsync(
+        ProjectPath project, BulkPlan plan, Action<string, BulkRowStatus> reportRow)
     {
         if (!plan.IsReady)
         {
             return Task.FromResult(BulkReport.Refused(plan.Problem));
         }
 
-        return adapter.GatherTheWritesAsync(() => WriteEachBeadAsync(project, plan));
+        return adapter.GatherTheWritesAsync(() => WriteEachBeadAsync(project, plan, reportRow));
     }
 
-    private async Task<BulkReport> WriteEachBeadAsync(ProjectPath project, BulkPlan plan)
+    private async Task<BulkReport> WriteEachBeadAsync(
+        ProjectPath project, BulkPlan plan, Action<string, BulkRowStatus> reportRow)
     {
         var written = 0;
         var failures = new List<BulkFailure>();
         foreach (var step in plan.Steps)
         {
+            reportRow(step.BeadId, BulkRowStatus.Writing);
             var outcome = await WriteAsync(new BeadAddress(project, step.BeadId), plan.Action, step);
             if (outcome.Wrote)
             {
                 written++;
+                reportRow(step.BeadId, BulkRowStatus.Written);
             }
             else
             {
                 failures.Add(new BulkFailure(step.BeadId, step.Title, outcome.Message));
+                reportRow(step.BeadId, BulkRowStatus.Failed(outcome.Message));
             }
         }
 

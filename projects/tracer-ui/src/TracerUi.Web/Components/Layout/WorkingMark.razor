@@ -1,0 +1,45 @@
+@*
+    The mark that a control carries while the write it started is still running. It
+    waits before it shows, so a write that answers at once flickers nothing, and
+    once it shows it stays for its floor, so a write that answers just after does
+    not blink it off the screen.
+*@
+
+@implements IDisposable
+
+@if (mark is { Visible: true })
+{
+    <span class="working-mark">
+        <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+        <span class="visually-hidden">Working</span>
+    </span>
+}
+
+@code {
+    /// <summary>How long a write must outrun before the mark shows at all.</summary>
+    public static readonly TimeSpan WaitBeforeShowing = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>How long a mark that has shown stays, once it has, even after the write answers.</summary>
+    public static readonly TimeSpan Floor = TimeSpan.FromMilliseconds(500);
+
+    [Inject]
+    public required TimeProvider Clock { get; set; }
+
+    /// <summary>True for as long as the write that a press started is still running.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required bool Writing { get; set; }
+
+    /// <summary>True when this mark must stand the instant the write starts, with no wait first.</summary>
+    [Parameter]
+    public bool Immediate { get; set; }
+
+    private DelayedMark? mark;
+
+    protected override void OnInitialized() =>
+        mark = new DelayedMark(Clock, Immediate ? TimeSpan.Zero : WaitBeforeShowing, Floor, () => InvokeAsync(StateHasChanged));
+
+    protected override void OnParametersSet() => mark?.SetActive(Writing);
+
+    public void Dispose() => mark?.Dispose();
+}

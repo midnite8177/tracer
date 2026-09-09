@@ -260,3 +260,15 @@
 .form-text {
     color: var(--tracer-fg-muted);
 }
+
+.working-mark {
+    color: var(--tracer-accent-fg);
+}
+
+.re-read-dim {
+    opacity: 0.6;
+}
+
+.re-read-mark {
+    color: var(--tracer-accent-fg);
+}

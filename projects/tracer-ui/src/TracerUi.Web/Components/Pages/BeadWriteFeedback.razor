@@ -1,0 +1,25 @@
+@*
+    What a write surface says about the write that just ran and the one that is
+    running now: the message of the last write, and the working mark of a write
+    still in flight. Every write surface draws both, so they stand together.
+*@
+
+<BeadWriteMessage Message="@Message" Wrote="Wrote" />
+<WorkingMark Writing="Writing" />
+
+@code {
+    /// <summary>What the last write said, or null when none has run.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required string? Message { get; set; }
+
+    /// <summary>True when that write succeeded, because good news and bad news read differently.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required bool Wrote { get; set; }
+
+    /// <summary>True while a write this surface started is still running.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required bool Writing { get; set; }
+}

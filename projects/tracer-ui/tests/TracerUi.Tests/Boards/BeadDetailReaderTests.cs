@@ -28,7 +28,7 @@ public sealed class BeadDetailReaderTests
 
     private static BeadDetailReader ReaderOf(FakeBd bd)
     {
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
         return new BeadDetailReader(adapter, new BacklogReader(adapter));
     }
 

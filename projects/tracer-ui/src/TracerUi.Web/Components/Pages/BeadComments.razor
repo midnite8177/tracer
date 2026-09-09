@@ -35,7 +35,7 @@ else if (Detail.Comments is AReadOfTheComments.Given { Value: var told })
     }
 }
 
-<BeadWriteMessage Message="@WriteMessage" Wrote="Wrote" />
+<BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
 
 @if (!Probed)
 {
@@ -45,9 +45,12 @@ else if (Detail.Comments is AReadOfTheComments.Given { Value: var told })
 <div class="bead-writes" title="@Why(UiVerbs.AddAComment)">
     <label class="form-label" for="write-comment">A comment of your own</label>
     <textarea class="form-control form-control-sm" id="write-comment" rows="3"
-              placeholder="What a later reader needs to know" @bind="comment"></textarea>
-    <button class="btn btn-sm btn-primary mt-1"
-            disabled="@(!Probed || !Can(UiVerbs.AddAComment) || comment.Trim().Length == 0)"
+              placeholder="What a later reader needs to know"
+              disabled="@(Writing || Abandoned)"
+              @bind="comment"></textarea>
+    <button class="btn btn-sm btn-primary mt-1 bead-comment-add"
+            disabled="@(!Probed || !Can(UiVerbs.AddAComment) || comment.Trim().Length == 0 || Writing || Abandoned)"
+            aria-busy="@AriaBusy"
             @onclick="AddTheComment">Add the comment</button>
 </div>
 
@@ -67,8 +70,21 @@ else if (Detail.Comments is AReadOfTheComments.Given { Value: var told })
     public EventCallback OnWritten { get; set; }
 
     private string comment = string.Empty;
+    private BeadDetail? lastRead;
 
     protected override ProjectPath OfProject => Address.Project;
+
+    // The box unlocks once the page reads the bead again, whatever caused that read: bd may still
+    // land the abandoned comment on its own, and a second press before then would post it twice.
+    protected override void OnParametersSet()
+    {
+        if (Abandoned && !ReferenceEquals(Detail, lastRead))
+        {
+            ForgetTheLastWrite();
+        }
+
+        lastRead = Detail;
+    }
 
     private async Task AddTheComment()
     {

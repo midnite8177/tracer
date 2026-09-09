@@ -8,14 +8,17 @@ namespace TracerUi.Core.Beads;
 /// <param name="Created">True when the bead exists.</param>
 /// <param name="Message">Empty when every write of the create ran; otherwise a message for the person.</param>
 /// <param name="Id">The id that bd gave the new bead, or an empty string when bd made none.</param>
-public sealed record BdCreateOutcome(bool Created, string Message, string Id)
+/// <param name="GaveUp">True when the app stopped waiting on bd, so this create may still have landed.</param>
+public sealed record BdCreateOutcome(bool Created, string Message, string Id, bool GaveUp)
 {
-    public static BdCreateOutcome Made(string id) => new(true, string.Empty, id);
+    public static BdCreateOutcome Made(string id) => new(true, string.Empty, id, false);
 
-    public static BdCreateOutcome Failure(string message) => new(false, message, string.Empty);
+    public static BdCreateOutcome Failure(string message) => new(false, message, string.Empty, false);
+
+    public static BdCreateOutcome Abandoned(string message) => new(false, message, string.Empty, true);
 
     /// <summary>The bead exists, but a write after it did not run.</summary>
-    public static BdCreateOutcome MadeButNotStarted(string id, string message) => new(true, message, id);
+    public static BdCreateOutcome MadeButNotStarted(string id, string message) => new(true, message, id, false);
 
     /// <summary>True when every write of the create ran, so the new bead is what the app meant.</summary>
     public bool Whole => Created && Message.Length == 0;

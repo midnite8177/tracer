@@ -8,6 +8,7 @@ using TracerUi.Core.Beads;
 using TracerUi.Core.Boards;
 using TracerUi.Core.Look;
 using TracerUi.Core.Projects;
+using TracerUi.Tests;
 using TracerUi.Tests.Beads;
 using TracerUi.Tests.Projects;
 using TracerUi.Web.Components.Layout;
@@ -19,6 +20,8 @@ namespace TracerUi.Tests.Boards;
 /// <summary>The board as a browser draws it: the markup of one row, and what a press on it does.</summary>
 public sealed class BoardMarkupTests : BunitContext
 {
+    private const string TheListCommand = "list --all --limit 0 --json";
+
     private const string OneBead =
         """[{"id": "x-1", "title": "First", "issue_type": "task", "priority": 2, "status": "open"}]""";
 
@@ -40,7 +43,20 @@ public sealed class BoardMarkupTests : BunitContext
           "labels": ["docs"]}]
         """;
 
+    // What a re-read of TwoBeads gives back once x-1 leaves the default view, as a defer does.
+    private const string TwoBeadsWithTheFirstDeferred =
+        """
+        [{"id": "x-2", "title": "Second", "issue_type": "bug", "priority": 3, "status": "open",
+          "labels": ["docs"]}]
+        """;
+
     private readonly TempDirectory directory = new();
+
+    private readonly FakeTimeProvider clock = new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+
+    private FakeBd bd = new();
+
+    private BacklogCache cache = ABacklogCache.OverASilentBd();
 
     [Fact]
     public void StaysOnTheBoardWhenAPressTravelsAcrossARowAndReleasesFarFromWhereItStarted()
@@ -335,6 +351,148 @@ public sealed class BoardMarkupTests : BunitContext
         Assert.Single(AQuickCreate.TheFieldsOf(board).FindAll("#create-epic"));
     }
 
+    private const string TheCreateOfANewBead = "create --title Read the two plans again --type task --silent";
+
+    [Fact]
+    public void ShowsTheWorkingMarkOnTheQuickCreateOfTheBoardOnceItsWriteOutrunsTheWaitAndDisablesBothButtons()
+    {
+        var board = TheBoardOf(
+            OneBead,
+            BoardFilterAddress.Page,
+            that => that.DeclaresEveryWrite().Holds(TheCreateOfANewBead));
+        board.Find("#create-title").Input("Read the two plans again");
+
+        board.Find("button.btn-primary").Click();
+
+        Assert.Empty(board.FindAll(".working-mark"));
+        clock.Advance(WorkingMark.WaitBeforeShowing);
+        board.WaitForAssertion(() => Assert.Single(board.FindAll(".working-mark")));
+        Assert.True(board.Find("button.btn-primary").HasAttribute("disabled"));
+        Assert.True(board.Find("button.btn-outline-primary").HasAttribute("disabled"));
+
+        bd.Answers(TheCreateOfANewBead, "x-2\n");
+        clock.Advance(WorkingMark.Floor);
+
+        board.WaitForAssertion(() => Assert.Empty(board.FindAll(".working-mark")));
+        Assert.Equal(string.Empty, board.Find("#create-title").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void LocksTheQuickCreateOfTheBoardOnceItsCreateOutrunsTheWaitLimitUntilTheBoardReadsAgain()
+    {
+        var board = TheBoardOf(
+            OneBead,
+            BoardFilterAddress.Page,
+            that => that.DeclaresEveryWrite().Holds(TheCreateOfANewBead));
+        board.Find("#create-title").Input("Read the two plans again");
+        board.Find("button.btn-primary").Click();
+
+        clock.Advance(WorkingMark.WaitBeforeShowing);
+        board.WaitForAssertion(() => Assert.Single(board.FindAll(".working-mark")));
+
+        clock.Advance(BdAdapter.WaitLimit - WorkingMark.WaitBeforeShowing);
+
+        board.WaitForAssertion(() => Assert.True(board.Find("#create-title").HasAttribute("disabled")));
+        Assert.Equal("Read the two plans again", board.Find("#create-title").GetAttribute("value"));
+        Assert.True(board.Find("button.btn-primary").HasAttribute("disabled"));
+
+        cache.InvalidateFromWatch(ProjectPath.From(directory.Path));
+
+        board.WaitForAssertion(() => Assert.False(board.Find("#create-title").HasAttribute("disabled")));
+        Assert.Equal("Read the two plans again", board.Find("#create-title").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void ShowsTheProbeSentenceAndNotTheWorkingMarkOnTheQuickCreateOfTheBoardWhileTheFirstProbeOfTheProjectRuns()
+    {
+        var board = TheBoardOf(
+            OneBead,
+            BoardFilterAddress.Page,
+            that => that.DeclaresEveryWrite().Holds("version"));
+
+        Assert.Contains(
+            "The app is asking bd what it can do",
+            board.Find(".board-quick-create").TextContent,
+            StringComparison.Ordinal);
+        Assert.Empty(board.FindAll(".board-quick-create .working-mark"));
+
+        bd.Answers("version", "bd version 1.2.2");
+
+        board.WaitForAssertion(() => Assert.DoesNotContain(
+            "The app is asking bd what it can do",
+            board.Find(".board-quick-create").TextContent,
+            StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MarksTheRowOfTheBulkCommitBusyAtOnceAndKeepsThePlanUntilThePersonClosesIt()
+    {
+        var board = TheBoardOf(
+            TwoBeads,
+            BoardFilterAddress.Page,
+            that => that.DeclaresEveryWrite().Holds("defer x-1"));
+        board.Find("input[title='Select this bead']").Change(true);
+        board.Find("#bulk-category").Change(BulkCategory.Defer.Name);
+        board.Find(".board-bulk-bar button.btn-primary").Click();
+
+        board.Find(".board-bulk-plan button.btn-danger").Click();
+
+        Assert.Single(board.FindAll(".working-mark"));
+        Assert.True(board.Find(".board-bulk-plan button.btn-danger").HasAttribute("disabled"));
+
+        bd.Answers("defer x-1", string.Empty);
+        clock.Advance(WorkingMark.Floor);
+
+        board.WaitForAssertion(() => Assert.Empty(board.FindAll(".working-mark")));
+        Assert.Single(board.FindAll(".board-bulk-plan"));
+
+        board.Find("#bulk-close").Click();
+
+        Assert.Empty(board.FindAll(".board-bulk-plan"));
+    }
+
+    [Fact]
+    public void KeepsThePlanOnScreenThroughTheReadThatTheCommitItselfCauses()
+    {
+        var board = TheBoardOf(
+            TwoBeads,
+            BoardFilterAddress.Page,
+            that => that.DeclaresEveryWrite()
+                .Prints("defer x-1", string.Empty)
+                .After("defer x-1", bd => bd.Prints(TheListCommand, TwoBeadsWithTheFirstDeferred)));
+        board.Find("input[title='Select this bead']").Change(true);
+        board.Find("#bulk-category").Change(BulkCategory.Defer.Name);
+        board.Find(".board-bulk-bar button.btn-primary").Click();
+
+        board.Find(".board-bulk-plan button.btn-danger").Click();
+
+        board.WaitForAssertion(() => Assert.Single(board.FindAll(".board-bulk-plan")));
+        Assert.Single(board.FindAll("#bulk-close"));
+    }
+
+    [Fact]
+    public void ShowsTheProbeSentenceAndNotTheWorkingMarkOnTheBulkBarWhileTheFirstProbeOfTheProjectRuns()
+    {
+        var board = TheBoardOf(
+            TwoBeads,
+            BoardFilterAddress.Page,
+            that => that.DeclaresEveryWrite().Holds("version"));
+        board.Find("input[title='Select this bead']").Change(true);
+
+        Assert.Contains(
+            "The app is asking bd what it can do",
+            board.Find(".board-bulk-bar").TextContent,
+            StringComparison.Ordinal);
+        Assert.Empty(board.FindAll(".board-bulk-bar .working-mark"));
+
+        bd.Answers("version", "bd version 1.2.2");
+
+        board.WaitForAssertion(() => Assert.DoesNotContain(
+            "The app is asking bd what it can do",
+            board.Find(".board-bulk-bar").TextContent,
+            StringComparison.Ordinal));
+    }
+
     // The modifier keys that ask a browser for a new tab on a link.
     public enum NewTabKey
     {
@@ -401,6 +559,75 @@ public sealed class BoardMarkupTests : BunitContext
         Assert.Equal(["Second"], TheTitles(board));
     }
 
+    [Fact]
+    public void KeepsTheRowsOnTheScreenDimmedWithTheMarkWhileAWriteRereadsTheBoardAndShowsTheNewRowsOnceItLands()
+    {
+        var board = TheBoardOfOneBead();
+        bd.Holds(TheListCommand);
+
+        cache.Invalidate(ProjectPath.From(directory.Path));
+
+        Assert.Equal(["First"], TheTitles(board));
+        Assert.Empty(board.FindAll(".re-read-mark"));
+
+        clock.Advance(WorkingMark.WaitBeforeShowing);
+
+        board.WaitForAssertion(() => Assert.Single(board.FindAll(".re-read-mark")));
+        Assert.Equal(
+            ["First"],
+            board.Find(".re-read-dim").QuerySelectorAll("a.board-title").Select(title => title.TextContent));
+
+        bd.Answers(TheListCommand, TwoBeads);
+
+        board.WaitForAssertion(() => Assert.Equal(["First", "Second"], TheTitles(board)));
+        Assert.Single(board.FindAll(".re-read-mark"));
+
+        clock.Advance(WorkingMark.Floor);
+
+        board.WaitForAssertion(() => Assert.Empty(board.FindAll(".re-read-mark")));
+    }
+
+    [Fact]
+    public void SaysTheBeadsOnTheScreenAreTheOnesFromBeforeWhenARereadOutrunsTheWaitLimit()
+    {
+        var board = TheBoardOfOneBead();
+        bd.Holds(TheListCommand);
+
+        cache.Invalidate(ProjectPath.From(directory.Path));
+
+        clock.Advance(WorkingMark.WaitBeforeShowing);
+        board.WaitForAssertion(() => Assert.Single(board.FindAll(".re-read-mark")));
+
+        clock.Advance(BdAdapter.WaitLimit - WorkingMark.WaitBeforeShowing);
+
+        board.WaitForAssertion(() => Assert.NotEmpty(board.FindAll(".board-stale-read")));
+        Assert.Contains(
+            "beads on the screen are the ones from before",
+            board.Find(".board-stale-read").TextContent,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("stopped", board.Find(".board-stale-read").TextContent, StringComparison.Ordinal);
+        Assert.Equal(["First"], TheTitles(board));
+    }
+
+    [Fact]
+    public void KeepsTheRowsOnTheScreenWithNoMarkWhileTheProjectWatcherRereadsTheBoard()
+    {
+        var board = TheBoardOfOneBead();
+        bd.Holds(TheListCommand);
+
+        cache.InvalidateFromWatch(ProjectPath.From(directory.Path));
+
+        clock.Advance(WorkingMark.WaitBeforeShowing);
+
+        Assert.Equal(["First"], TheTitles(board));
+        Assert.Empty(board.FindAll(".re-read-mark"));
+        Assert.Empty(board.FindAll(".re-read-dim"));
+
+        bd.Answers(TheListCommand, TwoBeads);
+
+        board.WaitForAssertion(() => Assert.Equal(["First", "Second"], TheTitles(board)));
+    }
+
     // Follows a filter press, as a browser follows the link that a press is. The test harness draws
     // the markup and follows no link of its own, so the test takes the address that the press names.
     private void Follow(IElement press) =>
@@ -428,20 +655,28 @@ public sealed class BoardMarkupTests : BunitContext
     // The board of these beads, as the browser draws it at this address. The address carries the
     // filter, so a test states the one that the board opens on.
     private IRenderedComponent<BoardPage> TheBoardOf(string beads, string address) =>
-        TheBoardOf(ABacklog.OfBeadsAlone(beads), address);
+        TheBoardOf(ABacklog.OfBeadsAlone(beads), address, that => { });
 
-    private IRenderedComponent<BoardPage> TheBoardOf(ABacklog backlog, string address)
+    private IRenderedComponent<BoardPage> TheBoardOf(ABacklog backlog, string address) =>
+        TheBoardOf(backlog, address, that => { });
+
+    // The board of these beads, with its bd scripted further before the first render.
+    private IRenderedComponent<BoardPage> TheBoardOf(string beads, string address, Action<FakeBd> configure) =>
+        TheBoardOf(ABacklog.OfBeadsAlone(beads), address, configure);
+
+    private IRenderedComponent<BoardPage> TheBoardOf(ABacklog backlog, string address, Action<FakeBd> configure)
     {
         var project = ProjectPath.From(directory.Path);
         var store = new InMemoryProjectRegistryStore();
         store.Save(new ProjectRegistry([project], []));
 
-        var bd = new FakeBd()
-            .Prints("list --all --limit 0 --json", backlog.Beads)
+        bd = new FakeBd()
+            .Prints(TheListCommand, backlog.Beads)
             .Prints("ready --json", backlog.Ready)
             .Prints("blocked --json", backlog.Blocked);
-        var adapter = new BdAdapter(bd);
-        var cache = new BacklogCache(new BacklogReader(adapter), adapter);
+        configure(bd);
+        var adapter = new BdAdapter(bd, clock);
+        cache = new BacklogCache(new BacklogReader(adapter), adapter);
         var catalog = new ProjectCatalog(store, adapter);
         var selection = new ActiveProjectSelection(catalog);
         selection.Select(project);
@@ -454,6 +689,7 @@ public sealed class BoardMarkupTests : BunitContext
         Services.AddSingleton(new SavedFilterCatalog(store));
         Services.AddSingleton(new BulkWriter(adapter));
         Services.AddSingleton(new CopyFeedback());
+        Services.AddSingleton<TimeProvider>(clock);
         Services.AddScoped<BeadOpener>();
 
         Services.GetRequiredService<NavigationManager>().NavigateTo(address);

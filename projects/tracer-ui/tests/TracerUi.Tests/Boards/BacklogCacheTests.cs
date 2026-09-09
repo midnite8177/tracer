@@ -20,7 +20,7 @@ public sealed class BacklogCacheTests
 
     private static BacklogCache CacheOver(FakeBd bd)
     {
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
         return new BacklogCache(new BacklogReader(adapter), adapter);
     }
 
@@ -73,11 +73,49 @@ public sealed class BacklogCacheTests
     {
         var cache = CacheOver(ABdThatLists());
         var named = new List<ProjectPath>();
-        cache.Changed += project => named.Add(project);
+        cache.Changed += change => named.Add(change.Project);
 
         cache.Invalidate(Second);
 
         Assert.Equal([Second], named);
+    }
+
+    [Fact]
+    public void RaisesAWriteChangeWhenAWriteOfThisAppInvalidatesTheProject()
+    {
+        var cache = CacheOver(ABdThatLists());
+        BacklogChange? change = null;
+        cache.Changed += raised => change = raised;
+
+        cache.Invalidate(Second);
+
+        Assert.Equal(BacklogChangeKind.Write, change?.Kind);
+    }
+
+    [Fact]
+    public void RaisesAWatchChangeWhenTheProjectWatcherInvalidatesTheProject()
+    {
+        var cache = CacheOver(ABdThatLists());
+        BacklogChange? change = null;
+        cache.Changed += raised => change = raised;
+
+        cache.InvalidateFromWatch(Second);
+
+        Assert.Equal(BacklogChangeKind.Watch, change?.Kind);
+    }
+
+    [Fact]
+    public async Task AsksBdAgainAfterTheProjectWatcherInvalidatesTheProject()
+    {
+        var bd = ABdThatLists();
+        var cache = CacheOver(bd);
+        await cache.ReadAsync(First);
+
+        cache.InvalidateFromWatch(First);
+        var again = await cache.ReadAsync(First);
+
+        Assert.True(again.Answered);
+        Assert.Equal(2, bd.Runs(First.Value, ListCommand));
     }
 
     [Fact]
@@ -107,13 +145,16 @@ public sealed class BacklogCacheTests
                 """)
             .Prints("comment --help", "Flags:")
             .Prints("comment x-1 I read this today", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
         var cache = new BacklogCache(new BacklogReader(adapter), adapter);
         await cache.ReadAsync(First);
+        BacklogChange? change = null;
+        cache.Changed += raised => change = raised;
 
         await adapter.CommentAsync(new BeadAddress(First, "x-1"), "I read this today");
         await cache.ReadAsync(First);
 
         Assert.Equal(2, bd.Runs(First.Value, "ready --json"));
+        Assert.Equal(BacklogChangeKind.Write, change?.Kind);
     }
 }

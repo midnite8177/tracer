@@ -21,7 +21,7 @@ public static class ABacklogCache
 
     public static BacklogCache OverASilentBd()
     {
-        var adapter = new BdAdapter(new FakeBd());
+        var adapter = new BdAdapter(new FakeBd(), TimeProvider.System);
         return new BacklogCache(new BacklogReader(adapter), adapter);
     }
 }

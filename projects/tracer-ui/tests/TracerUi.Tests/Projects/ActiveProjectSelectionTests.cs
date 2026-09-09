@@ -9,7 +9,7 @@ public class ActiveProjectSelectionTests
     [Fact]
     public void HasNoActiveProjectBeforeAChoice()
     {
-        var selection = new ActiveProjectSelection(new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady())));
+        var selection = new ActiveProjectSelection(new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System)));
 
         Assert.Null(selection.Current);
     }
@@ -155,7 +155,7 @@ public class ActiveProjectSelectionTests
 
     private static async Task<ProjectCatalog> CatalogWithProjects(TempDirectory temp, params string[] names)
     {
-        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady()));
+        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
         foreach (var name in names)
         {
             var repository = temp.CreateSubdirectory(name);

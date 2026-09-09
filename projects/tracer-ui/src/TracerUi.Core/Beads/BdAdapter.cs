@@ -8,15 +8,23 @@ namespace TracerUi.Core.Beads;
 /// <summary>The one layer that owns every bd invocation.</summary>
 public sealed class BdAdapter
 {
+    /// <summary>
+    /// How long a read or a write waits for bd before the app gives up on it. The app cannot stop
+    /// bd itself, so a run that outran this is not claimed to have been stopped.
+    /// </summary>
+    public static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private readonly IBdProcess process;
+    private readonly TimeProvider clock;
     private readonly ConcurrentDictionary<ProjectPath, Lazy<Task<BdCapabilities>>> probed = new();
     private readonly Lock gathering = new();
     private readonly HashSet<ProjectPath> gathered = [];
     private int runs;
 
-    public BdAdapter(IBdProcess process)
+    public BdAdapter(IBdProcess process, TimeProvider clock)
     {
         this.process = process;
+        this.clock = clock;
     }
 
     /// <summary>
@@ -82,11 +90,8 @@ public sealed class BdAdapter
         Wrote?.Invoke(project);
     }
 
-    public async Task<BdOutcome> ReadyAsync(ProjectPath project)
-    {
-        string[] arguments = ["ready", "--json"];
-        return OutcomeOf(arguments, await process.RunAsync(project.Value, arguments));
-    }
+    public Task<BdOutcome> ReadyAsync(ProjectPath project) =>
+        OutcomeOfAsync(project.Value, ["ready", "--json"]);
 
     private static BdOutcome OutcomeOf(IReadOnlyList<string> arguments, BdResult result)
     {
@@ -101,6 +106,26 @@ public sealed class BdAdapter
                 $"bd {string.Join(' ', arguments)} answered with something that is not JSON.");
     }
 
+    // Every plain read shares this wait limit and this outcome shape.
+    private async Task<BdOutcome> OutcomeOfAsync(string workingDirectory, IReadOnlyList<string> arguments)
+    {
+        var result = await RunOrGiveUpAsync(workingDirectory, arguments);
+        return result is null ? BdOutcome.Abandoned(AbandonedReadMessage) : OutcomeOf(arguments, result);
+    }
+
+    private async Task<BdResult?> RunOrGiveUpAsync(string workingDirectory, IReadOnlyList<string> arguments)
+    {
+        var run = process.RunAsync(workingDirectory, arguments);
+        var winner = await Task.WhenAny(run, Task.Delay(WaitLimit, clock));
+        return winner == run ? await run : null;
+    }
+
+    private const string AbandonedReadMessage =
+        "bd has not answered. The app cannot stop it, so this read may still be running.";
+
+    private const string AbandonedWriteMessage =
+        "bd has not answered. The app cannot stop it, so this write may still have landed.";
+
     /// <summary>
     /// Reads every bead of the project, whatever its status. bd list hides the closed beads and
     /// applies a limit by default, so the read asks for every status and lifts the limit. An older
@@ -109,36 +134,31 @@ public sealed class BdAdapter
     public async Task<BdOutcome> ListAsync(ProjectPath project)
     {
         string[] everyStatus = ["list", "--all", "--limit", "0", "--json"];
-        var result = await process.RunAsync(project.Value, everyStatus);
+        var result = await RunOrGiveUpAsync(project.Value, everyStatus);
+        if (result is null)
+        {
+            return BdOutcome.Abandoned(AbandonedReadMessage);
+        }
+
         if (result.Succeeded)
         {
             return OutcomeOf(everyStatus, result);
         }
 
-        string[] plain = ["list", "--json"];
-        return OutcomeOf(plain, await process.RunAsync(project.Value, plain));
+        return await OutcomeOfAsync(project.Value, ["list", "--json"]);
     }
 
     /// <summary>Reads one bead in full, with the dependency edges that name the beads it depends on.</summary>
-    public async Task<BdOutcome> ShowAsync(BeadAddress bead)
-    {
-        string[] arguments = ["show", bead.Id, "--json"];
-        return OutcomeOf(arguments, await process.RunAsync(bead.Project.Value, arguments));
-    }
+    public Task<BdOutcome> ShowAsync(BeadAddress bead) =>
+        OutcomeOfAsync(bead.Project.Value, ["show", bead.Id, "--json"]);
 
     /// <summary>Reads the comments of one bead, in the order that bd prints them.</summary>
-    public async Task<BdOutcome> CommentsAsync(BeadAddress bead)
-    {
-        string[] arguments = ["comments", bead.Id, "--json"];
-        return OutcomeOf(arguments, await process.RunAsync(bead.Project.Value, arguments));
-    }
+    public Task<BdOutcome> CommentsAsync(BeadAddress bead) =>
+        OutcomeOfAsync(bead.Project.Value, ["comments", bead.Id, "--json"]);
 
     /// <summary>Reads the beads that bd calls blocked, each with the beads that block it.</summary>
-    public async Task<BdOutcome> BlockedAsync(ProjectPath project)
-    {
-        string[] arguments = ["blocked", "--json"];
-        return OutcomeOf(arguments, await process.RunAsync(project.Value, arguments));
-    }
+    public Task<BdOutcome> BlockedAsync(ProjectPath project) =>
+        OutcomeOfAsync(project.Value, ["blocked", "--json"]);
 
     /// <summary>
     /// Adds one comment to a bead. A comment appends, where a write of the notes or the description
@@ -297,7 +317,12 @@ public sealed class BdAdapter
             return BdCreateOutcome.Failure(missing);
         }
 
-        var result = await process.RunAsync(project.Value, arguments);
+        var result = await RunOrGiveUpAsync(project.Value, arguments);
+        if (result is null)
+        {
+            return BdCreateOutcome.Abandoned(AbandonedWriteMessage);
+        }
+
         if (!result.Succeeded)
         {
             return BdCreateOutcome.Failure(BdFailure.Describe(arguments, result));
@@ -331,7 +356,12 @@ public sealed class BdAdapter
             return BdWriteOutcome.Failure(missing);
         }
 
-        var result = await process.RunAsync(bead.Project.Value, arguments);
+        var result = await RunOrGiveUpAsync(bead.Project.Value, arguments);
+        if (result is null)
+        {
+            return BdWriteOutcome.Abandoned(AbandonedWriteMessage);
+        }
+
         if (!result.Succeeded)
         {
             return BdWriteOutcome.Failure(BdFailure.Describe(arguments, result));
@@ -350,19 +380,24 @@ public sealed class BdAdapter
 
     private async Task<BdCapabilities> ProbeAsync(ProjectPath project)
     {
-        var version = await process.RunAsync(project.Value, ["version"]);
-        var help = await process.RunAsync(project.Value, ["--help"]);
+        var version = await RunOrGiveUpAsync(project.Value, ["version"]) ?? GaveUpOnTheProbe;
+        var help = await RunOrGiveUpAsync(project.Value, ["--help"]) ?? GaveUpOnTheProbe;
 
         var commandHelp = new Dictionary<string, BdResult>(StringComparer.Ordinal);
         foreach (var command in UiVerbs.Commands)
         {
-            commandHelp[command] = await process.RunAsync(project.Value, [command, "--help"]);
+            commandHelp[command] =
+                await RunOrGiveUpAsync(project.Value, [command, "--help"]) ?? GaveUpOnTheProbe;
         }
 
         var beads = await SampleAsync(project);
         var comments = await CommentsOfOneBeadAsync(project, beads);
         return CapabilityProbe.From(version, help, commandHelp, beads, comments);
     }
+
+    // What one run of the probe stands in as, once it gives up on bd. The wait limit still applies
+    // here, so the probe reports what this bd cannot do instead of asking forever.
+    private static readonly BdResult GaveUpOnTheProbe = new(-1, string.Empty, AbandonedReadMessage);
 
     // Reads the comments of one sampled bead, to learn the names that this bd gives a comment.
     // A bead in the sample carries no comment, so the probe asks for them on their own.

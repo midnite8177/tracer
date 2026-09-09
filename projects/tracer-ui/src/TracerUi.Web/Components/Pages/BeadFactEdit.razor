@@ -25,7 +25,7 @@
         }
         else
         {
-            <BeadWriteMessage Message="@WhyTheLastWriteFailed" Wrote="false" />
+            <BeadWriteFeedback Message="@WhyTheLastWriteFailed" Wrote="false" Writing="Writing" />
             @if (asked is { Question: { } question })
             {
                 <div class="bead-fact-question">
@@ -33,22 +33,25 @@
                            @ref="field"
                            aria-label="@question.Prompt"
                            placeholder="@question.Prompt"
+                           disabled="@Writing"
                            @bind="answer"
                            @bind:event="oninput" />
                     <button type="button" class="btn btn-sm btn-outline-danger bead-fact-commit"
-                            disabled="@(answer.Trim().Length == 0)"
+                            disabled="@(answer.Trim().Length == 0 || Writing)"
+                            aria-busy="@AriaBusy"
                             @onclick="Commit">@question.Press</button>
                 </div>
             }
             else
             {
-                <div class="bead-fact-choices" role="group" aria-labelledby="@Fact.HeadingId">
+                <div class="bead-fact-choices" role="group" aria-labelledby="@Fact.HeadingId" aria-busy="@AriaBusy">
                     @foreach (var choice in Fact.Picker.Choices)
                     {
                         <button type="button"
                                 class="bead-fact-choice @(choice.Marked ? "bead-fact-choice-current" : string.Empty)"
                                 aria-current="@(TheFieldHoldsOneValue && choice.Marked ? "true" : null)"
                                 aria-pressed="@(TheFieldHoldsOneValue ? null : choice.Marked ? "true" : "false")"
+                                disabled="@Writing"
                                 @onclick="() => Pick(choice)">@if (!TheFieldHoldsOneValue && choice.Marked)
                                                              {
                                                                  <span class="bead-fact-tick" aria-hidden="true">&#10003;</span>
@@ -61,10 +64,12 @@
                         <input class="form-control form-control-sm bead-fact-new"
                                aria-label="@addition.Question.Prompt"
                                placeholder="@addition.Question.Prompt"
+                               disabled="@Writing"
                                @bind="added"
                                @bind:event="oninput" />
                         <button type="button" class="btn btn-sm btn-outline-secondary bead-fact-add"
-                                disabled="@(added.Trim().Length == 0)"
+                                disabled="@(added.Trim().Length == 0 || Writing)"
+                                aria-busy="@AriaBusy"
                                 @onclick="() => Add(addition)">@addition.Question.Press</button>
                     </div>
                 }

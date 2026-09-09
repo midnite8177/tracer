@@ -23,10 +23,12 @@ public sealed class BacklogCache
     }
 
     /// <summary>
-    /// Names the project whose held backlog the cache dropped. A page that shows that project reads
-    /// it again, so a person never looks at a board that a write already made stale.
+    /// Names the project whose held backlog the cache dropped, and whether a write of this app
+    /// caused it or the project watcher did. A page that shows that project reads it again, so a
+    /// person never looks at a board that a write already made stale, and tells the two causes
+    /// apart to say whether that read is a re-read.
     /// </summary>
-    public event Action<ProjectPath>? Changed;
+    public event Action<BacklogChange>? Changed;
 
     /// <summary>
     /// The backlog of this project, from the held copy or from a read of bd. The cache holds an
@@ -47,10 +49,18 @@ public sealed class BacklogCache
         return outcome;
     }
 
-    /// <summary>Drops the held backlog of one project. Every other project keeps its own.</summary>
-    public void Invalidate(ProjectPath project)
+    /// <summary>
+    /// Drops the held backlog of one project because a write of this app changed it. Every other
+    /// project keeps its own.
+    /// </summary>
+    public void Invalidate(ProjectPath project) => Invalidate(project, BacklogChangeKind.Write);
+
+    /// <summary>Drops the held backlog of one project because its .beads directory changed on its own.</summary>
+    public void InvalidateFromWatch(ProjectPath project) => Invalidate(project, BacklogChangeKind.Watch);
+
+    private void Invalidate(ProjectPath project, BacklogChangeKind kind)
     {
         held.TryRemove(project, out _);
-        Changed?.Invoke(project);
+        Changed?.Invoke(new BacklogChange(project, kind));
     }
 }

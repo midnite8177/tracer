@@ -5,7 +5,7 @@
 
 <h2 class="h4 bead-section">Notes</h2>
 
-<BeadWriteMessage Message="@WriteMessage" Wrote="Wrote" />
+<BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
 
 @if (!rewriting)
 {
@@ -44,7 +44,10 @@ else
     </div>
 
     <div class="bead-writes">
-        <button class="btn btn-sm btn-danger bead-notes-save" @onclick="ReplaceTheNotes">@TheWordsOfTheSave</button>
+        <button class="btn btn-sm btn-danger bead-notes-save"
+                disabled="@Writing"
+                aria-busy="@AriaBusy"
+                @onclick="ReplaceTheNotes">@TheWordsOfTheSave</button>
         <button class="btn btn-sm btn-outline-secondary ms-1" @onclick="StopTheRewrite">Cancel</button>
     </div>
 }

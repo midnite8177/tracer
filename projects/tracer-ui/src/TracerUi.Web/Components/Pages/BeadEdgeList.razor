@@ -29,9 +29,10 @@
                 {
                     <BeadRow Link="link" />
                     <button class="btn btn-sm btn-link p-0 ms-1 bead-edge-cut"
-                            disabled="@(!Cuttable)"
+                            disabled="@(!Capability.Cuttable || Capability.Writing)"
                             aria-label="@($"{CutTitle} {link.Title}")"
-                            title="@(Cuttable ? CutTitle : WhyNoCut)"
+                            title="@(Capability.Cuttable ? CutTitle : Capability.WhyNot)"
+                            aria-busy="@(Capability.Writing ? "true" : "false")"
                             @onclick="() => Ask(link.Id)">×</button>
                 }
             </li>
@@ -59,20 +60,15 @@ else
     [EditorRequired]
     public required string WhenEmpty { get; set; }
 
-    /// <summary>True when the installed bd offers the write that cuts an edge of this list.</summary>
-    [Parameter]
-    [EditorRequired]
-    public required bool Cuttable { get; set; }
-
-    /// <summary>What the tooltip says when the installed bd cannot cut an edge.</summary>
-    [Parameter]
-    [EditorRequired]
-    public required string WhyNoCut { get; set; }
-
     /// <summary>What a cut of this list does, because each direction cuts a different edge.</summary>
     [Parameter]
     [EditorRequired]
     public required string CutTitle { get; set; }
+
+    /// <summary>Whether this list can cut an edge right now, and whether one is writing.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required CutCapability Capability { get; set; }
 
     /// <summary>Runs with the id of the bead at the far end of the edge that the person cut.</summary>
     [Parameter]

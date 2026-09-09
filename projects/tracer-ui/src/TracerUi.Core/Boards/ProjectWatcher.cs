@@ -26,7 +26,7 @@ public sealed class ProjectWatcher : IDisposable
         this.project = project;
         this.cache = cache;
         this.quietPeriod = quietPeriod;
-        quiet = new Timer(_ => this.cache.Invalidate(this.project));
+        quiet = new Timer(_ => this.cache.InvalidateFromWatch(this.project));
         watcher = new FileSystemWatcher(project.BeadsDirectory)
         {
             IncludeSubdirectories = true,

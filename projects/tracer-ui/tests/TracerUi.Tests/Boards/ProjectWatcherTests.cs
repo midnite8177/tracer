@@ -19,14 +19,15 @@ public sealed class ProjectWatcherTests
         var beads = directory.CreateSubdirectory(ProjectPathValidator.BeadsDirectoryName);
         var project = ProjectPath.From(directory.Path);
         var cache = ABacklogCache.OverASilentBd();
-        var changed = new TaskCompletionSource<ProjectPath>();
-        cache.Changed += path => changed.TrySetResult(path);
+        var changed = new TaskCompletionSource<BacklogChange>();
+        cache.Changed += change => changed.TrySetResult(change);
 
         using var watcher = new ProjectWatcher(project, cache, AShortQuietPeriod);
         await File.WriteAllTextAsync(Path.Combine(beads, "issues.jsonl"), "{}");
 
         var named = await changed.Task.WaitAsync(ABacklogCache.LongEnough);
-        Assert.Equal(project, named);
+        Assert.Equal(project, named.Project);
+        Assert.Equal(BacklogChangeKind.Watch, named.Kind);
     }
 
     [Fact]

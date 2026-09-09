@@ -485,6 +485,35 @@ a value that ignores a press reads as broken. It is not what `bd` said about
 a write that ran and failed.
 _Avoid_: Block, error, disabled reason, unsupported message
 
+**Working mark**:
+The mark that a control carries while the write that a press started is
+still running. It stands only after the write outruns the moment a person
+expects an answer, and a write that answers before that moment carries
+none. A row of a bulk plan is the exception and carries it at once,
+because the person pressed commit and is already waiting. The control refuses a further press from the press itself, and not
+from the moment the mark stands, so no write runs twice. The mark stays
+long enough to read, thus a write that answers just after it stands does
+not blink it off the screen. It says that a press is still going and
+nothing about what the write did.
+_Avoid_: Spinner, loading, busy, saving, progress
+
+**Abandoned write**:
+A write that `bd` did not answer, which the app stopped waiting for. The
+app cannot stop `bd`, so the write may still land, and the message says
+so. The control takes presses again, because every verb of a fact writes
+the same value twice as it writes it once. A comment is the exception:
+a second press would post a second comment, so that box keeps the words
+and waits for the page to read again.
+_Avoid_: Timeout, cancelled write, failed write, stuck
+
+**Abandoned read**:
+A read that `bd` did not answer, which the app stopped waiting for. A
+first read has nothing to fall back on, so it reads as any other failed
+read. A re-read is different: the board and the detail page keep what
+they already had on the screen and say that it is what was there before,
+because the beads on the screen are one write old and not wrong.
+_Avoid_: Timeout, cancelled read, failed read, stale board
+
 **Blocker**:
 A bead that must close before another bead is ready. A press on "Add a
 blocker" at the foot of the Blocked by box opens the picker of the beads
@@ -563,7 +592,10 @@ _Avoid_: Batch operation, mass edit
 
 **Bulk plan**:
 What an action will do to each bead of the selection, as the person reads
-it before it commits. A close carries one reason for each bead: it starts
+it before it commits, and then what it did to each of them as the writes
+run: a bead waits, one is writing, and the rest are written or failed. It
+stays on the screen after the last write, through the re-read that
+follows, until the person closes it. A close carries one reason for each bead: it starts
 as the shared reason, and the person edits the reason of a bead on its
 own.
 _Avoid_: Preview, dry run, confirmation
@@ -656,6 +688,24 @@ is many writes and invalidates once, at its end, because a board that
 read between two of those writes would show a selection that is half
 written.
 _Avoid_: Refresh, reload, expiry, eviction
+
+**Re-read**:
+The read that one person's own write caused. The page says it is doing
+one, and it keeps what is already on the screen while it runs, because
+what stands there is one write old and not wrong. A first read keeps
+nothing, so that one blanks the page and says it is reading. A read that
+a project watcher caused is no re-read: no person pressed anything, so
+the page says nothing and takes the new beads when they come. See
+[ADR 0015](docs/adr/0015-a-re-read-keeps-what-is-on-the-screen.md).
+_Avoid_: Refresh, reload, loading, stale board
+
+**Re-read mark**:
+The mark that a re-read carries on the beads it dims, once the read
+outruns the wait that a working mark waits on. It obeys that wait and
+its floor, and it says only that the page is reading again, nothing
+about what a write did. The board and the detail page draw the same
+component for it, and a read that a project watcher caused carries none.
+_Avoid_: Refresh spinner, loading indicator, stale banner
 
 **Project watcher**:
 The watch on the `.beads` directory of one project. An agent writes there

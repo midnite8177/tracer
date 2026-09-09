@@ -52,66 +52,73 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && addressedP
         </p>
     }
 
-    <div class="bead-columns">
-        <BeadFactStrip Address="bead"
-                       Detail="detail"
-                       Epics="read.Epics"
-                       Labels="read.Labels"
-                       OnWritten="Reload" />
+    @if (staleReadMessage.Length > 0)
+    {
+        <p class="text-danger bead-message bead-stale-read">@staleReadMessage</p>
+    }
 
-        <div class="bead-prose-column">
-            @if (detail.Bead.HasCloseReason)
-            {
-                <section class="bead-box bead-close-reason">
-                    <h2 class="h4 bead-section">Closed</h2>
-                    <p>@detail.Bead.CloseReason</p>
-                </section>
-            }
+    <ReReadMark Rereading="rereading">
+        <div class="bead-columns">
+            <BeadFactStrip Address="bead"
+                           Detail="detail"
+                           Epics="read.Epics"
+                           Labels="read.Labels"
+                           OnWritten="Reload" />
 
-            <section class="bead-box">
-                <BeadDescriptionEdit Address="bead"
-                                     Bead="detail.Bead"
-                                     OnWritten="Reload" />
-            </section>
-
-            @if (facts is AReadOfTheBacklog.Given { Value: var answered })
-            {
-                @if (answered.Held.Count > 0)
+            <div class="bead-prose-column">
+                @if (detail.Bead.HasCloseReason)
                 {
-                    <section class="bead-box">
-                        <BeadHeldBeads Held="answered.Held" Address="bead" OnCreated="Reload" />
+                    <section class="bead-box bead-close-reason">
+                        <h2 class="h4 bead-section">Closed</h2>
+                        <p>@detail.Bead.CloseReason</p>
                     </section>
                 }
-                else if (!answered.NamesNoBead)
+
+                <section class="bead-box">
+                    <BeadDescriptionEdit Address="bead"
+                                         Bead="detail.Bead"
+                                         OnWritten="Reload" />
+                </section>
+
+                @if (facts is AReadOfTheBacklog.Given { Value: var answered })
                 {
-                    <BeadAbsentLine Words="This bead holds no bead.">
-                        <Presses>
-                            <BeadHeldCreate Address="bead" OnCreated="Reload" />
-                        </Presses>
-                    </BeadAbsentLine>
+                    @if (answered.Held.Count > 0)
+                    {
+                        <section class="bead-box">
+                            <BeadHeldBeads Held="answered.Held" Address="bead" Detail="detail" OnCreated="Reload" />
+                        </section>
+                    }
+                    else if (!answered.NamesNoBead)
+                    {
+                        <BeadAbsentLine Words="This bead holds no bead.">
+                            <Presses>
+                                <BeadHeldCreate Address="bead" Detail="detail" OnCreated="Reload" />
+                            </Presses>
+                        </BeadAbsentLine>
+                    }
+
+                    <BeadDependencyEdges Address="bead"
+                                         Facts="answered"
+                                         Beads="read.Beads"
+                                         OnWritten="Reload">
+                        <HeldPress>
+                            <BeadHeldCreate Address="bead" Detail="detail" OnCreated="Reload" />
+                        </HeldPress>
+                    </BeadDependencyEdges>
                 }
 
-                <BeadDependencyEdges Address="bead"
-                                     Facts="answered"
-                                     Beads="read.Beads"
-                                     OnWritten="Reload">
-                    <HeldPress>
-                        <BeadHeldCreate Address="bead" OnCreated="Reload" />
-                    </HeldPress>
-                </BeadDependencyEdges>
-            }
+                <BeadAcceptanceAndNotes Address="bead"
+                                        Bead="detail.Bead"
+                                        OnWritten="Reload" />
 
-            <BeadAcceptanceAndNotes Address="bead"
-                                    Bead="detail.Bead"
-                                    OnWritten="Reload" />
-
-            <section class="bead-box">
-                <BeadComments Address="bead"
-                              Detail="detail"
-                              OnWritten="Reload" />
-            </section>
+                <section class="bead-box">
+                    <BeadComments Address="bead"
+                                  Detail="detail"
+                                  OnWritten="Reload" />
+                </section>
+            </div>
         </div>
-    </div>
+    </ReReadMark>
 }
 
 @code {
@@ -120,6 +127,11 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && addressedP
 
     private BeadDetailRead? read;
     private AddressedProject? addressedProject;
+    private bool rereading;
+    private string staleReadMessage = string.Empty;
+
+    private const string StaleReadMessage =
+        "bd has not answered again. The bead on the screen is the one from before.";
 
     private string TheTitleOfThisPage =>
         read?.Detail is AReadOfTheBead.Given { Value: var detail } ? detail.Bead.Title : Id;
@@ -185,6 +197,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && addressedP
     private async Task ReadTheBead()
     {
         read = null;
+        staleReadMessage = string.Empty;
         StateHasChanged();
         await Reload();
         StateHasChanged();
@@ -197,7 +210,33 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && addressedP
             return;
         }
 
+        rereading = read is not null;
+        if (rereading)
+        {
+            StateHasChanged();
+        }
+
         addressedProject = new AddressedProject.Found(project);
-        read = await Details.ReadAsync(project, Id);
+        BeadDetailRead fresh;
+        try
+        {
+            fresh = await Details.ReadAsync(project, Id);
+        }
+        finally
+        {
+            rereading = false;
+        }
+
+        // A re-read that gave up on bd has nothing new to show. The bead on the screen is one
+        // write old, same as it is through any re-read, so the page keeps it and says so instead
+        // of clearing itself to an error.
+        if (fresh.GaveUp && read?.Detail is AReadOfTheBead.Given)
+        {
+            staleReadMessage = StaleReadMessage;
+            return;
+        }
+
+        staleReadMessage = string.Empty;
+        read = fresh;
     }
 }

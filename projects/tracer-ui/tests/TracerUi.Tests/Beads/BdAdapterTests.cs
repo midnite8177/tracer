@@ -1,5 +1,6 @@
 using TracerUi.Core.Beads;
 using TracerUi.Core.Projects;
+using TracerUi.Tests;
 
 namespace TracerUi.Tests.Beads;
 
@@ -11,7 +12,7 @@ public class BdAdapterTests
     public async Task ReadsTheBeadsThatBdReadyPrintsAsAJsonArray()
     {
         var bd = new FakeBd().Prints("ready --json", """[{"id": "x-1", "title": "First"}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ReadyAsync(Project);
 
@@ -28,7 +29,7 @@ public class BdAdapterTests
             {"id": "x-1", "type": "task"}
             {"id": "x-2", "type": "bug"}
             """);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ReadyAsync(Project);
 
@@ -40,7 +41,7 @@ public class BdAdapterTests
     public async Task ReadsTheBeadsThatABdVersionWrapsInAnObject()
     {
         var bd = new FakeBd().Prints("ready --json", """{"issues": [{"id": "x-1"}]}""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ReadyAsync(Project);
 
@@ -52,7 +53,7 @@ public class BdAdapterTests
     public async Task ReportsWhatBdWroteOnStandardErrorWhenTheReadFails()
     {
         var bd = new FakeBd().Fails("ready --json", "no beads database found in this directory");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ReadyAsync(Project);
 
@@ -65,7 +66,7 @@ public class BdAdapterTests
     public async Task ReportsTheExitCodeWhenTheReadFailsAndBdWritesNothing()
     {
         var bd = new FakeBd().Fails("ready --json", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ReadyAsync(Project);
 
@@ -78,7 +79,7 @@ public class BdAdapterTests
     public async Task ReportsTheVersionNumberOfTheInstalledBd()
     {
         var bd = new FakeBd().Prints("version", "bd version 1.2.2 (Homebrew)");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -89,7 +90,7 @@ public class BdAdapterTests
     public async Task ReportsTheWholeVersionLineWhenItHoldsNoVersionNumber()
     {
         var bd = new FakeBd().Prints("version", "bd (built from source)");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -100,7 +101,7 @@ public class BdAdapterTests
     public async Task ReportsTheProblemWhenTheAppCannotRunBdAtAll()
     {
         var bd = new FakeBd();
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -129,7 +130,7 @@ public class BdAdapterTests
                       --json                      Output in JSON format
                   -h, --help                      help for bd
                 """);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -139,7 +140,7 @@ public class BdAdapterTests
     [Fact]
     public async Task ResolvesAUiVerbThroughTheCommandAndTheFlagsThatBdOffers()
     {
-        var adapter = new BdAdapter(BdWithUpdate());
+        var adapter = new BdAdapter(BdWithUpdate(), TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -150,7 +151,7 @@ public class BdAdapterTests
     [Fact]
     public async Task NamesTheCommandThatTheInstalledBdDoesNotHave()
     {
-        var adapter = new BdAdapter(BdWithUpdate());
+        var adapter = new BdAdapter(BdWithUpdate(), TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -161,7 +162,7 @@ public class BdAdapterTests
     [Fact]
     public async Task NamesTheFlagThatTheCommandOfTheInstalledBdDoesNotHave()
     {
-        var adapter = new BdAdapter(BdWithUpdate());
+        var adapter = new BdAdapter(BdWithUpdate(), TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -196,7 +197,7 @@ public class BdAdapterTests
         var bd = BdWithUpdate().Prints(
             "list --json",
             """[{"id": "x-1", "issue_type": "task", "owner": "sam", "acceptance_criteria": "done"}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -211,7 +212,7 @@ public class BdAdapterTests
         var bd = BdWithUpdate().Prints(
             "list --json",
             """[{"id": "x-1", "type": "task", "assignee": "sam", "acceptance": "done"}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -224,7 +225,7 @@ public class BdAdapterTests
     public async Task LeavesAFieldUnresolvedWhenNoBeadShowsIt()
     {
         var bd = BdWithUpdate().Prints("list --json", """[{"id": "x-1"}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -236,7 +237,7 @@ public class BdAdapterTests
     public async Task ProbesOneProjectOnceAndAnswersLaterQuestionsFromTheCache()
     {
         var bd = BdWithUpdate();
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         await adapter.CapabilitiesAsync(Project);
         var runsAfterTheProbe = bd.Invocations.Count;
@@ -249,7 +250,7 @@ public class BdAdapterTests
     public async Task ProbesEachProjectOnItsOwn()
     {
         var bd = BdWithUpdate();
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         await adapter.CapabilitiesAsync(Project);
         var runsAfterTheProbe = bd.Invocations.Count;
@@ -261,7 +262,7 @@ public class BdAdapterTests
     [Fact]
     public async Task SaysThatItCouldNotAskWhenTheProbeDidNotRun()
     {
-        var adapter = new BdAdapter(new FakeBd());
+        var adapter = new BdAdapter(new FakeBd(), TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -274,7 +275,7 @@ public class BdAdapterTests
     public async Task SaysThatItCouldNotAskWhenTheHelpOfBdDoesNotAnswer()
     {
         var bd = new FakeBd().Prints("version", "bd version 1.2.2");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -287,7 +288,7 @@ public class BdAdapterTests
     public async Task FailsTheReadWhenBdExitsWellButPrintsSomethingThatIsNotJson()
     {
         var bd = new FakeBd().Prints("ready --json", "Segmentation fault");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ReadyAsync(Project);
 
@@ -299,7 +300,7 @@ public class BdAdapterTests
     public async Task ReadsNoBeadsAndStillAnswersWhenBdPrintsNothing()
     {
         var bd = new FakeBd().Prints("ready --json", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ReadyAsync(Project);
 
@@ -322,7 +323,7 @@ public class BdAdapterTests
                 Flags:
                   -p, --priority int      Set the priority
                 """);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -338,7 +339,7 @@ public class BdAdapterTests
         var bd = BdWithUpdate().Prints(
             "list --all --limit 0 --json",
             """[{"id": "x-1", "labels": ["ui"], "close_reason": "shipped"}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -354,7 +355,7 @@ public class BdAdapterTests
             .Prints(
                 "comments x-1 --json",
                 """[{"id": "c-1", "issue_id": "x-1", "author": "sam", "text": "Looks good", "created_at": "2026-01-01T00:00:00Z"}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -368,7 +369,7 @@ public class BdAdapterTests
     public async Task ReadsThePlainListWhenThisBdHasNoFlagForEveryStatus()
     {
         var bd = BdWithUpdate().Prints("list --json", """[{"id": "x-1", "issue_type": "task"}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -385,7 +386,7 @@ public class BdAdapterTests
             .Prints(
                 "comments x-2 --json",
                 """[{"author": "sam", "text": "Looks good", "created_at": "2026-01-01T00:00:00Z"}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -399,7 +400,7 @@ public class BdAdapterTests
         var bd = BdWithUpdate()
             .Prints("list --all --limit 0 --json", """[{"id": "x-1"}]""")
             .Fails("comments x-1 --json", "unknown command \"comments\" for \"bd\"");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -423,7 +424,7 @@ public class BdAdapterTests
                 Flags:
                       --json      Output in JSON format
                 """);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var capabilities = await adapter.CapabilitiesAsync(Project);
 
@@ -437,7 +438,7 @@ public class BdAdapterTests
         var bd = new FakeBd().Prints(
             "list --all --limit 0 --json",
             """[{"id": "x-1", "status": "closed"}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ListAsync(Project);
 
@@ -451,7 +452,7 @@ public class BdAdapterTests
         var bd = new FakeBd()
             .Fails("list --all --limit 0 --json", "unknown flag: --all")
             .Prints("list --json", """[{"id": "x-1"}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ListAsync(Project);
 
@@ -465,7 +466,7 @@ public class BdAdapterTests
         var bd = new FakeBd()
             .Fails("list --all --limit 0 --json", "unknown flag: --all")
             .Fails("list --json", "no beads database found in this directory");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ListAsync(Project);
 
@@ -479,7 +480,7 @@ public class BdAdapterTests
         var bd = new FakeBd().Prints(
             "blocked --json",
             """[{"id": "x-1", "blocked_by": ["x-2", "x-3"]}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.BlockedAsync(Project);
 
@@ -493,7 +494,7 @@ public class BdAdapterTests
         var bd = new FakeBd().Prints(
             "show x-1 --json",
             """[{"id": "x-1", "title": "First", "notes": "Read the log first."}]""");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ShowAsync(new BeadAddress(Project, "x-1"));
 
@@ -505,7 +506,7 @@ public class BdAdapterTests
     public async Task ReportsWhatBdWroteWhenItKnowsNoBeadWithThatId()
     {
         var bd = new FakeBd().Fails("show x-9 --json", "issue not found: x-9");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.ShowAsync(new BeadAddress(Project, "x-9"));
 
@@ -522,7 +523,7 @@ public class BdAdapterTests
             [{"author": "sam", "text": "First", "created_at": "2026-01-01T09:00:00Z"},
              {"author": "claude", "text": "Second", "created_at": "2026-01-02T09:00:00Z"}]
             """);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CommentsAsync(new BeadAddress(Project, "x-1"));
 
@@ -531,4 +532,55 @@ public class BdAdapterTests
             ["First", "Second"],
             outcome.Records.Select(record => record.Text(BeadFields.TextOfAComment)));
     }
+
+    [Fact]
+    public async Task GivesUpOnAReadThatOutrunsTheWaitLimitWithoutClaimingToHaveStoppedBd()
+    {
+        var bd = new FakeBd().Holds("ready --json");
+        var clock = new FakeTimeProvider(Start);
+        var adapter = new BdAdapter(bd, clock);
+
+        var reading = adapter.ReadyAsync(Project);
+        clock.Advance(BdAdapter.WaitLimit);
+        var outcome = await reading;
+
+        Assert.False(outcome.Answered);
+        Assert.True(outcome.GaveUp);
+        Assert.DoesNotContain("stopped", outcome.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GivesUpOnAWriteThatOutrunsTheWaitLimitAndSaysItMayStillLand()
+    {
+        var bd = BdWithUpdate().Holds("update x-1 --priority 1");
+        var clock = new FakeTimeProvider(Start);
+        var adapter = new BdAdapter(bd, clock);
+
+        var writing = adapter.SetPriorityAsync(new BeadAddress(Project, "x-1"), 1);
+        clock.Advance(BdAdapter.WaitLimit);
+        var outcome = await writing;
+
+        Assert.False(outcome.Wrote);
+        Assert.True(outcome.GaveUp);
+        Assert.Contains("may still have landed", outcome.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GivesUpOnTheProbeThatOutrunsTheWaitLimitAndReportsWhatItCouldNotAsk()
+    {
+        var bd = new FakeBd().Holds("version");
+        var clock = new FakeTimeProvider(Start);
+        var adapter = new BdAdapter(bd, clock);
+
+        var probing = adapter.CapabilitiesAsync(Project);
+        clock.Advance(BdAdapter.WaitLimit);
+        var capabilities = await probing;
+
+        Assert.Equal(string.Empty, capabilities.Version);
+        Assert.False(capabilities.VerbsKnown);
+        Assert.Contains("bd version", capabilities.Problem, StringComparison.Ordinal);
+        Assert.DoesNotContain("stopped", capabilities.Problem, StringComparison.Ordinal);
+    }
+
+    private static readonly DateTimeOffset Start = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 }

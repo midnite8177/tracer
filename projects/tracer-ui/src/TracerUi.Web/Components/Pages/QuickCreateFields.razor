@@ -11,12 +11,13 @@
     <input class="form-control form-control-sm" id="@TitleId"
            @ref="titleBox"
            placeholder="@Names.Placeholder"
+           disabled="@Disabled"
            value="@Title" @oninput="TypeTheTitle" />
 </div>
 
 <div class="col-auto">
     <label class="form-label" for="@TypeId">Type</label>
-    <select class="form-select form-select-sm" id="@TypeId" value="@Type" @onchange="PickTheType">
+    <select class="form-select form-select-sm" id="@TypeId" value="@Type" disabled="@Disabled" @onchange="PickTheType">
         @foreach (var offered in BeadWriteChoices.QuickCreateTypes)
         {
             <option value="@offered">@offered</option>
@@ -41,6 +42,10 @@
     /// </summary>
     [Parameter]
     public RenderFragment? Epic { get; set; }
+
+    /// <summary>True while a create that this surface started is running, or has been abandoned.</summary>
+    [Parameter]
+    public bool Disabled { get; set; }
 
     [Parameter]
     public string Title { get; set; } = string.Empty;

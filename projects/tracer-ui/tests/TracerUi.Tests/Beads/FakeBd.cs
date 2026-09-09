@@ -2,7 +2,10 @@ using TracerUi.Core.Beads;
 
 namespace TracerUi.Tests.Beads;
 
-/// <summary>A bd that gives scripted stdout and stderr, so that a test fixes one version shape.</summary>
+/// <summary>
+/// A bd that gives scripted stdout and stderr, so that a test fixes one version shape. It can also
+/// hold one command line open, so that a test renders a component while that run is still going.
+/// </summary>
 public sealed class FakeBd : IBdProcess
 {
     private readonly Dictionary<string, BdResult> scripted = new(StringComparer.Ordinal);
@@ -10,6 +13,7 @@ public sealed class FakeBd : IBdProcess
     private readonly Dictionary<(string Directory, string CommandLine), BdResult> scriptedPerDirectory = [];
     private readonly List<(string Directory, string CommandLine)> runs = [];
     private readonly Dictionary<string, Action<FakeBd>> changes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCompletionSource<BdResult>> held = new(StringComparer.Ordinal);
 
     /// <summary>The command lines that the code under test ran, in order.</summary>
     public List<string> Invocations { get; } = [];
@@ -114,11 +118,47 @@ public sealed class FakeBd : IBdProcess
         return this;
     }
 
+    /// <summary>
+    /// Holds the next run of this command line open, so that a test renders a component while bd has
+    /// not answered it yet. <see cref="Answers"/> lets that run finish.
+    /// </summary>
+    public FakeBd Holds(string commandLine)
+    {
+        held[commandLine] = new TaskCompletionSource<BdResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        return this;
+    }
+
+    /// <summary>
+    /// Answers a run that <see cref="Holds"/> is holding open, as bd itself would have, and lets a
+    /// later run of the same command line fall through to what it is otherwise scripted to answer.
+    /// </summary>
+    public FakeBd Answers(string commandLine, string standardOutput)
+    {
+        if (!held.Remove(commandLine, out var holding))
+        {
+            throw new InvalidOperationException(
+                $"\"{commandLine}\" is not a held run. Call Holds before Answers.");
+        }
+
+        if (changes.TryGetValue(commandLine, out var change))
+        {
+            change(this);
+        }
+
+        holding.SetResult(new BdResult(0, standardOutput, string.Empty));
+        return this;
+    }
+
     public Task<BdResult> RunAsync(string workingDirectory, IReadOnlyList<string> arguments)
     {
         var commandLine = string.Join(' ', arguments);
         Invocations.Add(commandLine);
         runs.Add((workingDirectory, commandLine));
+        if (held.TryGetValue(commandLine, out var holding))
+        {
+            return holding.Task;
+        }
+
         var answer = Answer(workingDirectory, commandLine, arguments[0]);
         if (changes.TryGetValue(commandLine, out var change))
         {

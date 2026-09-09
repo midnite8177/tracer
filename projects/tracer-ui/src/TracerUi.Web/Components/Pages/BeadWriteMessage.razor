@@ -1,6 +1,6 @@
 @if (Message is { } message)
 {
-    <p class="@(Wrote ? "text-success" : "text-danger") bead-write-message">@message</p>
+    <p class="@(Wrote ? "text-success" : "text-danger") bead-write-message" role="status">@message</p>
 }
 
 @code {

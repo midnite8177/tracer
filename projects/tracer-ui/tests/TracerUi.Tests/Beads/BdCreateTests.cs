@@ -1,5 +1,6 @@
 using TracerUi.Core.Beads;
 using TracerUi.Core.Projects;
+using TracerUi.Tests;
 
 namespace TracerUi.Tests.Beads;
 
@@ -11,7 +12,7 @@ public sealed class BdCreateTests
     public async Task CreatesABeadFromATitleAndATypeAndGivesBackTheIdThatBdPrinted()
     {
         var bd = BdThatCreates().Prints("create --title Read the docs --type task --silent", "x-7\n");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CreateAsync(Project, "Read the docs", "task", null);
 
@@ -25,7 +26,7 @@ public sealed class BdCreateTests
     {
         var bd = BdThatCreates()
             .Prints("create --title Read the docs --type task --parent x-9 --silent", "x-9.1\n");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CreateAsync(Project, "Read the docs", "task", "x-9");
 
@@ -37,7 +38,7 @@ public sealed class BdCreateTests
     public async Task RefusesACreateThatStatesNoTitle()
     {
         var bd = BdThatCreates();
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CreateAsync(Project, "   ", "task", null);
 
@@ -52,7 +53,7 @@ public sealed class BdCreateTests
         var bd = BdThatCreates()
             .Prints("create --title The migration --type epic --silent", "x-4\n")
             .Prints("update x-4 --status in_progress", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CreateEpicAsync(Project, "The migration");
 
@@ -68,7 +69,7 @@ public sealed class BdCreateTests
         var bd = BdThatCreates()
             .Prints("create --title The migration --type epic --silent", "x-4\n")
             .Fails("update x-4 --status in_progress", "unknown status \"in_progress\"");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CreateEpicAsync(Project, "The migration");
 
@@ -82,7 +83,7 @@ public sealed class BdCreateTests
     public async Task ReportsWhatBdWroteOnStandardErrorWhenTheCreateFails()
     {
         var bd = BdThatCreates().Fails("create --title Read the docs --type task --silent", "prefix mismatch");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CreateAsync(Project, "Read the docs", "task", null);
 
@@ -95,7 +96,7 @@ public sealed class BdCreateTests
     public async Task RefusesACreateInsideAnEpicWhenTheCreateOfTheInstalledBdHasNoParentFlag()
     {
         var bd = BdWithoutTheParentFlag();
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CreateAsync(Project, "Read the docs", "task", "x-9");
 
@@ -105,10 +106,26 @@ public sealed class BdCreateTests
     }
 
     [Fact]
+    public async Task GivesUpOnACreateThatOutrunsTheWaitLimitAndSaysItMayStillHaveLanded()
+    {
+        var bd = BdThatCreates().Holds("create --title Read the docs --type task --silent");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var adapter = new BdAdapter(bd, clock);
+
+        var creating = adapter.CreateAsync(Project, "Read the docs", "task", null);
+        clock.Advance(BdAdapter.WaitLimit);
+        var outcome = await creating;
+
+        Assert.False(outcome.Created);
+        Assert.True(outcome.GaveUp);
+        Assert.Contains("may still have landed", outcome.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RefusesAMoveIntoAnEpicWhenTheUpdateOfTheInstalledBdHasNoParentFlag()
     {
         var bd = BdWithoutTheParentFlag();
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.SetParentAsync(new BeadAddress(Project, "x-1"), "x-9");
 

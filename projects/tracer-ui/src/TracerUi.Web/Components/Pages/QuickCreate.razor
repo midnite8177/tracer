@@ -4,10 +4,16 @@
 @inherits CapabilityAware
 
 <div class="board-quick-create">
-    <BeadWriteMessage Message="@WriteMessage" Wrote="Wrote" />
+    <BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
+
+    @if (!Probed)
+    {
+        <ProbePending />
+    }
 
     <div class="row g-2 align-items-end">
         <QuickCreateFields Names="TheNamesOfTheCapture"
+                           Disabled="@Abandoned"
                            @bind-Title="title"
                            @bind-Type="type">
             <Epic>
@@ -16,7 +22,7 @@
                     <EpicPicker Id="create-epic"
                                 Epics="Epics"
                                 WhenNone="No epic"
-                                Disabled="@(!Can(UiVerbs.CreateInAnEpic))"
+                                Disabled="@(!Can(UiVerbs.CreateInAnEpic) || Abandoned)"
                                 @bind-Value="epicId" />
                 </div>
             </Epic>
@@ -24,7 +30,8 @@
 
         <div class="col-auto" title="@Why(CreateVerb)">
             <button class="btn btn-sm btn-primary"
-                    disabled="@(!Can(CreateVerb) || title.Trim().Length == 0 || busy)"
+                    disabled="@(!Can(CreateVerb) || title.Trim().Length == 0 || Writing || Abandoned)"
+                    aria-busy="@AriaBusy"
                     @onclick="CreateTheBead">Create the bead</button>
         </div>
     </div>
@@ -34,12 +41,14 @@
         <div class="col">
             <label class="form-label" for="create-epic-title">Make an epic</label>
             <input class="form-control form-control-sm" id="create-epic-title"
-                   placeholder="What the epic is called" @bind="epicTitle" @bind:event="oninput" />
+                   placeholder="What the epic is called" disabled="@Abandoned"
+                   @bind="epicTitle" @bind:event="oninput" />
         </div>
 
         <div class="col-auto" title="@Why(UiVerbs.CreateAnEpic)">
             <button class="btn btn-sm btn-outline-primary"
-                    disabled="@(!Can(UiVerbs.CreateAnEpic) || epicTitle.Trim().Length == 0 || busy)"
+                    disabled="@(!Can(UiVerbs.CreateAnEpic) || epicTitle.Trim().Length == 0 || Writing || Abandoned)"
+                    aria-busy="@AriaBusy"
                     @onclick="CreateTheEpic">Create the epic</button>
         </div>
     </div>
@@ -63,9 +72,21 @@
     private string type = "task";
     private string epicId = string.Empty;
     private string epicTitle = string.Empty;
-    private bool busy;
+    private IReadOnlyList<Bead>? lastEpics;
 
     protected override ProjectPath OfProject => Project;
+
+    // The fields unlock once the board reads the backlog again, whatever caused that read: bd may
+    // still land the abandoned create on its own, and a second press before then risks a second bead.
+    protected override void OnParametersSet()
+    {
+        if (Abandoned && !ReferenceEquals(Epics, lastEpics))
+        {
+            ForgetTheLastWrite();
+        }
+
+        lastEpics = Epics;
+    }
 
     private UiVerb CreateVerb => InTheEpic is null ? UiVerbs.CreateABead : UiVerbs.CreateInAnEpic;
 
@@ -73,7 +94,7 @@
 
     private async Task CreateTheBead()
     {
-        if (await Create(() => Bd.CreateAsync(Project, title, type, InTheEpic)))
+        if (await CreateAsync(() => Bd.CreateAsync(Project, title, type, InTheEpic), EventCallback.Empty))
         {
             title = string.Empty;
         }
@@ -81,18 +102,9 @@
 
     private async Task CreateTheEpic()
     {
-        if (await Create(() => Bd.CreateEpicAsync(Project, epicTitle)))
+        if (await CreateAsync(() => Bd.CreateEpicAsync(Project, epicTitle), EventCallback.Empty))
         {
             epicTitle = string.Empty;
         }
-    }
-
-    private async Task<bool> Create(Func<Task<BdCreateOutcome>> create)
-    {
-        busy = true;
-        StateHasChanged();
-        var whole = await CreateAsync(create, EventCallback.Empty);
-        busy = false;
-        return whole;
     }
 }

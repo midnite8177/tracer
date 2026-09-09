@@ -26,7 +26,7 @@
     </button>
 }
 
-<BeadHeldCreate Address="Address" OnCreated="OnCreated" />
+<BeadHeldCreate Address="Address" Detail="Detail" OnCreated="OnCreated" />
 
 @code {
     /// <summary>The beads that this bead holds, in the order that the board draws them.</summary>
@@ -38,6 +38,11 @@
     [Parameter]
     [EditorRequired]
     public required BeadAddress Address { get; set; }
+
+    /// <summary>The bead this box stands on, which its own held create passes on to tell a fresh read apart.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadDetail Detail { get; set; }
 
     /// <summary>
     /// Runs when bd made a bead inside this one, so that the page reads the bead again and the new

@@ -271,6 +271,11 @@ textarea.bead-prose-editor {
     padding-top: var(--tracer-space-3);
 }
 
+.board-bulk-row-message {
+    color: var(--tracer-danger-fg);
+    margin-left: var(--tracer-space-2);
+}
+
 .board-quick-create {
     background-color: var(--tracer-canvas-subtle);
     border: 1px solid var(--tracer-border);

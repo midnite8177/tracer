@@ -1,0 +1,44 @@
+@*
+    Wraps the beads of a re-read. It keeps them in the markup, and once the read outruns the wait
+    that a working mark waits on, it dims them and shows the mark, for at least the mark's floor, so
+    a re-read that answers just after does not blink the dimming off the screen.
+*@
+
+@implements IDisposable
+
+@if (mark is { Visible: true })
+{
+    <div class="re-read-dim">
+        @ChildContent
+    </div>
+    <p class="re-read-mark" role="status">
+        <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+        Reading again…
+    </p>
+}
+else
+{
+    @ChildContent
+}
+
+@code {
+    [Inject]
+    public required TimeProvider Clock { get; set; }
+
+    /// <summary>True for as long as the read that a write of this app started is still running.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required bool Rereading { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private DelayedMark? mark;
+
+    protected override void OnInitialized() =>
+        mark = new DelayedMark(Clock, WorkingMark.WaitBeforeShowing, WorkingMark.Floor, () => InvokeAsync(StateHasChanged));
+
+    protected override void OnParametersSet() => mark?.SetActive(Rereading);
+
+    public void Dispose() => mark?.Dispose();
+}

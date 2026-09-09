@@ -3,8 +3,10 @@ using Bunit;
 using Microsoft.AspNetCore.Components;
 using Bunit.Web.AngleSharp;
 using Microsoft.Extensions.DependencyInjection;
+using TracerUi.Core.Beads;
 using TracerUi.Core.Boards;
 using TracerUi.Core.Projects;
+using TracerUi.Web.Components.Layout;
 using DetailPage = TracerUi.Web.Components.Pages.Detail;
 
 namespace TracerUi.Tests.Boards;
@@ -379,6 +381,97 @@ public sealed class DetailMarkupTests : BunitContext
     }
 
     [Fact]
+    public void DisablesTheHeldCreateWriteWhileBdHasNotAnsweredItAndListsTheBeadOnceItDoes()
+    {
+        projects.Bd
+            .DeclaresEveryWrite()
+            .After(TheCreateOfTheNewBead, bd => bd.PrintsIn(
+                projects.Second.Value,
+                ListCommand,
+                $"[{TheRecordsOfTheEpic}, {TheRecordOfTheNewBead}]"))
+            .Holds(TheCreateOfTheNewBead);
+        var page = ThePageOfTheEpic();
+
+        page.Find(".bead-held-add").Click();
+        page.Find("#held-create-title").Input("Read the two plans again");
+        page.Find(".bead-held-create-write").Click();
+
+        Assert.True(page.Find(".bead-held-create-write").HasAttribute("disabled"));
+        Assert.DoesNotContain(
+            "Read the two plans again",
+            page.FindAll(".bead-held .bead-row-title").Select(row => row.TextContent.Trim()));
+
+        projects.Bd.Answers(TheCreateOfTheNewBead, "b-1.1\n");
+
+        page.WaitForAssertion(() => Assert.Contains(
+            "Read the two plans again",
+            page.FindAll(".bead-held .bead-row-title").Select(row => row.TextContent.Trim())));
+    }
+
+    [Fact]
+    public void ShowsTheWorkingMarkOnTheHeldCreateOnceItsWriteOutrunsTheWait()
+    {
+        projects.Bd.DeclaresEveryWrite().Holds(TheCreateOfTheNewBead);
+        var page = ThePageOfTheEpic();
+        page.Find(".bead-held-add").Click();
+        page.Find("#held-create-title").Input("Read the two plans again");
+
+        page.Find(".bead-held-create-write").Click();
+
+        Assert.Empty(page.FindAll(".working-mark"));
+        projects.Clock.Advance(WorkingMark.WaitBeforeShowing);
+        page.WaitForAssertion(() => Assert.Single(page.FindAll(".working-mark")));
+        Assert.True(page.Find(".bead-held-create-write").HasAttribute("disabled"));
+
+        projects.Bd.Answers(TheCreateOfTheNewBead, "b-1.1\n");
+        projects.Clock.Advance(WorkingMark.Floor);
+
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll(".working-mark")));
+    }
+
+    [Fact]
+    public void LocksTheHeldCreateOnceItsWriteOutrunsTheWaitLimitAndKeepsTheTitle()
+    {
+        projects.Bd.DeclaresEveryWrite().Holds(TheCreateOfTheNewBead);
+        var page = ThePageOfTheEpic();
+        page.Find(".bead-held-add").Click();
+        page.Find("#held-create-title").Input("Read the two plans again");
+
+        page.Find(".bead-held-create-write").Click();
+
+        projects.Clock.Advance(WorkingMark.WaitBeforeShowing);
+        page.WaitForAssertion(() => Assert.Single(page.FindAll(".working-mark")));
+
+        projects.Clock.Advance(BdAdapter.WaitLimit - WorkingMark.WaitBeforeShowing);
+
+        page.WaitForAssertion(() => Assert.True(page.Find(".bead-held-create-write").HasAttribute("disabled")));
+        Assert.True(page.Find("#held-create-title").HasAttribute("disabled"));
+        Assert.Equal("Read the two plans again", page.Find("#held-create-title").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void ShowsTheProbeSentenceAndNotTheWorkingMarkOnTheHeldCreateWhileTheFirstProbeOfTheProjectRuns()
+    {
+        projects.Bd.DeclaresEveryWrite().Holds("version");
+        var page = ThePageOfTheEpic();
+
+        Assert.Contains(
+            "The app is asking bd what it can do",
+            page.Find(".bead-held-create").TextContent,
+            StringComparison.Ordinal);
+        Assert.Empty(page.FindAll(".bead-held-create .working-mark"));
+        Assert.True(page.Find(".bead-held-add").HasAttribute("disabled"));
+
+        projects.Bd.Answers("version", "bd version 1.2.2");
+
+        page.WaitForAssertion(() => Assert.False(page.Find(".bead-held-add").HasAttribute("disabled")));
+        Assert.DoesNotContain(
+            "The app is asking bd what it can do",
+            page.Find(".bead-held-create").TextContent,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void KeepsTheQuickCreateOpenWithTheTitleAndTheReasonWhenBdRefusedTheCreate()
     {
         var page = ThePageOfTheEpicThatTakesACreate();
@@ -483,6 +576,20 @@ public sealed class DetailMarkupTests : BunitContext
     }
 
     [Fact]
+    public void MarksTheCutBusyTheMomentThePersonAnswersYesAndItIsStillWaitingOnBd()
+    {
+        projects.Bd.DeclaresEveryWrite().Holds("dep remove b-7 b-9");
+        var page = ThePageOfTheBeadWithEveryFact();
+
+        TheCut(page, "Choose a registrar").Click();
+        page.Find(".bead-edge-yes").Click();
+
+        var cut = TheCut(page, "Choose a registrar");
+        Assert.Equal("true", cut.GetAttribute("aria-busy"));
+        Assert.True(cut.HasAttribute("disabled"));
+    }
+
+    [Fact]
     public void StandsNoBlockerPickerOnThePageUntilAPressAsksForOne()
     {
         var page = ThePageOfTheBeadWhoseEdgesBdCuts();
@@ -502,6 +609,19 @@ public sealed class DetailMarkupTests : BunitContext
 
         Assert.Contains("dep add b-7 b-2", projects.Bd.Invocations);
         Assert.Empty(page.FindAll("#write-blocker"));
+    }
+
+    [Fact]
+    public void MarksTheBlockerPickerBusyTheMomentAPickStartsItsWrite()
+    {
+        projects.Bd.DeclaresEveryWrite().Holds("dep add b-7 b-2");
+        var page = ThePageOfTheBeadWithEveryFact();
+
+        page.Find(".bead-blocker-press").Click();
+        page.Find("#write-blocker").Change("b-2");
+
+        Assert.Equal("true", page.Find("#write-blocker").GetAttribute("aria-busy"));
+        Assert.True(page.Find("#write-blocker").HasAttribute("disabled"));
     }
 
     [Fact]
@@ -666,6 +786,20 @@ public sealed class DetailMarkupTests : BunitContext
         page.Find(".bead-acceptance-save").Click();
 
         Assert.Contains("update b-7 --acceptance One plan wins.", projects.Bd.Invocations);
+    }
+
+    [Fact]
+    public void MarksTheAcceptanceSaveBusyTheMomentAPressStartsItsWrite()
+    {
+        projects.Bd.DeclaresEveryWrite().Holds("update b-7 --acceptance One plan wins.");
+        var page = ThePageOfTheBareBead();
+
+        page.Find(".bead-absent .bead-acceptance-add").Click();
+        page.Find("#prose-acceptance").Input("One plan wins.");
+        page.Find(".bead-acceptance-save").Click();
+
+        Assert.Equal("true", page.Find(".bead-acceptance-save").GetAttribute("aria-busy"));
+        Assert.True(page.Find(".bead-acceptance-save").HasAttribute("disabled"));
     }
 
     [Fact]
@@ -853,6 +987,43 @@ public sealed class DetailMarkupTests : BunitContext
     }
 
     [Fact]
+    public void MarksTheCommentBoxBusyTheMomentAPressStartsItsWrite()
+    {
+        projects.Bd.DeclaresEveryWrite().Holds("comment b-7 Read the two plans again.");
+        var page = ThePageOfTheBead(TheBeadWithEveryFact, TheComments);
+
+        page.Find("#write-comment").Change("Read the two plans again.");
+        page.Find(".bead-comment-add").Click();
+
+        Assert.Equal("true", page.Find(".bead-comment-add").GetAttribute("aria-busy"));
+        Assert.True(page.Find(".bead-comment-add").HasAttribute("disabled"));
+        Assert.True(page.Find("#write-comment").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void KeepsTheCommentTextAndTakesNoPressOnceItOutrunsTheWaitLimitUntilTheNextWriteReadsThePageAgain()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Holds("comment b-7 Read the two plans again.");
+        page.Find("#write-comment").Change("Read the two plans again.");
+        page.Find(".bead-comment-add").Click();
+
+        projects.Clock.Advance(BdAdapter.WaitLimit);
+
+        page.WaitForAssertion(() => Assert.True(page.Find(".bead-comment-add").HasAttribute("disabled")));
+        Assert.True(page.Find("#write-comment").HasAttribute("disabled"));
+        var box = page.FindAll(".bead-prose-column .bead-box")[^1];
+        Assert.Contains("may still have landed", TheOneIn(".bead-write-message", box).TextContent, StringComparison.Ordinal);
+
+        ThePress(page, "Priority, p2").Click();
+        ThePick(page, "p1").Click();
+
+        page.WaitForAssertion(() => Assert.False(page.Find(".bead-comment-add").HasAttribute("disabled")));
+        Assert.False(page.Find("#write-comment").HasAttribute("disabled"));
+        Assert.Equal("Read the two plans again.", page.Find("#write-comment").GetAttribute("value"));
+    }
+
+    [Fact]
     public void SaysWhyInsteadOfTheCommentsWhenBdWillNotReadThem()
     {
         var page = ThePageOfABeadWhoseCommentsBdCannotRead();
@@ -1002,6 +1173,116 @@ public sealed class DetailMarkupTests : BunitContext
     }
 
     [Fact]
+    public void MarksThePickerBusyAndRefusesASecondPressTheMomentAPickStartsItsWrite()
+    {
+        projects.Bd.DeclaresEveryWrite().Holds("update b-7 --priority 1");
+        var page = ThePageOfTheBeadThatBdWrites();
+
+        ThePress(page, "Priority, p2").Click();
+        ThePick(page, "p1").Click();
+
+        Assert.Equal("true", page.Find(".bead-fact-choices").GetAttribute("aria-busy"));
+        Assert.All(
+            page.FindAll(".bead-fact-picker .bead-fact-choice"),
+            choice => Assert.True(choice.HasAttribute("disabled")));
+        Assert.Empty(page.FindAll(".working-mark"));
+    }
+
+    [Fact]
+    public void ShowsTheWorkingMarkOnceTheWriteOutrunsTheWaitAndTakesItOffOnceTheWriteLands()
+    {
+        projects.Bd.DeclaresEveryWrite().Holds("update b-7 --priority 1");
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Priority, p2").Click();
+        ThePick(page, "p1").Click();
+
+        projects.Clock.Advance(WorkingMark.WaitBeforeShowing);
+        page.WaitForAssertion(() => Assert.Single(page.FindAll(".working-mark")));
+
+        projects.Bd.Answers("update b-7 --priority 1", string.Empty);
+
+        page.WaitForAssertion(() => Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim()));
+    }
+
+    [Fact]
+    public void GivesUpOnTheWriteOnceItOutrunsTheWaitLimitAndTakesAPressAgainWithoutClaimingBdStopped()
+    {
+        projects.Bd.DeclaresEveryWrite().Holds("update b-7 --priority 1");
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Priority, p2").Click();
+        ThePick(page, "p1").Click();
+
+        projects.Clock.Advance(WorkingMark.WaitBeforeShowing);
+        page.WaitForAssertion(() => Assert.Single(page.FindAll(".working-mark")));
+
+        projects.Clock.Advance(BdAdapter.WaitLimit - WorkingMark.WaitBeforeShowing);
+        page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll(".bead-fact-strip .bead-write-message")));
+
+        var message = page.Find(".bead-fact-strip .bead-write-message").TextContent;
+        Assert.Contains("may still have landed", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("stopped", message, StringComparison.Ordinal);
+        Assert.All(
+            page.FindAll(".bead-fact-picker .bead-fact-choice"),
+            choice => Assert.False(choice.HasAttribute("disabled")));
+
+        projects.Clock.Advance(WorkingMark.Floor);
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll(".working-mark")));
+    }
+
+    [Fact]
+    public void KeepsTheBeadOnTheScreenDimmedWithTheMarkWhileAWriteRereadsItAndShowsTheNewFactOnceItLands()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Holds("show b-7 --json");
+
+        ThePress(page, "Priority, p2").Click();
+        ThePick(page, "p1").Click();
+
+        Assert.Equal("task", ThePress(page, "Type, task").TextContent.Trim());
+        Assert.Empty(page.FindAll(".re-read-mark"));
+
+        projects.Clock.Advance(WorkingMark.WaitBeforeShowing);
+
+        page.WaitForAssertion(() => Assert.Single(page.FindAll(".re-read-mark")));
+        Assert.Equal(
+            "task",
+            TheOneIn(".bead-fact-value button[aria-label='Type, task']", page.Find(".re-read-dim"))
+                .TextContent.Trim());
+
+        projects.Bd.Answers("show b-7 --json", TheBeadAtPriorityOne);
+
+        page.WaitForAssertion(() => Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim()));
+        Assert.Single(page.FindAll(".re-read-mark"));
+
+        projects.Clock.Advance(WorkingMark.Floor);
+
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll(".re-read-mark")));
+    }
+
+    [Fact]
+    public void SaysTheBeadOnTheScreenIsTheOneFromBeforeWhenARereadOutrunsTheWaitLimit()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Holds("show b-7 --json");
+
+        ThePress(page, "Priority, p2").Click();
+        ThePick(page, "p1").Click();
+
+        projects.Clock.Advance(WorkingMark.WaitBeforeShowing);
+        page.WaitForAssertion(() => Assert.Single(page.FindAll(".re-read-mark")));
+
+        projects.Clock.Advance(BdAdapter.WaitLimit - WorkingMark.WaitBeforeShowing);
+
+        page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll(".bead-stale-read")));
+        Assert.Contains(
+            "bead on the screen is the one from before",
+            page.Find(".bead-stale-read").TextContent,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("stopped", page.Find(".bead-stale-read").TextContent, StringComparison.Ordinal);
+        Assert.Equal("task", ThePress(page, "Type, task").TextContent.Trim());
+    }
+
+    [Fact]
     public void ClosesThePickerOnEscapeAndRunsNoCommandAndPutsTheKeyboardBackOnTheValue()
     {
         var page = ThePageOfTheBeadThatBdWrites();
@@ -1032,6 +1313,18 @@ public sealed class DetailMarkupTests : BunitContext
             StringComparison.Ordinal);
         Assert.Empty(page.FindAll(".bead-fact-picker .bead-fact-refusal"));
         Assert.NotEmpty(page.FindAll(".bead-fact-picker .bead-fact-choice"));
+    }
+
+    [Fact]
+    public void AnnouncesTheWriteMessageToAScreenReader()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Fails("update b-7 --type chore", "unknown type \"chore\"");
+
+        ThePress(page, "Type, task").Click();
+        ThePick(page, "chore").Click();
+
+        Assert.Equal("status", page.Find(".bead-fact-picker .bead-write-message").GetAttribute("role"));
     }
 
     [Fact]
@@ -1075,6 +1368,20 @@ public sealed class DetailMarkupTests : BunitContext
     }
 
     [Fact]
+    public void MarksTheTitleSaveBusyTheMomentAPressStartsItsWrite()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Holds(TheWriteOfASharperTitle);
+
+        page.Find(".bead-title-press").Click();
+        page.Find(".bead-title-box").Input("A sharper title");
+        page.Find(".bead-title-save").Click();
+
+        Assert.Equal("true", page.Find(".bead-title-save").GetAttribute("aria-busy"));
+        Assert.True(page.Find(".bead-title-save").HasAttribute("disabled"));
+    }
+
+    [Fact]
     public void OpensTheDescriptionBoxWithItsPreviewBesideItAndNoBoxForTheTitle()
     {
         var page = ThePageOfTheBeadThatBdWrites();
@@ -1111,6 +1418,20 @@ public sealed class DetailMarkupTests : BunitContext
         Assert.Contains(
             "update b-7 --title Pick a hosting plan --description Three plans remain.",
             projects.Bd.Invocations);
+    }
+
+    [Fact]
+    public void MarksTheDescriptionSaveBusyTheMomentAPressStartsItsWrite()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Holds("update b-7 --title Pick a hosting plan --description Three plans remain.");
+
+        page.Find(".bead-prose-press").Click();
+        page.Find(".bead-prose-editor").Input("Three plans remain.");
+        page.Find(".bead-prose-save").Click();
+
+        Assert.Equal("true", page.Find(".bead-prose-save").GetAttribute("aria-busy"));
+        Assert.True(page.Find(".bead-prose-save").HasAttribute("disabled"));
     }
 
     [Fact]
@@ -1166,6 +1487,19 @@ public sealed class DetailMarkupTests : BunitContext
 
         Assert.NotEmpty(page.FindAll(".bead-notes-caution"));
         Assert.NotEmpty(page.FindAll("#notes-text"));
+    }
+
+    [Fact]
+    public void MarksTheNotesSaveBusyTheMomentAPressStartsItsWrite()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Holds("update b-7 --notes The vendor answers slowly.");
+
+        page.Find(".bead-notes-press").Click();
+        page.Find(".bead-notes-save").Click();
+
+        Assert.Equal("true", page.Find(".bead-notes-save").GetAttribute("aria-busy"));
+        Assert.True(page.Find(".bead-notes-save").HasAttribute("disabled"));
     }
 
     [Fact]

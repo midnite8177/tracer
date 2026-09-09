@@ -22,7 +22,7 @@
         }
         else
         {
-            <BeadWriteMessage Message="@WhyTheLastWriteFailed" Wrote="false" />
+            <BeadWriteFeedback Message="@WhyTheLastWriteFailed" Wrote="false" Writing="Writing" />
             <h1>
                 <input class="form-control bead-title-box"
                        @ref="Field"
@@ -32,7 +32,8 @@
             </h1>
             <div class="bead-title-writes">
                 <button type="button" class="btn btn-sm btn-primary bead-title-save"
-                        disabled="@(title.Trim().Length == 0)"
+                        disabled="@(title.Trim().Length == 0 || Writing)"
+                        aria-busy="@AriaBusy"
                         @onclick="Save">Save the title</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary ms-1"
                         @onclick="Close">Cancel</button>

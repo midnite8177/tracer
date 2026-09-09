@@ -11,19 +11,26 @@
 @inherits CapabilityAware
 
 <div class="bead-writes bead-held-create" title="@Why(UiVerbs.CreateInAnEpic)">
-    <BeadWriteMessage Message="@WriteMessage" Wrote="Wrote" />
+    <BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
+
+    @if (!Probed)
+    {
+        <ProbePending />
+    }
 
     @if (creating)
     {
         <div class="row g-2 align-items-end bead-write-row" @onkeydown="CloseOnEscape">
             <QuickCreateFields @ref="fields"
                                Names="TheNamesOfTheCapture"
+                               Disabled="@Abandoned"
                                @bind-Title="title"
                                @bind-Type="type" />
 
             <div class="col-auto">
                 <button class="btn btn-sm btn-primary bead-held-create-write"
-                        disabled="@(title.Trim().Length == 0 || busy)"
+                        disabled="@(title.Trim().Length == 0 || Writing || Abandoned)"
+                        aria-busy="@AriaBusy"
                         @onclick="CreateTheBead">Create the bead</button>
             </div>
         </div>
@@ -43,6 +50,11 @@
     [EditorRequired]
     public required BeadAddress Address { get; set; }
 
+    /// <summary>The bead this control stands on, so it can tell a fresh read of the page from a re-render.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadDetail Detail { get; set; }
+
     /// <summary>
     /// Runs when bd made the bead, so that the page reads this one again and the new bead stands in
     /// its list. A create that bd refused raises nothing.
@@ -57,13 +69,26 @@
 
     private string title = string.Empty;
     private string type = "task";
-    private bool busy;
 
     private QuickCreateFields? fields;
 
     private bool focusTheBox;
 
+    private BeadDetail? lastRead;
+
     protected override ProjectPath OfProject => Address.Project;
+
+    // The box unlocks once the page reads the bead again, whatever caused that read: bd may still
+    // land the abandoned create on its own, and a second press before then risks a second bead.
+    protected override void OnParametersSet()
+    {
+        if (Abandoned && !ReferenceEquals(Detail, lastRead))
+        {
+            ForgetTheLastWrite();
+        }
+
+        lastRead = Detail;
+    }
 
     private void OpenTheBox()
     {
@@ -100,12 +125,7 @@
 
     private async Task CreateTheBead()
     {
-        busy = true;
-        StateHasChanged();
-        var made = await CreateAsync(
-            () => Bd.CreateAsync(Address.Project, title, type, Address.Id),
-            OnCreated);
-        busy = false;
+        var made = await CreateAsync(() => Bd.CreateAsync(Address.Project, title, type, Address.Id), OnCreated);
         if (made)
         {
             CloseTheBox();

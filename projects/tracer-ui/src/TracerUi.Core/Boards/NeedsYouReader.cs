@@ -46,15 +46,14 @@ public sealed class NeedsYouReader
         this.backlogs = backlogs;
     }
 
-    /// <summary>Reads every project of the registry, in the order that the registry holds them.</summary>
+    /// <summary>
+    /// Reads every project of the registry at once, and gives them back in the order that the
+    /// registry holds them. One project that answers slowly costs no other project its own answer.
+    /// </summary>
     public async Task<NeedsYouView> ReadAsync()
     {
-        var projects = new List<NeedsYouProject>();
-        foreach (var project in catalog.Projects())
-        {
-            projects.Add(await ReadAsync(project));
-        }
-
+        var reads = catalog.Projects().Select(ReadAsync).ToList();
+        var projects = await Task.WhenAll(reads);
         return new NeedsYouView(projects);
     }
 

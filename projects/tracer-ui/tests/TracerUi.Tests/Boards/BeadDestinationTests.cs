@@ -37,5 +37,5 @@ public sealed class BeadDestinationTests
     }
 
     private static ProjectCatalog CatalogOver(IProjectRegistryStore store) =>
-        new(store, new BdAdapter(FakeBd.ThatAnswersReady()));
+        new(store, new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
 }

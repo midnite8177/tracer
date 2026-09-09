@@ -6,12 +6,16 @@ namespace TracerUi.Core.Boards;
 /// <summary>The backlog of one project, or the reason that bd gave none.</summary>
 /// <param name="Answered">True when bd listed the beads.</param>
 /// <param name="Message">Empty when bd answered; otherwise a message for the person.</param>
-public sealed record BacklogOutcome(bool Answered, string Message, Backlog Backlog)
+/// <param name="GaveUp">True when the app stopped waiting on bd, so this read may still be running.</param>
+public sealed record BacklogOutcome(bool Answered, string Message, Backlog Backlog, bool GaveUp)
 {
-    public static BacklogOutcome Answer(Backlog backlog) => new(true, string.Empty, backlog);
+    private static readonly Backlog Empty = new([], [], new Dictionary<string, IReadOnlyList<string>>());
 
-    public static BacklogOutcome Failure(string message) =>
-        new(false, message, new Backlog([], [], new Dictionary<string, IReadOnlyList<string>>()));
+    public static BacklogOutcome Answer(Backlog backlog) => new(true, string.Empty, backlog, false);
+
+    public static BacklogOutcome Failure(string message) => new(false, message, Empty, false);
+
+    public static BacklogOutcome Abandoned(string message) => new(false, message, Empty, true);
 }
 
 /// <summary>
@@ -33,7 +37,9 @@ public sealed class BacklogReader
         var listed = await adapter.ListAsync(project);
         if (!listed.Answered)
         {
-            return BacklogOutcome.Failure(listed.Message);
+            return listed.GaveUp
+                ? BacklogOutcome.Abandoned(listed.Message)
+                : BacklogOutcome.Failure(listed.Message);
         }
 
         var ready = await adapter.ReadyAsync(project);

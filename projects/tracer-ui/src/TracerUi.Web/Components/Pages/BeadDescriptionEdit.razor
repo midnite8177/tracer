@@ -43,7 +43,7 @@ else
         }
         else
         {
-            <BeadWriteMessage Message="@WhyTheLastWriteFailed" Wrote="false" />
+            <BeadWriteFeedback Message="@WhyTheLastWriteFailed" Wrote="false" Writing="Writing" />
 
             <div class="row g-3">
                 <div class="col-md-6">
@@ -61,6 +61,8 @@ else
 
             <div class="bead-writes">
                 <button type="button" class="btn btn-sm btn-primary bead-prose-save"
+                        disabled="@Writing"
+                        aria-busy="@AriaBusy"
                         @onclick="Save">Save the description</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary ms-1"
                         @onclick="Close">Cancel</button>

@@ -89,6 +89,24 @@ public sealed class NeedsYouReaderTests
     }
 
     [Fact]
+    public async Task StartsReadingEveryProjectBeforeAnyOneOfThemHasAnswered()
+    {
+        var bd = new FakeBd()
+            .Holds(ListCommand)
+            .Prints("ready --json", "[]")
+            .Prints("blocked --json", "[]");
+        var reader = ReaderOver(bd, First, Second);
+
+        var read = reader.ReadAsync();
+
+        Assert.Equal(1, bd.Runs(First.Value, ListCommand));
+        Assert.Equal(1, bd.Runs(Second.Value, ListCommand));
+
+        bd.Answers(ListCommand, "[]");
+        await read;
+    }
+
+    [Fact]
     public async Task ReadsOneProjectAgainAndLeavesTheBeadsOfTheOthersAsTheyWere()
     {
         var bd = ABdThatAnswersBoth(
@@ -120,7 +138,7 @@ public sealed class NeedsYouReaderTests
     {
         var store = new InMemoryProjectRegistryStore();
         store.Save(ProjectRegistry.Empty with { Projects = [.. projects] });
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
         return new NeedsYouReader(
             new ProjectCatalog(store, adapter),
             new BacklogCache(new BacklogReader(adapter), adapter));

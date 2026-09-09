@@ -12,10 +12,14 @@ namespace TracerUi.Core.Boards;
 /// The backlog of the project, which answers what a picker of this page offers: the beads by title,
 /// the epics, and the labels that the project uses. It is empty when the read gave none.
 /// </param>
+/// <param name="GaveUp">True when the app stopped waiting on bd, so this read may still be running.</param>
 public sealed record BeadDetailRead(
     Read<BeadDetail> Detail,
-    Backlog Backlog)
+    Backlog Backlog,
+    bool GaveUp)
 {
+    private static readonly Backlog EmptyBacklog = new([], [], new Dictionary<string, IReadOnlyList<string>>());
+
     /// <summary>Every bead of the backlog, so that a picker offers them by title.</summary>
     public IReadOnlyList<Bead> Beads => Backlog.Beads;
 
@@ -35,12 +39,13 @@ public sealed record BeadDetailRead(
             .Order(StringComparer.Ordinal)];
 
     public static BeadDetailRead Answer(BeadDetail detail, Backlog backlog) =>
-        new(new Read<BeadDetail>.Given(detail), backlog);
+        new(new Read<BeadDetail>.Given(detail), backlog, false);
 
     public static BeadDetailRead Failure(string message) =>
-        new(
-            new Read<BeadDetail>.Unread(message),
-            new Backlog([], [], new Dictionary<string, IReadOnlyList<string>>()));
+        new(new Read<BeadDetail>.Unread(message), EmptyBacklog, false);
+
+    public static BeadDetailRead Abandoned(string message) =>
+        new(new Read<BeadDetail>.Unread(message), EmptyBacklog, true);
 }
 
 /// <summary>
@@ -65,7 +70,9 @@ public sealed class BeadDetailReader
         var shown = await adapter.ShowAsync(bead);
         if (!shown.Answered)
         {
-            return BeadDetailRead.Failure(shown.Message);
+            return shown.GaveUp
+                ? BeadDetailRead.Abandoned(shown.Message)
+                : BeadDetailRead.Failure(shown.Message);
         }
 
         if (shown.Records.Count == 0)

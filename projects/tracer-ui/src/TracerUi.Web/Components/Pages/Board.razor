@@ -34,6 +34,11 @@ else
 {
     <p class="text-muted">@Selection.Current.Value</p>
 
+    @if (staleReadMessage.Length > 0)
+    {
+        <p class="text-danger board-message board-stale-read">@staleReadMessage</p>
+    }
+
     <NewTabRefusal Feedback="newTab" />
 
     <FilterBar Filter="filter"
@@ -56,52 +61,54 @@ else
              OnCleared="ClearTheSelection"
              OnRetry="KeepOnlyTheseBeads" />
 
-    @if (board.IsEmpty)
-    {
-        <p>No bead of this project matches the filter and the toggles.</p>
-    }
-    else
-    {
-        <table class="table board-table">
-            <thead>
-                <tr>
-                    <th class="board-cell-tick"></th>
-                    @foreach (var column in Columns)
-                    {
-                        <th>@column</th>
-                    }
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var row in collapsed.Draws(board.Rows))
-                {
-                    @Row(row)
-                }
-
-                @if (board.Unparented.Count > 0)
-                {
-                    <tr class="board-row board-unparented">
-                        <td class="board-cell-tick" style="--row-depth: @TheBoard.UnparentedDepth">
-                            <div class="board-ticks">
-                                @BranchTick(UnparentedIds, "Select every bead under this row")
-                            </div>
-                        </td>
-                        <td class="board-cell-title" colspan="@Columns.Length">
-                            <div class="board-title-line">
-                                @CollapseControl(collapsed.HoldsUnparented, collapsed.ToggleUnparented)
-                                <span>@TheBoard.UnparentedTitle</span>
-                                @Count(board.UnparentedHeld)
-                            </div>
-                        </td>
+    <ReReadMark Rereading="rereading">
+        @if (board.IsEmpty)
+        {
+            <p>No bead of this project matches the filter and the toggles.</p>
+        }
+        else
+        {
+            <table class="table board-table">
+                <thead>
+                    <tr>
+                        <th class="board-cell-tick"></th>
+                        @foreach (var column in Columns)
+                        {
+                            <th>@column</th>
+                        }
                     </tr>
-                    @foreach (var row in collapsed.DrawsUnparented(board.Unparented))
+                </thead>
+                <tbody>
+                    @foreach (var row in collapsed.Draws(board.Rows))
                     {
                         @Row(row)
                     }
-                }
-            </tbody>
-        </table>
-    }
+
+                    @if (board.Unparented.Count > 0)
+                    {
+                        <tr class="board-row board-unparented">
+                            <td class="board-cell-tick" style="--row-depth: @TheBoard.UnparentedDepth">
+                                <div class="board-ticks">
+                                    @BranchTick(UnparentedIds, "Select every bead under this row")
+                                </div>
+                            </td>
+                            <td class="board-cell-title" colspan="@Columns.Length">
+                                <div class="board-title-line">
+                                    @CollapseControl(collapsed.HoldsUnparented, collapsed.ToggleUnparented)
+                                    <span>@TheBoard.UnparentedTitle</span>
+                                    @Count(board.UnparentedHeld)
+                                </div>
+                            </td>
+                        </tr>
+                        @foreach (var row in collapsed.DrawsUnparented(board.Unparented))
+                        {
+                            @Row(row)
+                        }
+                    }
+                </tbody>
+            </table>
+        }
+    </ReReadMark>
 }
 
 @code {
@@ -245,6 +252,12 @@ else
     private readonly NewTabFeedback newTab = new();
     private bool reading;
     private bool readAgain;
+    private bool nextReadIsAReread;
+    private bool rereading;
+    private string staleReadMessage = string.Empty;
+
+    private const string StaleReadMessage =
+        "bd has not answered again. The beads on the screen are the ones from before.";
 
     protected override async Task OnInitializedAsync()
     {
@@ -286,6 +299,7 @@ else
             selection.Clear();
             collapsed.Clear();
             outcome = null;
+            staleReadMessage = string.Empty;
             StartOn(change.Project);
             StateHasChanged();
             await RereadOrSayWhyNot();
@@ -298,13 +312,16 @@ else
         Watchers.Watch(project);
     }
 
-    // Reads the beads again when something invalidated the backlog of the active project, whether
-    // that was an agent in a terminal or a write of this app.
-    private void OnBacklogChanged(ProjectPath project)
+    private void OnBacklogChanged(BacklogChange change)
     {
-        if (Selection.Current is null || !Selection.Current.Equals(project))
+        if (Selection.Current is null || !Selection.Current.Equals(change.Project))
         {
             return;
+        }
+
+        if (change.IsReRead)
+        {
+            nextReadIsAReread = true;
         }
 
         _ = InvokeAsync(RereadOrSayWhyNot);
@@ -343,6 +360,9 @@ else
             do
             {
                 readAgain = false;
+                rereading = nextReadIsAReread;
+                nextReadIsAReread = false;
+                StateHasChanged();
                 await Load();
                 StateHasChanged();
             }
@@ -351,7 +371,10 @@ else
         finally
         {
             reading = false;
+            rereading = false;
         }
+
+        StateHasChanged();
     }
 
     public void Dispose()
@@ -368,7 +391,19 @@ else
             return;
         }
 
-        outcome = await Backlogs.ReadAsync(Selection.Current);
+        var fresh = await Backlogs.ReadAsync(Selection.Current);
+
+        // A re-read that gave up on bd has nothing new to show. The rows on the screen are one
+        // write old, same as they are through any re-read, so the board keeps them and says so
+        // instead of clearing itself to an empty board.
+        if (fresh.GaveUp && outcome is { Answered: true })
+        {
+            staleReadMessage = StaleReadMessage;
+            return;
+        }
+
+        staleReadMessage = string.Empty;
+        outcome = fresh;
         types = outcome.Backlog.Types;
         priorities = outcome.Backlog.Priorities;
         labels = outcome.Backlog.Labels;

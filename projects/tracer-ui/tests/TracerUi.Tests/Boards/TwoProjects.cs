@@ -3,6 +3,7 @@ using TracerUi.Core.Beads;
 using TracerUi.Core.Boards;
 using TracerUi.Core.Look;
 using TracerUi.Core.Projects;
+using TracerUi.Tests;
 using TracerUi.Tests.Beads;
 using TracerUi.Tests.Projects;
 using TracerUi.Web.Components.Pages;
@@ -25,7 +26,7 @@ public sealed class TwoProjects : IDisposable
         Second = ProjectPath.From(directory.CreateSubdirectory("second"));
         Store = new InMemoryProjectRegistryStore();
         Store.Save(new ProjectRegistry([First, Second], []));
-        Adapter = new BdAdapter(Bd);
+        Adapter = new BdAdapter(Bd, Clock);
         Backlogs = new BacklogCache(new BacklogReader(Adapter), Adapter);
         Catalog = new ProjectCatalog(Store, Adapter);
         Selection = new ActiveProjectSelection(Catalog);
@@ -47,6 +48,9 @@ public sealed class TwoProjects : IDisposable
 
     public ActiveProjectSelection Selection { get; }
 
+    /// <summary>The clock that a working mark and a re-read mark read, which a test moves by hand.</summary>
+    public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+
     /// <summary>Takes a project out of the registry, as another window of the app can.</summary>
     public void Forget(ProjectPath project) =>
         Store.Save(new ProjectRegistry([.. Store.Load().Projects.Where(held => !held.Equals(project))], []));
@@ -59,6 +63,7 @@ public sealed class TwoProjects : IDisposable
         services.AddSingleton(Catalog);
         services.AddSingleton(Selection);
         services.AddSingleton(new CopyFeedback());
+        services.AddSingleton<TimeProvider>(Clock);
         services.AddScoped<BeadOpener>();
     }
 

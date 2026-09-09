@@ -101,7 +101,7 @@ else
 
     // Reads the project that changed again. Every other project keeps the beads that this view
     // already holds, so a write in one repository costs no run of bd in the others.
-    private void OnBacklogChanged(ProjectPath project) => _ = InvokeAsync(() => Reread(project));
+    private void OnBacklogChanged(BacklogChange change) => _ = InvokeAsync(() => Reread(change.Project));
 
     private async Task Reread(ProjectPath project)
     {

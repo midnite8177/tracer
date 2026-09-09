@@ -18,7 +18,7 @@ public sealed class BdWriteTests
     public async Task WritesACommentThroughTheCommentCommandOfBd()
     {
         var bd = BdThatWrites().Prints("comment x-1 I read this today", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CommentAsync(Bead, "I read this today");
 
@@ -31,7 +31,7 @@ public sealed class BdWriteTests
     public async Task ReportsWhatBdWroteOnStandardErrorWhenTheWriteFails()
     {
         var bd = BdThatWrites().Fails("comment x-1 hello", "issue x-1 not found");
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CommentAsync(Bead, "hello");
 
@@ -48,7 +48,7 @@ public sealed class BdWriteTests
                 Working With Issues:
                   update            Update one or more issues
                 """);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CommentAsync(Bead, "hello");
 
@@ -61,7 +61,7 @@ public sealed class BdWriteTests
     public async Task AddsALabelThroughTheLabelAddCommandOfBd()
     {
         var bd = BdThatWrites().Prints("label add x-1 human", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.AddLabelAsync(Bead, Label("human"));
 
@@ -73,7 +73,7 @@ public sealed class BdWriteTests
     public async Task RemovesALabelThroughTheLabelRemoveCommandOfBd()
     {
         var bd = BdThatWrites().Prints("label remove x-1 human", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.RemoveLabelAsync(Bead, Label("human"));
 
@@ -85,7 +85,7 @@ public sealed class BdWriteTests
     public async Task SetsThePriorityThroughTheUpdateCommandOfBd()
     {
         var bd = BdThatWrites().Prints("update x-1 --priority 1", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.SetPriorityAsync(Bead, 1);
 
@@ -97,7 +97,7 @@ public sealed class BdWriteTests
     public async Task SetsTheTypeThroughTheUpdateCommandOfBd()
     {
         var bd = BdThatWrites().Prints("update x-1 --type bug", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.SetTypeAsync(Bead, BeadTypeWord.Bug);
 
@@ -109,7 +109,7 @@ public sealed class BdWriteTests
     public async Task SetsTheStatusThroughTheUpdateCommandOfBd()
     {
         var bd = BdThatWrites().Prints("update x-1 --status in_progress", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.SetStatusAsync(Bead, StoredStatusWord.InProgress);
 
@@ -121,7 +121,7 @@ public sealed class BdWriteTests
     public async Task ClosesABeadWithTheReasonThatThePersonGave()
     {
         var bd = BdThatWrites().Prints("close x-1 --reason The board shows it now", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CloseAsync(Bead, "The board shows it now");
 
@@ -133,7 +133,7 @@ public sealed class BdWriteTests
     public async Task RefusesACloseThatStatesNoReason()
     {
         var bd = BdThatWrites();
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.CloseAsync(Bead, "   ");
 
@@ -146,7 +146,7 @@ public sealed class BdWriteTests
     public async Task MovesABeadIntoAnEpicThroughTheParentFlagOfBd()
     {
         var bd = BdThatWrites().Prints("update x-1 --parent x-9", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.SetParentAsync(Bead, "x-9");
 
@@ -158,7 +158,7 @@ public sealed class BdWriteTests
     public async Task DefersABeadThroughTheDeferCommandOfBd()
     {
         var bd = BdThatWrites().Prints("defer x-1", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.DeferAsync(Bead);
 
@@ -179,7 +179,7 @@ public sealed class BdWriteTests
                 Available Commands:
                   add       Add a label to one or more issues
                 """);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.RemoveLabelAsync(Bead, Label("human"));
 
@@ -192,7 +192,7 @@ public sealed class BdWriteTests
     public async Task WritesTheTitleAndTheDescriptionTogetherThroughTheUpdateCommandOfBd()
     {
         var bd = BdThatWrites().Prints("update x-1 --title A sharper title --description ## Demo\nIt runs.", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.EditProseAsync(Bead, "A sharper title", "## Demo\nIt runs.");
 
@@ -204,7 +204,7 @@ public sealed class BdWriteTests
     public async Task RefusesAProseEditThatLeavesTheBeadWithNoTitle()
     {
         var bd = BdThatWrites();
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.EditProseAsync(Bead, "   ", "The description stays.");
 
@@ -217,7 +217,7 @@ public sealed class BdWriteTests
     public async Task RewritesTheNotesThroughTheFlagOfBdThatReplacesThemRatherThanAppendsToThem()
     {
         var bd = BdThatWrites().Prints("update x-1 --notes The whole of the new notes.", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.RewriteNotesAsync(Bead, "The whole of the new notes.");
 
@@ -230,7 +230,7 @@ public sealed class BdWriteTests
     public async Task AddsACommentWithoutAWriteToTheNotesOfTheBead()
     {
         var bd = BdThatWrites().Prints("comment x-1 I read this today", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         await adapter.CommentAsync(Bead, "I read this today");
 
@@ -241,7 +241,7 @@ public sealed class BdWriteTests
     public async Task AddsABlockerThroughTheDepAddCommandOfBd()
     {
         var bd = BdThatWrites().Prints("dep add x-1 x-9", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.AddBlockerAsync(Bead, "x-9");
 
@@ -253,7 +253,7 @@ public sealed class BdWriteTests
     public async Task RemovesABlockerThroughTheDepRemoveCommandOfBd()
     {
         var bd = BdThatWrites().Prints("dep remove x-1 x-9", string.Empty);
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.RemoveBlockerAsync(Bead, "x-9");
 
@@ -265,7 +265,7 @@ public sealed class BdWriteTests
     public async Task RefusesADependencyEdgeThatNamesNoBlockerAtItsFarEnd()
     {
         var bd = BdThatWrites();
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.AddBlockerAsync(Bead, "  ");
 
@@ -278,7 +278,7 @@ public sealed class BdWriteTests
     public async Task RefusesADependencyEdgeFromABeadToItself()
     {
         var bd = BdThatWrites();
-        var adapter = new BdAdapter(bd);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
 
         var outcome = await adapter.AddBlockerAsync(Bead, "x-1");
 

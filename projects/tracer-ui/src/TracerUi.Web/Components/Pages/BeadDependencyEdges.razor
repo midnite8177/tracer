@@ -15,14 +15,13 @@ else
     <section class="bead-box">
         <h2 class="h4 bead-section">Dependencies</h2>
 
-        <BeadWriteMessage Message="@WriteMessage" Wrote="Wrote" />
+        <BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
 
         <BeadEdgeList Title="Blocked by"
                       Links="Facts.Blockers"
                       WhenEmpty="No bead blocks this one."
-                      Cuttable="@(Probed && Can(UiVerbs.EditADependencyEdge))"
-                      WhyNoCut="@Why(UiVerbs.EditADependencyEdge)"
                       CutTitle="Stop this bead waiting for"
+                      Capability="TheCutCapability"
                       OnCut="CutTheBlocker" />
 
         @ThePressThatAddsABlocker
@@ -30,9 +29,8 @@ else
         <BeadEdgeList Title="Blocks"
                       Links="Facts.Dependents"
                       WhenEmpty="This bead blocks no other bead."
-                      Cuttable="@(Probed && Can(UiVerbs.EditADependencyEdge))"
-                      WhyNoCut="@Why(UiVerbs.EditADependencyEdge)"
                       CutTitle="Stop this bead blocking"
+                      Capability="TheCutCapability"
                       OnCut="StopBlocking" />
     </section>
 }
@@ -53,6 +51,8 @@ else
             <label class="form-label" for="write-blocker">A bead that must close first</label>
             <select class="form-select form-select-sm bead-write-row" id="write-blocker"
                     @ref="picker"
+                    disabled="@Writing"
+                    aria-busy="@AriaBusy"
                     @onkeydown="CloseOnEscape"
                     @onchange="AddTheBlocker">
                 <option value="">Pick a bead</option>
@@ -61,6 +61,7 @@ else
                     <option value="@bead.Id">@bead.Title (@bead.Id)</option>
                 }
             </select>
+            <WorkingMark Writing="Writing" />
         }
         else
         {
@@ -107,6 +108,10 @@ else
     private bool focusThePicker;
 
     protected override ProjectPath OfProject => Address.Project;
+
+    // Both directions cut through the one verb, so they share one capability.
+    private CutCapability TheCutCapability =>
+        new(Probed && Can(UiVerbs.EditADependencyEdge), Why(UiVerbs.EditADependencyEdge), Writing);
 
     // The beads that the picker offers as a blocker: every open bead but this one, the ones that
     // block it already, and the ones that it blocks. A closed bead blocks nothing, and an edge back
