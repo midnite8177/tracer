@@ -1,6 +1,6 @@
 # tracer — Matt Pocock's skills on a beads tracker
 
-Seed revision 30 (2026-09-11). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
+Seed revision 31 (2026-09-11). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
 
 ## If you were handed this document
 
@@ -95,7 +95,7 @@ When asked to adopt or align a project to it:
 
    ```json
    { "name": "tracer",
-     "version": "1.2.3+tracer.30",
+     "version": "1.2.3+tracer.31",
      "description": "Matt Pocock's skills on a beads tracker",
      "author": { "name": "<the human's name>" } }
    ```
@@ -617,13 +617,31 @@ Replace the body with:
 > the bead. Present the review; do not act on it unasked.
 >
 > **The run is complete when `bd show <id>` reports the bead closed, and
-> not before.** In this order: `bd close <id> --reason="<commit sha>:
-> <what done meant here, including any spot fixes and beads filed>"`;
-> then `bd show <id>` and confirm the status; **then** write the summary
-> for the human, quoting that status line verbatim as its first line. A
-> summary whose first line is not a closed status is a defect in the run:
-> do not write it. Nothing (a review finding, a question, a follow-up
-> idea) postpones the close; those go in the close reason or in new beads.
+> not before.** In this order: `bd close <id> --reason="<commit>:
+> <what done meant here, including any spot fixes and beads filed>"`,
+> where `<commit>` is the sha, or the commit's subject line when
+> `.beads/` is tracked (the sweep below will amend, and a sha would go
+> stale); then `bd show <id>` and confirm the status; **then** write the
+> summary for the human, quoting that status line verbatim as its first
+> line. A summary whose first line is not a closed status is a defect in
+> the run: do not write it. Nothing (a review finding, a question, a
+> follow-up idea) postpones the close; those go in the close reason or
+> in new beads.
+>
+> **Tracker sweep.** When the tracker is committed (not stealth), every
+> `bd` write after the commit (`bd close`, `bd comment`, `bd create`;
+> reads like the review's `bd show` touch nothing) leaves
+> `.beads/*.jsonl` modified, the tree dirty, and the next implement's
+> clean-tree check failing. So, after the close and again as the very
+> last thing before you stop (after the review menu, if there is one):
+> if `git ls-files .beads` prints anything and
+> `git status --porcelain -- .beads` is not empty, then
+> `git add .beads` and fold it in: `git commit --amend --no-edit` if the
+> bead's commit has not been pushed (`git branch -r --contains HEAD`
+> prints nothing), otherwise `git commit -m "<bead title>: tracker
+> update"`. Stage `.beads` only; never `git add -A` here. If `git ls-files
+> .beads` prints nothing, the tracker is untracked or stealth and there
+> is nothing to do. The run is not over while `.beads` is dirty.
 >
 > Before the summary, call the Skill tool with "unslop" again and apply
 > it in full, soul included this time; do not work from a remembered
@@ -666,8 +684,9 @@ Replace the body with:
 > the bead's record matches the code; the bead stays closed. For `fN`,
 > `bd create` a bead with the finding as its description and a
 > `discovered-from` link, per the discovered-work rule. For findings
-> neither fixed nor filed, do nothing; they were advisory. Report in
-> three lines at most, and stop. Do not start another bead. If there
+> neither fixed nor filed, do nothing; they were advisory. Run the
+> tracker sweep once more (the comment and any `bd create` dirtied
+> `.beads` again), report in three lines at most, and stop. Do not start another bead. If there
 > were no unaddressed findings, there is no menu: stop after the TL;DR.
 
 **P2 · `to-tickets` — bead shape and beads publishing.** (The
@@ -2451,6 +2470,7 @@ back in, that is the signal to reread this document.
 Read this first on a re-adopt. Each entry is what changed since the
 previous revision, so a same-pin re-adopt knows where to look.
 
+- **31**: P1 tracker sweep: when `.beads/` is tracked, post-commit `bd` writes are folded into the bead's commit (amend if unpushed, else a follow-up commit), after the close and again after the review menu; the close reason names the commit by subject instead of sha in that case, since the amend changes the sha.
 - **30**: P1 `unslop` moves up to the pre-commit point and covers the prose in the diff (surviving comments and docstrings, error and log messages, user-facing strings, touched docs) with "Adding soul" switched off for code; the commit message rides the same pass; the summary pass is unchanged. Block 1 says why it runs on text, not before code.
 - **29**: P1 research phase runs in one read-only subagent after the cheap reads (bead, `CONTEXT.md`, files the bead names) and returns a bounded brief (under 2,500 words, every claim with a path); the brief is appended to the bead as `research brief:` and reused by re-runs and by P4 code-review. Block 2 adds the rule and the bead convention. Over-cap is treated as a split signal, not a reason to research more.
 - **28**: Status bar draft 3: no `refreshInterval` at all on native Windows (timer-driven spawns through `bash.exe` crash-stormed at 1, 15, and 30 s); the script detects Windows and renders the cache expiry as `🔥 until h:mmpm`; `CC_STATUS_COUNTDOWN` added to the tuning table; install shows the macOS/Linux and Windows settings values side by side.
