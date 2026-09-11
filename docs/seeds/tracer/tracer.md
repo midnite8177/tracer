@@ -1,6 +1,6 @@
 # tracer — Matt Pocock's skills on a beads tracker
 
-Seed revision 28 (2026-09-09). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
+Seed revision 30 (2026-09-11). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
 
 ## If you were handed this document
 
@@ -95,7 +95,7 @@ When asked to adopt or align a project to it:
 
    ```json
    { "name": "tracer",
-     "version": "1.2.3+tracer.28",
+     "version": "1.2.3+tracer.30",
      "description": "Matt Pocock's skills on a beads tracker",
      "author": { "name": "<the human's name>" } }
    ```
@@ -281,7 +281,10 @@ the id in parentheses, never a bare id.
 **Prose a human reads follows `unslop`.** Before writing a summary, a
 spec, an ADR, a commit message, or a doc, call the Skill tool with
 "unslop" (the file is `.claude/skills/tracer/skills/unslop/SKILL.md`).
-A host output style or a project style guide wins where they conflict;
+It is an editing pass, so it runs on text that exists, not before code
+is written; for prose inside code (comments, docstrings, messages) its
+pattern list applies and its "Adding soul" section does not. A host
+output style or a project style guide wins where they conflict;
 `unslop` applies where they are silent.
 
 **Committing work is not optional.** Any beads or stealth guidance about
@@ -400,6 +403,7 @@ syntax changes between versions: if a command here fails, check
 - **Close**: `bd close <id> --reason="..."`. Close reasons are the project's history; write them for a reader.
 - **Defer**: `bd defer <id>` for work you don't want to decide about now.
 - **Epics are containers.** Set an epic `in_progress` once it has children; `bd ready` then never lists it. If an epic ever does show up (created but not yet claimed), `bd ready --exclude-type=epic` hides it. Containers are never claimed.
+- **Research brief lives on the bead.** `implement` appends its subagent's brief as a `research brief:` comment; a re-run after `/clear`, a stranded-run recovery, and `code-review` read it instead of researching again. Local tracker content only; it never enters code, comments, or commits.
 - **Review fixed point lives on the bead.** `implement` records `implement started at <sha> on <branch>` as a comment at claim time; `code-review` reads it back. A bead with no such comment has no reviewable range yet: ask, never guess.
 - **Resolve a bare reference against beads.** "#12" or "12" in a skill argument is a bead id, never a numbered list in the conversation. Run `bd show` and confirm the title back before acting.
 
@@ -429,6 +433,13 @@ syntax changes between versions: if a command here fails, check
   subagent that ignored the rule above still needs to be caught, not
   trusted; duplicate comments, unexpected status changes and stray files
   are the signs.
+- **Research is a subagent's job; deciding is not.** Codebase
+  exploration that is more than a few known files goes to one read-only
+  subagent that returns a bounded brief (P1 gives `implement` the
+  shape). The session reads only the files the brief names, verifies a
+  quoted line or two, and does the design, the tests, and the writing
+  itself. What the subagent read is gone when it returns; that is the
+  point.
 - **Reserve shared identifiers before parallel work starts.** A new ADR
   number, or any identifier more than one parallel effort might claim, is
   reserved (create the file, claim the id) before the fan-out, not after.
@@ -547,14 +558,60 @@ Replace the body with:
 > say so. Claim the bead (`bd update <id> --claim`) and in the same step
 > record the review's fixed point **on the bead**, not in your head:
 > `bd comment <id> "implement started at <sha> on <branch>"` with the
-> output of `git rev-parse HEAD`. Build exactly what the bead says: no
+> output of `git rev-parse HEAD`.
+>
+> **Research stays out of this context.** Read only the cheap things
+> here: the bead, `CONTEXT.md` (or the relevant context's `CONTEXT.md`),
+> and any file the bead names by path. If a prior run left a comment on
+> the bead starting `research brief:`, read that and skip to building.
+> If, after the cheap reads, you can already name the files to change and
+> the seam, skip to building. Otherwise delegate the rest to **one**
+> read-only subagent (the `Explore` type, or the read-only agent this
+> host offers) and do not open further files yourself while it runs.
+> Its prompt: the bead's title, description and Demo line, the seam if
+> named, the `CONTEXT.md` glossary terms involved, the rules in
+> `docs/agents/issue-tracker.md` under "Delegating to subagents", and
+> this return shape, under 2,500 words, nothing outside it:
+>
+> ```
+> Files to change: path — function or region — what changes there
+> Seam: where it sits (path, symbol) and how a test reaches it
+> Pattern to copy: path, and the key lines quoted (at most ~15 lines)
+> Tests to model on: path
+> Gotchas: anything that will bite (config, ordering, a second caller)
+> Open questions: only what the human must decide; empty is fine
+> ```
+>
+> Every claim in the brief carries a path; the important ones quote the
+> line. The brief is pointers, not content: the code itself is read
+> from the files it names, so 2,500 words is room for a dozen files
+> and a quoted pattern. If the subagent reports it cannot fit, that is
+> a finding, not a reason to raise the cap: the bead is probably two
+> slices, and the right move is to say so and offer to split it
+> (`bd create` for the second slice, blocked on the first) rather
+> than research further. Verify the brief cheaply before trusting it: `Read` the files it
+> lists, and only those; if a quoted line is not where it says, treat the
+> brief as suspect and check its other claims the same way. Append it to
+> the bead verbatim: `bd comment <id> "research brief: ..."`, so a
+> `/clear`, a stranded-run recovery, or the later code-review can reuse
+> it instead of researching again. The brief is local tracker content
+> and never enters code, comments, or commits.
+>
+> Build exactly what the bead says: no
 > redesign, no interview. Call the Skill tool with "tdd" at the seams the
 > bead names; if it names none, ask for them before writing a test. Run
 > typechecking regularly, single test files regularly, and the full suite
 > once at the end. Apply the discovered-work rule from AGENTS.md as you go.
 > Before committing, call the Skill tool with "no-comments" on the working
 > tree diff against the recorded fixed point; act on its accepted
-> findings, then run the touched tests again.
+> findings. Then call the Skill tool with "unslop" once and apply it to
+> **every piece of prose in that diff**: comments and docstrings that
+> survived `no-comments`, error and log messages, user-facing strings,
+> and any doc or README the bead touched. For text inside code, skip
+> its "Adding soul" section entirely: a comment or a message states a
+> fact or a constraint and has no opinions, no first person, and no
+> deliberate mess; the pattern list is what applies. Write the commit
+> message under the same pass. Then run the touched tests again.
 > **Commit to the current branch first**, then call the Skill tool with
 > "code-review", passing the bead id; it reads the fixed point back from
 > the bead. Present the review; do not act on it unasked.
@@ -568,9 +625,9 @@ Replace the body with:
 > do not write it. Nothing (a review finding, a question, a follow-up
 > idea) postpones the close; those go in the close reason or in new beads.
 >
-> Before writing the commit message, and again before the summary, call
-> the Skill tool with "unslop" and apply it in full; do not work from a
-> remembered gist of it. End the summary with a
+> Before the summary, call the Skill tool with "unslop" again and apply
+> it in full, soul included this time; do not work from a remembered
+> gist of it. End the summary with a
 > section headed **TL;DR**: at most five short
 > lines, plain language, no ids, covering only what the human must know:
 > what they can now do or see (the Demo line, fulfilled or not), anything
@@ -669,7 +726,12 @@ reviews against is written beside the skill from Block 4e as
 > **2. Identify the spec source.** In order: the bead (`bd show <id>`,
 > plus its parent epic's description); a path the user passed; a spec
 > under `docs/` or `specs/` matching the branch or feature; else ask. If
-> there is none, the Spec lane is skipped and the report says so.
+> there is none, the Spec lane is skipped and the report says so. If
+> the bead carries a `research brief:` comment, read it: its "Pattern
+> to copy" and "Gotchas" are Standards-lane context, and its "Files to
+> change" is a checklist for the Spec lane (a listed file left
+> untouched is a question worth asking). Do not research the codebase
+> beyond the diff and the files the brief names.
 >
 > **3. Identify the standards sources.** Anything in the repo documenting
 > how code should be written (`CODING_STANDARDS.md`, `CONTRIBUTING.md`,
@@ -2389,6 +2451,8 @@ back in, that is the signal to reread this document.
 Read this first on a re-adopt. Each entry is what changed since the
 previous revision, so a same-pin re-adopt knows where to look.
 
+- **30**: P1 `unslop` moves up to the pre-commit point and covers the prose in the diff (surviving comments and docstrings, error and log messages, user-facing strings, touched docs) with "Adding soul" switched off for code; the commit message rides the same pass; the summary pass is unchanged. Block 1 says why it runs on text, not before code.
+- **29**: P1 research phase runs in one read-only subagent after the cheap reads (bead, `CONTEXT.md`, files the bead names) and returns a bounded brief (under 2,500 words, every claim with a path); the brief is appended to the bead as `research brief:` and reused by re-runs and by P4 code-review. Block 2 adds the rule and the bead convention. Over-cap is treated as a split signal, not a reason to research more.
 - **28**: Status bar draft 3: no `refreshInterval` at all on native Windows (timer-driven spawns through `bash.exe` crash-stormed at 1, 15, and 30 s); the script detects Windows and renders the cache expiry as `🔥 until h:mmpm`; `CC_STATUS_COUNTDOWN` added to the tuning table; install shows the macOS/Linux and Windows settings values side by side.
 - **27**: Status bar draft 2: cache timer shows the local clock time it goes cold; `refreshInterval` is 1 on macOS/Linux and 15 on Windows (bash.exe spawn storm); step 5 Python detection tries `py -3`, treats the Store stub as absent, and never searches the disk.
 - **26**: Block 5 replaced with the shared status bar from `statusline.md` / `statusbar-seed.md`: two lines, cost per hour, cache timer, sparkline and compaction count, Perforce-aware label, no subprocesses, `--demo` and `--dump`, environment-variable tuning, user-wide or project install.
