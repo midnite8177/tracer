@@ -1,6 +1,6 @@
 # tracer — Matt Pocock's skills on a beads tracker
 
-Seed revision 33 (2026-09-12). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
+Seed revision 34 (2026-09-12). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
 
 ## If you were handed this document
 
@@ -94,7 +94,7 @@ When asked to adopt or align a project to it:
 
    ```json
    { "name": "tracer",
-     "version": "1.2.3+tracer.33",
+     "version": "1.2.3+tracer.34",
      "description": "Matt Pocock's skills on a beads tracker",
      "author": { "name": "<the human's name>" } }
    ```
@@ -610,7 +610,12 @@ Replace the body with:
 > the bead's title, description, Demo and Seams lines; the research
 > brief; the path to the tdd skill
 > (`.claude/skills/tracer/skills/tdd/SKILL.md`) with the instruction to
-> read it and follow it at the named seams; the house rules section of
+> read it and follow it at the named seams; the path to the unslop skill
+> (`.claude/skills/tracer/skills/unslop/SKILL.md`) with the instruction
+> to read it **before writing any code** and apply its pattern list to
+> every comment, docstring, error message, log message, and user-facing
+> string it writes, with the "Adding soul" section not applied to text
+> inside code; the house rules section of
 > AGENTS.md by path; the "Delegating to subagents" rules from
 > `docs/agents/issue-tracker.md`; and these limits: build exactly what
 > the bead says, no redesign; run typechecking regularly, single test
@@ -642,13 +647,19 @@ Replace the body with:
 > Before committing, call the Skill tool with "no-comments" on the working
 > tree diff against the recorded fixed point; act on its accepted
 > findings. Then call the Skill tool with "unslop" once and apply it to
-> **every piece of prose in that diff**: comments and docstrings that
-> survived `no-comments`, error and log messages, user-facing strings,
-> and any doc or README the bead touched. For text inside code, skip
-> its "Adding soul" section entirely: a comment or a message states a
-> fact or a constraint and has no opinions, no first person, and no
-> deliberate mess; the pattern list is what applies. Write the commit
-> message under the same pass. Then run the touched tests again.
+> **every added or changed line of prose in the diff against the fixed
+> point**: comments and docstrings that survived `no-comments`, error
+> and log messages, user-facing strings, and any doc or README the bead
+> touched. The scope is the `+` lines, whoever wrote the original: a
+> pre-existing comment that was trimmed, moved, or reworded in this
+> diff is authored in this diff, and "not text I wrote" is not an
+> exemption. For text inside code, skip the "Adding soul" section
+> entirely: a comment or a message states a fact or a constraint and
+> has no opinions, no first person, and no deliberate mess; the pattern
+> list is what applies. End the pass with one line of numbers, `unslop:
+> N prose lines checked, M changed`, so a pass that changed nothing says
+> so as a count, not as a reason. Write the commit message under the
+> same pass. Then run the touched tests again.
 > **Commit to the current branch first**, then call the Skill tool with
 > "code-review", passing the bead id; it reads the fixed point back from
 > the bead. Present the review; do not act on it unasked.
@@ -2445,6 +2456,7 @@ back in, that is the signal to reread this document.
 Read this first on a re-adopt. Each entry is what changed since the
 previous revision, so a same-pin re-adopt knows where to look.
 
+- **34**: P1: the build subagent reads `unslop` by path before writing code and applies its pattern list to every comment and message it writes (soul off); the pre-commit `unslop` pass is scoped to every `+` prose line in the diff, with "pre-existing text" ruled out as an exemption, and ends with a checked/changed count.
 - **33**: P1: build report cap is per-section (lists one line per item, prose under 300 words) instead of a flat 600 words; a **Beads filed** section follows the TL;DR listing every bead the run created, by title with id, from `bd list` rather than memory; the review menu's closing report lists the beads it filed.
 - **32**: P1 build phase (tdd + code) runs in one writing subagent every time, with a bounded report (files, tests by seam, commands run, discovered work, choices made, not done); the session settles seams and open questions before the hand-off, then re-runs the suite and reads the diff before review. `migrate` removed along with every reference to the old batch workflow; manifest is 30 skills plus one agent; step 13 points existing backlogs at `triage` and `to-tickets`.
 - **31**: P1 tracker sweep: when `.beads/` is tracked, post-commit `bd` writes are folded into the bead's commit (amend if unpushed, else a follow-up commit), after the close and again after the review menu; the close reason names the commit by subject instead of sha in that case, since the amend changes the sha.
