@@ -1,6 +1,6 @@
 # tracer — Matt Pocock's skills on a beads tracker
 
-Seed revision 31 (2026-09-11). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
+Seed revision 33 (2026-09-12). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
 
 ## If you were handed this document
 
@@ -12,9 +12,8 @@ content gets distributed and the file goes dormant.
 (`mattpocock/skills`, MIT), installed as a per-repo Claude Code plugin named
 `tracer`, with Steve Yegge's beads (`bd`) as the issue tracker. The human
 plans (grilling, spec, tracer-bullet tickets) and reads every diff; the
-agent builds one bead per session and stops. There is no batch engine, no
-tiers, no molecules, no autonomous loop. Progress is measured in demoable
-slices, not beads closed.
+agent builds one bead per session and stops. There is no autonomous
+loop. Progress is measured in demoable slices, not beads closed.
 
 When asked to adopt or align a project to it:
 
@@ -95,7 +94,7 @@ When asked to adopt or align a project to it:
 
    ```json
    { "name": "tracer",
-     "version": "1.2.3+tracer.31",
+     "version": "1.2.3+tracer.33",
      "description": "Matt Pocock's skills on a beads tracker",
      "author": { "name": "<the human's name>" } }
    ```
@@ -103,11 +102,11 @@ When asked to adopt or align a project to it:
    The plugin loads automatically in this repo as `tracer@skills-dir`; its
    skills are `/tracer:<name>`. No settings entry is needed.
 6b. **Normalize the layout. Runs on every adopt, pin changed or not.**
-   The plugin's `skills/` directory must contain exactly these 31:
+   The plugin's `skills/` directory must contain exactly these 30:
 
    `adopt budget code-review codebase-design diagnosing-bugs
    domain-modeling grill-me grill-with-docs grilling guide handoff
-   implement improve-codebase-architecture issues migrate no-comments
+   implement improve-codebase-architecture issues no-comments
    prototype research resolving-merge-conflicts show-me-your-work tdd
    teach to-questionnaire to-spec to-tickets triage unslop wait-what
    wayfinder wizard writing-for-agents`
@@ -135,7 +134,7 @@ When asked to adopt or align a project to it:
    report any patch whose anchor text was not found (upstream changed) so it
    can be re-based.
 8. **Add the tracer-native skills** from Block 4 (`adopt`, `issues`,
-   `budget`, `migrate`) under `.claude/skills/tracer/skills/<name>/SKILL.md`,
+   `budget`) under `.claude/skills/tracer/skills/<name>/SKILL.md`,
    the `issues.py` script from Block 4b beside the `issues` skill,
    `budget.py` from Block 4c beside the `budget` skill, `smells.md` from
    Block 4e beside the `code-review` skill, and the carried
@@ -191,8 +190,8 @@ When asked to adopt or align a project to it:
     `/tracer:guide` routes to `/tracer:` names. Do not report those as
     verified.
 13. **Existing project with beads already in use?** Do not touch the open
-    beads during adopt. Tell the human to run `/tracer:migrate` when they
-    are ready; it is a one-time guided procedure with them present.
+    beads during adopt. The human re-slices them with `/tracer:triage`
+    and `/tracer:to-tickets` when they are ready.
 14. Adoption is idempotent. On a project already installed, bring every home
     into agreement with this document: re-fetch upstream (step 6) only if
     the pin changed; run step 6b, the patches, Block 2, Block 1 and Block 4
@@ -228,7 +227,7 @@ read by any skill that touches beads.
 | Triage role → label mapping | `docs/agents/triage-labels.md` | `/tracer:triage` only |
 | Read `CONTEXT.md` and ADRs before exploring | `docs/agents/domain.md` | skills that explore the codebase |
 | Upstream skills, patched | `.claude/skills/tracer/skills/*` | on invocation |
-| Adopt, issues view, budget, migration | `.claude/skills/tracer/skills/{adopt,issues,budget,migrate}` | on invocation |
+| Adopt, issues view, budget | `.claude/skills/tracer/skills/{adopt,issues,budget}` | on invocation |
 | Carried third-party skills (`unslop`, `no-comments`, `show-me-your-work`) | `.claude/skills/tracer/skills/{unslop,no-comments,show-me-your-work}` | on invocation |
 | Comment-sicko reviewer | `.claude/skills/tracer/agents/comment-sicko.md` | when `no-comments` spawns it |
 | Smell catalog (code + comments, C++/C#/Python) | `.claude/skills/tracer/skills/code-review/smells.md` | pasted into review lanes' briefs on invocation |
@@ -433,13 +432,15 @@ syntax changes between versions: if a command here fails, check
   subagent that ignored the rule above still needs to be caught, not
   trusted; duplicate comments, unexpected status changes and stray files
   are the signs.
-- **Research is a subagent's job; deciding is not.** Codebase
-  exploration that is more than a few known files goes to one read-only
-  subagent that returns a bounded brief (P1 gives `implement` the
-  shape). The session reads only the files the brief names, verifies a
-  quoted line or two, and does the design, the tests, and the writing
-  itself. What the subagent read is gone when it returns; that is the
-  point.
+- **Research and building are a subagent's job; deciding is not.**
+  Codebase exploration beyond a few known files goes to one read-only
+  subagent that returns a bounded brief; the build itself (tests and
+  code at the named seams) goes to one writing subagent that returns a
+  diff and a short report (P1 gives `implement` both shapes). The
+  session settles every question that needs the human *before* either
+  hand-off, since a subagent cannot ask; afterwards it verifies (runs
+  the suite, reads the diff), reviews, commits, and closes. What a
+  subagent read is gone when it returns; that is the point.
 - **Reserve shared identifiers before parallel work starts.** A new ADR
   number, or any identifier more than one parallel effort might claim, is
   reserved (create the file, claim the id) before the fan-out, not after.
@@ -597,11 +598,47 @@ Replace the body with:
 > it instead of researching again. The brief is local tracker content
 > and never enters code, comments, or commits.
 >
-> Build exactly what the bead says: no
-> redesign, no interview. Call the Skill tool with "tdd" at the seams the
-> bead names; if it names none, ask for them before writing a test. Run
-> typechecking regularly, single test files regularly, and the full suite
-> once at the end. Apply the discovered-work rule from AGENTS.md as you go.
+> **Settle everything that needs a human before the build starts.** The
+> seams: the bead's Seams line, or the brief's; if neither names one,
+> ask now. Any open question in the brief: ask now. The subagent below
+> cannot reach the human; whatever is unsettled here it will guess.
+>
+> **The build runs in a subagent, every time.** Its context is the
+> largest part of an implement run and none of it is needed afterward:
+> what survives is the diff and a short report. Spawn **one**
+> general-purpose subagent (it needs write access and a shell) with:
+> the bead's title, description, Demo and Seams lines; the research
+> brief; the path to the tdd skill
+> (`.claude/skills/tracer/skills/tdd/SKILL.md`) with the instruction to
+> read it and follow it at the named seams; the house rules section of
+> AGENTS.md by path; the "Delegating to subagents" rules from
+> `docs/agents/issue-tracker.md`; and these limits: build exactly what
+> the bead says, no redesign; run typechecking regularly, single test
+> files regularly, and the full suite once at the end; **do not commit,
+> do not run any `bd` command, do not spawn subagents or invoke other
+> skills**; when something is ambiguous, pick the smaller interpretation
+> and record it. It returns this, and nothing outside it. The list
+> sections are one line per item, as many items as there are; the prose
+> sections (Chose, Not done) stay under 300 words together:
+>
+> ```
+> Files changed: path — what changed (one line each)
+> Tests added: path::name — the seam it exercises
+> Ran: each typecheck and test command and its result (pass/fail counts)
+> Discovered work: things noticed and left alone, one line each
+> Chose: each ambiguity and the interpretation taken
+> Not done: anything from the bead that is not built, and why
+> ```
+>
+> When it returns: run the full suite yourself and typecheck; a report
+> that says green is not proof. Read the diff (`git diff` against the
+> fixed point), not the report, as the source of truth. Apply the
+> discovered-work rule from AGENTS.md to its "Discovered work" lines:
+> fix in place or `bd create`, per the rule; the subagent could not file
+> them. If "Not done" is non-empty, either send the same subagent back
+> with that list (once) or stop and tell the human; do not finish the
+> build in this context. If the subagent stopped early or the tree is
+> not in a testable state, say so and stop; do not patch around it.
 > Before committing, call the Skill tool with "no-comments" on the working
 > tree diff against the recorded fixed point; act on its accepted
 > findings. Then call the Skill tool with "unslop" once and apply it to
@@ -652,7 +689,13 @@ Replace the body with:
 > that needs a decision or action from them, anything surprising, and
 > the one review finding worth their attention if there is one. If
 > nothing needs them, say so in one line. Everything else stays in the
-> long summary above it.
+> long summary above it. Directly under the TL;DR, a section headed
+> **Beads filed**: one line per bead this run created (discovered work,
+> spot fixes filed instead of made, anything else), as title with the
+> id in parentheses and a few words on why, from `bd list` filtered to
+> this session's creations, not from memory. If none were filed, the
+> heading says `Beads filed: none`. This is the human's only view of
+> what the run added to their backlog, so it is never skipped.
 >
 > **Then, if the review left findings you did not act on, show a menu
 > and wait.** One numbered entry per finding, self-contained, so the
@@ -686,7 +729,8 @@ Replace the body with:
 > `discovered-from` link, per the discovered-work rule. For findings
 > neither fixed nor filed, do nothing; they were advisory. Run the
 > tracker sweep once more (the comment and any `bd create` dirtied
-> `.beads` again), report in three lines at most, and stop. Do not start another bead. If there
+> `.beads` again), report in three lines at most plus a **Beads
+> filed** line for each bead the menu created, and stop. Do not start another bead. If there
 > were no unaddressed findings, there is no menu: stop after the TL;DR.
 
 **P2 · `to-tickets` — bead shape and beads publishing.** (The
@@ -847,10 +891,9 @@ Code built-ins `/clear` and `/compact` stay as they are. Replace
 references to `setup-matt-pocock-skills` with `/tracer:adopt`. In step 3,
 replace the sentence describing local `.scratch/` tickets and "native
 blocking links on a real tracker" with: "Tickets are beads under the spec
-epic with `bd dep` edges; `/tracer:issues` shows the frontier." Add three
+epic with `bd dep` edges; `/tracer:issues` shows the frontier." Add these
 routes: "what is ready, what is blocked, show me a bead" →
-`/tracer:issues`; "an existing beads backlog to re-slice" →
-`/tracer:migrate`; "update or repair the installation" → `/tracer:adopt`;
+`/tracer:issues`; "update or repair the installation" → `/tracer:adopt`;
 "this reads like it was written by an AI, clean it up" → `/tracer:unslop`;
 "strip the comment noise from this diff" → `/tracer:no-comments`; "keep a
 decision trail I can review when I'm back" → `/tracer:show-me-your-work`.
@@ -962,72 +1005,6 @@ which this script cannot see.
 The script lives at `.claude/skills/tracer/skills/budget/budget.py`
 (Block 4c) and runs from a terminal for free:
 `python3 .claude/skills/tracer/skills/budget/budget.py`.
-
-## `migrate`
-
-```markdown
----
-name: migrate
-description: One-time, guided move of an existing beads backlog onto tracer: freeze, reorient, name the destination, triage old beads, re-slice the next milestone. Use only when the user explicitly asks to migrate; runs as a conversation with them present.
----
-
-This is a conversation, not a batch. Stop at every numbered step and wait.
-Do one project at a time; refuse politely if asked to run it across repos
-in one session.
-
-**Nothing in this procedure deletes a bead.** Beads are closed with a
-reason or deferred, both reversible (`bd reopen`, `bd undefer`, or the
-current equivalents per `--help`), and `bd` keeps every write in its own
-history. Even so, take a backup first and show the human where it is.
-
-0. **Start the trail.** Call the Skill tool with "show-me-your-work" and
-   open `.audit/migrate-<repo>.tsv`; from here on, every bucket decision
-   in step 4 and every slice in step 5 gets a row (what, why, evidence,
-   result), so the human can audit the migration afterwards without
-   rereading the session.
-0b. **Back up.** Copy the `.beads/` directory to a dated location outside
-   the repo (for example `~/beads-backups/<repo>-<date>/`). If
-   `bd export --help` exists, also export to JSONL in the same place.
-   Print `bd list --status=open | wc -l` and the same for `in_progress`
-   and `closed` so the counts can be compared afterwards. Do not continue
-   until the human confirms the backup exists.
-1. **Freeze.** Confirm no autonomous batch workflow will run on this repo
-   again (retire any `/beads:batch` command, Stop hook, or formulas if
-   present; note in the report). Nothing else changes in this step.
-2. **Reorient.** Ask the human to try a small change by hand first and
-   tell you where they got lost; record those spots. Then call the Skill
-   tool twice, for "grilling" and "domain-modeling", with the brief "help
-   me document this repo": read the code, ask what things are and why,
-   and write `CONTEXT.md` and ADRs for load-bearing decisions that already
-   exist. Where the human cannot answer, read bead close reasons and notes
-   (`bd list --status=closed`, `bd show`) for the history, and say what you
-   found. Expect fifty-plus questions; this step is the point.
-3. **Name the destination.** One more grilling round: what this project
-   is for, what the next demoable milestone looks like, what is out of
-   scope. Write it into a new epic (`in_progress`) titled with the
-   milestone; the description is the destination.
-4. **Triage the open beads, once, fast.** List `bd list --status=open` and
-   `bd list --status=in_progress`. For each, propose one of four buckets
-   and let the human override in bulk:
-   - *nearly done*: finish it in one `/tracer:implement` session later, or close it;
-   - *belongs to the milestone*: close with reason `superseded by re-slicing`, after copying anything useful from its description into the milestone epic's notes;
-   - *meta or investigation*: keep only with a live reason, else close;
-   - *everything else*: `bd defer`.
-   Any bead sitting `in_progress` with an agent assignee and no live work
-   is returned to `open` first. Epics with no live children are closed.
-5. **Re-slice.** Grill the milestone (call the Skill tool with "grilling"
-   and "domain-modeling"), then call the Skill tool with "to-tickets" to
-   propose three to five tracer-bullet beads under the milestone epic.
-   **The human writes or rewrites the Demo and Seams lines themselves**;
-   read them back and challenge any slice that isn't demoable.
-6. **Hand off.** Show `/tracer:issues` for the milestone and stop. The
-   next session is `/tracer:implement <first ready bead>`.
-
-Report: the before/after counts from step 0 (open + in_progress + closed
-+ deferred must equal the original total: nothing vanished); beads
-closed, deferred, kept; files written; where the human got lost in step 2
-(these are candidates for `docs/<topic>.md` chapters or `/tracer:teach`).
-```
 
 ## Block 4b — `skills/issues/issues.py`
 
@@ -1625,15 +1602,14 @@ names Claude Code's transcript location instead of Cursor's; the
 cross-model review says what to do when no second model family is
 available (say so, never invent a reviewer); `scripts/log.sh` becomes
 `scripts/log.py` so it runs on Windows without bash; and the description says
-when tracer uses it (`migrate`, long wayfinder efforts, anything the
-human reviews after stepping away). It keeps `disable-model-invocation`
-because starting a trail is the human's call; `migrate` invokes it by
-name.
+when tracer uses it (long wayfinder efforts, anything the human reviews
+after stepping away). It keeps `disable-model-invocation` because
+starting a trail is the human's call.
 
 ````markdown
 ---
 name: show-me-your-work
-description: "Keep a reviewable decision trail for long-running or unattended work: a TSV log with one row per decision (what, why, evidence, result). Local by default; commit it when a reviewer needs the trail to trust the result. Use for /show-me-your-work, a migration, a multi-session wayfinder effort, or any work a human reviews after stepping away."
+description: "Keep a reviewable decision trail for long-running or unattended work: a TSV log with one row per decision (what, why, evidence, result). Local by default; commit it when a reviewer needs the trail to trust the result. Use for /show-me-your-work, a multi-session wayfinder effort, or any work a human reviews after stepping away."
 disable-model-invocation: true
 ---
 
@@ -2446,8 +2422,7 @@ if __name__ == "__main__":
   candidate or none; refactoring is scheduled work with a reason, filed
   as a prefactoring bead.
 - **Losing the thread on a project:** `/tracer:teach` in a separate
-  workspace repo, mission "continue this codebase by hand"; or read the
-  `docs/<topic>.md` chapter `/tracer:migrate` flagged.
+  workspace repo, mission "continue this codebase by hand".
 - **Prose that reads like a machine wrote it** (a spec, an ADR, a
   summary, a commit message): `/tracer:unslop`. The skills that write
   prose already call it; this is for text that came from elsewhere.
@@ -2455,7 +2430,7 @@ if __name__ == "__main__":
   `implement` already runs it before each commit; this is for code that
   came from elsewhere.
 - **Work you will review after stepping away** (a long wayfinder
-  session, a migration, anything multi-hour): `/tracer:show-me-your-work`
+  session, anything multi-hour): `/tracer:show-me-your-work`
   at the start, and read `.audit/<slug>.tsv` when you're back.
 - **Unsure which of the above:** `/tracer:guide`.
 
@@ -2470,6 +2445,8 @@ back in, that is the signal to reread this document.
 Read this first on a re-adopt. Each entry is what changed since the
 previous revision, so a same-pin re-adopt knows where to look.
 
+- **33**: P1: build report cap is per-section (lists one line per item, prose under 300 words) instead of a flat 600 words; a **Beads filed** section follows the TL;DR listing every bead the run created, by title with id, from `bd list` rather than memory; the review menu's closing report lists the beads it filed.
+- **32**: P1 build phase (tdd + code) runs in one writing subagent every time, with a bounded report (files, tests by seam, commands run, discovered work, choices made, not done); the session settles seams and open questions before the hand-off, then re-runs the suite and reads the diff before review. `migrate` removed along with every reference to the old batch workflow; manifest is 30 skills plus one agent; step 13 points existing backlogs at `triage` and `to-tickets`.
 - **31**: P1 tracker sweep: when `.beads/` is tracked, post-commit `bd` writes are folded into the bead's commit (amend if unpushed, else a follow-up commit), after the close and again after the review menu; the close reason names the commit by subject instead of sha in that case, since the amend changes the sha.
 - **30**: P1 `unslop` moves up to the pre-commit point and covers the prose in the diff (surviving comments and docstrings, error and log messages, user-facing strings, touched docs) with "Adding soul" switched off for code; the commit message rides the same pass; the summary pass is unchanged. Block 1 says why it runs on text, not before code.
 - **29**: P1 research phase runs in one read-only subagent after the cheap reads (bead, `CONTEXT.md`, files the bead names) and returns a bounded brief (under 2,500 words, every claim with a path); the brief is appended to the bead as `research brief:` and reused by re-runs and by P4 code-review. Block 2 adds the rule and the bead convention. Over-cap is treated as a split signal, not a reason to research more.
