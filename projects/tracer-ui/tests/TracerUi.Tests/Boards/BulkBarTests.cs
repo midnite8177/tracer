@@ -100,6 +100,28 @@ public sealed class BulkBarTests : BunitContext
         Assert.Single(bar.FindAll(".board-bulk-plan"));
     }
 
+    [Fact]
+    public void LeavesAClosedEpicOutOfTheMoveIntoAnEpicAndKeepsADeferredOne()
+    {
+        var bar = Render<BulkBar>(parameters =>
+        {
+            parameters.Add(component => component.Project, projects.First);
+            parameters.Add(component => component.Selected, [ABead.Called("x-1", "One")]);
+            parameters.Add(component => component.Epics,
+            [
+                ABead.Epic("e-1", "The open epic"),
+                ABead.Epic("e-2", "The finished epic") with { Status = StoredStatus.Closed },
+                ABead.Epic("e-3", "The parked epic") with { Status = StoredStatus.Deferred },
+            ]);
+        });
+
+        bar.Find("#bulk-category").Change(BulkCategory.Epic.Name);
+
+        Assert.Equal(
+            ["Pick an epic", "The open epic", "The parked epic"],
+            bar.FindAll("#bulk-epic option").Select(offered => offered.TextContent));
+    }
+
     private static IEnumerable<string> RowWords(IRenderedComponent<BulkBar> bar) =>
         bar.FindAll(".board-bulk-row-word").Select(word => word.TextContent.Trim());
 

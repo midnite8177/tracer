@@ -79,6 +79,13 @@ public sealed class BoardMarkupTests : BunitContext
          {"id": "z-1", "title": "Loose", "issue_type": "task", "priority": 2, "status": "open"}]
         """;
 
+    private const string AnOpenAClosedAndADeferredEpic =
+        """
+        [{"id": "e-1", "title": "The open epic", "issue_type": "epic", "priority": 2, "status": "open"},
+         {"id": "e-2", "title": "The finished epic", "issue_type": "epic", "priority": 2, "status": "closed"},
+         {"id": "e-3", "title": "The parked epic", "issue_type": "epic", "priority": 2, "status": "deferred"}]
+        """;
+
     private readonly TempDirectory directory = new();
 
     private readonly FakeTimeProvider clock = new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
@@ -378,6 +385,26 @@ public sealed class BoardMarkupTests : BunitContext
         var board = TheBoardOfOneBead();
 
         Assert.Single(AQuickCreate.TheFieldsOf(board).FindAll("#create-epic"));
+    }
+
+    [Fact]
+    public void LeavesAClosedEpicOutOfTheQuickCreateOfTheBoardAndKeepsADeferredOne()
+    {
+        var board = TheBoardOf(AnOpenAClosedAndADeferredEpic);
+
+        Assert.Equal(
+            ["No epic", "The open epic", "The parked epic"],
+            AQuickCreate.TheFieldsOf(board).FindAll("#create-epic option").Select(offered => offered.TextContent));
+    }
+
+    [Fact]
+    public void OffersAClosedEpicInTheEpicFilterBecauseTheFilterOnlyNarrowsTheBoard()
+    {
+        var board = TheBoardOf(AnOpenAClosedAndADeferredEpic);
+
+        Assert.Equal(
+            ["Any epic", "The finished epic", "The open epic", "The parked epic"],
+            board.FindAll("#filter-epic option").Select(offered => offered.TextContent));
     }
 
     private const string TheCreateOfANewBead = "create --title Read the two plans again --type task --silent";

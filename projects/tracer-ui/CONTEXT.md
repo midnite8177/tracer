@@ -272,7 +272,11 @@ _Avoid_: Issue, ticket, card, task
 **Epic**:
 A bead that holds other beads, and a bead in full: it carries its own
 status, priority, labels and description. The board draws it as a row,
-with the beads that it holds under it.
+with the beads that it holds under it. A closed epic takes no new bead:
+no place that moves a bead or creates one offers it, except as the epic
+that a bead already sits in. A deferred epic is parked and not finished,
+so it still takes one. The epic filter offers every epic, because it only
+narrows the board.
 _Avoid_: Parent, group, milestone
 
 **Unparented**:
@@ -564,7 +568,8 @@ the epic open, so the person picks one or picks none. The detail page
 offers it inside the held beads box and on the line that says the bead
 holds none, and the epic there is the bead of the page: bd has no
 add-a-child verb, so a bead born inside the epic is how the page reaches
-one without writing to a bead it does not show.
+one without writing to a bead it does not show. The page of a closed
+epic does not offer it.
 _Avoid_: New issue, add, capture form
 
 **The fields of a quick create**:

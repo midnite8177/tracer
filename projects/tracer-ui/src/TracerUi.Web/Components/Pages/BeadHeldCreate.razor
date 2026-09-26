@@ -2,7 +2,8 @@
     The quick create of a bead that this bead holds. bd has no add-a-child verb: it
     sets the parent of the other bead, which is a write to a bead this page does not
     show. A create from here sidesteps that, because the new bead names this bead as
-    its parent at birth.
+    its parent at birth. A closed epic takes no new bead, so on its page this control
+    draws nothing, and the caller's box or line stands without a press.
 *@
 
 @using TracerUi.Core.Beads
@@ -10,39 +11,42 @@
 @using TracerUi.Core.Projects
 @inherits CapabilityAware
 
-<div class="bead-writes bead-held-create" title="@Why(UiVerbs.CreateInAnEpic)">
-    <BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
+@if (Detail.Bead.TakesANewBead)
+{
+    <div class="bead-writes bead-held-create" title="@Why(UiVerbs.CreateInAnEpic)">
+        <BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
 
-    @if (!Probed)
-    {
-        <ProbePending />
-    }
+        @if (!Probed)
+        {
+            <ProbePending />
+        }
 
-    @if (creating)
-    {
-        <div class="row g-2 align-items-end bead-write-row" @onkeydown="CloseOnEscape">
-            <QuickCreateFields @ref="fields"
-                               Names="TheNamesOfTheCapture"
-                               Disabled="@Abandoned"
-                               @bind-Title="title"
-                               @bind-Type="type" />
+        @if (creating)
+        {
+            <div class="row g-2 align-items-end bead-write-row" @onkeydown="CloseOnEscape">
+                <QuickCreateFields @ref="fields"
+                                   Names="TheNamesOfTheCapture"
+                                   Disabled="@Abandoned"
+                                   @bind-Title="title"
+                                   @bind-Type="type" />
 
-            <div class="col-auto">
-                <button class="btn btn-sm btn-primary bead-held-create-write"
-                        disabled="@(title.Trim().Length == 0 || Writing || Abandoned)"
-                        aria-busy="@AriaBusy"
-                        @onclick="CreateTheBead">Create the bead</button>
+                <div class="col-auto">
+                    <button class="btn btn-sm btn-primary bead-held-create-write"
+                            disabled="@(title.Trim().Length == 0 || Writing || Abandoned)"
+                            aria-busy="@AriaBusy"
+                            @onclick="CreateTheBead">Create the bead</button>
+                </div>
             </div>
-        </div>
-        <div class="form-text">@BeadWriteChoices.WhatAQuickCreateMakes</div>
-    }
-    else
-    {
-        <button class="btn btn-sm btn-link p-0 bead-held-add"
-                disabled="@(!Probed || !Can(UiVerbs.CreateInAnEpic))"
-                @onclick="OpenTheBox">Add a bead</button>
-    }
-</div>
+            <div class="form-text">@BeadWriteChoices.WhatAQuickCreateMakes</div>
+        }
+        else
+        {
+            <button class="btn btn-sm btn-link p-0 bead-held-add"
+                    disabled="@(!Probed || !Can(UiVerbs.CreateInAnEpic))"
+                    @onclick="OpenTheBox">Add a bead</button>
+        }
+    </div>
+}
 
 @code {
     /// <summary>The bead that is to hold every bead this control makes.</summary>

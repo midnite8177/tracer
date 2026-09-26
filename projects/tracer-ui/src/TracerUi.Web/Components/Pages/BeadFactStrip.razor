@@ -211,8 +211,8 @@
     private Task<BdWriteOutcome> RemoveTheLabel(string label) =>
         CheckedWrite.Async(label, word => Bd.RemoveLabelAsync(Address, word), "A label needs a word.");
 
-    // The epic row, whose picker offers every epic of the backlog and the entry that takes the bead
-    // out of all of them. bd clears the parent with the flag that sets it, so that entry asks for no
+    // The epic row, whose picker offers every epic of the backlog that takes a new bead, the closed
+    // epic that holds this bead if there is one, and the entry that takes the bead out of all of them. bd clears the parent with the flag that sets it, so that entry asks for no
     // action beyond the one the rest of the picker needs. The link beside the press opens the epic,
     // because an epic is a bead of its own and the value is now the control that moves this one.
     private PressableFact TheEpicOf(BacklogFacts facts) => new(
@@ -225,7 +225,8 @@
         FactPicker.OfOneOf([.. TheEpicChoices(facts)]));
 
     // The entries of the epic picker: no epic first, because it is the one entry that every bead can
-    // stand in, then the epics by title. A bead is never offered itself.
+    // stand in, then the epics by title. A bead is never offered itself. A closed epic is left out,
+    // except the one that holds this bead, so that the picker still marks where the bead stands.
     private IEnumerable<FactChoice> TheEpicChoices(BacklogFacts facts)
     {
         yield return FactChoice.ThatWrites(
@@ -233,10 +234,7 @@
             marked: facts.Epic is null,
             () => Bd.SetParentAsync(Address, string.Empty));
 
-        var offered = Epics
-            .Where(epic => !string.Equals(epic.Id, Detail.Bead.Id, StringComparison.Ordinal))
-            .OrderBy(epic => epic.Title, StringComparer.Ordinal);
-        foreach (var epic in offered)
+        foreach (var epic in Bead.EpicsToOffer(Epics, Detail.Bead.Id, facts.Epic?.Id ?? string.Empty))
         {
             yield return FactChoice.ThatWrites(
                 epic.Title,

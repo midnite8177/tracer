@@ -215,6 +215,52 @@ public sealed class DetailMarkupTests : BunitContext
 
     private const string TheBacklogOfTheEpic = $"[{TheRecordsOfTheEpic}]";
 
+    private const string TheRecordOfItsClosedEpic =
+        """{"id": "b-1", "title": "Ship the site", "issue_type": "epic", "status": "closed"}""";
+
+    private const string TheBacklogOfItsClosedEpic =
+        $"[{TheRecordOfItsClosedEpic}, {TheRecordOfThatBead}, {TheRecordOfAClosedHeldBead}]";
+
+    private const string TheRecordOfItsDeferredEpic =
+        """{"id": "b-1", "title": "Ship the site", "issue_type": "epic", "status": "deferred"}""";
+
+    private const string TheBacklogOfItsDeferredEpic =
+        $"[{TheRecordOfItsDeferredEpic}, {TheRecordOfThatBead}, {TheRecordOfAClosedHeldBead}]";
+
+    private const string TheRecordOfAClosedEpic =
+        """{"id": "b-3", "title": "Retire the old site", "issue_type": "epic", "status": "closed"}""";
+
+    private const string TheRecordOfADeferredEpic =
+        """{"id": "b-4", "title": "Move the mail", "issue_type": "epic", "status": "deferred"}""";
+
+    private const string TheBacklogOfThatBeadBesideAClosedAndADeferredEpic =
+        $"[{TheRecordOfItsEpic}, {TheRecordOfASecondEpic}, {TheRecordOfAClosedEpic}, "
+        + $"{TheRecordOfADeferredEpic}, {TheRecordOfThatBead}, {TheRecordOfItsBlocker}, "
+        + $"{TheRecordOfItsDependent}]";
+
+    private const string TheBacklogOfThatBeadInsideItsClosedEpic =
+        $"[{TheRecordOfItsClosedEpic}, {TheRecordOfASecondEpic}, {TheRecordOfThatBead}, "
+        + $"{TheRecordOfItsBlocker}, {TheRecordOfItsDependent}]";
+
+    private const string TheClosedEpicThatNamesNoBead = $"[{TheRecordOfAClosedEpic}]";
+
+    private const string TheRecordOfAClosedEpicWithABlocker =
+        """
+        {"id": "b-3", "title": "Retire the old site", "issue_type": "epic", "status": "closed",
+         "dependencies": [{"id": "b-9", "dependency_type": "blocks"}]}
+        """;
+
+    private const string TheClosedEpicWithABlocker = $"[{TheRecordOfAClosedEpicWithABlocker}]";
+
+    private const string TheBacklogOfTheClosedEpicWithABlocker =
+        $"[{TheRecordOfAClosedEpicWithABlocker}, {TheRecordOfItsBlocker}]";
+
+    private const string TheClosedBareRecord =
+        """
+        {"id": "b-7", "title": "Pick a hosting plan", "issue_type": "task", "priority": 2,
+         "status": "closed", "description": "Two plans remain."}
+        """;
+
     [Fact]
     public void DrawsEachOfTheFiveShortFactsOfTheBeadInABoxOfTheFactStrip()
     {
@@ -363,6 +409,62 @@ public sealed class DetailMarkupTests : BunitContext
         page.Find(".bead-held-add").Click();
 
         Assert.Empty(AQuickCreate.TheFieldsOf(page).FindAll("select.form-select:not(#held-create-type)"));
+    }
+
+    [Fact]
+    public void OffersNoQuickCreateInTheHeldBeadsBoxOfAClosedEpic()
+    {
+        projects.Bd.DeclaresEveryWrite();
+        var page = TheDetailPageOf("b-1", $"[{TheRecordOfItsClosedEpic}]", "[]", TheBacklogOfItsClosedEpic);
+
+        Assert.Single(page.FindAll(".bead-held"));
+        Assert.Empty(page.FindAll(".bead-held-add"));
+    }
+
+    [Fact]
+    public void OffersTheQuickCreateInTheHeldBeadsBoxOfADeferredEpic()
+    {
+        projects.Bd.DeclaresEveryWrite();
+        var page = TheDetailPageOf("b-1", $"[{TheRecordOfItsDeferredEpic}]", "[]", TheBacklogOfItsDeferredEpic);
+
+        Assert.Single(page.FindAll(".bead-held"));
+        Assert.Single(page.FindAll(".bead-held-add"));
+    }
+
+    [Theory]
+    [InlineData(
+        TheClosedEpicThatNamesNoBead,
+        TheClosedEpicThatNamesNoBead,
+        "No bead blocks this one, it blocks no other bead, and it holds none.")]
+    [InlineData(
+        TheClosedEpicWithABlocker,
+        TheBacklogOfTheClosedEpicWithABlocker,
+        "This bead holds no bead.")]
+    public void KeepsTheWordsOfTheLineThatSaysAClosedEpicHoldsNoneButOffersNoQuickCreateOnIt(
+        string epic,
+        string backlog,
+        string words)
+    {
+        projects.Bd.DeclaresEveryWrite();
+        var page = TheDetailPageOf("b-3", epic, "[]", backlog);
+
+        Assert.Contains(
+            words,
+            page.FindAll(".bead-prose-column .bead-absent span").Select(line => line.TextContent.Trim()));
+        Assert.Empty(page.FindAll(".bead-held-add"));
+    }
+
+    [Fact]
+    public void KeepsTheQuickCreateOnTheLineThatSaysAClosedBeadThatIsNoEpicHoldsNone()
+    {
+        projects.Bd.DeclaresEveryWrite();
+        var page = TheDetailPageOf(
+            "b-7",
+            $"[{TheClosedBareRecord}]",
+            "[]",
+            $"[{TheRecordOfASecondEpic}, {TheClosedBareRecord}]");
+
+        Assert.Single(page.FindAll(".bead-prose-column .bead-absent .bead-held-add"));
     }
 
     [Fact]
@@ -1630,6 +1732,38 @@ public sealed class DetailMarkupTests : BunitContext
     public void OffersEveryEpicOfTheBacklogAndANoEpicEntryAndMarksTheOneThatHoldsThisBead()
     {
         var page = ThePageOfTheBeadThatBdWrites();
+
+        ThePress(page, "Epic, Ship the site").Click();
+
+        var entries = page.FindAll(".bead-fact-picker .bead-fact-choice");
+        Assert.Equal(["no epic", "Choose the vendor", "Ship the site"], entries.Select(TheWordsOf));
+        Assert.Equal(
+            ["Ship the site"],
+            entries.Where(entry => entry.GetAttribute("aria-current") is "true").Select(TheWordsOf));
+    }
+
+    [Fact]
+    public void LeavesAClosedEpicOutOfTheEpicPickerAndKeepsADeferredOne()
+    {
+        projects.Bd.DeclaresEveryWrite();
+        var page = TheDetailPageOf(
+            "b-7",
+            TheBeadWithEveryFact,
+            "[]",
+            TheBacklogOfThatBeadBesideAClosedAndADeferredEpic);
+
+        ThePress(page, "Epic, Ship the site").Click();
+
+        Assert.Equal(
+            ["no epic", "Choose the vendor", "Move the mail", "Ship the site"],
+            page.FindAll(".bead-fact-picker .bead-fact-choice").Select(TheWordsOf));
+    }
+
+    [Fact]
+    public void KeepsTheClosedEpicThatHoldsThisBeadInTheEpicPickerAndMarksIt()
+    {
+        projects.Bd.DeclaresEveryWrite();
+        var page = TheDetailPageOf("b-7", TheBeadWithEveryFact, "[]", TheBacklogOfThatBeadInsideItsClosedEpic);
 
         ThePress(page, "Epic, Ship the site").Click();
 

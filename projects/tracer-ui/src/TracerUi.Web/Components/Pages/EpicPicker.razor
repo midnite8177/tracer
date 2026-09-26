@@ -3,14 +3,14 @@
 <select class="@Class" id="@Id" disabled="@Disabled" value="@Value"
         @onchange="Pick">
     <option value="">@WhenNone</option>
-    @foreach (var epic in Epics.Where(epic => epic.Id != Except).OrderBy(epic => epic.Title, StringComparer.Ordinal))
+    @foreach (var epic in Offered)
     {
         <option value="@epic.Id">@epic.Title</option>
     }
 </select>
 
 @code {
-    /// <summary>The epics to offer, in whatever order the caller holds them.</summary>
+    /// <summary>The epics of the project, in whatever order the caller holds them. The picker leaves out the closed ones.</summary>
     [Parameter]
     [EditorRequired]
     public required IReadOnlyList<Bead> Epics { get; set; }
@@ -40,6 +40,8 @@
 
     [Parameter]
     public bool Disabled { get; set; }
+
+    private IReadOnlyList<Bead> Offered => Bead.EpicsToOffer(Epics, Except, string.Empty);
 
     private Task Pick(ChangeEventArgs changed) =>
         ValueChanged.InvokeAsync(changed.Value?.ToString() ?? string.Empty);

@@ -40,6 +40,24 @@ public sealed record Bead(
 
     public bool IsClosed => Status == StoredStatus.Closed;
 
+    /// <summary>
+    /// True for every bead but a closed epic, which is finished. A deferred epic is only parked, so it
+    /// still takes a new bead.
+    /// </summary>
+    public bool TakesANewBead => !(IsEpic && IsClosed);
+
+    /// <summary>
+    /// The epics that a picker offers as a place for one bead, by title: each epic that takes a new
+    /// bead, and the epic with the id <paramref name="keep"/> even when it is closed, so that a picker
+    /// still marks the epic the bead sits in. The epic with the id <paramref name="except"/> is left
+    /// out, so that a bead is never offered itself. An empty id names no epic.
+    /// </summary>
+    public static IReadOnlyList<Bead> EpicsToOffer(IEnumerable<Bead> epics, string except, string keep) =>
+        [.. epics
+            .Where(epic => !string.Equals(epic.Id, except, StringComparison.Ordinal))
+            .Where(epic => epic.TakesANewBead || string.Equals(epic.Id, keep, StringComparison.Ordinal))
+            .OrderBy(epic => epic.Title, StringComparer.Ordinal)];
+
     public bool NeedsYou => Labels.Contains(HumanLabel, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>A close reason belongs to a closed bead, so an open bead never shows one.</summary>
