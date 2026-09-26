@@ -99,7 +99,7 @@ public sealed class CollapsedRowsTests
         var collapsed = new CollapsedRows();
         collapsed.Toggle("x");
 
-        collapsed.Clear();
+        collapsed.OpenAll();
 
         Assert.Equal(["The epic", "First"], collapsed.Draws(rows).Select(row => row.Bead.Title));
     }
@@ -122,7 +122,7 @@ public sealed class CollapsedRowsTests
         var collapsed = new CollapsedRows();
         collapsed.ToggleUnparented();
 
-        collapsed.Clear();
+        collapsed.OpenAll();
 
         Assert.Equal(["Loose"], collapsed.DrawsUnparented(unparented).Select(row => row.Bead.Title));
     }
@@ -188,5 +188,187 @@ public sealed class CollapsedRowsTests
         collapsed.Toggle("x");
 
         Assert.Equal(["Loose"], collapsed.DrawsUnparented(board.Unparented).Select(row => row.Bead.Title));
+    }
+
+    [Fact]
+    public void LeavesOnlyTheRowsThatHeadTheBoardWhenAPersonCollapsesAll()
+    {
+        var board = Of(
+            ABead.Epic("outer", "The outer epic"),
+            ABead.Epic("inner", "The inner epic") with { ParentId = "outer" },
+            ABead.Called("x-1", "Held deep") with { ParentId = "inner" },
+            ABead.Epic("y", "The second epic"),
+            ABead.Called("y-1", "Held") with { ParentId = "y" }).ToBoard(Default);
+        var collapsed = new CollapsedRows();
+
+        collapsed.CollapseAll(board);
+
+        Assert.Equal(["The outer epic", "The second epic"], collapsed.Draws(board.Rows).Select(row => row.Bead.Title));
+    }
+
+    [Fact]
+    public void CollapsesTheRowsBelowATopRowAsWellWhenAPersonCollapsesAll()
+    {
+        var board = Of(
+            ABead.Epic("outer", "The outer epic"),
+            ABead.Epic("inner", "The inner epic") with { ParentId = "outer" },
+            ABead.Called("x-1", "Held deep") with { ParentId = "inner" }).ToBoard(Default);
+        var collapsed = new CollapsedRows();
+
+        collapsed.CollapseAll(board);
+        collapsed.Toggle("outer");
+
+        Assert.Equal(["The outer epic", "The inner epic"], collapsed.Draws(board.Rows).Select(row => row.Bead.Title));
+    }
+
+    [Fact]
+    public void CollapsesTheUnparentedRowWhenAPersonCollapsesAllOnABoardThatDrawsIt()
+    {
+        var board = Of(
+            ABead.Epic("x", "The epic"),
+            ABead.Called("x-1", "Held") with { ParentId = "x" },
+            ABead.Called("x-2", "Loose")).ToBoard(Default);
+        var collapsed = new CollapsedRows();
+
+        collapsed.CollapseAll(board);
+
+        Assert.Empty(collapsed.DrawsUnparented(board.Unparented));
+    }
+
+    [Fact]
+    public void LeavesTheUnparentedRowOpenWhenAPersonCollapsesAllOnABoardThatDoesNotDrawIt()
+    {
+        var loose = Of(ABead.Called("x-2", "Loose")).ToBoard(Default).Unparented;
+        var withNoLooseBead = Of(
+            ABead.Epic("x", "The epic"),
+            ABead.Called("x-1", "Held") with { ParentId = "x" }).ToBoard(Default);
+        var collapsed = new CollapsedRows();
+
+        collapsed.CollapseAll(withNoLooseBead);
+
+        Assert.Equal(["Loose"], collapsed.DrawsUnparented(loose).Select(row => row.Bead.Title));
+    }
+
+    [Fact]
+    public void BringsARowThatArrivesAfterACollapseAllInOpen()
+    {
+        var before = Of(
+            ABead.Epic("x", "The epic"),
+            ABead.Called("x-1", "Held") with { ParentId = "x" }).ToBoard(Default);
+        var after = Of(
+            ABead.Epic("x", "The epic"),
+            ABead.Called("x-1", "Held") with { ParentId = "x" },
+            ABead.Epic("y", "The new epic"),
+            ABead.Called("y-1", "Held by the new epic") with { ParentId = "y" }).ToBoard(Default).Rows;
+        var collapsed = new CollapsedRows();
+
+        collapsed.CollapseAll(before);
+
+        Assert.Equal(
+            ["The epic", "The new epic", "Held by the new epic"],
+            collapsed.Draws(after).Select(row => row.Bead.Title));
+    }
+
+    [Fact]
+    public void SaysThatNothingIsLeftToCollapseOnceAPersonCollapsesAll()
+    {
+        var board = Of(
+            ABead.Epic("x", "The epic"),
+            ABead.Called("x-1", "Held") with { ParentId = "x" },
+            ABead.Called("x-2", "Loose")).ToBoard(Default);
+        var collapsed = new CollapsedRows();
+
+        Assert.False(collapsed.LeavesNothingToCollapse(board));
+
+        collapsed.CollapseAll(board);
+
+        Assert.True(collapsed.LeavesNothingToCollapse(board));
+    }
+
+    [Fact]
+    public void SaysThatARowIsLeftToCollapseOnceAPersonOpensOne()
+    {
+        var board = Of(
+            ABead.Epic("x", "The epic"),
+            ABead.Called("x-1", "Held") with { ParentId = "x" },
+            ABead.Called("x-2", "Loose")).ToBoard(Default);
+        var collapsed = new CollapsedRows();
+        collapsed.CollapseAll(board);
+
+        collapsed.ToggleUnparented();
+
+        Assert.False(collapsed.LeavesNothingToCollapse(board));
+    }
+
+    [Fact]
+    public void SaysThatNothingIsLeftToCollapseWhenNoRowOnTheBoardHoldsABead()
+    {
+        var board = Of(ABead.Epic("x", "The empty epic")).ToBoard(Default);
+
+        Assert.True(new CollapsedRows().LeavesNothingToCollapse(board));
+    }
+
+    [Fact]
+    public void SaysThatItHoldsNoRowUntilAPersonCollapsesOne()
+    {
+        var collapsed = new CollapsedRows();
+
+        Assert.False(collapsed.HoldsAny);
+
+        collapsed.Toggle("x");
+
+        Assert.True(collapsed.HoldsAny);
+    }
+
+    [Fact]
+    public void SaysThatItHoldsARowWhenOnlyTheUnparentedRowIsCollapsed()
+    {
+        var collapsed = new CollapsedRows();
+
+        collapsed.ToggleUnparented();
+
+        Assert.True(collapsed.HoldsAny);
+    }
+
+    [Fact]
+    public void OpensEveryRowAndHoldsNoneOnceAPersonExpandsAll()
+    {
+        var everything = Of(
+            ABead.Epic("x", "The epic"),
+            ABead.Called("x-1", "Held") with { ParentId = "x" },
+            ABead.Epic("y", "The other epic"),
+            ABead.Called("y-1", "Also held") with { ParentId = "y" }).ToBoard(Default);
+        var collapsed = new CollapsedRows();
+        collapsed.CollapseAll(everything);
+
+        collapsed.OpenAll();
+
+        Assert.False(collapsed.HoldsAny);
+        Assert.Equal(
+            ["The epic", "Held", "The other epic", "Also held"],
+            collapsed.Draws(everything.Rows).Select(row => row.Bead.Title));
+    }
+
+    [Fact]
+    public void OpensACollapsedRowWhoseBeadLeftTheBacklog()
+    {
+        var collapsed = new CollapsedRows();
+        collapsed.Toggle("x");
+
+        collapsed.KeepOnly(["y"]);
+
+        Assert.False(collapsed.Holds("x"));
+        Assert.False(collapsed.HoldsAny);
+    }
+
+    [Fact]
+    public void KeepsARowCollapsedWhileItsBeadStaysInTheBacklog()
+    {
+        var collapsed = new CollapsedRows();
+        collapsed.Toggle("x");
+
+        collapsed.KeepOnly(["x", "y"]);
+
+        Assert.True(collapsed.Holds("x"));
     }
 }

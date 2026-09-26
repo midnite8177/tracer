@@ -392,6 +392,19 @@ about the backlog, so the board opens with every row open and a switch of
 the project opens them all again.
 _Avoid_: Folded, closed epic, hidden epic, expanded
 
+**Collapse all**:
+The press that collapses every row of the board that holds beads, at any
+depth, and the Unparented row with them. It takes the rows that the board
+shows at the press, so a row that a filter or a re-read brings later
+arrives open.
+_Avoid_: Fold all, collapse mode, collapse everything
+
+**Expand all**:
+The press that opens every collapsed row, so no row stays collapsed. It
+opens a row that a filter hides as well. The word names the press. The
+state it leaves is open, and a row is never called expanded.
+_Avoid_: Open all, unfold all, reset
+
 **Stored status**:
 The status word that `bd` itself keeps on a bead: open, in progress,
 deferred or closed.

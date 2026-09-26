@@ -13,6 +13,8 @@ public sealed record BoardRow(Bead Bead, BeadStatus Status, int Depth, IReadOnly
     /// so the count is one less than the branch, and a row that holds nothing says zero.
     /// </summary>
     public int Held => Branch.Count - 1;
+
+    public bool HoldsBeads => Held > 0;
 }
 
 /// <summary>

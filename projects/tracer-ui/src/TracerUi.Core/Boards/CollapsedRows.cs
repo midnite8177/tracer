@@ -24,12 +24,46 @@ public sealed class CollapsedRows
     /// <summary>Collapses the Unparented row when it is open, and opens it when it is collapsed.</summary>
     public void ToggleUnparented() => unparentedCollapsed = !unparentedCollapsed;
 
-    /// <summary>Opens every row again.</summary>
-    public void Clear()
+    /// <summary>
+    /// Collapses every row of this board that holds beads, and the Unparented row when the board
+    /// draws it. It takes every row of the tree and not only the drawn ones, so a row below a
+    /// collapsed row collapses too and stays collapsed when a person opens the row above it. It
+    /// takes the board at the press, so a row that arrives later arrives open.
+    /// </summary>
+    public void CollapseAll(Board board)
+    {
+        collapsed.TakeAll(board.Rows.Where(row => row.HoldsBeads).Select(row => row.Bead.Id));
+        unparentedCollapsed = unparentedCollapsed || board.Unparented.Count > 0;
+    }
+
+    /// <summary>
+    /// True when every row of this board that holds beads is collapsed, and the Unparented row too
+    /// when the board draws it, so a press of Collapse all has nothing left to collapse. A board
+    /// where no row holds a bead gives true for the same reason.
+    /// </summary>
+    public bool LeavesNothingToCollapse(Board board) =>
+        (unparentedCollapsed || board.Unparented.Count == 0)
+        && board.Rows.Where(row => row.HoldsBeads).All(row => collapsed.Holds(row.Bead.Id));
+
+    /// <summary>
+    /// True when any row is collapsed, so Expand all has a row to open. It counts a row that a
+    /// filter hides now, because Expand all opens that row too.
+    /// </summary>
+    public bool HoldsAny => !collapsed.IsEmpty || unparentedCollapsed;
+
+    /// <summary>Opens every row again, a row that a filter hides now as well.</summary>
+    public void OpenAll()
     {
         collapsed.Clear();
         unparentedCollapsed = false;
     }
+
+    /// <summary>
+    /// Opens every collapsed row whose bead is not among these, so a bead that left the backlog
+    /// leaves no collapsed row behind. The caller passes the beads of the whole backlog and not only
+    /// the ones that the filter shows, because a row that a filter hides stays collapsed.
+    /// </summary>
+    public void KeepOnly(IEnumerable<string> ids) => collapsed.KeepOnly(ids);
 
     /// <summary>
     /// The rows that the board draws, in the order that it draws them: these rows, minus the beads

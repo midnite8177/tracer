@@ -72,7 +72,8 @@ else
                 <thead>
                     <tr>
                         <th class="board-cell-tick"></th>
-                        @foreach (var column in Columns)
+                        @TitleHead()
+                        @foreach (var column in ColumnsAfterTitle)
                         {
                             <th>@column</th>
                         }
@@ -92,7 +93,7 @@ else
                                     @BranchTick(UnparentedIds, "Select every bead under this row")
                                 </div>
                             </td>
-                            <td class="board-cell-title" colspan="@Columns.Length">
+                            <td class="board-cell-title" colspan="@(ColumnsAfterTitle.Length + 1)">
                                 <div class="board-title-line">
                                     @CollapseControl(collapsed.HoldsUnparented, collapsed.ToggleUnparented)
                                     <span>@TheBoard.UnparentedTitle</span>
@@ -112,9 +113,24 @@ else
 }
 
 @code {
-    // The columns that follow the tick, in the order that the table draws them. The Unparented row
-    // spans all of them, so one list gives the header its cells and that row its width.
-    private static readonly string[] Columns = ["Title", "Id", "Type", "Priority", "Labels", "Status", "Demo"];
+    // The columns that follow the title, in the order that the table draws them. The Unparented row
+    // spans the title and all of them, so one list gives the header its cells and that row its width.
+    private static readonly string[] ColumnsAfterTitle = ["Id", "Type", "Priority", "Labels", "Status", "Demo"];
+
+    // The header of the title column. It carries Collapse all and Expand all above the chevrons that
+    // collapse one row each.
+    private RenderFragment TitleHead() =>
+        @<th>
+            <div class="board-title-head">
+                <span>Title</span>
+                <button type="button" class="btn btn-sm btn-outline-secondary board-collapse-all"
+                        disabled="@collapsed.LeavesNothingToCollapse(board)"
+                        @onclick="() => collapsed.CollapseAll(board)">Collapse all</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary board-expand-all"
+                        disabled="@(!collapsed.HoldsAny)"
+                        @onclick="collapsed.OpenAll">Expand all</button>
+            </div>
+        </th>;
 
     // One row of the board. The tree and the beads under the Unparented row take the same drawing,
     // so a bead of either place reads the same, and the depth alone says where it sits.
@@ -135,7 +151,7 @@ else
             </td>
             <td class="board-cell-title">
                 <div class="board-title-line">
-                    @if (row.Held > 0)
+                    @if (row.HoldsBeads)
                     {
                         @CollapseControl(collapsed.Holds(row.Bead.Id), () => collapsed.Toggle(row.Bead.Id))
                     }
@@ -143,7 +159,7 @@ else
                               Address="@Href(row.Bead.Id)"
                               Tooltip="@row.Bead.Title"
                               Text="@row.Bead.Title" />
-                    @if (row.Held > 0)
+                    @if (row.HoldsBeads)
                     {
                         @Count(row.Held)
                     }
@@ -297,7 +313,7 @@ else
             filter = BoardFilter.Everything;
             Navigation.NavigateTo(BoardFilterAddress.Page);
             selection.Clear();
-            collapsed.Clear();
+            collapsed.OpenAll();
             outcome = null;
             staleReadMessage = string.Empty;
             StartOn(change.Project);
@@ -447,6 +463,7 @@ else
         if (outcome is not null)
         {
             board = outcome.Backlog.ToBoard(filter);
+            collapsed.KeepOnly(outcome.Backlog.Beads.Select(bead => bead.Id));
         }
 
         selection.KeepOnly(OnTheBoard.Select(bead => bead.Id));

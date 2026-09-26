@@ -243,6 +243,25 @@
 }
 
 /*
+    Collapse all and Expand all sit beside the name of the title column. They
+    drop the vertical padding of a small button, so the header row stays close
+    to one line of text tall, and they wrap under the name when the column is
+    narrow.
+*/
+.board-title-head {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--tracer-space-2);
+}
+
+.board-title-head .btn {
+    font-size: var(--tracer-text-small);
+    line-height: 1.2;
+    padding: 0 var(--tracer-space-1);
+}
+
+/*
     A filter press under the pointer, and one that the keyboard reached. Neither
     one states a color, because each press keeps the color of its own chip.
 */

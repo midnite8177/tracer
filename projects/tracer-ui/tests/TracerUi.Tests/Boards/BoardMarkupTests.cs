@@ -50,6 +50,35 @@ public sealed class BoardMarkupTests : BunitContext
           "labels": ["docs"]}]
         """;
 
+    private const string NestedEpics =
+        """
+        [{"id": "x", "title": "The outer epic", "issue_type": "epic", "priority": 2, "status": "open"},
+         {"id": "x-1", "title": "The inner epic", "issue_type": "epic", "priority": 2, "status": "open",
+          "parent": "x"},
+         {"id": "x-1-1", "title": "Held deep", "issue_type": "task", "priority": 2, "status": "open",
+          "parent": "x-1"},
+         {"id": "y", "title": "The second epic", "issue_type": "epic", "priority": 2, "status": "open"},
+         {"id": "y-1", "title": "Held", "issue_type": "task", "priority": 2, "status": "open",
+          "parent": "y"},
+         {"id": "z-1", "title": "Loose", "issue_type": "task", "priority": 2, "status": "open"}]
+        """;
+
+    private const string NestedEpicsAndANewOne =
+        """
+        [{"id": "x", "title": "The outer epic", "issue_type": "epic", "priority": 2, "status": "open"},
+         {"id": "x-1", "title": "The inner epic", "issue_type": "epic", "priority": 2, "status": "open",
+          "parent": "x"},
+         {"id": "x-1-1", "title": "Held deep", "issue_type": "task", "priority": 2, "status": "open",
+          "parent": "x-1"},
+         {"id": "y", "title": "The second epic", "issue_type": "epic", "priority": 2, "status": "open"},
+         {"id": "y-1", "title": "Held", "issue_type": "task", "priority": 2, "status": "open",
+          "parent": "y"},
+         {"id": "w", "title": "The new epic", "issue_type": "epic", "priority": 2, "status": "open"},
+         {"id": "w-1", "title": "Held by the new epic", "issue_type": "task", "priority": 2, "status": "open",
+          "parent": "w"},
+         {"id": "z-1", "title": "Loose", "issue_type": "task", "priority": 2, "status": "open"}]
+        """;
+
     private readonly TempDirectory directory = new();
 
     private readonly FakeTimeProvider clock = new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
@@ -535,6 +564,113 @@ public sealed class BoardMarkupTests : BunitContext
                 "board-status-stored",
             ],
             TheStatusClasses(board));
+    }
+
+    [Fact]
+    public void LeavesTheRowsThatHeadTheBoardAndTheUnparentedRowWhenAPersonCollapsesAll()
+    {
+        var board = TheBoardOf(NestedEpics);
+
+        board.Find("button.board-collapse-all").Click();
+
+        Assert.Equal(["The outer epic", "The second epic"], TheTitles(board));
+        Assert.Single(board.FindAll("tr.board-unparented"));
+    }
+
+    [Fact]
+    public void OpensEveryRowAgainWhenAPersonExpandsAll()
+    {
+        var board = TheBoardOf(NestedEpics);
+        board.Find("button.board-collapse-all").Click();
+
+        board.Find("button.board-expand-all").Click();
+
+        Assert.Equal(
+            ["The outer epic", "The inner epic", "Held deep", "The second epic", "Held", "Loose"],
+            TheTitles(board));
+    }
+
+    [Fact]
+    public void DisablesExpandAllUntilARowIsCollapsed()
+    {
+        var board = TheBoardOf(NestedEpics);
+
+        Assert.True(board.Find("button.board-expand-all").HasAttribute("disabled"));
+        Assert.False(board.Find("button.board-collapse-all").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void DisablesCollapseAllOnceEveryRowThatHoldsBeadsIsCollapsed()
+    {
+        var board = TheBoardOf(NestedEpics);
+
+        board.Find("button.board-collapse-all").Click();
+
+        Assert.True(board.Find("button.board-collapse-all").HasAttribute("disabled"));
+        Assert.False(board.Find("button.board-expand-all").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void BringsARowThatAFilterChangeAddsAfterACollapseAllInOpen()
+    {
+        var board = TheBoardOf(NestedEpics, "board?epic=y");
+        board.Find("button.board-collapse-all").Click();
+
+        Services.GetRequiredService<NavigationManager>().NavigateTo(BoardFilterAddress.Page);
+
+        board.WaitForAssertion(() => Assert.Equal(
+            ["The outer epic", "The inner epic", "Held deep", "The second epic", "Loose"],
+            TheTitles(board)));
+    }
+
+    [Fact]
+    public void OpensARowThatAFilterHidesWhenAPersonExpandsAll()
+    {
+        var board = TheBoardOf(NestedEpics);
+        board.Find("button.board-collapse-all").Click();
+        Services.GetRequiredService<NavigationManager>().NavigateTo("board?epic=y");
+        board.WaitForAssertion(() => Assert.Equal(["The second epic"], TheTitles(board)));
+
+        board.Find("button.board-expand-all").Click();
+        Services.GetRequiredService<NavigationManager>().NavigateTo(BoardFilterAddress.Page);
+
+        board.WaitForAssertion(() => Assert.Equal(
+            ["The outer epic", "The inner epic", "Held deep", "The second epic", "Held", "Loose"],
+            TheTitles(board)));
+    }
+
+    [Fact]
+    public void BringsARowThatARereadAddsAfterACollapseAllInOpen()
+    {
+        var board = TheBoardOf(NestedEpics);
+        board.Find("button.board-collapse-all").Click();
+        bd.Holds(TheListCommand);
+
+        cache.InvalidateFromWatch(ProjectPath.From(directory.Path));
+        bd.Answers(TheListCommand, NestedEpicsAndANewOne);
+
+        board.WaitForAssertion(() => Assert.Equal(
+            ["The new epic", "Held by the new epic", "The outer epic", "The second epic"],
+            TheTitles(board)));
+    }
+
+    [Fact]
+    public void DisablesExpandAllOnceARereadTakesTheOnlyCollapsedRowOffTheBacklog()
+    {
+        var board = TheBoardOf(
+            """
+            [{"id": "x", "title": "The epic", "issue_type": "epic", "priority": 2, "status": "open"},
+             {"id": "x-1", "title": "Held", "issue_type": "task", "priority": 2, "status": "open",
+              "parent": "x"}]
+            """);
+        board.Find("button.board-collapse-all").Click();
+        bd.Holds(TheListCommand);
+
+        cache.InvalidateFromWatch(ProjectPath.From(directory.Path));
+        bd.Answers(TheListCommand, OneBead);
+
+        board.WaitForAssertion(() => Assert.Equal(["First"], TheTitles(board)));
+        Assert.True(board.Find("button.board-expand-all").HasAttribute("disabled"));
     }
 
     private static IReadOnlyList<string> TheStatusClasses(IRenderedComponent<BoardPage> board) =>
