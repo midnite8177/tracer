@@ -19,6 +19,7 @@ public sealed class BulkWriterTests
         var run = writer.RunAsync(
             Project,
             BulkPlan.For(BulkAction.AddTheLabel("human"), OneBead),
+            NoEpics,
             (beadId, status) => seen.Add((beadId, status.State)));
 
         Assert.Equal([("x-1", BulkRowState.Writing)], seen);
@@ -41,6 +42,7 @@ public sealed class BulkWriterTests
         await writer.RunAsync(
             Project,
             BulkPlan.For(BulkAction.AddTheLabel("human"), [ABead.Called("x-2", "Two")]),
+            NoEpics,
             (beadId, status) => seen.Add((beadId, status.State, status.Message)));
 
         Assert.Contains(("x-2", BulkRowState.Writing, string.Empty), seen);
@@ -57,7 +59,7 @@ public sealed class BulkWriterTests
         var writer = new BulkWriter(new BdAdapter(bd, TimeProvider.System));
 
         var report = await writer.RunAsync(
-            Project, BulkPlan.For(BulkAction.AddTheLabel("human"), TwoBeads), NoProgress);
+            Project, BulkPlan.For(BulkAction.AddTheLabel("human"), TwoBeads), NoEpics, NoProgress);
 
         Assert.True(report.Whole);
         Assert.Equal(2, report.Written);
@@ -76,7 +78,7 @@ public sealed class BulkWriterTests
         adapter.Wrote += project => named.Add(project);
 
         await new BulkWriter(adapter)
-            .RunAsync(Project, BulkPlan.For(BulkAction.AddTheLabel("human"), TwoBeads), NoProgress);
+            .RunAsync(Project, BulkPlan.For(BulkAction.AddTheLabel("human"), TwoBeads), NoEpics, NoProgress);
 
         Assert.Equal([Project], named);
     }
@@ -90,7 +92,7 @@ public sealed class BulkWriterTests
         var writer = new BulkWriter(new BdAdapter(bd, TimeProvider.System));
 
         var report = await writer.RunAsync(
-            Project, BulkPlan.For(BulkAction.AddTheLabel("human"), TwoBeads), NoProgress);
+            Project, BulkPlan.For(BulkAction.AddTheLabel("human"), TwoBeads), NoEpics, NoProgress);
 
         Assert.False(report.Whole);
         Assert.Equal(1, report.Written);
@@ -108,7 +110,7 @@ public sealed class BulkWriterTests
         var plan = BulkPlan.For(BulkAction.CloseThem("Stale"), TwoBeads)
             .WithReasonFor("x-2", "This one shipped");
 
-        var report = await writer.RunAsync(Project, plan, NoProgress);
+        var report = await writer.RunAsync(Project, plan, NoEpics, NoProgress);
 
         Assert.True(report.Whole);
         Assert.Contains("close x-1 --reason Stale", bd.Invocations);
@@ -122,7 +124,7 @@ public sealed class BulkWriterTests
         var writer = new BulkWriter(new BdAdapter(bd, TimeProvider.System));
         var plan = BulkPlan.For(BulkAction.CloseThem("Stale"), TwoBeads).WithReasonFor("x-1", "  ");
 
-        var report = await writer.RunAsync(Project, plan, NoProgress);
+        var report = await writer.RunAsync(Project, plan, NoEpics, NoProgress);
 
         Assert.Equal(0, report.Written);
         Assert.Equal("Bead x-1 has no close reason.", report.Message);
@@ -138,7 +140,7 @@ public sealed class BulkWriterTests
 
         foreach (var action in EveryVerbCategory)
         {
-            await writer.RunAsync(Project, BulkPlan.For(action, one), NoProgress);
+            await writer.RunAsync(Project, BulkPlan.For(action, one), TheEpicOfTheMove, NoProgress);
         }
 
         Assert.Equal(
@@ -165,9 +167,9 @@ public sealed class BulkWriterTests
             .Fails("defer x-2", "issue x-2 not found");
 
         var everyBead = await new BulkWriter(new BdAdapter(whole, TimeProvider.System))
-            .RunAsync(Project, BulkPlan.For(BulkAction.DeferThem(), TwoBeads), NoProgress);
+            .RunAsync(Project, BulkPlan.For(BulkAction.DeferThem(), TwoBeads), NoEpics, NoProgress);
         var oneShort = await new BulkWriter(new BdAdapter(partial, TimeProvider.System))
-            .RunAsync(Project, BulkPlan.For(BulkAction.DeferThem(), TwoBeads), NoProgress);
+            .RunAsync(Project, BulkPlan.For(BulkAction.DeferThem(), TwoBeads), NoEpics, NoProgress);
 
         Assert.Equal("bd wrote 2 beads.", everyBead.Summary);
         Assert.Equal("bd wrote 1 bead. 1 failed.", oneShort.Summary);
@@ -183,6 +185,10 @@ public sealed class BulkWriterTests
             BulkAction.SetThePriority(1),
             BulkAction.SetTheType("bug"),
         ];
+
+    private static IReadOnlyList<Bead> NoEpics => [];
+
+    private static IReadOnlyList<Bead> TheEpicOfTheMove => [ABead.Epic("x-9", "The epic of the move")];
 
     private static IReadOnlyList<Bead> OneBead => [ABead.Called("x-1", "One")];
 

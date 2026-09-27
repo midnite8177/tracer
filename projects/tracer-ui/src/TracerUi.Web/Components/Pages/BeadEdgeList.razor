@@ -8,8 +8,9 @@
 *@
 
 @using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
 
-<h3 class="h6 bead-writes">@Title</h3>
+<h3 class="h6 bead-writes">@Words.Title</h3>
 @if (Links.Count > 0)
 {
     <ul class="list-unstyled">
@@ -20,18 +21,18 @@
                 {
                     <span class="bead-edge-question">Cut this edge?</span>
                     <button class="btn btn-sm btn-outline-danger bead-edge-yes"
-                            aria-label="@($"{CutTitle} {link.Title}")"
+                            aria-label="@($"{Words.CutTitle} {link.Title}")"
                             @onclick="() => Cut(link.Id)">Yes</button>
                     <button class="btn btn-sm btn-outline-secondary bead-edge-cancel"
                             @onclick="Keep">Cancel</button>
                 }
                 else
                 {
-                    <BeadRow Link="link" />
+                    <BeadRow Link="link" Project="Project" />
                     <button class="btn btn-sm btn-link p-0 ms-1 bead-edge-cut"
                             disabled="@(!Capability.Cuttable || Capability.Writing)"
-                            aria-label="@($"{CutTitle} {link.Title}")"
-                            title="@(Capability.Cuttable ? CutTitle : Capability.WhyNot)"
+                            aria-label="@($"{Words.CutTitle} {link.Title}")"
+                            title="@(Capability.Cuttable ? Words.CutTitle : Capability.WhyNot)"
                             aria-busy="@(Capability.Writing ? "true" : "false")"
                             @onclick="() => Ask(link.Id)">×</button>
                 }
@@ -41,29 +42,24 @@
 }
 else
 {
-    <p class="text-muted">@WhenEmpty</p>
+    <p class="text-muted">@Words.WhenEmpty</p>
 }
 
 @code {
-    /// <summary>What this direction of the dependencies is called on the page.</summary>
+    /// <summary>The words of this direction of the dependencies.</summary>
     [Parameter]
     [EditorRequired]
-    public required string Title { get; set; }
+    public required EdgeDirectionWords Words { get; set; }
 
     /// <summary>The beads to name, each with its title.</summary>
     [Parameter]
     [EditorRequired]
     public required IReadOnlyList<BeadLink> Links { get; set; }
 
-    /// <summary>What the list says when no bead belongs in it.</summary>
+    /// <summary>The project that holds the beads of this list.</summary>
     [Parameter]
     [EditorRequired]
-    public required string WhenEmpty { get; set; }
-
-    /// <summary>What a cut of this list does, because each direction cuts a different edge.</summary>
-    [Parameter]
-    [EditorRequired]
-    public required string CutTitle { get; set; }
+    public required ProjectPath Project { get; set; }
 
     /// <summary>Whether this list can cut an edge right now, and whether one is writing.</summary>
     [Parameter]

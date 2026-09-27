@@ -33,20 +33,48 @@ public sealed class BacklogCache
     /// <summary>
     /// The backlog of this project, from the held copy or from a read of bd. The cache holds an
     /// answer alone and drops a failure at once, so the next read asks bd again. A held failure
-    /// would keep an error message on the board until something invalidated the project.
+    /// would keep an error message on the board until something invalidated the project. A read
+    /// whose pipe to bd breaks, or whose run of bd cannot start, gives a failure too, and throws
+    /// nothing. A read that throws any other exception throws it to the readers that shared it, and
+    /// the cache drops it as it drops a failure.
     /// </summary>
     public async Task<BacklogOutcome> ReadAsync(ProjectPath project)
     {
         var entry = held.GetOrAdd(
             project,
-            path => new Lazy<Task<BacklogOutcome>>(() => reader.ReadAsync(path)));
-        var outcome = await entry.Value;
+            path => new Lazy<Task<BacklogOutcome>>(() => TheOutcomeOfARead(path)));
+        // A removal by key alone would drop the newer read that an invalidation let in after this
+        // one began.
+        var mine = new KeyValuePair<ProjectPath, Lazy<Task<BacklogOutcome>>>(project, entry);
+        BacklogOutcome outcome;
+        try
+        {
+            outcome = await entry.Value;
+        }
+        catch
+        {
+            held.TryRemove(mine);
+            throw;
+        }
+
         if (!outcome.Answered)
         {
-            held.TryRemove(new KeyValuePair<ProjectPath, Lazy<Task<BacklogOutcome>>>(project, entry));
+            held.TryRemove(mine);
         }
 
         return outcome;
+    }
+
+    private async Task<BacklogOutcome> TheOutcomeOfARead(ProjectPath project)
+    {
+        try
+        {
+            return await reader.ReadAsync(project);
+        }
+        catch (Exception unread) when (unread is IOException or InvalidOperationException)
+        {
+            return BacklogOutcome.Failure($"The app could not read the beads of this project. {unread.Message}");
+        }
     }
 
     /// <summary>

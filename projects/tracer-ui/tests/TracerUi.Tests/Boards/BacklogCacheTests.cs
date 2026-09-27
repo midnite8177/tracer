@@ -135,6 +135,36 @@ public sealed class BacklogCacheTests
     }
 
     [Fact]
+    public async Task GivesAFailureForAReadThatThrowsAndAsksBdAgainAtTheNextRead()
+    {
+        var bd = ABdThatLists().Throws(ListCommand, new InvalidOperationException("the pipe to bd closed"));
+        var cache = CacheOver(bd);
+
+        var first = await cache.ReadAsync(First);
+        bd.Prints(ListCommand, """[{"id": "x-1", "title": "First", "status": "open"}]""");
+        var again = await cache.ReadAsync(First);
+
+        Assert.False(first.Answered);
+        Assert.Contains("the pipe to bd closed", first.Message, StringComparison.Ordinal);
+        Assert.True(again.Answered);
+        Assert.Equal(2, bd.Runs(First.Value, ListCommand));
+    }
+
+    [Fact]
+    public async Task ThrowsAnExceptionItDoesNotTurnIntoAFailureAndAsksBdAgainAtTheNextRead()
+    {
+        var bd = ABdThatLists().Throws(ListCommand, new UnauthorizedAccessException("access to the project is denied"));
+        var cache = CacheOver(bd);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => cache.ReadAsync(First));
+        bd.Prints(ListCommand, """[{"id": "x-1", "title": "First", "status": "open"}]""");
+        var again = await cache.ReadAsync(First);
+
+        Assert.True(again.Answered);
+        Assert.Equal(2, bd.Runs(First.Value, ListCommand));
+    }
+
+    [Fact]
     public async Task DropsTheBacklogOfTheProjectThatTheAppItselfWroteTo()
     {
         var bd = ABdThatLists()

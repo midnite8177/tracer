@@ -112,7 +112,7 @@ public sealed class BoardMarkupTests : BunitContext
 
         APress.LandsOn(TheRowOfTheOneBead(board), APress.Plain);
 
-        Assert.EndsWith("bead/x-1", ABrowser.TheAddressItStandsOn(this), StringComparison.Ordinal);
+        Assert.EndsWith(TheAddressOfTheOneBead, ABrowser.TheAddressItStandsOn(this), StringComparison.Ordinal);
     }
 
     [Theory]
@@ -125,7 +125,7 @@ public sealed class BoardMarkupTests : BunitContext
 
         APress.LandsOn(TheRowOfTheOneBead(board), TheReleaseThatCarries(key));
 
-        Assert.Equal(["bead/x-1"], ABrowser.TheAddressesOf(opened));
+        Assert.Equal([TheAddressOfTheOneBead], ABrowser.TheAddressesOf(opened));
     }
 
     [Theory]
@@ -150,7 +150,15 @@ public sealed class BoardMarkupTests : BunitContext
 
         TheRowOfTheOneBead(board)().MouseUp(APress.OfTheMiddleButton);
 
-        Assert.Equal(["bead/x-1"], ABrowser.TheAddressesOf(opened));
+        Assert.Equal([TheAddressOfTheOneBead], ABrowser.TheAddressesOf(opened));
+    }
+
+    [Fact]
+    public void NamesTheProjectOfTheBoardInTheAddressThatARowTitleCarries()
+    {
+        var board = TheBoardOfOneBead();
+
+        Assert.Equal(TheAddressOfTheOneBead, TheAddressOf(board.Find("a.board-title")));
     }
 
     [Fact]
@@ -160,7 +168,7 @@ public sealed class BoardMarkupTests : BunitContext
 
         board.Find("a.board-title").Click(APress.Plain);
 
-        Assert.EndsWith("bead/x-1", ABrowser.TheAddressItStandsOn(this), StringComparison.Ordinal);
+        Assert.EndsWith(TheAddressOfTheOneBead, ABrowser.TheAddressItStandsOn(this), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -171,7 +179,7 @@ public sealed class BoardMarkupTests : BunitContext
 
         board.Find("a.board-title").Click(TheReleaseThatCarries(NewTabKey.Meta));
 
-        Assert.Equal(["bead/x-1"], ABrowser.TheAddressesOf(opened));
+        Assert.Equal([TheAddressOfTheOneBead], ABrowser.TheAddressesOf(opened));
     }
 
     [Fact]
@@ -192,7 +200,7 @@ public sealed class BoardMarkupTests : BunitContext
 
         board.Find("tr.board-row:not(.board-unparented) td.board-cell-quiet").Click();
 
-        Assert.EndsWith("bead/x-1", ABrowser.TheAddressItStandsOn(this), StringComparison.Ordinal);
+        Assert.EndsWith(TheAddressOfTheOneBead, ABrowser.TheAddressItStandsOn(this), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -217,11 +225,11 @@ public sealed class BoardMarkupTests : BunitContext
     }
 
     [Fact]
-    public void NamesTheBoardAndNoBeadInTheAddressOfAPress()
+    public void NamesTheBoardOfTheSameProjectAndNoBeadInTheAddressOfAPress()
     {
         var board = TheBoardOf(TwoBeads);
 
-        Assert.Equal("board?type=bug", TheAddressOf(ThePress(board, "type", "bug")));
+        Assert.Equal($"board?{TheProjectInTheQuery}&type=bug", TheAddressOf(ThePress(board, "type", "bug")));
     }
 
     [Fact]
@@ -239,7 +247,7 @@ public sealed class BoardMarkupTests : BunitContext
     {
         var board = TheBoardOf(TwoBeads);
 
-        Assert.Equal("board?priority=3", TheAddressOf(ThePress(board, "priority", "p3")));
+        Assert.Equal($"board?{TheProjectInTheQuery}&priority=3", TheAddressOf(ThePress(board, "priority", "p3")));
     }
 
     [Fact]
@@ -407,6 +415,34 @@ public sealed class BoardMarkupTests : BunitContext
             board.FindAll("#filter-epic option").Select(offered => offered.TextContent));
     }
 
+    private const string TheOpenEpicClosed =
+        """
+        [{"id": "e-1", "title": "The open epic", "issue_type": "epic", "priority": 2, "status": "closed"},
+         {"id": "e-2", "title": "The finished epic", "issue_type": "epic", "priority": 2, "status": "closed"},
+         {"id": "e-3", "title": "The parked epic", "issue_type": "epic", "priority": 2, "status": "deferred"}]
+        """;
+
+    [Fact]
+    public void DropsThePickedEpicOfTheQuickCreateOfTheBoardOnceARereadShowsItClosedAndCreatesInNoEpic()
+    {
+        var board = TheBoardOf(
+            AnOpenAClosedAndADeferredEpic,
+            BoardFilterAddress.Page,
+            that => that.DeclaresEveryWrite().Prints(TheCreateOfANewBead, "x-2\n"));
+        board.Find("#create-epic").Change("e-1");
+        Assert.Equal("e-1", AnEpicPicker.ThePickedEpic(board, "create-epic"));
+
+        bd.Prints(TheListCommand, TheOpenEpicClosed);
+        cache.InvalidateFromWatch(ProjectPath.From(directory.Path));
+
+        board.WaitForAssertion(() => Assert.Equal(string.Empty, AnEpicPicker.ThePickedEpic(board, "create-epic")));
+        board.Find("#create-title").Input("Read the two plans again");
+        board.Find("button.btn-primary").Click();
+
+        Assert.Contains(TheCreateOfANewBead, bd.Invocations);
+        Assert.DoesNotContain(bd.Invocations, invocation => invocation.Contains("--parent", StringComparison.Ordinal));
+    }
+
     private const string TheCreateOfANewBead = "create --title Read the two plans again --type task --silent";
 
     [Fact]
@@ -427,10 +463,15 @@ public sealed class BoardMarkupTests : BunitContext
         Assert.True(board.Find("button.btn-outline-primary").HasAttribute("disabled"));
 
         bd.Answers(TheCreateOfANewBead, "x-2\n");
+
+        // Moving the clock before this render leaves the floor timer unset, and the mark never hides.
+        board.WaitForAssertion(() => Assert.Equal("false", board.Find("button.btn-primary").GetAttribute("aria-busy")));
+        Assert.Single(board.FindAll(".working-mark"));
+
         clock.Advance(WorkingMark.Floor);
 
         board.WaitForAssertion(() => Assert.Empty(board.FindAll(".working-mark")));
-        Assert.Equal(string.Empty, board.Find("#create-title").GetAttribute("value"));
+        board.WaitForAssertion(() => Assert.Equal(string.Empty, board.Find("#create-title").GetAttribute("value")));
     }
 
     [Fact]
@@ -497,14 +538,22 @@ public sealed class BoardMarkupTests : BunitContext
         Assert.True(board.Find(".board-bulk-plan button.btn-danger").HasAttribute("disabled"));
 
         bd.Answers("defer x-1", string.Empty);
+
+        // Moving the clock before this render leaves the floor timer unset, and the mark never hides.
+        board.WaitForAssertion(() => Assert.Equal("written", board.Find(".board-bulk-row-word").TextContent));
+        Assert.Single(board.FindAll(".working-mark"));
+
         clock.Advance(WorkingMark.Floor);
 
         board.WaitForAssertion(() => Assert.Empty(board.FindAll(".working-mark")));
+        // The mark clears once bd writes the row; the commit ends later, when the close button draws.
+        board.WaitForAssertion(() => Assert.Single(board.FindAll("#bulk-close")));
         Assert.Single(board.FindAll(".board-bulk-plan"));
 
         board.Find("#bulk-close").Click();
 
-        Assert.Empty(board.FindAll(".board-bulk-plan"));
+        board.WaitForAssertion(() => Assert.Empty(board.FindAll(".board-bulk-plan")));
+        Assert.Equal(["First", "Second"], TheTitles(board));
     }
 
     [Fact]
@@ -522,8 +571,8 @@ public sealed class BoardMarkupTests : BunitContext
 
         board.Find(".board-bulk-plan button.btn-danger").Click();
 
-        board.WaitForAssertion(() => Assert.Single(board.FindAll(".board-bulk-plan")));
-        Assert.Single(board.FindAll("#bulk-close"));
+        board.WaitForAssertion(() => Assert.Single(board.FindAll("#bulk-close")));
+        Assert.Single(board.FindAll(".board-bulk-plan"));
     }
 
     [Fact]
@@ -763,13 +812,75 @@ public sealed class BoardMarkupTests : BunitContext
 
         clock.Advance(BdAdapter.WaitLimit - WorkingMark.WaitBeforeShowing);
 
-        board.WaitForAssertion(() => Assert.NotEmpty(board.FindAll(".board-stale-read")));
-        Assert.Contains(
-            "beads on the screen are the ones from before",
-            board.Find(".board-stale-read").TextContent,
-            StringComparison.Ordinal);
+        AssertTheBoardSaysWhyItKeptTheBeads(board, "bd has not answered again.");
         Assert.DoesNotContain("stopped", board.Find(".board-stale-read").TextContent, StringComparison.Ordinal);
         Assert.Equal(["First"], TheTitles(board));
+    }
+
+    private const string AnEpicAndOneBead =
+        """
+        [{"id": "e-1", "title": "The open epic", "issue_type": "epic", "priority": 2, "status": "open"},
+         {"id": "x-1", "title": "First", "issue_type": "task", "priority": 2, "status": "open"}]
+        """;
+
+    private const string TheTypedTitle = "Read the two plans again";
+
+    [Fact]
+    public void KeepsTheRowsTheTypedQuickCreateAndTheBulkPlanAndSaysWhyWhenAReadOfTheProjectWatcherFails()
+    {
+        var board = TheBoardWithATypedQuickCreateAndABulkPlan();
+        bd.Fails(TheListCommand, "the database is locked")
+            .Fails("list --json", "the database is locked");
+
+        cache.InvalidateFromWatch(ProjectPath.From(directory.Path));
+
+        AssertTheBoardSaysWhyItKeptTheBeads(board, "the database is locked");
+        AssertTheBoardKeptTheTypedQuickCreateAndTheBulkPlan(board);
+
+        bd.Prints(TheListCommand, AnEpicAndOneBead);
+        cache.Invalidate(ProjectPath.From(directory.Path));
+
+        board.WaitForAssertion(() => Assert.Empty(board.FindAll(".board-stale-read")));
+    }
+
+    [Fact]
+    public void KeepsTheRowsTheTypedQuickCreateAndTheBulkPlanAndSaysWhyWhenARereadThrows()
+    {
+        var board = TheBoardWithATypedQuickCreateAndABulkPlan();
+        bd.Throws(TheListCommand, new InvalidOperationException("the pipe to bd closed"));
+
+        cache.Invalidate(ProjectPath.From(directory.Path));
+
+        AssertTheBoardSaysWhyItKeptTheBeads(board, "the pipe to bd closed");
+        AssertTheBoardKeptTheTypedQuickCreateAndTheBulkPlan(board);
+    }
+
+    private static void AssertTheBoardSaysWhyItKeptTheBeads(IRenderedComponent<BoardPage> board, string reason)
+    {
+        board.WaitForAssertion(() => Assert.NotEmpty(board.FindAll(".board-stale-read")));
+        var said = board.Find(".board-stale-read").TextContent;
+        Assert.Contains(reason, said, StringComparison.Ordinal);
+        Assert.Contains("The beads on the screen are the ones from before.", said, StringComparison.Ordinal);
+    }
+
+    private IRenderedComponent<BoardPage> TheBoardWithATypedQuickCreateAndABulkPlan()
+    {
+        var board = TheBoardOf(AnEpicAndOneBead, BoardFilterAddress.Page, that => that.DeclaresEveryWrite());
+        board.Find("#create-title").Input(TheTypedTitle);
+        board.Find("#create-epic").Change("e-1");
+        board.FindAll("input[title='Select this bead']")[1].Change(true);
+        board.Find("#bulk-category").Change(BulkCategory.Defer.Name);
+        board.Find(".board-bulk-bar button.btn-primary").Click();
+        Assert.Single(board.FindAll(".board-bulk-plan"));
+        return board;
+    }
+
+    private static void AssertTheBoardKeptTheTypedQuickCreateAndTheBulkPlan(IRenderedComponent<BoardPage> board)
+    {
+        Assert.Equal(["The open epic", "First"], TheTitles(board));
+        Assert.Equal(TheTypedTitle, board.Find("#create-title").GetAttribute("value"));
+        Assert.Equal("e-1", AnEpicPicker.ThePickedEpic(board, "create-epic"));
+        Assert.Contains("First", board.Find(".board-bulk-plan").TextContent, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -797,6 +908,11 @@ public sealed class BoardMarkupTests : BunitContext
         Services.GetRequiredService<NavigationManager>().NavigateTo(TheAddressOf(press));
 
     private static string TheAddressOf(IElement press) => press.GetAttribute("href") ?? string.Empty;
+
+    private string TheProjectInTheQuery => $"project={Uri.EscapeDataString(ProjectPath.From(directory.Path).Value)}";
+
+    private string TheAddressOfTheOneBead =>
+        $"bead/x-1?project={Uri.EscapeDataString(ProjectPath.From(directory.Path).Value)}";
 
     // The filter press of one kind, on the row whose word it names. A press carries the word that a
     // person reads, so the test asks for it the way that person would.
@@ -846,7 +962,7 @@ public sealed class BoardMarkupTests : BunitContext
 
         Services.AddSingleton(adapter);
         Services.AddSingleton(cache);
-        Services.AddSingleton(new ProjectWatchers(cache));
+        Services.AddSingleton(new ProjectWatchers(cache, new FakeWriteReports()));
         Services.AddSingleton(catalog);
         Services.AddSingleton(selection);
         Services.AddSingleton(new SavedFilterCatalog(store));
@@ -854,6 +970,7 @@ public sealed class BoardMarkupTests : BunitContext
         Services.AddSingleton(new CopyFeedback());
         Services.AddSingleton<TimeProvider>(clock);
         Services.AddScoped<BeadOpener>();
+        Services.AddScoped<SwitchAddress>();
 
         Services.GetRequiredService<NavigationManager>().NavigateTo(address);
 

@@ -13,12 +13,14 @@ public sealed class ProjectWatchers : IDisposable
     public static readonly TimeSpan QuietPeriod = TimeSpan.FromMilliseconds(250);
 
     private readonly BacklogCache cache;
+    private readonly IWriteReports reports;
 
     private readonly ConcurrentDictionary<ProjectPath, Lazy<ProjectWatcher>> watching = new();
 
-    public ProjectWatchers(BacklogCache cache)
+    public ProjectWatchers(BacklogCache cache, IWriteReports reports)
     {
         this.cache = cache;
+        this.reports = reports;
     }
 
     /// <summary>
@@ -34,7 +36,7 @@ public sealed class ProjectWatchers : IDisposable
 
         _ = watching.GetOrAdd(
             project,
-            path => new Lazy<ProjectWatcher>(() => new ProjectWatcher(path, cache, QuietPeriod))).Value;
+            path => new Lazy<ProjectWatcher>(() => new ProjectWatcher(path, cache, QuietPeriod, reports))).Value;
     }
 
     public void Dispose()

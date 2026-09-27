@@ -33,6 +33,10 @@ builder.Services.AddSingleton<BdAdapter>();
 builder.Services.AddSingleton<BacklogReader>();
 builder.Services.AddSingleton<BacklogCache>();
 builder.Services.AddSingleton<NeedsYouReader>();
+builder.Services.AddSingleton<IWriteReports>(services => new JournalCheckedWriteReports(
+    new FileSystemWriteReports(),
+    services.GetRequiredService<TimeProvider>(),
+    JournalCheckedWriteReports.Interval));
 builder.Services.AddSingleton<ProjectWatchers>();
 builder.Services.AddSingleton<BeadDetailReader>();
 builder.Services.AddSingleton<BulkWriter>();
@@ -41,6 +45,7 @@ builder.Services.AddSingleton<SavedFilterCatalog>();
 builder.Services.AddScoped<ActiveProjectSelection>();
 builder.Services.AddScoped<CopyFeedback>();
 builder.Services.AddScoped<BeadOpener>();
+builder.Services.AddScoped<SwitchAddress>();
 builder.Services.AddSingleton(bindAddress);
 builder.Services.AddSingleton<IStartupBrowser, BrowserTab>();
 

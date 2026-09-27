@@ -6,9 +6,10 @@
     alone. A page that names no bead at all carries none, and it carries the
     head without the id, because the way back is what a person needs there.
 *@
+@using TracerUi.Core.Boards
 
 <div class="bead-head">
-    <p><a href="board">← Back to the board</a></p>
+    <p><a href="@TheBoardAddress">← Back to the board</a></p>
 
     @if (Title is not null)
     {
@@ -30,4 +31,11 @@
     [Parameter]
     [EditorRequired]
     public required string Id { get; set; }
+
+    /// <summary>The project whose board the way back leads to, or null while the page has none to name.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required ProjectPath? Project { get; set; }
+
+    private string TheBoardAddress => BoardFilterAddress.OfEverythingIn(Project);
 }

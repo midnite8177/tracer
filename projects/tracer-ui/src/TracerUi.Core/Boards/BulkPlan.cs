@@ -51,34 +51,37 @@ public sealed record BulkPlan(BulkAction Action, IReadOnlyList<BulkStep> Steps)
 
     /// <summary>
     /// Empty when the action is ready to commit; otherwise what the person must still give. A close
-    /// with no reason would leave a hole in the history of a bead, so the plan states it here and the
-    /// action bar keeps the commit out of reach.
+    /// with no reason would leave a hole in the history of a bead. A move into an epic that the latest
+    /// read shows closed or gone would put beads where no bead belongs. The plan states either problem
+    /// here, and the action bar keeps the commit out of reach.
     /// </summary>
-    public string Problem
+    /// <param name="epics">The epics of the backlog as the latest read shows them.</param>
+    public string Problem(IReadOnlyList<Bead> epics)
     {
-        get
+        if (Steps.Count == 0)
         {
-            if (Steps.Count == 0)
-            {
-                return "Select a bead first.";
-            }
-
-            if (Action.Verb == BulkVerb.CloseWithAReason)
-            {
-                var without = Steps.FirstOrDefault(step => step.Reason.Trim().Length == 0);
-                if (without is not null)
-                {
-                    return $"Bead {without.BeadId} has no close reason.";
-                }
-            }
-            else if (Action.Shape.NeedsAValue && Action.Value.Trim().Length == 0)
-            {
-                return $"This action needs a value: {Action.Shape.Name.ToLowerInvariant()}.";
-            }
-
-            return string.Empty;
+            return "Select a bead first.";
         }
+
+        if (Action.Verb == BulkVerb.CloseWithAReason)
+        {
+            var without = Steps.FirstOrDefault(step => step.Reason.Trim().Length == 0);
+            if (without is not null)
+            {
+                return $"Bead {without.BeadId} has no close reason.";
+            }
+        }
+        else if (Action.Shape.NeedsAValue && Action.Value.Trim().Length == 0)
+        {
+            return $"This action needs a value: {Action.Shape.Name.ToLowerInvariant()}.";
+        }
+        else if (Action.Verb == BulkVerb.MoveIntoAnEpic && !Bead.TakesANewBeadAmong(epics, Action.Value))
+        {
+            return $"Epic {Action.Value} no longer takes a bead. Pick another epic.";
+        }
+
+        return string.Empty;
     }
 
-    public bool IsReady => Problem.Length == 0;
+    public bool IsReady(IReadOnlyList<Bead> epics) => Problem(epics).Length == 0;
 }

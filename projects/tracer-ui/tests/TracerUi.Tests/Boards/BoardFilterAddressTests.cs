@@ -1,13 +1,30 @@
 using TracerUi.Core.Boards;
+using TracerUi.Core.Projects;
 
 namespace TracerUi.Tests.Boards;
 
 public sealed class BoardFilterAddressTests
 {
+    private static readonly ProjectPath Project = ProjectPath.From(Path.Combine(Path.GetTempPath(), "second"));
+
+    private static readonly string TheProjectInTheQuery = $"project={Uri.EscapeDataString(Project.Value)}";
+
     [Fact]
-    public void GivesThePlainBoardAddressForTheFilterThatKeepsEveryBead()
+    public void NamesTheProjectAloneForTheFilterThatKeepsEveryBead()
     {
-        Assert.Equal("board", BoardFilterAddress.Of(BoardFilter.Everything));
+        Assert.Equal($"board?{TheProjectInTheQuery}", BoardFilterAddress.Of(Project, BoardFilter.Everything));
+    }
+
+    [Fact]
+    public void NamesTheProjectAloneForTheBoardOfEverythingInAProject()
+    {
+        Assert.Equal($"board?{TheProjectInTheQuery}", BoardFilterAddress.OfEverythingIn(Project));
+    }
+
+    [Fact]
+    public void GivesTheBoardPageAloneForTheBoardOfEverythingInNoProject()
+    {
+        Assert.Equal("board", BoardFilterAddress.OfEverythingIn(null));
     }
 
     [Fact]
@@ -17,11 +34,13 @@ public sealed class BoardFilterAddressTests
     }
 
     [Fact]
-    public void NamesEveryPartThatStatesSomethingInTheQuery()
+    public void NamesTheProjectFirstAndThenEveryPartThatStatesSomethingInTheQuery()
     {
         var filter = BoardFilter.Everything with { Type = "bug", Label = "human", RequiresNoDemoLine = true };
 
-        Assert.Equal("board?type=bug&label=human&no-demo=true", BoardFilterAddress.Of(filter));
+        Assert.Equal(
+            $"board?{TheProjectInTheQuery}&type=bug&label=human&no-demo=true",
+            BoardFilterAddress.Of(Project, filter));
     }
 
     [Fact]
@@ -39,7 +58,15 @@ public sealed class BoardFilterAddressTests
             ShowDeferred: true,
             ShowClosed: true);
 
-        Assert.Equal(filter, BoardFilterAddress.FilterIn("http://localhost/" + BoardFilterAddress.Of(filter)));
+        Assert.Equal(filter, BoardFilterAddress.FilterIn("http://localhost/" + BoardFilterAddress.Of(Project, filter)));
+    }
+
+    [Fact]
+    public void ReadsBackTheProjectThatItWroteIntoAnAddress()
+    {
+        var address = "http://localhost/" + BoardFilterAddress.Of(Project, BoardFilter.Everything with { Type = "bug" });
+
+        Assert.Equal(new ProjectInTheAddress.Named(Project), ProjectInTheAddress.Of(address));
     }
 
     [Fact]
@@ -47,7 +74,7 @@ public sealed class BoardFilterAddressTests
     {
         var filter = BoardFilter.Everything with { Text = "a=b&c d" };
 
-        Assert.Equal("a=b&c d", BoardFilterAddress.FilterIn("/" + BoardFilterAddress.Of(filter)).Text);
+        Assert.Equal("a=b&c d", BoardFilterAddress.FilterIn("/" + BoardFilterAddress.Of(Project, filter)).Text);
     }
 
     [Fact]

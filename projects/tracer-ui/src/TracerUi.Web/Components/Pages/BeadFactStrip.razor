@@ -220,7 +220,7 @@
         "bead-fact-epic",
         facts.Epic is { } epic ? epic.Title : NoEpic,
         facts.Epic is null ? "text-muted" : string.Empty,
-        facts.Epic is { } held ? $"bead/{Uri.EscapeDataString(held.Id)}" : string.Empty,
+        facts.Epic is { } held ? BeadPageAddress.Of(new BeadAddress(Address.Project, held.Id)) : string.Empty,
         [UiVerbs.MoveIntoAnEpic],
         FactPicker.OfOneOf([.. TheEpicChoices(facts)]));
 

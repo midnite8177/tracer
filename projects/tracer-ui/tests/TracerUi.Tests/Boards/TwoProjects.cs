@@ -65,6 +65,7 @@ public sealed class TwoProjects : IDisposable
         services.AddSingleton(new CopyFeedback());
         services.AddSingleton<TimeProvider>(Clock);
         services.AddScoped<BeadOpener>();
+        services.AddScoped<SwitchAddress>();
     }
 
     public void Dispose() => directory.Dispose();

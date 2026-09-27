@@ -1,14 +1,23 @@
 @page "/doctor"
 @using TracerUi.Core.Beads
+@using TracerUi.Core.Boards
+@using TracerUi.Core.Projects
 @inject BdAdapter Bd
 @inject ActiveProjectSelection Selection
+@inject SwitchAddress Switches
+@inject NavigationManager Navigation
+@inherits ProjectPage
 @implements IDisposable
 
 <PageTitle>Doctor</PageTitle>
 
 <h1>Doctor</h1>
 
-@if (Selection.Current is null)
+@if (TheProject.Addressed is AddressedProject.Lost lostProject)
+{
+    <p class="text-danger doctor-message">@lostProject.Reason</p>
+}
+else if (TheProject.Addressed is not AddressedProject.Found { Project: var project })
 {
     <p>@NoActiveProject.Ask The doctor page reports the bd that the active project uses.</p>
     <a class="btn btn-primary" href="">Go to the projects</a>
@@ -19,7 +28,7 @@ else if (capabilities is null)
 }
 else
 {
-    <p class="text-muted machine-text doctor-path">@Selection.Current.Value</p>
+    <p class="text-muted machine-text doctor-path">@project.Value</p>
 
     @if (capabilities.Problem.Length > 0)
     {
@@ -138,28 +147,39 @@ else
 }
 
 @code {
+    private PageProject? theProject;
     private BdCapabilities? capabilities;
+    private IDisposable? switchWalk;
 
-    protected override async Task OnInitializedAsync()
+    // Built once, at first use, because Blazor injects the services it takes after the constructor runs.
+    private PageProject TheProject =>
+        theProject ??= new PageProject(
+            Navigation, Selection, DoctorAddress.Page, "whose bd it can report", DoctorAddress.Of);
+
+    protected override void OnInitialized() => switchWalk = Switches.WalkTo(DoctorAddress.Of);
+
+    protected override async Task ShowTheAddressAsync()
     {
-        Selection.Changed += OnActiveProjectChanged;
-        if (Selection.Current is not null)
+        if (TheProject.TakeTheAddress().ProjectToRead is { } project)
         {
-            capabilities = await Bd.CapabilitiesAsync(Selection.Current);
+            await AskTheBdOf(project);
         }
     }
 
-    // Asks the bd of another project what it can do, after that project becomes the active one.
-    private void OnActiveProjectChanged(ActiveProjectChange change)
+    private async Task AskTheBdOf(ProjectPath project)
     {
-        _ = InvokeAsync(async () =>
+        capabilities = null;
+        StateHasChanged();
+        var answer = await Bd.CapabilitiesAsync(project);
+
+        // The address can name another project while bd answers. The answer for the old one stays
+        // off the screen, or the page would print it under the path of the new one.
+        if (TheProject.Shows(project))
         {
-            capabilities = null;
+            capabilities = answer;
             StateHasChanged();
-            capabilities = await Bd.CapabilitiesAsync(change.Project);
-            StateHasChanged();
-        });
+        }
     }
 
-    public void Dispose() => Selection.Changed -= OnActiveProjectChanged;
+    public void Dispose() => switchWalk?.Dispose();
 }

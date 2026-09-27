@@ -1,7 +1,7 @@
 using AngleSharp.Dom;
 using Bunit;
-using Microsoft.AspNetCore.Components;
 using Bunit.Web.AngleSharp;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using TracerUi.Core.Beads;
 using TracerUi.Core.Boards;
@@ -11,75 +11,14 @@ using DetailPage = TracerUi.Web.Components.Pages.Detail;
 
 namespace TracerUi.Tests.Boards;
 
-/// <summary>The detail page as a browser draws it, and the project that its own address names.</summary>
+/// <summary>The detail page as a browser draws it: the markup of one bead, and what a press on it does.</summary>
 public sealed class DetailMarkupTests : BunitContext
 {
     private const string ListCommand = "list --all --limit 0 --json";
 
-    private const string TheBeadOfTheSecondProject =
-        """[{"id": "b-7", "title": "Pick a hosting plan", "status": "open"}]""";
-
     private const string TheTitleOfThatBead = "Pick a hosting plan";
 
     private readonly TwoProjects projects = new();
-
-    [Fact]
-    public void ReadsTheBeadOfTheProjectThatItsAddressNamesInATabThatHoldsNoProjectYet()
-    {
-        var page = ThePageAt(TheAddressOfTheBead);
-
-        Assert.Contains(TheTitleOfThatBead, page.Find("h1").TextContent, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void MakesTheProjectThatItsAddressNamesTheActiveOne()
-    {
-        ThePageAt(TheAddressOfTheBead);
-
-        Assert.Equal(projects.Second, projects.Selection.Current);
-    }
-
-    [Fact]
-    public void KeepsTheProjectThatTheTabHoldsWhenTheAddressNamesNone()
-    {
-        var page = ThePageAt("bead/b-7", theActiveProject: projects.Second);
-
-        Assert.Equal(projects.Second, projects.Selection.Current);
-        Assert.Contains(TheTitleOfThatBead, page.Find("h1").TextContent, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void SaysThatTheProjectOfItsAddressLeftTheRegistryAndReadsTheBeadOfNoOtherProject()
-    {
-        projects.Forget(projects.Second);
-
-        var page = ThePageAt(TheAddressOfTheBead, theActiveProject: projects.First);
-
-        Assert.Contains("second", page.Find("p.bead-message").TextContent, StringComparison.Ordinal);
-        Assert.DoesNotContain(TheTitleOfThatBead, page.Markup, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void DrawsTheBeadWhenTheBrowserGivesItsProjectBackToATabThatHeldNone()
-    {
-        var page = ThePageAt("bead/b-7");
-
-        projects.Selection.Restore(projects.Second.Value);
-
-        page.WaitForAssertion(() =>
-            Assert.Contains(TheTitleOfThatBead, page.Find("h1").TextContent, StringComparison.Ordinal));
-        Assert.EndsWith("bead/b-7", TheAddress(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void LeavesForTheBoardWhenAPersonSwitchesTheProject()
-    {
-        var page = ThePageAt(TheAddressOfTheBead);
-
-        projects.Selection.Select(projects.First);
-
-        page.WaitForAssertion(() => Assert.EndsWith("board", TheAddress(), StringComparison.Ordinal));
-    }
 
     // A bead with every fact that the fact strip states, so that one page shows every box. The
     // show of the bead and the backlog beside it name the same record, thus neither drifts from
@@ -282,7 +221,7 @@ public sealed class DetailMarkupTests : BunitContext
         var page = ThePageOfTheBeadWithEveryFact();
 
         var head = page.Find(".bead-head");
-        Assert.Equal("board", TheOneIn("a", head).GetAttribute("href"));
+        Assert.Equal(BoardFilterAddress.Of(projects.Second, BoardFilter.Everything), TheOneIn("a", head).GetAttribute("href"));
         Assert.Contains(TheTitleOfThatBead, TheOneIn("h1", head).TextContent, StringComparison.Ordinal);
         Assert.Equal("b-7", TheOneIn("code.machine-text-quiet", head).TextContent);
         Assert.NotNull(head.QuerySelector(".copy-button"));
@@ -322,7 +261,7 @@ public sealed class DetailMarkupTests : BunitContext
         var row = page.Find(".bead-held .bead-row");
         Assert.Contains("bead-status-needs-you", TheOneIn(".bead-dot", row).ClassList);
         Assert.Equal("needs you", TheOneIn(".visually-hidden", row).TextContent.Trim());
-        Assert.Equal("bead/b-7", TheOneIn("a", row).GetAttribute("href"));
+        Assert.Equal(TheAddressOfTheBead, TheOneIn("a", row).GetAttribute("href"));
         Assert.Equal(TheTitleOfThatBead, TheOneIn("a", row).TextContent.Trim());
         Assert.Equal(
             ["task", "b-7"],
@@ -526,6 +465,11 @@ public sealed class DetailMarkupTests : BunitContext
         Assert.True(page.Find(".bead-held-create-write").HasAttribute("disabled"));
 
         projects.Bd.Answers(TheCreateOfTheNewBead, "b-1.1\n");
+
+        // Moving the clock before this render leaves the floor timer unset, and the mark never hides.
+        page.WaitForAssertion(() => Assert.Single(page.FindAll(".bead-held-add")));
+        Assert.Single(page.FindAll(".working-mark"));
+
         projects.Clock.Advance(WorkingMark.Floor);
 
         page.WaitForAssertion(() => Assert.Empty(page.FindAll(".working-mark")));
@@ -637,6 +581,9 @@ public sealed class DetailMarkupTests : BunitContext
         Assert.Equal(
             ["Choose a registrar", "Launch the site"],
             rows.Select(row => TheOneIn(".bead-row-title", row).TextContent.Trim()));
+        Assert.Equal(
+            [TheAddressInTheSecondProjectOf("b-9"), TheAddressInTheSecondProjectOf("b-10")],
+            rows.Select(row => TheOneIn(".bead-row-title", row).GetAttribute("href")));
         Assert.All(rows, row => Assert.NotNull(row.QuerySelector(".bead-dot")));
         Assert.All(rows, row => Assert.NotNull(row.QuerySelector(".bead-edge-cut")));
         Assert.Equal(
@@ -1362,6 +1309,64 @@ public sealed class DetailMarkupTests : BunitContext
     }
 
     [Fact]
+    public void ShowsTheAnswerOfAnEarlierReReadAndKeepsTheMarkWhileALaterReReadRuns()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        var commentReads = projects.Bd.Runs(projects.Second.Value, "comments b-7 --json");
+        var shows = projects.Bd.Runs(projects.Second.Value, "show b-7 --json");
+        projects.Bd.Holds("comments b-7 --json");
+        ThePress(page, "Priority, p2").Click();
+        ThePick(page, "p1").Click();
+        page.WaitForAssertion(() =>
+            Assert.Equal(commentReads + 1, projects.Bd.Runs(projects.Second.Value, "comments b-7 --json")));
+
+        projects.Bd.Holds("show b-7 --json");
+        ThePress(page, "Type, task").Click();
+        ThePick(page, "feature").Click();
+        page.WaitForAssertion(() => Assert.Equal(shows + 2, projects.Bd.Runs(projects.Second.Value, "show b-7 --json")));
+        projects.Clock.Advance(WorkingMark.WaitBeforeShowing);
+        page.WaitForAssertion(() => Assert.Single(page.FindAll(".re-read-mark")));
+        projects.Clock.Advance(WorkingMark.Floor);
+        var renders = page.RenderCount;
+
+        projects.Bd.Answers("comments b-7 --json", "[]");
+
+        page.WaitForAssertion(() => Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim()));
+        Assert.Single(page.FindAll(".re-read-mark"));
+
+        projects.Bd.Answers("show b-7 --json", TheBeadOfTypeFeature);
+
+        page.WaitForAssertion(() => Assert.Equal("feature", ThePress(page, "Type, feature").TextContent.Trim()));
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll(".re-read-mark")));
+    }
+
+    [Fact]
+    public void KeepsTheAnswerOfAnEarlierReReadAndSaysItIsFromBeforeWhenALaterReReadOutrunsTheWaitLimit()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        var commentReads = projects.Bd.Runs(projects.Second.Value, "comments b-7 --json");
+        var shows = projects.Bd.Runs(projects.Second.Value, "show b-7 --json");
+        projects.Bd.Holds("comments b-7 --json");
+        ThePress(page, "Priority, p2").Click();
+        ThePick(page, "p1").Click();
+        page.WaitForAssertion(() =>
+            Assert.Equal(commentReads + 1, projects.Bd.Runs(projects.Second.Value, "comments b-7 --json")));
+
+        projects.Bd.Holds("show b-7 --json");
+        ThePress(page, "Type, task").Click();
+        ThePick(page, "feature").Click();
+        page.WaitForAssertion(() => Assert.Equal(shows + 2, projects.Bd.Runs(projects.Second.Value, "show b-7 --json")));
+
+        projects.Bd.Answers("comments b-7 --json", "[]");
+        page.WaitForAssertion(() => Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim()));
+
+        projects.Clock.Advance(BdAdapter.WaitLimit);
+
+        page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll(".bead-stale-read")));
+        Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim());
+    }
+
+    [Fact]
     public void SaysTheBeadOnTheScreenIsTheOneFromBeforeWhenARereadOutrunsTheWaitLimit()
     {
         var page = ThePageOfTheBeadThatBdWrites();
@@ -1775,12 +1780,26 @@ public sealed class DetailMarkupTests : BunitContext
     }
 
     [Fact]
+    public void KeepsALinkInsideTheDescriptionAsTheDescriptionWritesIt()
+    {
+        const string record =
+            """
+            {"id": "b-7", "title": "Pick a hosting plan", "status": "open",
+             "description": "Ask [the registrar](bead/b-9) first."}
+            """;
+
+        var page = TheDetailPageOf("b-7", $"[{record}]", "[]", $"[{record}]");
+
+        Assert.Equal("bead/b-9", page.Find(".bead-prose a").GetAttribute("href"));
+    }
+
+    [Fact]
     public void LinksToTheEpicBesideThePressThatMovesTheBeadIntoAnother()
     {
         var page = ThePageOfTheBeadWithEveryFact();
 
         var link = page.Find(".bead-fact-page");
-        Assert.Equal("bead/b-1", link.GetAttribute("href"));
+        Assert.Equal(TheAddressInTheSecondProjectOf("b-1"), link.GetAttribute("href"));
         Assert.Equal("Open Ship the site", link.GetAttribute("aria-label"));
     }
 
@@ -1945,10 +1964,11 @@ public sealed class DetailMarkupTests : BunitContext
     }
 
     private static IElement TheCut(IRenderedComponent<DetailPage> page, string title) =>
-        page.FindAll(".bead-edge")
-            .Single(row =>
-                string.Equals(row.QuerySelector(".bead-row-title")?.TextContent.Trim(), title, StringComparison.Ordinal))
-            .QuerySelector(".bead-edge-cut")!;
+        TheOneIn(
+            ".bead-edge-cut",
+            page.FindAll(".bead-edge")
+                .Single(row =>
+                    string.Equals(row.QuerySelector(".bead-row-title")?.TextContent.Trim(), title, StringComparison.Ordinal)));
 
     // The detail page of the bare bead, read from a bd that takes every write of one bead, so that
     // the press of each line is one a person can use.
@@ -1994,8 +2014,7 @@ public sealed class DetailMarkupTests : BunitContext
         projects.RegisterOn(Services);
         Services.AddSingleton(new BeadDetailReader(projects.Adapter, new BacklogReader(projects.Adapter)));
 
-        Services.GetRequiredService<NavigationManager>()
-            .NavigateTo($"bead/{id}?project={Uri.EscapeDataString(projects.Second.Value)}");
+        Navigation.NavigateTo(TheAddressInTheSecondProjectOf(id));
 
         return Render<DetailPage>(parameters => parameters.Add(page => page.Id, id));
     }
@@ -2072,34 +2091,14 @@ public sealed class DetailMarkupTests : BunitContext
         return ThePageOfTheEpic();
     }
 
-    private string TheAddress() => Services.GetRequiredService<NavigationManager>().Uri;
+    private NavigationManager Navigation => Services.GetRequiredService<NavigationManager>();
 
-    private string TheAddressOfTheBead => $"bead/b-7?project={Uri.EscapeDataString(projects.Second.Value)}";
+    private static string TheAddressIn(ProjectPath project, string id) =>
+        $"bead/{id}?project={Uri.EscapeDataString(project.Value)}";
 
-    private IRenderedComponent<DetailPage> ThePageAt(string address) =>
-        ThePageAt(address, theActiveProject: null);
+    private string TheAddressOfTheBead => TheAddressInTheSecondProjectOf("b-7");
 
-    // The detail page at this address, in a tab that holds this project or no project at all. Only
-    // the second project holds the bead, so a page that reads another project shows nothing.
-    private IRenderedComponent<DetailPage> ThePageAt(string address, ProjectPath? theActiveProject)
-    {
-        projects.Bd
-            .PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadOfTheSecondProject)
-            .PrintsIn(projects.Second.Value, "comments b-7 --json", "[]")
-            .PrintsIn(projects.Second.Value, ListCommand, TheBeadOfTheSecondProject)
-            .PrintsIn(projects.First.Value, ListCommand, "[]");
-        if (theActiveProject is not null)
-        {
-            projects.Selection.Select(theActiveProject);
-        }
-
-        projects.RegisterOn(Services);
-        Services.AddSingleton(new BeadDetailReader(projects.Adapter, new BacklogReader(projects.Adapter)));
-
-        Services.GetRequiredService<NavigationManager>().NavigateTo(address);
-
-        return Render<DetailPage>(parameters => parameters.Add(page => page.Id, "b-7"));
-    }
+    private string TheAddressInTheSecondProjectOf(string id) => TheAddressIn(projects.Second, id);
 
     protected override void Dispose(bool disposing)
     {

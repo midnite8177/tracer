@@ -1,11 +1,14 @@
+using TracerUi.Core.Projects;
+
 namespace TracerUi.Core.Boards;
 
 /// <summary>
-/// The board filter as the address of the board carries it. A part that states nothing appears in no
-/// query, so the plain board address is the filter that keeps every live bead. This is what makes a
-/// filter press a link: the link carries the whole filter, with the one part that the press sets, so
-/// the address of the board says what a person is looking at, a second tab shows the same beads, and
-/// the Back button of the browser undoes a press.
+/// The project and the board filter as the address of the board carries them. A part that states
+/// nothing appears in no query, so the address that names the project alone is the filter that keeps
+/// every live bead of it. This is what makes a filter press a link. The link carries the project and
+/// the whole filter, with the one part that the press sets, so the address of the board says what a
+/// person is looking at, a second tab shows the same beads, and the Back button of the browser undoes
+/// a press.
 /// </summary>
 public static class BoardFilterAddress
 {
@@ -25,12 +28,14 @@ public static class BoardFilterAddress
     private const string True = "true";
 
     /// <summary>
-    /// The address of the board that this filter narrows. The parts follow one order, so the same
-    /// filter always gives the same address and two of them compare as text.
+    /// The address of the board of this project that this filter narrows. The project comes first and
+    /// the parts follow one order, so the same filter always gives the same address and two of them
+    /// compare as text.
     /// </summary>
-    public static string Of(BoardFilter filter)
+    public static string Of(ProjectPath project, BoardFilter filter)
     {
         var parts = new List<string>();
+        Add(parts, ProjectInTheAddress.QueryName, project.Value);
         Add(parts, Status, filter.Status);
         Add(parts, Type, filter.Type);
         Add(parts, Priority, filter.Priority);
@@ -42,12 +47,20 @@ public static class BoardFilterAddress
         Add(parts, Deferred, filter.ShowDeferred ? True : string.Empty);
         Add(parts, Closed, filter.ShowClosed ? True : string.Empty);
 
-        return parts.Count == 0 ? Page : $"{Page}?{string.Join('&', parts)}";
+        return $"{Page}?{string.Join('&', parts)}";
     }
 
     /// <summary>
+    /// The address of the board of this project with no filter, which shows every live bead of it. A
+    /// page with no project to name gives the board page alone.
+    /// </summary>
+    public static string OfEverythingIn(ProjectPath? project) =>
+        project is null ? Page : Of(project, BoardFilter.Everything);
+
+    /// <summary>
     /// The filter that the query of this address states. A name that no part answers to says nothing,
-    /// so an address that a person typed by hand narrows the board by the parts that it does name.
+    /// so an address that a person typed by hand narrows the board by the parts that it does name, and
+    /// the project is no part of the filter.
     /// </summary>
     public static BoardFilter FilterIn(string address)
     {

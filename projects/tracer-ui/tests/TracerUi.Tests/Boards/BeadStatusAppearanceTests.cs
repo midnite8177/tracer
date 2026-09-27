@@ -2,6 +2,7 @@ using Bunit;
 using Microsoft.Extensions.DependencyInjection;
 using TracerUi.Core.Boards;
 using TracerUi.Core.Look;
+using TracerUi.Core.Projects;
 using TracerUi.Web.Components.Layout;
 
 namespace TracerUi.Tests.Boards;
@@ -47,8 +48,8 @@ public sealed class BeadStatusAppearanceTests : BunitContext
     private IRenderedComponent<BeadRow> TheRowOfABeadThatIs(BeadStatusKind kind)
     {
         Services.AddSingleton(new CopyFeedback());
-        return Render<BeadRow>(row => row.Add(
-            it => it.Link,
-            new BeadLink("x-1", "First", "task", Of(kind))));
+        return Render<BeadRow>(row => row
+            .Add(it => it.Link, new BeadLink("x-1", "First", "task", Of(kind)))
+            .Add(it => it.Project, ProjectPath.From(Path.GetTempPath())));
     }
 }

@@ -8,10 +8,12 @@ reaching for was still open, so it is answered here for the app.
 Prerendering is off. The needs-you page held its response 1.24 seconds over
 two registered projects, and the detail page held it 2.0 seconds over one,
 because each ran `bd` before its first render and the circuit then ran it
-again. The board paid a different price: it guards on the active project,
-which the browser holds and no prerender pass can know, so it drew "Select
-a project first" and the circuit threw that away. See
-[ADR 0007](0007-the-browser-holds-the-active-project.md).
+again. The board paid a different price: it guarded on the active project,
+which the browser held then and no prerender pass could know, so it drew
+"Select a project first" and the circuit threw that away. The address
+carries the project now, so that reason is gone and the doubled read
+remains. See
+[ADR 0016](0016-the-address-carries-the-active-project.md).
 
 ## Consequences
 

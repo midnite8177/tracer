@@ -4,25 +4,25 @@ namespace TracerUi.Tests.Beads;
 
 /// <summary>
 /// A bd that gives scripted stdout and stderr, so that a test fixes one version shape. It can also
-/// hold one command line open, so that a test renders a component while that run is still going.
+/// hold one command line open, in every directory or in one, so that a test renders a component
+/// while that run is still going, and tell a test when a run held in one directory begins.
 /// </summary>
 public sealed class FakeBd : IBdProcess
 {
-    private readonly Dictionary<string, BdResult> scripted = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Task<BdResult>> scripted = new(StringComparer.Ordinal);
 
-    private readonly Dictionary<(string Directory, string CommandLine), BdResult> scriptedPerDirectory = [];
-    private readonly List<(string Directory, string CommandLine)> runs = [];
+    private readonly Dictionary<Run, BdResult> scriptedPerDirectory = [];
+    private readonly List<Run> runs = [];
     private readonly Dictionary<string, Action<FakeBd>> changes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCompletionSource<BdResult>> held = new(StringComparer.Ordinal);
+    private readonly Dictionary<Run, HeldRun> heldPerDirectory = [];
 
     /// <summary>The command lines that the code under test ran, in order.</summary>
     public List<string> Invocations { get; } = [];
 
     /// <summary>How many times the code under test ran this command line in this directory.</summary>
     public int Runs(string workingDirectory, string commandLine) =>
-        runs.Count(run =>
-            string.Equals(run.Directory, workingDirectory, StringComparison.Ordinal)
-            && string.Equals(run.CommandLine, commandLine, StringComparison.Ordinal));
+        runs.Count(new Run(workingDirectory, commandLine).Equals);
 
     /// <summary>A bd that answers the read which the add-project flow makes, and nothing else.</summary>
     public static FakeBd ThatAnswersReady() => new FakeBd().Prints("ready --json", "[]");
@@ -98,7 +98,7 @@ public sealed class FakeBd : IBdProcess
 
     public FakeBd Prints(string commandLine, string standardOutput)
     {
-        scripted[commandLine] = new BdResult(0, standardOutput, string.Empty);
+        scripted[commandLine] = Task.FromResult(new BdResult(0, standardOutput, string.Empty));
         return this;
     }
 
@@ -108,13 +108,23 @@ public sealed class FakeBd : IBdProcess
     /// </summary>
     public FakeBd PrintsIn(string workingDirectory, string commandLine, string standardOutput)
     {
-        scriptedPerDirectory[(workingDirectory, commandLine)] = new BdResult(0, standardOutput, string.Empty);
+        scriptedPerDirectory[new Run(workingDirectory, commandLine)] = new BdResult(0, standardOutput, string.Empty);
         return this;
     }
 
     public FakeBd Fails(string commandLine, string standardError)
     {
-        scripted[commandLine] = new BdResult(1, string.Empty, standardError);
+        scripted[commandLine] = Task.FromResult(new BdResult(1, string.Empty, standardError));
+        return this;
+    }
+
+    /// <summary>
+    /// Makes every run of this command line throw this exception. A later <see cref="Prints"/> or
+    /// <see cref="Fails"/> of the same command line replaces it.
+    /// </summary>
+    public FakeBd Throws(string commandLine, Exception exception)
+    {
+        scripted[commandLine] = Task.FromException<BdResult>(exception);
         return this;
     }
 
@@ -140,45 +150,120 @@ public sealed class FakeBd : IBdProcess
                 $"\"{commandLine}\" is not a held run. Call Holds before Answers.");
         }
 
+        Release(holding, commandLine, standardOutput);
+        return this;
+    }
+
+    /// <summary>
+    /// Holds every run of this command line in one directory open until <see cref="AnswersIn"/>
+    /// answers it or <see cref="ThrowsIn"/> fails it, so that a test keeps the read of one project
+    /// waiting while the same command line answers in another. It wins over a <see cref="Holds"/>
+    /// of the same command line.
+    /// </summary>
+    public FakeBd HoldsIn(string workingDirectory, string commandLine)
+    {
+        heldPerDirectory[new Run(workingDirectory, commandLine)] = new HeldRun(
+            new TaskCompletionSource<BdResult>(TaskCreationOptions.RunContinuationsAsynchronously),
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        return this;
+    }
+
+    /// <summary>
+    /// A task that completes when a run that <see cref="HoldsIn"/> holds open in this directory
+    /// begins, so that a test waits for the code under test to reach bd even when no render follows.
+    /// Ask for it before <see cref="AnswersIn"/> answers that run or <see cref="ThrowsIn"/> fails it.
+    /// </summary>
+    public Task StartsIn(string workingDirectory, string commandLine) =>
+        HeldIn(new Run(workingDirectory, commandLine), nameof(StartsIn)).Started.Task;
+
+    /// <summary>
+    /// Answers a run that <see cref="HoldsIn"/> is holding open in this directory, as bd itself would
+    /// have, and lets a later run there fall through to what it is otherwise scripted to answer.
+    /// </summary>
+    public FakeBd AnswersIn(string workingDirectory, string commandLine, string standardOutput)
+    {
+        var holding = TakeHeldIn(workingDirectory, commandLine, nameof(AnswersIn));
+        Release(holding.Answer, commandLine, standardOutput);
+        return this;
+    }
+
+    /// <summary>
+    /// Makes the run that <see cref="HoldsIn"/> holds open in this directory throw an
+    /// <see cref="InvalidOperationException"/> with this message instead of answering. A later run
+    /// there answers what it is otherwise scripted to answer.
+    /// </summary>
+    public FakeBd ThrowsIn(string workingDirectory, string commandLine, string message)
+    {
+        var holding = TakeHeldIn(workingDirectory, commandLine, nameof(ThrowsIn));
+        holding.Answer.SetException(new InvalidOperationException(message));
+        return this;
+    }
+
+    private HeldRun TakeHeldIn(string workingDirectory, string commandLine, string caller)
+    {
+        var run = new Run(workingDirectory, commandLine);
+        var holding = HeldIn(run, caller);
+        heldPerDirectory.Remove(run);
+        return holding;
+    }
+
+    private HeldRun HeldIn(Run run, string caller) =>
+        heldPerDirectory.TryGetValue(run, out var holding)
+            ? holding
+            : throw new InvalidOperationException(
+                $"\"{run.CommandLine}\" in {run.Directory} is not a held run. Call HoldsIn before {caller}.");
+
+    private void Release(TaskCompletionSource<BdResult> holding, string commandLine, string standardOutput)
+    {
         if (changes.TryGetValue(commandLine, out var change))
         {
             change(this);
         }
 
         holding.SetResult(new BdResult(0, standardOutput, string.Empty));
-        return this;
     }
 
     public Task<BdResult> RunAsync(string workingDirectory, IReadOnlyList<string> arguments)
     {
         var commandLine = string.Join(' ', arguments);
         Invocations.Add(commandLine);
-        runs.Add((workingDirectory, commandLine));
+        var run = new Run(workingDirectory, commandLine);
+        runs.Add(run);
+        if (heldPerDirectory.TryGetValue(run, out var holdingHere))
+        {
+            holdingHere.Started.TrySetResult();
+            return holdingHere.Answer.Task;
+        }
+
         if (held.TryGetValue(commandLine, out var holding))
         {
             return holding.Task;
         }
 
-        var answer = Answer(workingDirectory, commandLine, arguments[0]);
+        var answer = Answer(run, arguments[0]);
         if (changes.TryGetValue(commandLine, out var change))
         {
             change(this);
         }
 
-        return Task.FromResult(answer);
+        return answer;
     }
 
     // The scripted answer for this directory, or the one that every directory shares, or the
     // failure that a bd gives a command it does not have.
-    private BdResult Answer(string workingDirectory, string commandLine, string verb)
+    private Task<BdResult> Answer(Run run, string verb)
     {
-        if (scriptedPerDirectory.TryGetValue((workingDirectory, commandLine), out var here))
+        if (scriptedPerDirectory.TryGetValue(run, out var here))
         {
-            return here;
+            return Task.FromResult(here);
         }
 
-        return scripted.TryGetValue(commandLine, out var anywhere)
+        return scripted.TryGetValue(run.CommandLine, out var anywhere)
             ? anywhere
-            : new BdResult(1, string.Empty, $"unknown command \"{verb}\" for \"bd\"");
+            : Task.FromResult(new BdResult(1, string.Empty, $"unknown command \"{verb}\" for \"bd\""));
     }
+
+    private sealed record Run(string Directory, string CommandLine);
+
+    private sealed record HeldRun(TaskCompletionSource<BdResult> Answer, TaskCompletionSource Started);
 }

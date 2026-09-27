@@ -209,12 +209,13 @@ a marker while LAN mode holds. See
   and reports what that version can do. Beads changes its flags between
   versions, and the probe finds the difference before a command fails.
 - **The top bar and the two themes.** One bar carries every page: the app
-  name, the nav links, the LAN mode marker and the theme toggle. The app
+  name, the project picker, the nav links, the LAN mode marker and the
+  theme toggle. The app
   opens in the theme that your operating system asks for. The toggle
-  overrides that, and your browser remembers the choice. Your browser
-  remembers the active project in the same way, so a reload of the page and a
-  second tab both keep the project you chose. See
-  [ADR 0007](docs/adr/0007-the-browser-holds-the-active-project.md).
+  overrides that, and your browser remembers the choice. The address carries
+  the active project. A page that shows one project names it there, so a
+  reload keeps it and each tab keeps its own. A new tab at the root has none.
+  See [ADR 0016](docs/adr/0016-the-address-carries-the-active-project.md).
 
 ## The look
 

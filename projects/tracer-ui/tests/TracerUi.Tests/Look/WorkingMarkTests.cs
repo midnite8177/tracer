@@ -94,6 +94,47 @@ public sealed class WorkingMarkTests : BunitContext
         mark.WaitForAssertion(() => Assert.Empty(mark.FindAll(".working-mark")));
     }
 
+    [Fact]
+    public async Task ShowsNoMarkWhenTheWriteAnswersBeforeTheRendererActsOnItsElapsedWait()
+    {
+        var mark = Render<WorkingMark>(p => p.Add(m => m.Writing, true));
+
+        await mark.InvokeAsync(() =>
+        {
+            TheClockAdvancesOffTheRenderer(WorkingMark.WaitBeforeShowing);
+            mark.Render(p => p.Add(m => m.Writing, false));
+        });
+        await TheRendererDrains(mark);
+
+        Assert.Empty(mark.FindAll(".working-mark"));
+    }
+
+    [Fact]
+    public async Task KeepsAnImmediateMarkWhenANewWriteStartsBeforeTheRendererActsOnTheElapsedFloorOfTheLastOne()
+    {
+        var mark = Render<WorkingMark>(p => p.Add(m => m.Writing, true).Add(m => m.Immediate, true));
+        mark.Render(p => p.Add(m => m.Writing, false).Add(m => m.Immediate, true));
+
+        await mark.InvokeAsync(() =>
+        {
+            TheClockAdvancesOffTheRenderer(WorkingMark.Floor);
+            mark.Render(p => p.Add(m => m.Writing, true).Add(m => m.Immediate, true));
+        });
+        await TheRendererDrains(mark);
+
+        Assert.Single(mark.FindAll(".working-mark"));
+    }
+
+    // The timer takes a thread of its own, because a wait on a pool task can run that task inline on the renderer.
+    private void TheClockAdvancesOffTheRenderer(TimeSpan by)
+    {
+        var timerThread = new Thread(() => clock.Advance(by));
+        timerThread.Start();
+        timerThread.Join();
+    }
+
+    private static Task TheRendererDrains(IRenderedComponent<WorkingMark> mark) => mark.InvokeAsync(() => { });
+
     // A mark whose wait has already elapsed while still busy, so the tests of the floor start from
     // a mark that a reader would actually see rather than racing the render that shows it.
     private IRenderedComponent<WorkingMark> TheMarkThatHasAlreadyShown()

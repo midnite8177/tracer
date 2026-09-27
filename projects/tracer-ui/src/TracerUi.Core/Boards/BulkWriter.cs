@@ -70,12 +70,15 @@ public sealed class BulkWriter
         this.adapter = adapter;
     }
 
+    /// <param name="epics">
+    /// The epics of the backlog as the latest read shows them. A move into an epic is judged against them.
+    /// </param>
     public Task<BulkReport> RunAsync(
-        ProjectPath project, BulkPlan plan, Action<string, BulkRowStatus> reportRow)
+        ProjectPath project, BulkPlan plan, IReadOnlyList<Bead> epics, Action<string, BulkRowStatus> reportRow)
     {
-        if (!plan.IsReady)
+        if (!plan.IsReady(epics))
         {
-            return Task.FromResult(BulkReport.Refused(plan.Problem));
+            return Task.FromResult(BulkReport.Refused(plan.Problem(epics)));
         }
 
         return adapter.GatherTheWritesAsync(() => WriteEachBeadAsync(project, plan, reportRow));

@@ -1,5 +1,5 @@
 @page "/board"
-@using Microsoft.AspNetCore.Components.Routing
+@using TracerUi.Core.Beads
 @using TracerUi.Core.Boards
 @using TracerUi.Core.Look
 @using TracerUi.Core.Projects
@@ -8,15 +8,21 @@
 @inject BacklogCache Backlogs
 @inject ProjectWatchers Watchers
 @inject ActiveProjectSelection Selection
+@inject SwitchAddress Switches
 @inject SavedFilterCatalog SavedFilters
 @inject BeadOpener Opener
+@inherits ProjectPage
 @implements IDisposable
 
 <PageTitle>Board</PageTitle>
 
 <h1>Board</h1>
 
-@if (Selection.Current is null)
+@if (TheProject.Addressed is AddressedProject.Lost lostProject)
+{
+    <p class="text-danger board-message">@lostProject.Reason</p>
+}
+else if (TheProject.Addressed is not AddressedProject.Found { Project: var project })
 {
     <p>@NoActiveProject.Ask The board shows the beads of the active project.</p>
     <a class="btn btn-primary" href="">Go to the projects</a>
@@ -27,16 +33,19 @@ else if (outcome is null)
 }
 else if (!outcome.Answered)
 {
-    <p class="text-muted">@Selection.Current.Value</p>
+    <p class="text-muted">@project.Value</p>
     <p class="text-danger board-message">@outcome.Message</p>
 }
 else
 {
-    <p class="text-muted">@Selection.Current.Value</p>
+    <p class="text-muted">@project.Value</p>
 
-    @if (staleReadMessage.Length > 0)
+    @if (whyTheBeadsAreFromBefore.Length > 0)
     {
-        <p class="text-danger board-message board-stale-read">@staleReadMessage</p>
+        <p class="text-danger board-message board-stale-read">
+            @whyTheBeadsAreFromBefore<br />
+            The beads on the screen are the ones from before.
+        </p>
     }
 
     <NewTabRefusal Feedback="newTab" />
@@ -51,10 +60,10 @@ else
                OnSave="SaveTheFilter"
                OnForget="Forget" />
 
-    <QuickCreate Project="Selection.Current"
+    <QuickCreate Project="project"
                  Epics="epics" />
 
-    <BulkBar Project="Selection.Current"
+    <BulkBar Project="project"
              Selected="SelectedBeads"
              Labels="labels"
              Epics="epics"
@@ -82,7 +91,7 @@ else
                 <tbody>
                     @foreach (var row in collapsed.Draws(board.Rows))
                     {
-                        @Row(row)
+                        @Row(project, row)
                     }
 
                     @if (board.Unparented.Count > 0)
@@ -103,7 +112,7 @@ else
                         </tr>
                         @foreach (var row in collapsed.DrawsUnparented(board.Unparented))
                         {
-                            @Row(row)
+                            @Row(project, row)
                         }
                     }
                 </tbody>
@@ -133,10 +142,11 @@ else
         </th>;
 
     // One row of the board. The tree and the beads under the Unparented row take the same drawing,
-    // so a bead of either place reads the same, and the depth alone says where it sits.
-    private RenderFragment Row(BoardRow row) =>
+    // so a bead of either place reads the same, and the depth alone says where it sits. The project
+    // comes in from the markup, where the board already holds the project it reads.
+    private RenderFragment Row(ProjectPath project, BoardRow row) =>
         @<PressableRow Class="board-row" Style="@($"--row-depth: {row.Depth}")"
-                       OnOpen="up => Open(row.Bead.Id, up)">
+                       OnOpen="up => Open(new BeadAddress(project, row.Bead.Id), up)">
             <td class="board-cell-tick" @onclick:stopPropagation="true">
                 <div class="board-ticks">
                     <input class="form-check-input" type="checkbox"
@@ -156,7 +166,7 @@ else
                         @CollapseControl(collapsed.Holds(row.Bead.Id), () => collapsed.Toggle(row.Bead.Id))
                     }
                     <RowTitle Class="board-title"
-                              Address="@Href(row.Bead.Id)"
+                              Address="@BeadPageAddress.Of(new BeadAddress(project, row.Bead.Id))"
                               Tooltip="@row.Bead.Title"
                               Text="@row.Bead.Title" />
                     @if (row.HoldsBeads)
@@ -174,7 +184,7 @@ else
                 @if (row.Bead.Type.Length > 0)
                 {
                     @FilterPress(row.Bead.Type, "type", string.Empty,
-                                 filter.AfterAPressOnType(row.Bead.Type),
+                                 BoardFilterAddress.Of(project, filter.AfterAPressOnType(row.Bead.Type)),
                                  "Filter the board by this type")
                 }
             </td>
@@ -182,7 +192,7 @@ else
                 @if (row.Bead.HasPriority)
                 {
                     @FilterPress($"p{row.Bead.PriorityText}", "priority", string.Empty,
-                                 filter.AfterAPressOnPriority(row.Bead.PriorityText),
+                                 BoardFilterAddress.Of(project, filter.AfterAPressOnPriority(row.Bead.PriorityText)),
                                  "Filter the board by this priority")
                 }
                 else
@@ -195,7 +205,7 @@ else
                     @foreach (var label in row.Bead.Labels)
                     {
                         @FilterPress(label, "label", "board-chip board-label",
-                                     filter.AfterAPressOnLabel(label),
+                                     BoardFilterAddress.Of(project, filter.AfterAPressOnLabel(label)),
                                      "Filter the board by this label")
                     }
                 </div>
@@ -212,7 +222,7 @@ else
                 else
                 {
                     @FilterPress("no demo", "demo", "board-chip board-demo board-demo-no",
-                                 filter.AfterAPressOnTheNoDemoLineMarker(),
+                                 BoardFilterAddress.Of(project, filter.AfterAPressOnTheNoDemoLineMarker()),
                                  "This bead is not ready to implement. Filter the board by this marker.")
                 }
             </td>
@@ -246,15 +256,16 @@ else
                 @onchange="() => selection.ToggleAll(branch)" />;
 
     // One filter press: the type of a row, one of its labels, or the marker that says it states no
-    // Demo line. It is a link, and its address carries the whole filter with the one part that the
-    // press sets, so a second tab shows the same beads and the Back button undoes the press. The
-    // press stops the row press, because it narrows the board and opens no bead.
-    private RenderFragment FilterPress(string text, string kind, string shape, BoardFilter pressed, string title) =>
+    // Demo line. It is a link, and its address carries the project and the whole filter with the one
+    // part that the press sets, so a second tab shows the same beads and the Back button undoes the
+    // press. The press stops the row press, because it narrows the board and opens no bead.
+    private RenderFragment FilterPress(string text, string kind, string shape, string address, string title) =>
         @<a class="@($"board-filter-press board-filter-press-{kind} {shape}".TrimEnd())"
-            href="@BoardFilterAddress.Of(pressed)"
+            href="@address"
             title="@title"
             @onclick:stopPropagation="true">@text</a>;
 
+    private PageProject? theProject;
     private BacklogOutcome? outcome;
     private BoardFilter filter = BoardFilter.Everything;
     private TheBoard board = new([], []);
@@ -270,56 +281,60 @@ else
     private bool readAgain;
     private bool nextReadIsAReread;
     private bool rereading;
-    private string staleReadMessage = string.Empty;
+    private string whyTheBeadsAreFromBefore = string.Empty;
+    private IDisposable? switchWalk;
 
-    private const string StaleReadMessage =
-        "bd has not answered again. The beads on the screen are the ones from before.";
+    private const string NoAnswerAgain = "bd has not answered again.";
 
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
         Backlogs.Changed += OnBacklogChanged;
-        Selection.Changed += OnActiveProjectChanged;
-        Navigation.LocationChanged += OnAddressChanged;
-        filter = BoardFilterAddress.FilterIn(Navigation.Uri);
-        if (Selection.Current is null)
+        switchWalk = Switches.WalkTo(BoardFilterAddress.OfEverythingIn);
+    }
+
+    // Built once, at first use, because Blazor injects the services it takes after the constructor runs.
+    private PageProject TheProject =>
+        theProject ??= new PageProject(
+            Navigation, Selection, BoardFilterAddress.Page, "whose board it can show", TheBoardAddressIn);
+
+    private string TheBoardAddressIn(ProjectPath project) =>
+        BoardFilterAddress.Of(project, BoardFilterAddress.FilterIn(Navigation.Uri));
+
+    protected override async Task ShowTheAddressAsync()
+    {
+        var change = TheProject.TakeTheAddress();
+        if (change is AddressChange.Elsewhere)
         {
             return;
         }
 
-        StartOn(Selection.Current);
-        await Load();
+        filter = BoardFilterAddress.FilterIn(Navigation.Uri);
+        switch (change)
+        {
+            case AddressChange.FirstProject { Project: var project }:
+                StartOn(project);
+                await Reread();
+                break;
+            case AddressChange.AnotherProject { Project: var project }:
+                await ShowAnotherProject(project);
+                break;
+            default:
+                Rebuild();
+                break;
+        }
     }
 
-    // Draws the board that the new address asks for. The address carries the whole filter, so a
-    // filter press, the Back button and an address that a person typed all reach the board the same
-    // way, and the bead selection and the collapsed rows outlive every one of them.
-    private void OnAddressChanged(object? sender, LocationChangedEventArgs changed)
+    // The bead selection and the collapsed rows outlive every change of the filter, and a change of
+    // the project drops them, because an epic id and a label of one project name nothing in another.
+    private async Task ShowAnotherProject(ProjectPath project)
     {
-        _ = InvokeAsync(() =>
-        {
-            filter = BoardFilterAddress.FilterIn(changed.Location);
-            Rebuild();
-            StateHasChanged();
-        });
-    }
-
-    // Draws the board of another project after the top bar switches it. The board drops the filter
-    // and the bead selection of the old project, because an epic id and a label of that project
-    // name nothing in this one.
-    private void OnActiveProjectChanged(ActiveProjectChange change)
-    {
-        _ = InvokeAsync(async () =>
-        {
-            filter = BoardFilter.Everything;
-            Navigation.NavigateTo(BoardFilterAddress.Page);
-            selection.Clear();
-            collapsed.OpenAll();
-            outcome = null;
-            staleReadMessage = string.Empty;
-            StartOn(change.Project);
-            StateHasChanged();
-            await RereadOrSayWhyNot();
-        });
+        selection.Clear();
+        collapsed.OpenAll();
+        outcome = null;
+        whyTheBeadsAreFromBefore = string.Empty;
+        StartOn(project);
+        StateHasChanged();
+        await Reread();
     }
 
     private void StartOn(ProjectPath project)
@@ -330,7 +345,7 @@ else
 
     private void OnBacklogChanged(BacklogChange change)
     {
-        if (Selection.Current is null || !Selection.Current.Equals(change.Project))
+        if (!TheProject.Shows(change.Project))
         {
             return;
         }
@@ -340,22 +355,19 @@ else
             nextReadIsAReread = true;
         }
 
-        _ = InvokeAsync(RereadOrSayWhyNot);
+        _ = InvokeAsync(RereadOrHandTheThrowToTheRenderer);
     }
 
-    // Reads the backlog again. Nothing waits for this read, because a change arrives on its own, so
-    // a read that throws puts its reason on the board instead of vanishing.
-    private async Task RereadOrSayWhyNot()
+    // Nothing awaits this read, so a throw would otherwise vanish with the task.
+    private async Task RereadOrHandTheThrowToTheRenderer()
     {
         try
         {
             await Reread();
         }
-        catch (Exception unread)
+        catch (Exception unexpected)
         {
-            outcome = BacklogOutcome.Failure(
-                $"The app could not read the beads of this project again. {unread.Message}");
-            StateHasChanged();
+            await DispatchExceptionAsync(unexpected);
         }
     }
 
@@ -396,29 +408,36 @@ else
     public void Dispose()
     {
         Backlogs.Changed -= OnBacklogChanged;
-        Selection.Changed -= OnActiveProjectChanged;
-        Navigation.LocationChanged -= OnAddressChanged;
+        switchWalk?.Dispose();
     }
 
     private async Task Load()
     {
-        if (Selection.Current is null)
+        if (TheProject.OnTheScreen is not { } project)
         {
             return;
         }
 
-        var fresh = await Backlogs.ReadAsync(Selection.Current);
+        var fresh = await Backlogs.ReadAsync(project);
 
-        // A re-read that gave up on bd has nothing new to show. The rows on the screen are one
-        // write old, same as they are through any re-read, so the board keeps them and says so
-        // instead of clearing itself to an empty board.
-        if (fresh.GaveUp && outcome is { Answered: true })
+        if (!TheProject.Shows(project))
         {
-            staleReadMessage = StaleReadMessage;
             return;
         }
 
-        staleReadMessage = string.Empty;
+        Show(fresh);
+    }
+
+    private void Show(BacklogOutcome fresh)
+    {
+        // The rows on the screen are one write old and not wrong, so a read with nothing new keeps them.
+        if (!fresh.Answered && outcome is { Answered: true })
+        {
+            whyTheBeadsAreFromBefore = fresh.GaveUp ? NoAnswerAgain : fresh.Message;
+            return;
+        }
+
+        whyTheBeadsAreFromBefore = string.Empty;
         outcome = fresh;
         types = outcome.Backlog.Types;
         priorities = outcome.Backlog.Priorities;
@@ -427,35 +446,41 @@ else
         Rebuild();
     }
 
-    // Takes the board to the address of the filter that the bar now states, because the address is
-    // where the filter lives. A change of the search text replaces the address instead of adding to
-    // the history, so the Back button leaves the search and never walks back one letter at a time.
+    // Takes the board to the address of the filter that the bar now states, in the same project,
+    // because the address is where the filter lives. A change of the search text replaces the address
+    // instead of adding to the history, so the Back button leaves the search and never walks back one
+    // letter at a time.
     private void OnFilterChanged(BoardFilter changed)
     {
+        if (TheProject.OnTheScreen is not { } project)
+        {
+            return;
+        }
+
         var onlyTheTextChanged = (changed with { Text = filter.Text }) == filter;
-        Navigation.NavigateTo(BoardFilterAddress.Of(changed), forceLoad: false, replace: onlyTheTextChanged);
+        Navigation.NavigateTo(BoardFilterAddress.Of(project, changed), forceLoad: false, replace: onlyTheTextChanged);
     }
 
     private void SaveTheFilter(string name)
     {
-        if (Selection.Current is null)
+        if (TheProject.OnTheScreen is not { } project)
         {
             return;
         }
 
-        SavedFilters.Save(Selection.Current, name, filter);
-        savedFilters = SavedFilters.Filters(Selection.Current);
+        SavedFilters.Save(project, name, filter);
+        savedFilters = SavedFilters.Filters(project);
     }
 
     private void Forget(SavedFilter saved)
     {
-        if (Selection.Current is null)
+        if (TheProject.OnTheScreen is not { } project)
         {
             return;
         }
 
-        SavedFilters.Remove(Selection.Current, saved.Name);
-        savedFilters = SavedFilters.Filters(Selection.Current);
+        SavedFilters.Remove(project, saved.Name);
+        savedFilters = SavedFilters.Filters(project);
     }
 
     private void Rebuild()
@@ -483,8 +508,6 @@ else
 
     // Opens the bead that a press on a row asks for, where the release asks for it. The board
     // stays as it is when the bead opens beside it, and it says so when the browser refuses.
-    private async Task Open(string id, MouseEventArgs release) =>
-        newTab.Take(await Opener.OpenAsync(Href(id), release));
-
-    private static string Href(string id) => BeadPageAddress.Of(id);
+    private async Task Open(BeadAddress bead, MouseEventArgs release) =>
+        newTab.Take(await Opener.OpenAsync(BeadPageAddress.Of(bead), release));
 }

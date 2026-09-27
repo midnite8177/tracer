@@ -157,14 +157,14 @@
                 </tbody>
             </table>
 
-            @if (!Ended && !plan.IsReady)
+            @if (!Ended && !committing && !plan.IsReady(Epics))
             {
-                <p class="text-danger board-bulk-message">@plan.Problem</p>
+                <p class="text-danger board-bulk-message">@plan.Problem(Epics)</p>
             }
 
             @if (!Ended)
             {
-                <button id="bulk-commit" class="btn btn-sm btn-danger" disabled="@(!plan.IsReady || committing)"
+                <button id="bulk-commit" class="btn btn-sm btn-danger" disabled="@(!plan.IsReady(Epics) || committing)"
                         aria-busy="@CommittingAriaBusy"
                         @onclick="Commit">Commit this action</button>
                 <button id="bulk-cancel" class="btn btn-sm btn-outline-secondary" disabled="@committing"
@@ -286,7 +286,7 @@
         }
 
         committing = true;
-        report = await Bulk.RunAsync(Project, plan, ReportRow);
+        report = await Bulk.RunAsync(Project, plan, Epics, ReportRow);
         committing = false;
     }
 

@@ -34,8 +34,9 @@ public sealed class ProjectPath : IEquatable<ProjectPath>
         new(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
 
     /// <summary>
-    /// Reads text that a person can edit, such as the text that a browser holds. It gives false
-    /// for text that the system refuses as a path, so no such text reaches the app as an error.
+    /// Reads text that a person can edit, such as a path typed on the Add a project page or the
+    /// project that an address names. It gives false for text that the system refuses as a path, so
+    /// no such text reaches the app as an error.
     /// </summary>
     public static bool TryFrom(string text, [NotNullWhen(true)] out ProjectPath? path)
     {
@@ -53,6 +54,22 @@ public sealed class ProjectPath : IEquatable<ProjectPath>
         }
 
         return path is not null;
+    }
+
+    /// <summary>
+    /// Reads text that must already name an absolute path, such as the project in an address. It
+    /// gives false for relative text, which the system would otherwise resolve against the working
+    /// directory of the app, and for text that the system refuses as a path.
+    /// </summary>
+    public static bool TryFromAbsolute(string text, [NotNullWhen(true)] out ProjectPath? path)
+    {
+        if (!Path.IsPathFullyQualified(text))
+        {
+            path = null;
+            return false;
+        }
+
+        return TryFrom(text, out path);
     }
 
     public bool Equals(ProjectPath? other) => other is not null && PathComparer.Equals(Value, other.Value);

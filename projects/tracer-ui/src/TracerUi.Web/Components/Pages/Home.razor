@@ -1,4 +1,5 @@
 @page "/"
+@using TracerUi.Core.Boards
 @inject ProjectCatalog Catalog
 @inject ActiveProjectSelection Selection
 @implements IDisposable
@@ -26,11 +27,10 @@ else
         @foreach (var entry in entries)
         {
             <li class="project-row @(IsActive(entry.Path) ? "project-row-active" : string.Empty)">
-                <button type="button"
-                        class="btn btn-sm @(IsActive(entry.Path) ? "btn-primary" : "btn-outline-primary")"
-                        @onclick="() => Selection.Select(entry.Path)">
+                <a class="btn btn-sm @(IsActive(entry.Path) ? "btn-primary" : "btn-outline-primary")"
+                   href="@BoardFilterAddress.OfEverythingIn(entry.Path)">
                     @entry.Name
-                </button>
+                </a>
                 <span class="text-muted machine-text project-path">@entry.Path.Value</span>
             </li>
         }
@@ -49,7 +49,7 @@ else
     }
 
     // Marks the project that is active now, so this page and the top bar agree.
-    private void OnActiveProjectChanged(ActiveProjectChange change) => _ = InvokeAsync(StateHasChanged);
+    private void OnActiveProjectChanged(ProjectPath project) => _ = InvokeAsync(StateHasChanged);
 
     public void Dispose() => Selection.Changed -= OnActiveProjectChanged;
 

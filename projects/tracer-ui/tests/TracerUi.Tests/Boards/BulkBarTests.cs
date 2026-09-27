@@ -122,6 +122,79 @@ public sealed class BulkBarTests : BunitContext
             bar.FindAll("#bulk-epic option").Select(offered => offered.TextContent));
     }
 
+    [Fact]
+    public void DropsThePickedEpicOfTheMoveOnceARereadShowsItClosedAndMovesOnlyIntoTheNextPick()
+    {
+        projects.Bd
+            .Prints("update x-1 --parent e-1", string.Empty)
+            .Prints("update x-1 --parent e-2", string.Empty);
+        var bar = TheBarThatMovesOneBead([ABead.Epic("e-1", "The first epic"), ABead.Epic("e-2", "The second epic")]);
+        bar.Find("#bulk-epic").Change("e-1");
+
+        TheEpicsReadAgain(bar, [TheFirstEpicClosed, ABead.Epic("e-2", "The second epic")]);
+
+        Assert.Equal(string.Empty, AnEpicPicker.ThePickedEpic(bar, "bulk-epic"));
+        bar.Find("#bulk-review").Click();
+        Assert.True(bar.Find("#bulk-commit").HasAttribute("disabled"));
+
+        bar.Find("#bulk-epic").Change("e-2");
+        bar.Find("#bulk-review").Click();
+        bar.Find("#bulk-commit").Click();
+
+        Assert.Contains("update x-1 --parent e-2", projects.Bd.Invocations);
+        Assert.DoesNotContain("update x-1 --parent e-1", projects.Bd.Invocations);
+    }
+
+    [Fact]
+    public void DropsThePickedEpicOfTheMoveOnceARereadNoLongerHoldsIt()
+    {
+        var bar = TheBarThatMovesOneBead([ABead.Epic("e-1", "The first epic"), ABead.Epic("e-2", "The second epic")]);
+        bar.Find("#bulk-epic").Change("e-1");
+
+        TheEpicsReadAgain(bar, [ABead.Epic("e-2", "The second epic")]);
+
+        Assert.Equal(string.Empty, AnEpicPicker.ThePickedEpic(bar, "bulk-epic"));
+    }
+
+    [Fact]
+    public void KeepsAStandingMoveIntoAnEpicThatARereadShowsClosedAndRefusesToCommitIt()
+    {
+        projects.Bd.Prints("update x-1 --parent e-1", string.Empty);
+        var bar = TheBarThatMovesOneBead([ABead.Epic("e-1", "The first epic"), ABead.Epic("e-2", "The second epic")]);
+        bar.Find("#bulk-epic").Change("e-1");
+        bar.Find("#bulk-review").Click();
+
+        TheEpicsReadAgain(bar, [TheFirstEpicClosed, ABead.Epic("e-2", "The second epic")]);
+
+        Assert.Single(bar.FindAll(".board-bulk-plan"));
+        Assert.Equal(
+            "Epic e-1 no longer takes a bead. Pick another epic.",
+            bar.Find(".board-bulk-plan .text-danger.board-bulk-message").TextContent.Trim());
+        Assert.True(bar.Find("#bulk-commit").HasAttribute("disabled"));
+
+        bar.Find("#bulk-commit").Click();
+
+        Assert.DoesNotContain("update x-1 --parent e-1", projects.Bd.Invocations);
+    }
+
+    private static Bead TheFirstEpicClosed =>
+        ABead.Epic("e-1", "The first epic") with { Status = StoredStatus.Closed };
+
+    private IRenderedComponent<BulkBar> TheBarThatMovesOneBead(IReadOnlyList<Bead> epics)
+    {
+        var bar = Render<BulkBar>(parameters =>
+        {
+            parameters.Add(component => component.Project, projects.First);
+            parameters.Add(component => component.Selected, [ABead.Called("x-1", "One")]);
+            parameters.Add(component => component.Epics, epics);
+        });
+        bar.Find("#bulk-category").Change(BulkCategory.Epic.Name);
+        return bar;
+    }
+
+    private static void TheEpicsReadAgain(IRenderedComponent<BulkBar> bar, IReadOnlyList<Bead> epics) =>
+        bar.Render(parameters => parameters.Add(component => component.Epics, epics));
+
     private static IEnumerable<string> RowWords(IRenderedComponent<BulkBar> bar) =>
         bar.FindAll(".board-bulk-row-word").Select(word => word.TextContent.Trim());
 

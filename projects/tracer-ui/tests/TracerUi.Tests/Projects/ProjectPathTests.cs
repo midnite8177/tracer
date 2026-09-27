@@ -30,4 +30,19 @@ public class ProjectPathTests
 
         Assert.Equal("tracer", path.DirectoryName);
     }
+
+    [Fact]
+    public void ReadsTextThatNamesAnAbsolutePath()
+    {
+        var text = Path.Combine(Path.GetTempPath(), "tracer");
+
+        Assert.True(ProjectPath.TryFromAbsolute(text, out var path));
+        Assert.Equal(ProjectPath.From(text), path);
+    }
+
+    [Fact]
+    public void RefusesRelativeTextInsteadOfResolvingItAgainstTheWorkingDirectory()
+    {
+        Assert.False(ProjectPath.TryFromAbsolute(Path.Combine("someone", "tracer"), out _));
+    }
 }

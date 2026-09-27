@@ -1,4 +1,10 @@
+---
+status: superseded by ADR-0016
+---
+
 # The browser holds the active project
+
+Superseded by [ADR 0016](0016-the-address-carries-the-active-project.md).
 
 The active project lived in the circuit alone, so a reload of the page and a
 second tab both lost it and sent the person back to the picker. The choice

@@ -1,12 +1,3 @@
-/*
-    The registry, as one row per project.
-
-    A row carries the button that names the project and makes it active, and it
-    prints the full path of that project as machine text. The active row takes
-    the accent at its left edge, so a person finds the current project without
-    a read of every button.
-*/
-
 .project-active {
     color: var(--tracer-fg-muted);
 }

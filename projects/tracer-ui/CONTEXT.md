@@ -25,9 +25,9 @@ _Avoid_: Network mode, remote access, public mode
 
 **Circuit**:
 The live connection between one browser tab and the server, which carries
-every render after the first response. The server learns what the browser
-holds only when the circuit opens, so the active project reaches a page
-then and not before.
+every render after the first response. It holds the project that the tab
+remembers, so a reload forgets that project and the address alone brings
+one back.
 _Avoid_: Connection, socket, session, SignalR connection
 
 **Render mode**:
@@ -200,8 +200,10 @@ _Avoid_: Header, navbar, sidebar, nav menu, chrome
 
 **Project picker**:
 The control in the top bar that names the active project and switches it.
-It shows one entry for each project of the registry, and a pick makes that
-project active from whatever page the person stands on.
+It shows one entry for each project of the registry, and a pick is a switch.
+On a page that shows one project, a pick walks to the address of the picked
+project. On a page that belongs to no project, it makes that project active
+and stays where the person stands.
 _Avoid_: Project switcher, dropdown, selector, combo box
 
 ### Projects
@@ -233,26 +235,22 @@ adds a project; the registry only holds one.
 _Avoid_: Manager, service
 
 **Active project**:
-The one project that the current browser session looks at. It says when it
-becomes another one, and whether that change is a switch or a restore, so
-every page that reads it answers each of the two as it must. The
-browser holds its path, as it holds the theme, so a reload of the page and a
-second tab both find the choice again. See
-[ADR 0007](docs/adr/0007-the-browser-holds-the-active-project.md).
-_Avoid_: Current project, selected repository
+The one project that one tab looks at. The address of a page that shows one
+project names it, and that address wins. The tab remembers the last project
+that an address named, for the pages that belong to no project, such as the
+needs-you view and the list of projects. The browser holds none, so a switch
+in one tab changes no other tab and no link. See
+[ADR 0016](docs/adr/0016-the-address-carries-the-active-project.md).
+_Avoid_: Current project, selected repository, stored project
 
 **Switch**:
 A change of the active project that a person made, with the project picker.
-A page that a bead of the old project holds, such as the detail page, leaves
-for the board of the new one.
-_Avoid_: Change, pick, selection
-
-**Restore**:
-The change of the active project that gives a session the project that the
-browser already held. It reaches the pages at the first render of the top
-bar, and it is no switch: a person asked for nothing, so a page stays where
-it stands. A fresh tab of a bead thus draws that bead.
-_Avoid_: Reload, rehydrate, first change, initial switch
+It is a walk to another address, so Back undoes it. The board and the detail
+page walk to the board of the new project, the doctor page to the doctor page
+of the new one, and a page that belongs to no project stays where it stands.
+An address that names a project is no switch: the person asked for that page,
+so it stays where it stands.
+_Avoid_: Change, pick, selection, restore
 
 **Project entry**:
 One project of the registry, as the project picker shows it: the project
@@ -440,10 +438,11 @@ _Avoid_: Acceptance criteria, definition of done
 
 **Bead page address**:
 The address of the detail page of one bead, which carries the project that
-holds that bead in its query. A tab that the browser opens beside another
-one carries no active project, so the address is where it learns which
-repository to read, and the detail page makes that project the active one.
-See [ADR 0011](docs/adr/0011-the-address-of-a-bead-carries-its-project.md).
+holds that bead in its query. An id alone means nothing outside its project,
+so every link to a bead that the app writes names the project, and the page
+makes it the active project of the tab. An address that names no project
+takes the one that the tab remembers and rewrites itself to name it. See
+[ADR 0011](docs/adr/0011-the-address-of-a-bead-carries-its-project.md).
 _Avoid_: Permalink, deep link, bead link, URL
 
 **Detail page**:
@@ -648,11 +647,13 @@ row press: it narrows the board and opens no bead.
 _Avoid_: Click to filter, drill-down, facet, quick filter
 
 **Board address**:
-The address of the board, which carries the whole board filter in its query.
-A part that states nothing appears in no query, so the plain board address is
-the filter that keeps every live bead. The address is where the filter lives:
-the filter bar and every filter press write it, and the board reads it. See
-[ADR 0010](docs/adr/0010-the-address-of-the-board-carries-the-filter.md).
+The address of the board, which carries the project and the whole board
+filter in its query. A part that states nothing appears in no query, so the
+address that names a project alone is the filter that keeps every live bead
+of it. The address is where the filter lives: the filter bar and every filter
+press write it, and the board reads it. See
+[ADR 0010](docs/adr/0010-the-address-of-the-board-carries-the-filter.md) and
+[ADR 0016](docs/adr/0016-the-address-carries-the-active-project.md).
 _Avoid_: Query string, URL, link, permalink
 
 **Text search**:
@@ -713,7 +714,9 @@ one, and it keeps what is already on the screen while it runs, because
 what stands there is one write old and not wrong. A first read keeps
 nothing, so that one blanks the page and says it is reading. A read that
 a project watcher caused is no re-read: no person pressed anything, so
-the page says nothing and takes the new beads when they come. See
+the page says nothing and takes the new beads when they come. On the
+board, a read that fails after the board has shown beads keeps what is on
+the screen too, re-read or not, and says why it failed. See
 [ADR 0015](docs/adr/0015-a-re-read-keeps-what-is-on-the-screen.md).
 _Avoid_: Refresh, reload, loading, stale board
 
@@ -728,9 +731,30 @@ _Avoid_: Refresh spinner, loading indicator, stale banner
 **Project watcher**:
 The watch on the `.beads` directory of one project. An agent writes there
 while the app is open, so a change invalidates the backlog of that
-project and the board reads it again. One command of `bd` writes several
-files, so the watch waits for a quiet period and invalidates once.
+project and the board reads it again. Where the project has a Dolt
+journal, a change counts only when the journal check agrees. One command
+of `bd` writes several files, so the watch waits for a quiet period and
+invalidates once.
 _Avoid_: File watcher, monitor, listener, poller
+
+**Report of a write**:
+What the file system says when something under a watched directory
+changes. A project watcher counts reports, not files, and the file system
+can also say that it dropped reports it could not hold. Unrelated to a
+bulk report.
+_Avoid_: File event, notification
+
+**Journal check**:
+The slow check beside the watch of a project watcher. Once a second it
+reads the size of the Dolt journal under `.beads`, and a change counts as
+a report of a write. The file system reports some writes late and drops
+others, and the check keeps the board from trailing such a write by more
+than about two seconds. It reads a size and runs no `bd`, so it is not a
+poll. A read of `bd` rewrites files under `.beads` too, so a report of the
+watch counts as a write only when the size of the journal changed. A
+project whose `.beads` holds no embedded Dolt database has no journal to
+read, and the watch alone follows it.
+_Avoid_: Poll, heartbeat, fallback
 
 ### The bd boundary
 
@@ -766,3 +790,11 @@ _Avoid_: Features, support matrix
 **Doctor page**:
 The page that shows the capabilities of one project's `bd`.
 _Avoid_: Diagnostics, health, status page
+
+**Doctor address**:
+The address of the doctor page, which carries the project whose `bd` the
+page reports in its query. A reload reports the same `bd`, whatever another
+tab switched to. An address that names no project takes the one that the tab
+remembers and rewrites itself to name it. See
+[ADR 0016](docs/adr/0016-the-address-carries-the-active-project.md).
+_Avoid_: Doctor link, diagnostics URL

@@ -58,6 +58,12 @@ public sealed record Bead(
             .Where(epic => epic.TakesANewBead || string.Equals(epic.Id, keep, StringComparison.Ordinal))
             .OrderBy(epic => epic.Title, StringComparer.Ordinal)];
 
+    /// <summary>
+    /// True when one of these epics has the id <paramref name="epicId"/> and takes a new bead.
+    /// </summary>
+    public static bool TakesANewBeadAmong(IEnumerable<Bead> epics, string epicId) =>
+        epics.Any(epic => string.Equals(epic.Id, epicId, StringComparison.Ordinal) && epic.TakesANewBead);
+
     public bool NeedsYou => Labels.Contains(HumanLabel, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>A close reason belongs to a closed bead, so an open bead never shows one.</summary>

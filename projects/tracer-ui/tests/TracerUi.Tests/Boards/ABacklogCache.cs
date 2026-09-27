@@ -7,9 +7,6 @@ namespace TracerUi.Tests.Boards;
 /// <summary>A cache over a bd that answers nothing, for a test that watches the change alone.</summary>
 public static class ABacklogCache
 {
-    /// <summary>Long enough that a slow machine still reports a write, short enough to fail fast.</summary>
-    public static readonly TimeSpan LongEnough = TimeSpan.FromSeconds(10);
-
     /// <summary>How long to wait before reading a count that a test proves stays where it is.</summary>
     /// <remarks>
     /// A test that proves no further invalidation arrives has to outlive every chance of one, so it

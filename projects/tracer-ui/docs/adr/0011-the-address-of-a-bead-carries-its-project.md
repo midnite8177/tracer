@@ -13,11 +13,7 @@ project the active one before it reads the bead.
 A row of the needs-you view is a link, so a person opens a bead there the
 way a person opens one on the board.
 
-There are two sources of the active project, and the address beats the
-browser. The browser still holds the choice, so a plain address of a bead,
-which the board writes, still reads the project of the browser. See
-[ADR 0007](0007-the-browser-holds-the-active-project.md).
-
-A tab that opens a bead of another project makes that project active, thus
-the browser holds it and the next fresh tab starts there. This is the same
-switch that a press in this tab makes, and the top bar names it either way.
+The address of every page that shows one project now carries it, and the
+browser holds no project at all. A tab that opens a bead of another project
+makes that project active in that tab alone, so it changes no other tab.
+See [ADR 0016](0016-the-address-carries-the-active-project.md).

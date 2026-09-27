@@ -43,6 +43,18 @@
 
     private IReadOnlyList<Bead> Offered => Bead.EpicsToOffer(Epics, Except, string.Empty);
 
+    // A read that shows the picked epic closed or gone puts the pick back to the empty choice. A kept
+    // pick would let the caller write to an epic that the picker no longer shows.
+    protected override Task OnParametersSetAsync()
+    {
+        if (Value.Length > 0 && !Offered.Any(epic => string.Equals(epic.Id, Value, StringComparison.Ordinal)))
+        {
+            return ValueChanged.InvokeAsync(string.Empty);
+        }
+
+        return Task.CompletedTask;
+    }
+
     private Task Pick(ChangeEventArgs changed) =>
         ValueChanged.InvokeAsync(changed.Value?.ToString() ?? string.Empty);
 }

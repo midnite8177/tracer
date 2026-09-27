@@ -1,5 +1,8 @@
+@using TracerUi.Core.Boards
 @using TracerUi.Web.Startup
 @inject BindAddress BindAddress
+@inject ActiveProjectSelection Selection
+@implements IDisposable
 
 @*
     The top bar, which the layout gives to every page.
@@ -19,13 +22,13 @@
     <ProjectPicker />
 
     <nav class="top-bar-nav">
-        <NavLink class="top-bar-link" href="board">
+        <NavLink class="top-bar-link" href="@TheBoardAddress">
             <Icon Name="IconName.Board" /> Board
         </NavLink>
         <NavLink class="top-bar-link" href="needs-you">
             <Icon Name="IconName.NeedsYou" /> Needs you
         </NavLink>
-        <NavLink class="top-bar-link" href="doctor">
+        <NavLink class="top-bar-link" href="@TheDoctorAddress">
             <Icon Name="IconName.Doctor" /> Doctor
         </NavLink>
     </nav>
@@ -43,3 +46,15 @@
         <ThemeToggle />
     </div>
 </header>
+
+@code {
+    private string TheBoardAddress => BoardFilterAddress.OfEverythingIn(Selection.Current);
+
+    private string TheDoctorAddress => DoctorAddress.Of(Selection.Current);
+
+    protected override void OnInitialized() => Selection.Changed += OnActiveProjectChanged;
+
+    private void OnActiveProjectChanged(ProjectPath project) => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Selection.Changed -= OnActiveProjectChanged;
+}

@@ -6,38 +6,40 @@
 @using AReadOfTheBead = TracerUi.Core.Boards.Read<TracerUi.Core.Boards.BeadDetail>
 @inject BeadDetailReader Details
 @inject ActiveProjectSelection Selection
+@inject SwitchAddress Switches
 @inject NavigationManager Navigation
+@inherits ProjectPage
 @implements IDisposable
 
 <PageTitle>@TheTitleOfThisPage</PageTitle>
 
-@if (addressedProject is AddressedProject.Lost lostProject)
+@if (TheProject.Addressed is AddressedProject.Lost lostProject)
 {
-    <BeadHead Id=""><Title><h1>@Id</h1></Title></BeadHead>
+    <BeadHead Id="" Project="null"><Title><h1>@Id</h1></Title></BeadHead>
     <p class="text-danger bead-message">@lostProject.Reason</p>
 }
-else if (Selection.Current is null)
+else if (TheProject.Addressed is AddressedProject.Unnamed)
 {
-    <BeadHead Id="" />
+    <BeadHead Id="" Project="null" />
     <p>@NoActiveProject.Ask A bead belongs to the active project.</p>
     <a class="btn btn-primary" href="">Go to the projects</a>
 }
 else if (read is null)
 {
-    <BeadHead Id="" />
+    <BeadHead Id="" Project="TheProjectOnTheScreen" />
     <p>The app is reading this bead…</p>
 }
 else if (read.Detail is AReadOfTheBead.Unread unreadBead)
 {
-    <BeadHead Id=""><Title><h1>@Id</h1></Title></BeadHead>
+    <BeadHead Id="" Project="TheProjectOnTheScreen"><Title><h1>@Id</h1></Title></BeadHead>
     <p class="text-danger bead-message">@unreadBead.Reason</p>
 }
-else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && addressedProject is AddressedProject.Found { Project: var project })
+else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProjectOnTheScreen is { } project)
 {
     var bead = new BeadAddress(project, detail.Bead.Id);
     var facts = detail.BacklogFacts;
 
-    <BeadHead Id="@detail.Bead.Id">
+    <BeadHead Id="@detail.Bead.Id" Project="project">
         <Title>
             <BeadTitleEdit Address="bead" Bead="detail.Bead" OnWritten="Reload" />
         </Title>
@@ -122,13 +124,19 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && addressedP
 }
 
 @code {
+    /// <summary>The id of the bead that the page shows, as the router hands it from the address.</summary>
     [Parameter]
     public string Id { get; set; } = string.Empty;
 
     private BeadDetailRead? read;
-    private AddressedProject? addressedProject;
+    private PageProject? theProject;
+    private IDisposable? switchWalk;
+    private BeadAddress? theBeadRead;
     private bool rereading;
     private string staleReadMessage = string.Empty;
+
+    private int readsBegun;
+    private int theLatestReadShown;
 
     private const string StaleReadMessage =
         "bd has not answered again. The bead on the screen is the one from before.";
@@ -136,64 +144,55 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && addressedP
     private string TheTitleOfThisPage =>
         read?.Detail is AReadOfTheBead.Given { Value: var detail } ? detail.Bead.Title : Id;
 
+    // Built once, at first use, because Blazor injects the services it takes after the constructor runs.
+    private PageProject TheProject =>
+        theProject ??= new PageProject(
+            Navigation, Selection, BeadPageAddress.Page, "that holds this bead", TheAddressOfThisBeadIn);
+
+    private ProjectPath? TheProjectOnTheScreen => TheProject.OnTheScreen;
+
     protected override void OnInitialized()
     {
-        SelectTheProjectThatTheAddressNames();
-        Selection.Changed += OnActiveProjectChanged;
+        // The id of a bead names nothing outside the project that holds it, so a switch walks to the
+        // board of the picked project instead of to this id in it.
+        switchWalk = Switches.WalkTo(BoardFilterAddress.OfEverythingIn);
     }
 
-    // Makes the project that the address names the active one, before this page listens for a
-    // switch. A tab that the browser opened beside another one carries no active project of its
-    // own, so the address is where it learns which repository holds this bead.
-    private void SelectTheProjectThatTheAddressNames()
+    private string TheAddressOfThisBeadIn(ProjectPath project) => BeadPageAddress.Of(new BeadAddress(project, Id));
+
+    public void Dispose() => switchWalk?.Dispose();
+
+    // Reads the bead when the address names a bead other than the one the page last began to read:
+    // another id, or the same id in another project. The rewrite of an address that names no
+    // project takes the address a second time, and that take finds the bead it began to read.
+    // An address that names no project the page can read clears the page, and no answer to an
+    // earlier read lands on it.
+    protected override async Task ShowTheAddressAsync()
     {
-        if (BeadPageAddress.ProjectIn(Navigation.Uri) is not { } project)
+        if (TheProject.TakeTheAddressOf(Id) is AddressChange.Elsewhere)
         {
             return;
         }
 
-        if (!Selection.Select(project))
+        if (TheProjectOnTheScreen is not { } project)
         {
-            addressedProject = new AddressedProject.Lost(
-                $"{project.DirectoryName} is not in the registry any more, "
-                + "so this address names no project that holds this bead.");
-        }
-    }
-
-    private void OnActiveProjectChanged(ActiveProjectChange change)
-    {
-        if (change.Kind is ActiveProjectChangeKind.Switch)
-        {
-            // The id of a bead names nothing outside the project that holds it, so a person who
-            // switched stands on the board of the new project instead of on a bead of the old one.
-            _ = InvokeAsync(() => Navigation.NavigateTo("board"));
+            theBeadRead = null;
+            read = null;
             return;
         }
 
-        if (addressedProject is AddressedProject.Lost)
+        var bead = new BeadAddress(project, Id);
+        if (bead.Equals(theBeadRead))
         {
             return;
         }
 
-        // A restore names no other project, and this tab opened this bead, so the page reads it
-        // again instead of leaving for a board.
-        _ = InvokeAsync(ReadTheBead);
-    }
-
-    public void Dispose() => Selection.Changed -= OnActiveProjectChanged;
-
-    protected override async Task OnParametersSetAsync()
-    {
-        if (addressedProject is AddressedProject.Lost || Selection.Current is null)
-        {
-            return;
-        }
-
+        theBeadRead = bead;
         await ReadTheBead();
     }
 
     // Reads this bead from the start. The page holds no read while bd answers, so it says
-    // that it reads, wherever the read began.
+    // that it reads.
     private async Task ReadTheBead()
     {
         read = null;
@@ -203,20 +202,25 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && addressedP
         StateHasChanged();
     }
 
+    private int BeginARead() => ++readsBegun;
+
+    private bool IsTheLatest(int aRead) => aRead == readsBegun;
+
     private async Task Reload()
     {
-        if (Selection.Current is not { } project)
+        if (TheProjectOnTheScreen is not { } project)
         {
             return;
         }
 
+        var bead = new BeadAddress(project, Id);
+        var thisRead = BeginARead();
         rereading = read is not null;
         if (rereading)
         {
             StateHasChanged();
         }
 
-        addressedProject = new AddressedProject.Found(project);
         BeadDetailRead fresh;
         try
         {
@@ -224,7 +228,17 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && addressedP
         }
         finally
         {
-            rereading = false;
+            if (IsTheLatest(thisRead))
+            {
+                rereading = false;
+            }
+        }
+
+        // An answer lands only on the bead it was asked for, and never over the answer of a read
+        // that began after it. The re-read mark stays until the latest read answers.
+        if (!bead.Equals(theBeadRead) || thisRead < theLatestReadShown)
+        {
+            return;
         }
 
         // A re-read that gave up on bd has nothing new to show. The bead on the screen is one
@@ -236,7 +250,12 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && addressedP
             return;
         }
 
-        staleReadMessage = string.Empty;
+        if (IsTheLatest(thisRead))
+        {
+            staleReadMessage = string.Empty;
+        }
+
+        theLatestReadShown = thisRead;
         read = fresh;
     }
 }

@@ -17,25 +17,29 @@ else
 
         <BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
 
-        <BeadEdgeList Title="Blocked by"
+        <BeadEdgeList Words="BlockedBy"
                       Links="Facts.Blockers"
-                      WhenEmpty="No bead blocks this one."
-                      CutTitle="Stop this bead waiting for"
+                      Project="Address.Project"
                       Capability="TheCutCapability"
                       OnCut="CutTheBlocker" />
 
         @ThePressThatAddsABlocker
 
-        <BeadEdgeList Title="Blocks"
+        <BeadEdgeList Words="Blocks"
                       Links="Facts.Dependents"
-                      WhenEmpty="This bead blocks no other bead."
-                      CutTitle="Stop this bead blocking"
+                      Project="Address.Project"
                       Capability="TheCutCapability"
                       OnCut="StopBlocking" />
     </section>
 }
 
 @code {
+    private static readonly EdgeDirectionWords BlockedBy =
+        new("Blocked by", "No bead blocks this one.", "Stop this bead waiting for");
+
+    private static readonly EdgeDirectionWords Blocks =
+        new("Blocks", "This bead blocks no other bead.", "Stop this bead blocking");
+
     // What the absent line carries: the press of this section, then the press for the absence it
     // names that this section does not own.
     private RenderFragment ThePressesOfTheLine => @<text>

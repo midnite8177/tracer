@@ -14,7 +14,7 @@
     @foreach (var link in Shown)
     {
         <li class="bead-row @(link.Status.IsClosed ? "bead-row-closed" : "")">
-            <BeadRow Link="link" />
+            <BeadRow Link="link" Project="Address.Project" />
         </li>
     }
 </ul>

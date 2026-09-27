@@ -61,11 +61,7 @@ public sealed class DelayedMark : IDisposable
 
     private async Task ShowOnceTheWaitElapsesAsync(CancellationToken cancellation)
     {
-        try
-        {
-            await Task.Delay(wait, clock, cancellation);
-        }
-        catch (OperationCanceledException)
+        if (!await ElapsesUncancelledAsync(wait, cancellation))
         {
             return;
         }
@@ -77,20 +73,29 @@ public sealed class DelayedMark : IDisposable
     private async Task HideOnceTheFloorElapsesAsync(DateTimeOffset shown, CancellationToken cancellation)
     {
         var remaining = floor - (clock.GetUtcNow() - shown);
-        if (remaining > TimeSpan.Zero)
+        if (remaining > TimeSpan.Zero && !await ElapsesUncancelledAsync(remaining, cancellation))
         {
-            try
-            {
-                await Task.Delay(remaining, clock, cancellation);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
+            return;
         }
 
         shownAt = null;
         await changed();
+    }
+
+    private async Task<bool> ElapsesUncancelledAsync(TimeSpan delay, CancellationToken cancellation)
+    {
+        try
+        {
+            await Task.Delay(delay, clock, cancellation);
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+
+        // A timer that fired just before a cancel still completes the delay. Without this check a mark
+        // stays up after its write ends, or a floor hides the mark of the next write.
+        return !cancellation.IsCancellationRequested;
     }
 
     public void Dispose() => pending?.Cancel();

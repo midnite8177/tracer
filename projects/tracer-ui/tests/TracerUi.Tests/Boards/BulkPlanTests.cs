@@ -67,8 +67,8 @@ public sealed class BulkPlanTests
     {
         var plan = BulkPlan.For(BulkAction.CloseThem("Stale"), TwoBeads).WithReasonFor("x-2", "  ");
 
-        Assert.False(plan.IsReady);
-        Assert.Equal("Bead x-2 has no close reason.", plan.Problem);
+        Assert.False(plan.IsReady(NoEpics));
+        Assert.Equal("Bead x-2 has no close reason.", plan.Problem(NoEpics));
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public sealed class BulkPlanTests
     {
         var plan = BulkPlan.For(BulkAction.AddTheLabel("   "), TwoBeads);
 
-        Assert.False(plan.IsReady);
+        Assert.False(plan.IsReady(NoEpics));
     }
 
     [Fact]
@@ -84,8 +84,8 @@ public sealed class BulkPlanTests
     {
         var plan = BulkPlan.For(BulkAction.DeferThem(), []);
 
-        Assert.False(plan.IsReady);
-        Assert.Equal("Select a bead first.", plan.Problem);
+        Assert.False(plan.IsReady(NoEpics));
+        Assert.Equal("Select a bead first.", plan.Problem(NoEpics));
     }
 
     [Fact]
@@ -93,7 +93,36 @@ public sealed class BulkPlanTests
     {
         var plan = BulkPlan.For(BulkAction.DeferThem(), TwoBeads);
 
-        Assert.True(plan.IsReady);
+        Assert.True(plan.IsReady(NoEpics));
+    }
+
+    [Fact]
+    public void RefusesToCommitAMoveIntoAnEpicThatTheEpicsShowClosed()
+    {
+        var plan = BulkPlan.For(BulkAction.MoveIntoTheEpic("e-1"), TwoBeads);
+        IReadOnlyList<Bead> epics = [ABead.Epic("e-1", "The first epic") with { Status = StoredStatus.Closed }];
+
+        Assert.False(plan.IsReady(epics));
+        Assert.Equal("Epic e-1 no longer takes a bead. Pick another epic.", plan.Problem(epics));
+    }
+
+    [Fact]
+    public void RefusesToCommitAMoveIntoAnEpicThatTheEpicsNoLongerHold()
+    {
+        var plan = BulkPlan.For(BulkAction.MoveIntoTheEpic("e-1"), TwoBeads);
+
+        Assert.Equal(
+            "Epic e-1 no longer takes a bead. Pick another epic.",
+            plan.Problem([ABead.Epic("e-2", "The second epic")]));
+    }
+
+    [Fact]
+    public void CommitsAMoveIntoAnEpicThatIsOpenOrOnlyDeferred()
+    {
+        var plan = BulkPlan.For(BulkAction.MoveIntoTheEpic("e-1"), TwoBeads);
+
+        Assert.True(plan.IsReady([ABead.Epic("e-1", "The first epic")]));
+        Assert.True(plan.IsReady([ABead.Epic("e-1", "The first epic") with { Status = StoredStatus.Deferred }]));
     }
 
     [Fact]
@@ -116,6 +145,8 @@ public sealed class BulkPlanTests
             [.. Enum.GetValues<BulkVerb>().Order()],
             BulkCategory.All.SelectMany(category => category.Verbs).Order());
     }
+
+    private static IReadOnlyList<Bead> NoEpics => [];
 
     private static IReadOnlyList<Bead> TwoBeads =>
         [ABead.Called("x-1", "One"), ABead.Called("x-2", "Two")];

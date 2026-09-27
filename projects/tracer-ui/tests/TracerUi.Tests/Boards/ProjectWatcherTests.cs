@@ -5,48 +5,61 @@ namespace TracerUi.Tests.Boards;
 
 public sealed class ProjectWatcherTests
 {
-    // Far shorter than the timeout the test waits on, so a failure there means a lost report and
-    // never a slow clock.
+    // Far shorter than the timeout the test waits on, so a failure there means the watcher never
+    // invalidated, and never a slow clock.
     private static readonly TimeSpan AShortQuietPeriod = TimeSpan.FromMilliseconds(20);
 
-    // Longer than the burst of writes that the test makes, so that the burst coalesces.
-    private static readonly TimeSpan AGenerousQuietPeriod = TimeSpan.FromMilliseconds(300);
+    private static readonly TimeSpan AQuietPeriodLongerThanTheBurst = TimeSpan.FromMilliseconds(300);
+
+    private static readonly ProjectPath Project = ProjectPath.From(Path.Combine(Path.GetTempPath(), "a-project"));
 
     [Fact]
     public async Task InvalidatesTheBacklogWhenSomethingElseWritesInTheBeadsDirectory()
     {
-        using var directory = new TempDirectory();
-        var beads = directory.CreateSubdirectory(ProjectPathValidator.BeadsDirectoryName);
-        var project = ProjectPath.From(directory.Path);
+        var reports = new FakeWriteReports();
         var cache = ABacklogCache.OverASilentBd();
         var changed = new TaskCompletionSource<BacklogChange>();
         cache.Changed += change => changed.TrySetResult(change);
 
-        using var watcher = new ProjectWatcher(project, cache, AShortQuietPeriod);
-        await File.WriteAllTextAsync(Path.Combine(beads, "issues.jsonl"), "{}");
+        using var watcher = new ProjectWatcher(Project, cache, AShortQuietPeriod, reports);
+        reports.ReportWrite(Project.BeadsDirectory);
 
-        var named = await changed.Task.WaitAsync(ABacklogCache.LongEnough);
-        Assert.Equal(project, named.Project);
+        var named = await changed.Task.WaitAsync(Signals.LongEnough);
+        Assert.Equal(Project, named.Project);
         Assert.Equal(BacklogChangeKind.Watch, named.Kind);
     }
 
     [Fact]
     public async Task InvalidatesOnceWhenOneCommandOfBdWritesManyFiles()
     {
-        using var directory = new TempDirectory();
-        var beads = directory.CreateSubdirectory(ProjectPathValidator.BeadsDirectoryName);
-        var project = ProjectPath.From(directory.Path);
+        var reports = new FakeWriteReports();
         var cache = ABacklogCache.OverASilentBd();
         var count = 0;
         cache.Changed += _ => Interlocked.Increment(ref count);
 
-        using var watcher = new ProjectWatcher(project, cache, AGenerousQuietPeriod);
+        using var watcher = new ProjectWatcher(Project, cache, AQuietPeriodLongerThanTheBurst, reports);
         for (var file = 0; file < 5; file++)
         {
-            await File.WriteAllTextAsync(Path.Combine(beads, $"part-{file}.jsonl"), "{}");
+            reports.ReportWrite(Project.BeadsDirectory);
         }
 
-        await Task.Delay(ABacklogCache.LongEnoughForAStrayInvalidationToLand(AGenerousQuietPeriod));
+        await Task.Delay(ABacklogCache.LongEnoughForAStrayInvalidationToLand(AQuietPeriodLongerThanTheBurst));
         Assert.Equal(1, Volatile.Read(ref count));
+    }
+
+    [Fact]
+    public async Task InvalidatesTheBacklogWhenTheFileSystemDropsTheReportsOfWrites()
+    {
+        var reports = new FakeWriteReports();
+        var cache = ABacklogCache.OverASilentBd();
+        var changed = new TaskCompletionSource<BacklogChange>();
+        cache.Changed += change => changed.TrySetResult(change);
+
+        using var watcher = new ProjectWatcher(Project, cache, AShortQuietPeriod, reports);
+        reports.LoseReports(Project.BeadsDirectory);
+
+        var named = await changed.Task.WaitAsync(Signals.LongEnough);
+        Assert.Equal(Project, named.Project);
+        Assert.Equal(BacklogChangeKind.Watch, named.Kind);
     }
 }
