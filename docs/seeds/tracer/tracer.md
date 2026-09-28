@@ -1,6 +1,6 @@
 # tracer — Matt Pocock's skills on a beads tracker
 
-Seed revision 34 (2026-09-12). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
+Seed revision 35 (2026-09-27). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
 
 ## If you were handed this document
 
@@ -94,7 +94,7 @@ When asked to adopt or align a project to it:
 
    ```json
    { "name": "tracer",
-     "version": "1.2.3+tracer.34",
+     "version": "1.2.3+tracer.35",
      "description": "Matt Pocock's skills on a beads tracker",
      "author": { "name": "<the human's name>" } }
    ```
@@ -102,11 +102,11 @@ When asked to adopt or align a project to it:
    The plugin loads automatically in this repo as `tracer@skills-dir`; its
    skills are `/tracer:<name>`. No settings entry is needed.
 6b. **Normalize the layout. Runs on every adopt, pin changed or not.**
-   The plugin's `skills/` directory must contain exactly these 30:
+   The plugin's `skills/` directory must contain exactly these 31:
 
    `adopt budget code-review codebase-design diagnosing-bugs
    domain-modeling grill-me grill-with-docs grilling guide handoff
-   implement improve-codebase-architecture issues no-comments
+   human-queue implement improve-codebase-architecture issues no-comments
    prototype research resolving-merge-conflicts show-me-your-work tdd
    teach to-questionnaire to-spec to-tickets triage unslop wait-what
    wayfinder wizard writing-for-agents`
@@ -134,7 +134,7 @@ When asked to adopt or align a project to it:
    report any patch whose anchor text was not found (upstream changed) so it
    can be re-based.
 8. **Add the tracer-native skills** from Block 4 (`adopt`, `issues`,
-   `budget`) under `.claude/skills/tracer/skills/<name>/SKILL.md`,
+   `budget`, `human-queue`) under `.claude/skills/tracer/skills/<name>/SKILL.md`,
    the `issues.py` script from Block 4b beside the `issues` skill,
    `budget.py` from Block 4c beside the `budget` skill, `smells.md` from
    Block 4e beside the `code-review` skill, and the carried
@@ -142,7 +142,7 @@ When asked to adopt or align a project to it:
    `show-me-your-work` with its `scripts/log.py` and
    `references/decision-log-template.tsv`, and the `comment-sicko` agent
    under the plugin's `agents/`), exactly as printed there. The
-   four tracer-native ones deliberately leave model invocation enabled (unlike the
+   five tracer-native ones deliberately leave model invocation enabled (unlike the
    upstream user-invoked skills) so `/tracer:adopt @seed.md` and similar
    @-mention invocations work: an @-mention routes through the model,
    which cannot call a skill marked `disable-model-invocation`. Their
@@ -151,7 +151,10 @@ When asked to adopt or align a project to it:
    `docs/agents/triage-labels.md`, `docs/agents/domain.md`.
 10. **Install Block 1.** Normal install: into `AGENTS.md`, and reduce
     `CLAUDE.md` to the single line `@AGENTS.md`; project-specific build
-    notes already there stay. Stealth install: into `AGENTS.local.md`, with
+    notes already there stay. Ask the human once whether the full test
+    suite is quick enough to run after every build; if not, set the
+    **Test gate** house rule to `targeted` and fill in the project's
+    filter command. On re-adopt, keep the gate the file already has. Stealth install: into `AGENTS.local.md`, with
     `CLAUDE.local.md` containing the single line `@AGENTS.local.md`; the
     committed `AGENTS.md` / `CLAUDE.md`, if any, are not touched.
     `CLAUDE.local.md` is a documented Claude Code memory file, loaded
@@ -227,7 +230,7 @@ read by any skill that touches beads.
 | Triage role → label mapping | `docs/agents/triage-labels.md` | `/tracer:triage` only |
 | Read `CONTEXT.md` and ADRs before exploring | `docs/agents/domain.md` | skills that explore the codebase |
 | Upstream skills, patched | `.claude/skills/tracer/skills/*` | on invocation |
-| Adopt, issues view, budget | `.claude/skills/tracer/skills/{adopt,issues,budget}` | on invocation |
+| Adopt, issues view, budget, human queue | `.claude/skills/tracer/skills/{adopt,issues,budget,human-queue}` | on invocation |
 | Carried third-party skills (`unslop`, `no-comments`, `show-me-your-work`) | `.claude/skills/tracer/skills/{unslop,no-comments,show-me-your-work}` | on invocation |
 | Comment-sicko reviewer | `.claude/skills/tracer/agents/comment-sicko.md` | when `no-comments` spawns it |
 | Smell catalog (code + comments, C++/C#/Python) | `.claude/skills/tracer/skills/code-review/smells.md` | pasted into review lanes' briefs on invocation |
@@ -290,18 +293,29 @@ output style or a project style guide wins where they conflict;
 not committing covers the machinery only. Code, tests, `CONTEXT.md` and
 ADRs the work produced are always committed.
 
-## Discovered work: fix it now or file it, decide on the spot
+## Discovered work: decide on the spot, and lean toward fixing
 
 Anything found during work that is not the current bead's job gets a
-decision the moment it is noticed. Binary:
+decision the moment it is noticed. A bead costs a full implement session;
+beads open faster than they close when filing is the reflex. Three
+outcomes, and the first is the default:
 
-- **Simple fix** — small, inside the current bead's blast radius, needs no
-  plan of its own: fix it, note it in the bead's close reason, keep moving.
-- **Real work** — anything that deserves grilling, a spec, or its own
-  slice: file it as a bead, right then, and keep moving.
+- **Fix it now** — small, inside or next to the current bead's blast
+  radius, needs no plan of its own: fix it in this bead's commit and note
+  it in one line of the close reason. **Comment work is always this
+  outcome**: a stale or misleading comment, a work-journal comment, a
+  bead or requirement id, anything in `smells.md` Part 2, found in any
+  file this run reads or touches, is fixed here and never becomes a bead.
+- **Real work** — a defect a user or operator would hit, a correctness or
+  data-loss risk, or a change that needs its own plan or grilling: file
+  it, right then. First `bd search "<keywords>"`; when an open bead
+  already covers it, `bd comment` there instead of creating a duplicate.
+- **Everything else** — style nits outside the diff, nice-to-haves,
+  speculative ideas, "could be cleaner": one line in the close reason,
+  no bead. If it matters, it will be found again.
 
-No third option: no "later", no markdown note, no folding it into the
-current bead, no holding it in memory.
+No fourth option: no "later", no markdown note, no holding it in memory.
+The review menu's `fN` still files a bead, because the human chose it.
 
 ```bash
 bd create --title="..." --description="what was seen and where" --type=bug \
@@ -320,6 +334,18 @@ Reviewers may cite these; a violation is a legitimate finding.
   when the API design genuinely calls for one. Never add a default to make
   a signature change easier to roll out; let the compiler find every
   callsite.
+- **Test gate: full.** What "the tests" means before a commit. `full`
+  runs the whole suite once at the end of a build. `targeted` runs the
+  tests that cover the changed code: the test files or classes the
+  diff's seams reach, plus any test that references a changed public
+  type, using the project's filter syntax (for example
+  `dotnet test <project> --filter "FullyQualifiedName~<Class>"`,
+  `pytest <paths>`, `ctest -R <regex>`), with the exact commands
+  recorded in the close reason; the full suite is then CI's job on push.
+  Choose `targeted` when the full suite takes long enough to dominate an
+  implement run. Build or typecheck stays whole-project either way.
+  Edit this line to change the gate; `implement` and its build subagent
+  read it.
 - **Tests assert runtime behavior.** No test may inspect source text,
   project files or package manifests. Those are lint concerns; file a bead
   proposing the right tool and label it `human`.
@@ -599,9 +625,27 @@ Replace the body with:
 > and never enters code, comments, or commits.
 >
 > **Settle everything that needs a human before the build starts.** The
-> seams: the bead's Seams line, or the brief's; if neither names one,
-> ask now. Any open question in the brief: ask now. The subagent below
-> cannot reach the human; whatever is unsettled here it will guess.
+> subagent below cannot reach the human; whatever is unsettled here it
+> will guess. Any open question in the brief: ask now.
+>
+> **A bead with no Demo or no Seams line gets a researched proposal, not
+> a bare question.** Do not ask the human to invent them cold. Send
+> **one** read-only subagent (the `Explore` type) with the bead's text,
+> the `CONTEXT.md` glossary, and the research brief if one exists, to
+> read the code and docs the bead touches and return, under 500 words:
+> what a person could see or do when this is done (two or three
+> candidate Demo lines, most demoable first); where a test could reach
+> the behavior (candidate seams, each with path and symbol, and one line
+> on why that point and not the one above or below it); and anything in
+> the code that makes one candidate cheaper than another. Verify the
+> paths it names, then present the human a proposal: the recommended
+> Demo line and Seams line, the alternatives in one line each, and the
+> reason for the recommendation, in the project's vocabulary and with
+> no ids in the prose. Wait. When the human accepts or edits, write the
+> result onto the bead (`bd update <id> --description` with the
+> `## Demo` and `## Seams` sections added to the existing description;
+> check `bd update --help` for the flag) so the bead is complete before
+> the build. Only if the human declines to choose does the run stop.
 >
 > **The build runs in a subagent, every time.** Its context is the
 > largest part of an implement run and none of it is needed afterward:
@@ -619,7 +663,10 @@ Replace the body with:
 > AGENTS.md by path; the "Delegating to subagents" rules from
 > `docs/agents/issue-tracker.md`; and these limits: build exactly what
 > the bead says, no redesign; run typechecking regularly, single test
-> files regularly, and the full suite once at the end; **do not commit,
+> files regularly, and the **Test gate** from the AGENTS.md house rules
+> once at the end (quote that rule into the prompt: `full` means the
+> whole suite, `targeted` means the covering tests with the project's
+> filter command and every command recorded in the report); **do not commit,
 > do not run any `bd` command, do not spawn subagents or invoke other
 > skills**; when something is ambiguous, pick the smaller interpretation
 > and record it. It returns this, and nothing outside it. The list
@@ -635,12 +682,18 @@ Replace the body with:
 > Not done: anything from the bead that is not built, and why
 > ```
 >
-> When it returns: run the full suite yourself and typecheck; a report
-> that says green is not proof. Read the diff (`git diff` against the
+> When it returns: run the Test gate yourself (the same commands the
+> report lists, under `targeted`; the suite, under `full`) and
+> typecheck; a report that says green is not proof. Read the exit
+> status, not a "Passed" line. Read the diff (`git diff` against the
 > fixed point), not the report, as the source of truth. Apply the
-> discovered-work rule from AGENTS.md to its "Discovered work" lines:
-> fix in place or `bd create`, per the rule; the subagent could not file
-> them. If "Not done" is non-empty, either send the same subagent back
+> discovered-work rule from AGENTS.md to its "Discovered work" lines,
+> **leaning toward fixing**: comment work is fixed in this commit
+> without exception; a defect or risk is filed after `bd search` shows
+> no open bead already covers it; the rest becomes one line in the
+> close reason. The subagent could not file anything, so this is where
+> that decision is made, and the expected count of new beads from an
+> ordinary run is zero or one. If "Not done" is non-empty, either send the same subagent back
 > with that list (once) or stop and tell the human; do not finish the
 > build in this context. If the subagent stopped early or the tree is
 > not in a testable state, say so and stop; do not patch around it.
@@ -669,7 +722,8 @@ Replace the body with:
 > <what done meant here, including any spot fixes and beads filed>"`,
 > where `<commit>` is the sha, or the commit's subject line when
 > `.beads/` is tracked (the sweep below will amend, and a sha would go
-> stale); then `bd show <id>` and confirm the status; **then** write the
+> stale); under a `targeted` Test gate the reason also lists the exact
+> test commands run, so a reader knows what the local gate covered; then `bd show <id>` and confirm the status; **then** write the
 > summary for the human, quoting that status line verbatim as its first
 > line. A summary whose first line is not a closed status is a defect in
 > the run: do not write it. Nothing (a review finding, a question, a
@@ -904,7 +958,8 @@ replace the sentence describing local `.scratch/` tickets and "native
 blocking links on a real tracker" with: "Tickets are beads under the spec
 epic with `bd dep` edges; `/tracer:issues` shows the frontier." Add these
 routes: "what is ready, what is blocked, show me a bead" →
-`/tracer:issues`; "update or repair the installation" → `/tracer:adopt`;
+`/tracer:issues`; "what is waiting on me, let's decide them" →
+`/tracer:human-queue`; "update or repair the installation" → `/tracer:adopt`;
 "this reads like it was written by an AI, clean it up" → `/tracer:unslop`;
 "strip the comment noise from this diff" → `/tracer:no-comments`; "keep a
 decision trail I can review when I'm back" → `/tracer:show-me-your-work`.
@@ -1016,6 +1071,127 @@ which this script cannot see.
 The script lives at `.claude/skills/tracer/skills/budget/budget.py`
 (Block 4c) and runs from a terminal for free:
 `python3 .claude/skills/tracer/skills/budget/budget.py`.
+
+## `human-queue`
+
+For the human who takes their decisions in batches. Everything labeled
+`human` gets researched in parallel, then presented one decision at a
+time in plain language with a recommendation, and each answer is
+recorded on its bead before the next question. It plans and records; it
+never implements.
+
+````markdown
+---
+name: human-queue
+description: Work through every bead waiting on the human: research each in parallel with read-only subagents, present them one at a time in plain language with a recommendation, and record each answer on its bead. Use when the user wants to clear their human-labeled beads or asks what is waiting on them.
+argument-hint: "[assignee:<name>] [label:<name>] [not <epic or words to skip>]"
+---
+
+The reader is the human. They do not hold bead ids in their head, and a
+bead rarely carries enough context to decide from. This skill turns the
+queue into a sequence of decisions they can make from what you show
+them. Reader rules from AGENTS.md apply throughout: beads by title with
+the id in parentheses, no bare ids in prose, `unslop` on everything you
+present.
+
+## 1. Collect the queue
+
+The queue is every bead not closed that carries the `human` label, plus
+any label named by `label:<name>` in `$ARGUMENTS`, plus any bead whose
+assignee matches `assignee:<name>` if given. Get the list from the
+issues script, which already knows this repo's field names:
+
+```
+python3 .claude/skills/tracer/skills/issues/issues.py human
+python3 .claude/skills/tracer/skills/issues/issues.py label:<name>   # per extra label
+```
+
+(`human` lists every open bead with that label; for an assignee filter,
+`bd list --json` and match the `assignee`/`owner` field.) Then read each with `bd show <id> --json` (the pretty renderer drops
+bare angle-bracketed tokens). Set aside, naming each in one line with
+its reason:
+
+- anything `$ARGUMENTS` excludes (`not <epic title or words>`);
+- a decision already made that waits on a trigger that has not happened
+  (the text says "once", "when", "until"): find the trigger's bead, and
+  if it is still open, this question is not ready.
+
+Tell the human the count and what you set aside, in a few words, before
+research starts. If the queue is empty, say so and stop.
+
+## 2. Research every question in parallel
+
+One read-only subagent per question (the `Explore` type), all dispatched
+in one message. Each prompt carries the bead's full text, the
+`CONTEXT.md` glossary terms involved, the "Delegating to subagents"
+rules from `docs/agents/issue-tracker.md` (edit nothing, run no `bd`
+command, spawn nothing, mark inference as inference), and asks for a
+plain-language report under 600 words:
+
+1. **What the thing is**: the code, file or process the question is
+   about, and what property or risk is at stake, with `path:line`.
+2. **The premises, re-checked**: every factual claim the question rests
+   on, verified against today's code and docs. Beads age; a premise that
+   went stale changes the answer, and is the most valuable finding.
+3. **Options with concrete costs**: what changes, how big, what breaks,
+   whether it is reversible.
+4. **A recommendation with its reasoning**, weighed against the house
+   rules in AGENTS.md and the project's stated stage or constraints in
+   `CONTEXT.md`.
+
+A report is a set of claims. Before presenting a question, verify
+yourself the one claim its recommendation leans on, above all a claim
+that a premise is stale: open the file, read the line.
+
+## 3. Present one question at a time
+
+Start with the first report to arrive. Each presentation, in this
+order:
+
+- **Heading**: `Question N of M: <the decision, as a plain question>`.
+- **Background**: what the thing is and why it exists, in words a
+  developer new to this project would follow. Name code by what it does;
+  add a path only where the human might open it.
+- **What research found**: the facts that move the decision; stale
+  premises and corrections to the bead first.
+- **Options**: each with its cost and what it buys.
+- **Recommendation**: which option and why, in two or three sentences.
+- One closing question naming the choices.
+
+Hold the next question until the current one is answered. A report that
+finishes while you wait gets a one-line acknowledgement and nothing
+more. If the human says "skip", set the bead aside and move on.
+
+## 4. Record each answer before the next question
+
+Take the date from the shell (`date +%F` or the platform equivalent),
+never from `bd`.
+
+- **The answer produces work**: the bead becomes that work. Remove the
+  `human` label (`bd label remove <id> human`, or the form `bd label
+  --help` gives) and clear a human assignee; retitle it as the work;
+  rewrite its description so `implement` can build it: what is wrong,
+  the work items, a `## Demo` line and a `## Seams` line, in the shape
+  `docs/agents/issue-tracker.md` gives. Append notes with
+  `--append-notes`: `Decided <date>: <decision>`, then the research
+  facts the decision rests on, stale premises included.
+- **The answer produces no work**: `bd close <id> --reason="<the
+  decision and the evidence it accepted>"`.
+- **The answer is "not yet"**: `bd comment <id> "Deferred <date>:
+  <why, and what would make it ready>"`; the label stays.
+
+Then present the next question.
+
+## 5. Finish
+
+Run the tracker sweep from `implement` (when `.beads/` is tracked and
+dirty, `git add .beads` and commit it alone as `<what was decided>:
+tracker update`; nothing else is staged). Then show a table: each
+question in a few words, the decision, and the bead's new title with its
+id. Close with one line per bead set aside in step 1, and the one
+command that starts the first piece of new work:
+`/tracer:implement <id>`.
+````
 
 ## Block 4b — `skills/issues/issues.py`
 
@@ -2423,6 +2599,10 @@ if __name__ == "__main__":
   Read the diff and the review. Repeat.
 - **Tiny change:** grill briefly, then `/tracer:implement` in the same
   window with "the plan is in this conversation".
+- **Decisions have piled up** (beads labeled `human`): when you have
+  focus, `/tracer:human-queue`. It researches all of them at once, then
+  walks you through one at a time and turns each answer into work or a
+  closed bead.
 - **Too big to grill in one sitting:** `/tracer:wayfinder <idea>` to chart;
   later sessions `/tracer:wayfinder <map-id>` resolve one decision each;
   when clear, `/tracer:to-spec <map-id>`.
@@ -2456,6 +2636,7 @@ back in, that is the signal to reread this document.
 Read this first on a re-adopt. Each entry is what changed since the
 previous revision, so a same-pin re-adopt knows where to look.
 
+- **35**: Field tweaks from daily use. Discovered work leans toward fixing: three outcomes (fix now, real work after `bd search`, one line in the close reason), comment work always fixed in place, expected new beads per run zero or one. **Test gate** house rule (`full` or `targeted`, set at adopt) replaces every blanket "full suite"; P1 and the build subagent read it and record targeted commands in the close reason. A bead with no Demo or Seams gets a researched proposal from an Explore subagent, written onto the bead once the human accepts. New native skill `human-queue`: research every `human` bead in parallel, present one decision at a time with a recommendation, record each answer; manifest is 31 skills plus one agent.
 - **34**: P1: the build subagent reads `unslop` by path before writing code and applies its pattern list to every comment and message it writes (soul off); the pre-commit `unslop` pass is scoped to every `+` prose line in the diff, with "pre-existing text" ruled out as an exemption, and ends with a checked/changed count.
 - **33**: P1: build report cap is per-section (lists one line per item, prose under 300 words) instead of a flat 600 words; a **Beads filed** section follows the TL;DR listing every bead the run created, by title with id, from `bd list` rather than memory; the review menu's closing report lists the beads it filed.
 - **32**: P1 build phase (tdd + code) runs in one writing subagent every time, with a bounded report (files, tests by seam, commands run, discovered work, choices made, not done); the session settles seams and open questions before the hand-off, then re-runs the suite and reads the diff before review. `migrate` removed along with every reference to the old batch workflow; manifest is 30 skills plus one agent; step 13 points existing backlogs at `triage` and `to-tickets`.
