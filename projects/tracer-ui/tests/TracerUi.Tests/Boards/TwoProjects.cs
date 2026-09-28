@@ -28,6 +28,7 @@ public sealed class TwoProjects : IDisposable
         Store.Save(new ProjectRegistry([First, Second], []));
         Adapter = new BdAdapter(Bd, Clock);
         Backlogs = new BacklogCache(new BacklogReader(Adapter), Adapter);
+        Watchers = new ProjectWatchers(Backlogs, WriteReports);
         Catalog = new ProjectCatalog(Store, Adapter);
         Selection = new ActiveProjectSelection(Catalog);
     }
@@ -43,6 +44,10 @@ public sealed class TwoProjects : IDisposable
     public BdAdapter Adapter { get; }
 
     public BacklogCache Backlogs { get; }
+
+    public FakeWriteReports WriteReports { get; } = new();
+
+    public ProjectWatchers Watchers { get; }
 
     public ProjectCatalog Catalog { get; }
 
@@ -60,6 +65,7 @@ public sealed class TwoProjects : IDisposable
     {
         services.AddSingleton(Adapter);
         services.AddSingleton(Backlogs);
+        services.AddSingleton(Watchers);
         services.AddSingleton(Catalog);
         services.AddSingleton(Selection);
         services.AddSingleton(new CopyFeedback());
@@ -68,5 +74,9 @@ public sealed class TwoProjects : IDisposable
         services.AddScoped<SwitchAddress>();
     }
 
-    public void Dispose() => directory.Dispose();
+    public void Dispose()
+    {
+        Watchers.Dispose();
+        directory.Dispose();
+    }
 }

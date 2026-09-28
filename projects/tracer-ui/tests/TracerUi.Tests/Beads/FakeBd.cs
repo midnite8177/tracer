@@ -4,8 +4,9 @@ namespace TracerUi.Tests.Beads;
 
 /// <summary>
 /// A bd that gives scripted stdout and stderr, so that a test fixes one version shape. It can also
-/// hold one command line open, in every directory or in one, so that a test renders a component
-/// while that run is still going, and tell a test when a run held in one directory begins.
+/// hold one command line open, in every directory, in one, or one run at a time, so that a test
+/// renders a component while that run is still going, and tell a test when a run held in one
+/// directory begins.
 /// </summary>
 public sealed class FakeBd : IBdProcess
 {
@@ -16,6 +17,7 @@ public sealed class FakeBd : IBdProcess
     private readonly Dictionary<string, Action<FakeBd>> changes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCompletionSource<BdResult>> held = new(StringComparer.Ordinal);
     private readonly Dictionary<Run, HeldRun> heldPerDirectory = [];
+    private readonly Dictionary<string, Queue<OneHeldRun>> heldOneAtATime = new(StringComparer.Ordinal);
 
     /// <summary>The command lines that the code under test ran, in order.</summary>
     public List<string> Invocations { get; } = [];
@@ -129,8 +131,8 @@ public sealed class FakeBd : IBdProcess
     }
 
     /// <summary>
-    /// Holds the next run of this command line open, so that a test renders a component while bd has
-    /// not answered it yet. <see cref="Answers"/> lets that run finish.
+    /// Holds every run of this command line open until <see cref="Answers"/>, so that a test renders a
+    /// component while bd has not answered yet. Every held run gets the same answer.
     /// </summary>
     public FakeBd Holds(string commandLine)
     {
@@ -199,6 +201,25 @@ public sealed class FakeBd : IBdProcess
         return this;
     }
 
+    /// <summary>
+    /// Holds the next run of this command line open on its own, and gives that run to answer. Each
+    /// call holds one more run, in the order the runs begin, so that a test answers two runs of one
+    /// command line in the order it picks. It wins over a <see cref="Holds"/> of the same command
+    /// line.
+    /// </summary>
+    public OneHeldRun HoldsTheNextRun(string commandLine)
+    {
+        var run = new OneHeldRun(this, commandLine);
+        if (!heldOneAtATime.TryGetValue(commandLine, out var waiting))
+        {
+            waiting = new Queue<OneHeldRun>();
+            heldOneAtATime[commandLine] = waiting;
+        }
+
+        waiting.Enqueue(run);
+        return run;
+    }
+
     private HeldRun TakeHeldIn(string workingDirectory, string commandLine, string caller)
     {
         var run = new Run(workingDirectory, commandLine);
@@ -235,6 +256,11 @@ public sealed class FakeBd : IBdProcess
             return holdingHere.Answer.Task;
         }
 
+        if (heldOneAtATime.TryGetValue(commandLine, out var waiting) && waiting.TryDequeue(out var next))
+        {
+            return next.Answer.Task;
+        }
+
         if (held.TryGetValue(commandLine, out var holding))
         {
             return holding.Task;
@@ -264,6 +290,25 @@ public sealed class FakeBd : IBdProcess
     }
 
     private sealed record Run(string Directory, string CommandLine);
+
+    /// <summary>One run that <see cref="HoldsTheNextRun"/> holds open until a test answers it.</summary>
+    public sealed class OneHeldRun
+    {
+        private readonly FakeBd bd;
+        private readonly string commandLine;
+
+        internal OneHeldRun(FakeBd bd, string commandLine)
+        {
+            this.bd = bd;
+            this.commandLine = commandLine;
+        }
+
+        internal TaskCompletionSource<BdResult> Answer { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Answers this run as bd itself would have.</summary>
+        public void Answers(string standardOutput) => bd.Release(Answer, commandLine, standardOutput);
+    }
 
     private sealed record HeldRun(TaskCompletionSource<BdResult> Answer, TaskCompletionSource Started);
 }

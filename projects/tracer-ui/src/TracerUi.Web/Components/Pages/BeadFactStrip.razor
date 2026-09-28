@@ -16,25 +16,25 @@
 
 <aside class="bead-fact-strip">
     <div class="bead-fact">
-        <BeadFactEdit Project="Address.Project" Fact="TheStatus" OnWritten="OnWritten" />
+        <BeadFactEdit Project="Address.Project" Fact="TheStatus" OnWritten="OnWritten" OpenRow="@openRow" OnOpen="Opened" />
     </div>
 
     <div class="bead-fact">
-        <BeadFactEdit Project="Address.Project" Fact="ThePriority" OnWritten="OnWritten" />
+        <BeadFactEdit Project="Address.Project" Fact="ThePriority" OnWritten="OnWritten" OpenRow="@openRow" OnOpen="Opened" />
     </div>
 
     <div class="bead-fact">
-        <BeadFactEdit Project="Address.Project" Fact="TheType" OnWritten="OnWritten" />
+        <BeadFactEdit Project="Address.Project" Fact="TheType" OnWritten="OnWritten" OpenRow="@openRow" OnOpen="Opened" />
     </div>
 
     <div class="bead-fact">
-        <BeadFactEdit Project="Address.Project" Fact="TheLabels" OnWritten="OnWritten" />
+        <BeadFactEdit Project="Address.Project" Fact="TheLabels" OnWritten="OnWritten" OpenRow="@openRow" OnOpen="Opened" />
     </div>
 
     @if (facts is AReadOfTheBacklog.Given { Value: var answered })
     {
         <div class="bead-fact">
-            <BeadFactEdit Project="Address.Project" Fact="TheEpicOf(answered)" OnWritten="OnWritten" />
+            <BeadFactEdit Project="Address.Project" Fact="TheEpicOf(answered)" OnWritten="OnWritten" OpenRow="@openRow" OnOpen="Opened" />
         </div>
     }
 </aside>
@@ -67,6 +67,10 @@
     [EditorRequired]
     public required IReadOnlyList<string> Labels { get; set; }
 
+    private string openRow = string.Empty;
+
+    private void Opened(string row) => openRow = row;
+
     private const string NoLabel = "no label";
 
     private const string NoEpic = "no epic";
@@ -82,7 +86,7 @@
         $"bead-status-{Detail.Status.Appearance}",
         string.Empty,
         [UiVerbs.SetTheStatus, UiVerbs.DeferABead, UiVerbs.CloseWithAReason],
-        FactPicker.OfOneOf([.. BeadWriteChoices.Statuses.Select(TheStatusChoice)]));
+        new FactPicker.OfOneOf([.. BeadWriteChoices.Statuses.Select(TheStatusChoice)]));
 
     // One entry of the status picker. Two of the four run a write of their own, because bd closes
     // and defers with commands that are not an update of the status. The close asks for its reason
@@ -118,7 +122,7 @@
         Detail.Bead.HasPriority ? string.Empty : "text-muted",
         string.Empty,
         [UiVerbs.SetThePriority],
-        FactPicker.OfOneOf(
+        new FactPicker.OfOneOf(
         [
             .. BeadWriteChoices.Priorities.Select(priority =>
                 FactChoice.ThatWrites(
@@ -137,7 +141,7 @@
         string.Empty,
         string.Empty,
         [UiVerbs.SetTheType],
-        FactPicker.OfOneOf(
+        new FactPicker.OfOneOf(
         [
             .. BeadWriteChoices.Types.Select(type =>
                 FactChoice.ThatWrites(
@@ -150,71 +154,66 @@
         CheckedWrite.Async<BeadTypeWord>(
             type, BeadType.TryParse, word => Bd.SetTypeAsync(Address, word), $"{type} is not a bead type.");
 
-    // The labels row. Its picker offers the whole vocabulary of the project, with the labels of this
-    // bead ticked, because a label that two beads spell differently is two labels. The box at the
-    // foot is for the label that the project does not use yet.
     private PressableFact TheLabels => new(
         "Labels",
         "bead-fact-labels",
         TheLabelText,
         Detail.Bead.Labels.Count > 0 ? string.Empty : "text-muted",
         string.Empty,
-        [UiVerbs.LabelABead],
-        new FactPicker(
-            FactMarks.EachOneItCarries,
-            [.. Labels.Select(TheLabelChoice)],
-            new FactAddition(new FactQuestion("A new label", "Add"), PutOnTheNewLabel)));
+        [UiVerbs.ChangeTheLabels],
+        new FactPicker.OfSeveral(
+            [.. TheLabelEntries()],
+            new FactAddition(new FactQuestion("A new label", "Add"), CheckTheNewLabel),
+            change => Bd.ChangeLabelsAsync(Address, change.Adds, change.Removes)));
 
     private string TheLabelText =>
         Detail.Bead.Labels.Count > 0 ? string.Join(", ", Detail.Bead.Labels) : NoLabel;
 
-    // One entry of the labels picker. A press takes the label off a bead that carries it and puts it
-    // on one that does not, so the same entry both adds and removes. The remove names the spelling
-    // that the bead carries, because the entry prints the one spelling that the project settled on.
-    private FactChoice TheLabelChoice(string label)
+    // A blank word names no label that a write could send, so the picker leaves it out.
+    private IEnumerable<FactTick> TheLabelEntries()
     {
-        var carried = TheSpellingOnTheBead(label);
-        return FactChoice.ThatWrites(
-            label,
-            marked: carried is not null,
-            () => carried is null ? AddTheLabel(label) : RemoveTheLabel(carried));
+        foreach (var word in Labels)
+        {
+            if (BeadLabel.TryFrom(word, out var label))
+            {
+                yield return new FactTick(label, TheLabelOnTheBead(label));
+            }
+        }
     }
 
-    // Puts on the label that the person typed into the box at the foot of the picker. A box that
-    // wrote whatever it was given would be the one place where a second spelling of an existing
-    // label is born, which is what the list of entries above it exists to prevent, so a word that
-    // the project already uses writes that spelling and never a new one.
-    private Task<BdWriteOutcome> PutOnTheNewLabel(string typed)
+    private BeadLabel? TheLabelOnTheBead(BeadLabel label) =>
+        TheSpellingOnTheBead(label) is { } spelling && BeadLabel.TryFrom(spelling, out var carried)
+            ? carried
+            : null;
+
+    private TypedLabel CheckTheNewLabel(string typed)
     {
-        var known = Labels.FirstOrDefault(label =>
-            string.Equals(label, typed, StringComparison.OrdinalIgnoreCase));
-        if (known is null)
+        if (!BeadLabel.TryFromTyped(typed, out var label, out var whyNot))
         {
-            return AddTheLabel(typed);
+            return new TypedLabel.Refused(whyNot);
         }
 
-        return TheSpellingOnTheBead(known) is null
-            ? AddTheLabel(known)
-            : Task.FromResult(BdWriteOutcome.Failure(
-                $"This bead already carries {known}, which the list above ticks."));
+        if (TheSpellingOnTheBead(label) is { } carried)
+        {
+            return new TypedLabel.Refused($"This bead already carries {carried}.");
+        }
+
+        return new TypedLabel.ToTick(TheProjectSpellingOf(label) ?? label);
     }
+
+    private BeadLabel? TheProjectSpellingOf(BeadLabel label) =>
+        Labels.FirstOrDefault(label.ReadsTheSameAs) is { } known
+        && BeadLabel.TryFrom(known, out var spelled)
+            ? spelled
+            : null;
 
     // How this bead spells the label, or null when it carries none that reads the same. A remove
     // names the spelling of the bead, because bd holds the label as the bead spells it.
-    private string? TheSpellingOnTheBead(string label) =>
-        Detail.Bead.Labels.FirstOrDefault(one =>
-            string.Equals(one, label, StringComparison.OrdinalIgnoreCase));
+    private string? TheSpellingOnTheBead(BeadLabel label) =>
+        Detail.Bead.Labels.FirstOrDefault(label.ReadsTheSameAs);
 
-    private Task<BdWriteOutcome> AddTheLabel(string label) =>
-        CheckedWrite.Async(label, word => Bd.AddLabelAsync(Address, word), "A label needs a word.");
-
-    private Task<BdWriteOutcome> RemoveTheLabel(string label) =>
-        CheckedWrite.Async(label, word => Bd.RemoveLabelAsync(Address, word), "A label needs a word.");
-
-    // The epic row, whose picker offers every epic of the backlog that takes a new bead, the closed
-    // epic that holds this bead if there is one, and the entry that takes the bead out of all of them. bd clears the parent with the flag that sets it, so that entry asks for no
-    // action beyond the one the rest of the picker needs. The link beside the press opens the epic,
-    // because an epic is a bead of its own and the value is now the control that moves this one.
+    // bd clears the parent with the flag that sets it, so the entry of no epic asks for no action
+    // beyond the one the rest of the picker needs.
     private PressableFact TheEpicOf(BacklogFacts facts) => new(
         "Epic",
         "bead-fact-epic",
@@ -222,7 +221,7 @@
         facts.Epic is null ? "text-muted" : string.Empty,
         facts.Epic is { } held ? BeadPageAddress.Of(new BeadAddress(Address.Project, held.Id)) : string.Empty,
         [UiVerbs.MoveIntoAnEpic],
-        FactPicker.OfOneOf([.. TheEpicChoices(facts)]));
+        new FactPicker.OfOneOf([.. TheEpicChoices(facts)]));
 
     // The entries of the epic picker: no epic first, because it is the one entry that every bead can
     // stand in, then the epics by title. A bead is never offered itself. A closed epic is left out,

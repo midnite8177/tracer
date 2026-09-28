@@ -32,19 +32,20 @@ public sealed class DetailMarkupTests : BunitContext
          "dependencies": [{"id": "b-9", "dependency_type": "blocks"}]}
         """;
 
-    // The bead that blocks it, so that the Blocked by list holds one bead. It carries the second
-    // label of the project, thus the labels picker offers a label that the bead of every fact lacks.
+    // The bead that blocks it, so that the Blocked by list holds one bead. It carries a label that
+    // the bead of every fact lacks, so the labels picker offers one to put on.
     private const string TheRecordOfItsBlocker =
         """
         {"id": "b-9", "title": "Choose a registrar", "issue_type": "task", "status": "open",
          "labels": ["docs"]}
         """;
 
-    // The bead that waits for it, so that the Blocks list holds one bead.
+    // The bead that waits for it, so that the Blocks list holds one bead. It carries a label that the
+    // bead of every fact lacks.
     private const string TheRecordOfItsDependent =
         """
         {"id": "b-10", "title": "Launch the site", "issue_type": "feature", "status": "open",
-         "dependencies": [{"id": "b-7", "dependency_type": "blocks"}]}
+         "labels": ["ops"], "dependencies": [{"id": "b-7", "dependency_type": "blocks"}]}
         """;
 
     // A bead that names nothing beside its title and its description: no blocker, no dependent, no
@@ -1390,6 +1391,171 @@ public sealed class DetailMarkupTests : BunitContext
     }
 
     [Fact]
+    public void KeepsTheBeadOnTheScreenWithNoMarkWhileTheProjectWatcherRereadsItAndShowsWhatAnAgentWrote()
+    {
+        var page = ThePageOfTheBeadWithEveryFact();
+        projects.Bd.Holds("show b-7 --json");
+
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+        projects.Clock.Advance(WorkingMark.WaitBeforeShowing);
+
+        Assert.Equal("p2", ThePress(page, "Priority, p2").TextContent.Trim());
+        Assert.Empty(page.FindAll(".re-read-mark"));
+        Assert.Empty(page.FindAll(".re-read-dim"));
+
+        projects.Bd.Answers("show b-7 --json", TheBeadAtPriorityOne);
+
+        page.WaitForAssertion(() => Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim()));
+        Assert.Empty(page.FindAll(".re-read-mark"));
+    }
+
+    [Fact]
+    public void WatchesItsOwnProjectSoThatAWriteUnderItsBeadsDirectoryShowsOnThePage()
+    {
+        Directory.CreateDirectory(projects.Second.BeadsDirectory);
+        var page = ThePageOfTheBeadWithEveryFact();
+
+        projects.Bd.PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadAtPriorityOne);
+        projects.WriteReports.ReportWrite(projects.Second.BeadsDirectory);
+
+        page.WaitForAssertion(
+            () => Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim()),
+            ABacklogCache.LongEnoughForAStrayInvalidationToLand(ProjectWatchers.QuietPeriod));
+        Assert.Empty(page.FindAll(".re-read-mark"));
+    }
+
+    [Fact]
+    public void LeavesTheReReadMarkToTheReReadOfThePersonWhileAReadOfTheProjectWatcherRunsBesideIt()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        var theReReadOfThePerson = projects.Bd.HoldsTheNextRun("show b-7 --json");
+        var theReadOfTheWatcher = projects.Bd.HoldsTheNextRun("show b-7 --json");
+        ThePress(page, "Priority, p2").Click();
+        ThePick(page, "p1").Click();
+        projects.Clock.Advance(WorkingMark.WaitBeforeShowing);
+        page.WaitForAssertion(() => Assert.Single(page.FindAll(".re-read-mark")));
+        projects.Clock.Advance(WorkingMark.Floor);
+
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+        theReadOfTheWatcher.Answers(TheBeadOfTypeFeature);
+
+        page.WaitForAssertion(() => Assert.Equal("feature", ThePress(page, "Type, feature").TextContent.Trim()));
+        Assert.Single(page.FindAll(".re-read-mark"));
+
+        theReReadOfThePerson.Answers(TheBeadAtPriorityOne);
+
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll(".re-read-mark")));
+    }
+
+    [Fact]
+    public void ReadsNothingWhenTheProjectWatcherSeesAnotherProjectChange()
+    {
+        var page = ThePageOfTheBeadWithEveryFact();
+        var shows = projects.Bd.Runs(projects.Second.Value, "show b-7 --json");
+
+        projects.Backlogs.InvalidateFromWatch(projects.First);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+
+        page.WaitForAssertion(() => Assert.True(projects.Bd.Runs(projects.Second.Value, "show b-7 --json") > shows));
+        Assert.Equal(shows + 1, projects.Bd.Runs(projects.Second.Value, "show b-7 --json"));
+    }
+
+    [Fact]
+    public void KeepsTheBeadAndTheOpenPickerAndSaysWhyWhenAReadOfTheProjectWatcherFails()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        ThePick(page, "docs").Click();
+
+        projects.Bd.PrintsIn(projects.Second.Value, "show b-7 --json", "[]");
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+
+        page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll(".bead-stale-read")));
+        var said = page.Find(".bead-stale-read").TextContent;
+        Assert.Contains("This project has no bead b-7.", said, StringComparison.Ordinal);
+        Assert.Contains("The bead on the screen is the one from before.", said, StringComparison.Ordinal);
+        Assert.Contains(TheTitleOfThatBead, page.Find("h1").TextContent, StringComparison.Ordinal);
+        Assert.Equal("p2", ThePress(page, "Priority, p2").TextContent.Trim());
+        Assert.Equal(["docs"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+
+        projects.Bd.PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadAtPriorityOne);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+
+        page.WaitForAssertion(() => Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim()));
+        Assert.Empty(page.FindAll(".bead-stale-read"));
+    }
+
+    [Fact]
+    public void KeepsTheBeadWithNoMarkAndSaysItIsFromBeforeWhenAReadOfTheProjectWatcherOutrunsTheWaitLimit()
+    {
+        var page = ThePageOfTheBeadWithEveryFact();
+        projects.Bd.Holds("show b-7 --json");
+
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+        projects.Clock.Advance(BdAdapter.WaitLimit);
+
+        page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll(".bead-stale-read")));
+        Assert.Contains("bd has not answered again.", page.Find(".bead-stale-read").TextContent, StringComparison.Ordinal);
+        Assert.Equal("p2", ThePress(page, "Priority, p2").TextContent.Trim());
+        Assert.Empty(page.FindAll(".re-read-mark"));
+    }
+
+    [Fact]
+    public void TakesTheBeadAndKeepsTheBacklogFromBeforeAndSaysWhyWhenAReadOfTheProjectWatcherGetsNoBacklog()
+    {
+        var page = ThePageOfTheBeadWithEveryFact();
+
+        projects.Bd
+            .PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadAtPriorityOne)
+            .PrintsIn(projects.Second.Value, ListCommand, "no backlog here");
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+
+        page.WaitForAssertion(() => Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim()));
+        var said = page.Find(".bead-stale-read").TextContent;
+        Assert.Contains("answered with something that is not JSON.", said, StringComparison.Ordinal);
+        Assert.Contains("The backlog on the screen is the one from before.", said, StringComparison.Ordinal);
+        Assert.Empty(page.FindAll(".bead-unread-backlog"));
+        Assert.Contains(
+            "Epic",
+            page.FindAll(".bead-fact-strip .bead-fact")
+                .Select(fact => TheOneIn(".bead-fact-name", fact).TextContent.Trim()));
+        Assert.Contains("Choose a registrar", page.Find(".bead-prose-column").TextContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReadsOnceMoreForABurstOfChangesThatTheProjectWatcherRaisesWhileItsReadRuns()
+    {
+        var page = ThePageOfTheBeadWithEveryFact();
+        var shows = projects.Bd.Runs(projects.Second.Value, "show b-7 --json");
+        projects.Bd.Holds("show b-7 --json");
+
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+
+        page.WaitForAssertion(() => Assert.Equal(shows + 1, projects.Bd.Runs(projects.Second.Value, "show b-7 --json")));
+
+        projects.Bd.PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadAtPriorityOne);
+        projects.Bd.Answers("show b-7 --json", TheBeadAtPriorityOne);
+
+        page.WaitForAssertion(() => Assert.Equal(shows + 2, projects.Bd.Runs(projects.Second.Value, "show b-7 --json")));
+        page.WaitForAssertion(() => Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim()));
+    }
+
+    [Fact]
+    public void RunsNoReadForTheWriteKindChangeOfItsOwnWrite()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        var shows = projects.Bd.Runs(projects.Second.Value, "show b-7 --json");
+
+        ThePress(page, "Priority, p2").Click();
+        ThePick(page, "p1").Click();
+
+        page.WaitForAssertion(() => Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim()));
+        Assert.Equal(shows + 1, projects.Bd.Runs(projects.Second.Value, "show b-7 --json"));
+    }
+
+    [Fact]
     public void ClosesThePickerOnEscapeAndRunsNoCommandAndPutsTheKeyboardBackOnTheValue()
     {
         var page = ThePageOfTheBeadThatBdWrites();
@@ -1403,6 +1569,56 @@ public sealed class DetailMarkupTests : BunitContext
             projects.Bd.Invocations,
             command => command.StartsWith("update b-7", StringComparison.Ordinal));
         Assert.Equal([thePicker, TheReferenceOf(ThePress(page, "Type, task"))], TheFocused());
+    }
+
+    [Theory]
+    [InlineData("Priority, p2")]
+    [InlineData("Labels, human")]
+    public void ClosesThePickerOnAPressOutsideItAndRunsNoCommandAndPutsTheKeyboardBackOnTheValue(string value)
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+
+        ThePress(page, value).Click();
+        var thePicker = TheReferenceOf(page.Find(".bead-fact-picker"));
+        var commandsBefore = projects.Bd.Invocations.ToList();
+        page.Find(".bead-fact-picker-backdrop").Click();
+
+        Assert.Empty(page.FindAll(".bead-fact-strip .bead-fact-picker"));
+        Assert.Equal(commandsBefore, projects.Bd.Invocations);
+        Assert.Equal([thePicker, TheReferenceOf(ThePress(page, value))], TheFocused());
+    }
+
+    [Fact]
+    public void ClosesTheOpenPickerWhenTheKeyboardOpensAnotherRowAndRunsNoCommand()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+
+        ThePress(page, "Priority, p2").Click();
+        var thePriorityPicker = TheReferenceOf(page.Find(".bead-fact-picker"));
+        var commandsBefore = projects.Bd.Invocations.ToList();
+        ThePress(page, "Type, task").Click();
+
+        var thePicker = Assert.Single(page.FindAll(".bead-fact-strip .bead-fact-picker"));
+        Assert.NotNull(ThePress(page, "Priority, p2"));
+        Assert.Contains(thePicker.QuerySelectorAll(".bead-fact-choice"), choice => string.Equals(TheWordsOf(choice), "bug", StringComparison.Ordinal));
+        Assert.Equal(commandsBefore, projects.Bd.Invocations);
+        Assert.Equal([thePriorityPicker, TheReferenceOf(thePicker)], TheFocused());
+    }
+
+    [Fact]
+    public void ClosesTheStatusPickerOnAPressOutsideItWhileItAsksWhyTheWorkEndedAndRunsNoCommand()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+
+        ThePress(page, "Status, needs you").Click();
+        ThePick(page, "closed").Click();
+        page.Find(".bead-fact-answer").Input("The vendor answered.");
+        var commandsBefore = projects.Bd.Invocations.ToList();
+        page.Find(".bead-fact-picker-backdrop").Click();
+
+        Assert.Empty(page.FindAll(".bead-fact-strip .bead-fact-picker"));
+        Assert.Equal(commandsBefore, projects.Bd.Invocations);
+        Assert.Equal("needs you", ThePress(page, "Status, needs you").TextContent.Trim());
     }
 
     [Fact]
@@ -1655,82 +1871,582 @@ public sealed class DetailMarkupTests : BunitContext
         ThePress(page, "Labels, human").Click();
 
         var entries = page.FindAll(".bead-fact-picker .bead-fact-choice");
-        Assert.Equal(["docs", "human"], entries.Select(TheWordsOf));
-        Assert.Equal(["false", "true"], entries.Select(entry => entry.GetAttribute("aria-pressed")));
+        Assert.Equal(["docs", "human", "ops"], entries.Select(TheWordsOf));
+        Assert.Equal(["false", "true", "false"], entries.Select(entry => entry.GetAttribute("aria-pressed")));
         Assert.Equal(
             ["human"],
             entries.Where(entry => entry.QuerySelector(".bead-fact-tick") is not null).Select(TheWordsOf));
     }
 
     [Fact]
-    public void PutsALabelOfTheProjectOnTheBeadOnAPressOfItsEntryAndTicksItWithoutASecondPress()
+    public void WritesNothingOnAPressOfALabelThatTheBeadLacksAndMarksItWithAPlus()
     {
         var page = ThePageOfTheBeadThatBdWrites();
-
         ThePress(page, "Labels, human").Click();
+        var commandsBefore = projects.Bd.Invocations.ToList();
+
         ThePick(page, "docs").Click();
 
-        Assert.Contains("label add b-7 docs", projects.Bd.Invocations);
-        Assert.Equal(
-            ["docs", "human"],
-            page.FindAll(".bead-fact-picker .bead-fact-choice")
-                .Where(entry => entry.QuerySelector(".bead-fact-tick") is not null)
-                .Select(TheWordsOf));
+        Assert.Equal(commandsBefore, projects.Bd.Invocations);
+        Assert.Equal(["docs"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Equal("true", ThePick(page, "docs").GetAttribute("aria-pressed"));
     }
 
     [Fact]
-    public void TakesALabelOffTheBeadOnAPressOfTheEntryThatItCarries()
+    public void WritesNothingOnAPressOfALabelThatTheBeadCarriesAndMarksItWithAMinus()
     {
         var page = ThePageOfTheBeadThatBdWrites();
-
         ThePress(page, "Labels, human").Click();
+        var commandsBefore = projects.Bd.Invocations.ToList();
+
         ThePick(page, "human").Click();
 
-        Assert.Contains("label remove b-7 human", projects.Bd.Invocations);
+        Assert.Equal(commandsBefore, projects.Bd.Invocations);
+        Assert.Equal(["human"], TheLabelsMarkedWith(page, ".bead-fact-minus"));
+        Assert.Empty(TheLabelsMarkedWith(page, ".bead-fact-tick"));
+        Assert.Equal("false", ThePick(page, "human").GetAttribute("aria-pressed"));
     }
 
     [Fact]
-    public void AddsALabelThatTheProjectDoesNotUseYetFromTheBoxAtTheFootOfTheList()
+    public void TakesAnUnsavedTickBackToWhatTheBeadCarriesOnASecondPressOfItsEntry()
     {
         var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+
+        ThePick(page, "docs").Click();
+        ThePick(page, "human").Click();
+        ThePick(page, "docs").Click();
+        ThePick(page, "human").Click();
+
+        Assert.Empty(TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Empty(TheLabelsMarkedWith(page, ".bead-fact-minus"));
+        Assert.Equal(["human"], TheLabelsMarkedWith(page, ".bead-fact-tick"));
+        Assert.Equal("Save 0 changes", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Fact]
+    public void TellsAScreenReaderWhatSaveWillDoToEachEntryThatCarriesAnUnsavedTick()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+
+        ThePick(page, "docs").Click();
+        ThePick(page, "human").Click();
+
+        var entries = page.FindAll(".bead-fact-picker .bead-fact-choice");
+        Assert.Equal(
+            [", will be added", ", will come off", string.Empty],
+            entries.Select(entry => entry.QuerySelector(".visually-hidden")?.TextContent ?? string.Empty));
+        Assert.All(
+            page.FindAll(".bead-fact-picker .bead-fact-plus, .bead-fact-picker .bead-fact-minus"),
+            mark => Assert.Equal("true", mark.GetAttribute("aria-hidden")));
+    }
+
+    [Fact]
+    public void CountsTheUnsavedTicksOnSaveAndPressesNowhereWhileThereAreNone()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+
+        var save = page.Find(".bead-fact-picker .bead-fact-save");
+        Assert.Equal("Save 0 changes", save.TextContent.Trim());
+        Assert.True(save.HasAttribute("disabled"));
+
+        ThePick(page, "docs").Click();
+        Assert.Equal("Save 1 change", page.Find(".bead-fact-save").TextContent.Trim());
+        Assert.False(page.Find(".bead-fact-save").HasAttribute("disabled"));
+
+        ThePick(page, "ops").Click();
+        ThePick(page, "human").Click();
+        Assert.Equal("Save 3 changes", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Fact]
+    public void SendsEveryUnsavedTickInOneUpdateOnSaveAndClosesThePickerOnTheLabelsThatBdReadsBack()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        var commandsBefore = projects.Bd.Invocations.ToList();
+
+        ThePick(page, "docs").Click();
+        ThePick(page, "ops").Click();
+        ThePick(page, "human").Click();
+        page.Find(".bead-fact-save").Click();
+
+        Assert.Equal([TheSaveOfThreeLabels], TheWritesOfLabelsSince(commandsBefore.Count));
+        Assert.Empty(page.FindAll(".bead-fact-strip .bead-fact-picker"));
+        Assert.Equal("docs, ops", ThePress(page, "Labels, docs, ops").TextContent.Trim());
+    }
+
+    [Fact]
+    public void KeepsThePickerOpenWithEveryUnsavedTickAndStatesTheReasonWhenBdRefusesTheSave()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Fails("update b-7 --add-label docs --remove-label human", "label \"docs\" is reserved");
+        ThePress(page, "Labels, human").Click();
+
+        ThePick(page, "docs").Click();
+        ThePick(page, "human").Click();
+        page.Find(".bead-fact-save").Click();
+
+        Assert.Contains(
+            "is reserved",
+            page.Find(".bead-fact-picker .bead-write-message").TextContent,
+            StringComparison.Ordinal);
+        Assert.Equal(["docs"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Equal(["human"], TheLabelsMarkedWith(page, ".bead-fact-minus"));
+        Assert.Equal("Save 2 changes", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ThrowsTheUnsavedTicksAwayAndWritesNothingOnEscapeOrAPressOutsideThePicker(bool escape)
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        var commandsBefore = projects.Bd.Invocations.ToList();
+
+        ThePick(page, "docs").Click();
+        ThePick(page, "human").Click();
+        if (escape)
+        {
+            page.Find(".bead-fact-picker").KeyDown(Key.Escape);
+        }
+        else
+        {
+            page.Find(".bead-fact-picker-backdrop").Click();
+        }
 
         ThePress(page, "Labels, human").Click();
+
+        Assert.Equal(commandsBefore, projects.Bd.Invocations);
+        Assert.Empty(TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Empty(TheLabelsMarkedWith(page, ".bead-fact-minus"));
+        Assert.Equal("Save 0 changes", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Fact]
+    public void KeepsTheUnsavedTicksThroughAReReadThatLeavesTheirLabelsAsTheyWere()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        ThePick(page, "ops").Click();
+        ThePick(page, "human").Click();
+
+        projects.Bd.PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadOfHumanAndSpike);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+
+        page.WaitForAssertion(() => Assert.Equal(["spike"], TheLabelsMarkedWith(page, ".bead-fact-tick")));
+        Assert.Equal(["ops"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Equal(["human"], TheLabelsMarkedWith(page, ".bead-fact-minus"));
+        Assert.Equal("Save 2 changes", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Fact]
+    public void DropsAnUnsavedAddThatAnAgentMadeTrueWhenTheProjectWatcherRereadsTheBeadAndSavesTheRest()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Prints("update b-7 --add-label ops", string.Empty);
+        ThePress(page, "Labels, human").Click();
+        ThePick(page, "docs").Click();
+        ThePick(page, "ops").Click();
+
+        projects.Bd.PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadOfDocsAndHuman);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+
+        page.WaitForAssertion(() => Assert.Equal(["docs", "human"], TheLabelsMarkedWith(page, ".bead-fact-tick")));
+        Assert.Equal(["ops"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Empty(TheLabelsMarkedWith(page, ".bead-fact-minus"));
+        Assert.Equal("Save 1 change", page.Find(".bead-fact-save").TextContent.Trim());
+
+        var commandsBefore = projects.Bd.Invocations.ToList();
+        page.Find(".bead-fact-save").Click();
+
+        Assert.Equal(["update b-7 --add-label ops"], TheWritesOfLabelsSince(commandsBefore.Count));
+    }
+
+    [Fact]
+    public void DropsAnUnsavedRemovalOfALabelThatAReReadTookOffAndSavesTheRest()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Prints("update b-7 --add-label ops", string.Empty);
+        ThePress(page, "Labels, human").Click();
+        ThePick(page, "human").Click();
+        ThePick(page, "ops").Click();
+
+        projects.Bd.PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadOfSpikeAlone);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+
+        page.WaitForAssertion(() => Assert.Equal(["spike"], TheLabelsMarkedWith(page, ".bead-fact-tick")));
+        Assert.Equal(["ops"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Empty(TheLabelsMarkedWith(page, ".bead-fact-minus"));
+        Assert.Equal("Save 1 change", page.Find(".bead-fact-save").TextContent.Trim());
+
+        var commandsBefore = projects.Bd.Invocations.ToList();
+        page.Find(".bead-fact-save").Click();
+
+        Assert.Equal(["update b-7 --add-label ops"], TheWritesOfLabelsSince(commandsBefore.Count));
+    }
+
+    [Fact]
+    public void RefusesAPressOfAnEntryOrOfSaveWhileTheSaveRuns()
+    {
+        projects.Bd.DeclaresEveryWrite().Holds("update b-7 --add-label docs");
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+
+        ThePick(page, "docs").Click();
+        page.Find(".bead-fact-save").Click();
+
+        Assert.Equal("true", page.Find(".bead-fact-choices").GetAttribute("aria-busy"));
+        Assert.Equal("true", page.Find(".bead-fact-save").GetAttribute("aria-busy"));
+        Assert.All(
+            page.FindAll(".bead-fact-picker .bead-fact-choice"),
+            choice => Assert.True(choice.HasAttribute("disabled")));
+        Assert.True(page.Find(".bead-fact-save").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void NamesTheSpellingThatTheBeadCarriesWhenSaveTakesALabelOff()
+    {
+        projects.Bd.DeclaresEveryWrite().Prints("update b-7 --remove-label Human", string.Empty);
+        var page = TheDetailPageOf("b-7", $"[{TheRecordOfAHumanSpelledWithACapital}]", "[]", TheBacklogThatSpellsHumanInLowerCase);
+        ThePress(page, "Labels, Human").Click();
+
+        ThePick(page, "human").Click();
+        page.Find(".bead-fact-save").Click();
+
+        Assert.Contains("update b-7 --remove-label Human", projects.Bd.Invocations);
+        Assert.DoesNotContain("update b-7 --remove-label human", projects.Bd.Invocations);
+    }
+
+    [Fact]
+    public void StatesWhatABdWithoutTheLabelFlagsOfUpdateLacksInPlaceOfTheLabelEntries()
+    {
+        var page = ThePageOfTheBeadWhoseUpdateHasNoLabelFlags();
+
+        ThePress(page, "Labels, human").Click();
+
+        Assert.Equal(
+            "bd update has no --add-label flag.",
+            page.Find(".bead-fact-picker .bead-fact-refusal").TextContent.Trim());
+        Assert.Empty(page.FindAll(".bead-fact-picker .bead-fact-choice"));
+        Assert.Empty(page.FindAll(".bead-fact-picker .bead-fact-save"));
+    }
+
+    [Fact]
+    public void MarksALabelThatTheProjectDoesNotUseYetWithAPlusAtTheFootOfTheEntriesAndWritesNothing()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        var commandsBefore = projects.Bd.Invocations.ToList();
+
         Assert.True(page.Find(".bead-fact-add").HasAttribute("disabled"));
+        TypeIntoTheBox(page, "spike");
+
+        Assert.Equal(commandsBefore, projects.Bd.Invocations);
+        Assert.Equal(["docs", "human", "ops", "spike"], TheEntriesOfThePicker(page));
+        Assert.Equal(["spike"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Equal("Save 1 change", page.Find(".bead-fact-save").TextContent.Trim());
+        Assert.Empty(page.Find(".bead-fact-new").GetAttribute("value") ?? string.Empty);
+    }
+
+    [Fact]
+    public void SendsALabelThatTheBoxTookInTheUpdateThatSaveRuns()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        var commandsBefore = projects.Bd.Invocations.ToList();
+
+        TypeIntoTheBox(page, "spike");
+        page.Find(".bead-fact-save").Click();
+
+        Assert.Equal(["update b-7 --add-label spike"], TheWritesOfLabelsSince(commandsBefore.Count));
+    }
+
+    [Fact]
+    public void TicksTheEntryOfTheProjectWhenTheBoxTakesALabelThatDiffersFromItInCaseAlone()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        var commandsBefore = projects.Bd.Invocations.ToList();
+
+        TypeIntoTheBox(page, "DOCS");
+
+        Assert.Equal(commandsBefore, projects.Bd.Invocations);
+        Assert.Equal(["docs", "human", "ops"], TheEntriesOfThePicker(page));
+        Assert.Equal(["docs"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+
+        page.Find(".bead-fact-save").Click();
+
+        Assert.Equal(["update b-7 --add-label docs"], TheWritesOfLabelsSince(commandsBefore.Count));
+    }
+
+    [Fact]
+    public void PutsTheTypedLabelsAtTheFootOfTheEntriesInTheOrderThatThePersonTypedThem()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+
+        TypeIntoTheBox(page, "spike");
+        TypeIntoTheBox(page, "alpha");
+
+        Assert.Equal(["docs", "human", "ops", "spike", "alpha"], TheEntriesOfThePicker(page));
+        Assert.Equal("Save 2 changes", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Fact]
+    public void TicksTheTypedWordWhenThePersonPressesEnterInTheBox()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+
         page.Find(".bead-fact-new").Input("spike");
-        page.Find(".bead-fact-add").Click();
+        page.Find(".bead-fact-new").KeyDown(Key.Enter);
 
-        Assert.Contains("label add b-7 spike", projects.Bd.Invocations);
+        Assert.Equal(["spike"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.NotEmpty(page.FindAll(".bead-fact-strip .bead-fact-picker"));
     }
 
     [Fact]
-    public void WritesTheSpellingOfTheProjectWhenTheBoxTakesALabelThatDiffersFromItInCaseAlone()
+    public void RefusesABlankWordOnEnterAndSaysWhy()
     {
         var page = ThePageOfTheBeadThatBdWrites();
-
         ThePress(page, "Labels, human").Click();
-        page.Find(".bead-fact-new").Input("DOCS");
-        page.Find(".bead-fact-add").Click();
 
-        Assert.Contains("label add b-7 docs", projects.Bd.Invocations);
-        Assert.DoesNotContain("label add b-7 DOCS", projects.Bd.Invocations);
+        page.Find(".bead-fact-new").Input("   ");
+        page.Find(".bead-fact-new").KeyDown(Key.Enter);
+
+        Assert.Equal(
+            "A label needs a word.",
+            page.Find(".bead-fact-picker .bead-write-message").TextContent.Trim());
+        Assert.Empty(TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Equal("Save 0 changes", page.Find(".bead-fact-save").TextContent.Trim());
     }
 
     [Fact]
-    public void WritesNothingAndSaysSoWhenTheBoxTakesALabelThatTheBeadAlreadyCarries()
+    public void RefusesAWordThatHoldsACommaAndSaysThatALabelCannotHoldOne()
     {
         var page = ThePageOfTheBeadThatBdWrites();
-
         ThePress(page, "Labels, human").Click();
-        page.Find(".bead-fact-new").Input("Human");
-        page.Find(".bead-fact-add").Click();
 
-        Assert.DoesNotContain(
-            projects.Bd.Invocations,
-            command => command.StartsWith("label add b-7", StringComparison.Ordinal));
+        TypeIntoTheBox(page, "a,b");
+
+        Assert.Contains(
+            "cannot hold a comma",
+            page.Find(".bead-fact-picker .bead-write-message").TextContent,
+            StringComparison.Ordinal);
+        Assert.Equal(["docs", "human", "ops"], TheEntriesOfThePicker(page));
+        Assert.Empty(TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Equal("Save 0 changes", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Fact]
+    public void RefusesALabelThatTheBeadAlreadyCarriesAndNamesItsSpelling()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        var commandsBefore = projects.Bd.Invocations.ToList();
+
+        TypeIntoTheBox(page, "Human");
+
+        Assert.Equal(commandsBefore, projects.Bd.Invocations);
         Assert.Contains(
             "already carries human",
             page.Find(".bead-fact-picker .bead-write-message").TextContent,
             StringComparison.Ordinal);
+        Assert.Equal(["human"], TheLabelsMarkedWith(page, ".bead-fact-tick"));
+        Assert.Equal("Save 0 changes", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Fact]
+    public void RefusesALabelThatTheBeadCarriesAndKeepsTheMinusThatItsEntryHolds()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        ThePick(page, "human").Click();
+
+        TypeIntoTheBox(page, "human");
+
+        Assert.Contains(
+            "already carries human",
+            page.Find(".bead-fact-picker .bead-write-message").TextContent,
+            StringComparison.Ordinal);
+        Assert.Equal(["human"], TheLabelsMarkedWith(page, ".bead-fact-minus"));
+        Assert.Equal("Save 1 change", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Fact]
+    public void DropsTheReasonOfARefusedWordOnTheNextPressOfAnEntry()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        TypeIntoTheBox(page, "a,b");
+
+        ThePick(page, "docs").Click();
+
+        Assert.Empty(page.FindAll(".bead-fact-picker .bead-write-message"));
+    }
+
+    [Theory]
+    [InlineData("a,b")]
+    [InlineData("Human")]
+    public void KeepsARefusedWordInTheBoxSoThePersonCanCorrectIt(string typed)
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+
+        TypeIntoTheBox(page, typed);
+
+        Assert.NotEmpty(page.FindAll(".bead-fact-picker .bead-write-message"));
+        Assert.Equal(typed, page.Find(".bead-fact-new").GetAttribute("value"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void DropsTheReasonOfARefusedSaveOnTheNextPressOfAnEntryOrWordThatTheBoxTakes(bool press)
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Fails("update b-7 --add-label docs --remove-label human", "label \"docs\" is reserved");
+        ThePress(page, "Labels, human").Click();
+        ThePick(page, "docs").Click();
+        ThePick(page, "human").Click();
+        page.Find(".bead-fact-save").Click();
+
+        if (press)
+        {
+            ThePick(page, "ops").Click();
+        }
+        else
+        {
+            TypeIntoTheBox(page, "spike");
+        }
+
+        Assert.Empty(page.FindAll(".bead-fact-picker .bead-write-message"));
+        Assert.Equal("Save 3 changes", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Fact]
+    public void KeepsThePlusOfAnEntryAndSaysNothingWhenTheBoxTakesItsWordAgain()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        ThePick(page, "docs").Click();
+
+        TypeIntoTheBox(page, "docs");
+
+        Assert.Equal(["docs"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Empty(page.FindAll(".bead-fact-picker .bead-write-message"));
+        Assert.Equal("Save 1 change", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Fact]
+    public void KeepsOneTypedEntryWithTheFirstSpellingWhenTheBoxTakesItsWordAgainInAnotherCase()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+
+        TypeIntoTheBox(page, "spike");
+        TypeIntoTheBox(page, "SPIKE");
+
+        Assert.Equal(["docs", "human", "ops", "spike"], TheEntriesOfThePicker(page));
+        Assert.Equal(["spike"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+    }
+
+    [Fact]
+    public void KeepsATypedEntryUntickedInTheListWhenAPressTakesItsPlusOffAndPutsItBackOnASecondPress()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        TypeIntoTheBox(page, "spike");
+
+        ThePick(page, "spike").Click();
+
+        Assert.Equal("false", ThePick(page, "spike").GetAttribute("aria-pressed"));
+        Assert.Empty(TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Equal("Save 0 changes", page.Find(".bead-fact-save").TextContent.Trim());
+
+        ThePick(page, "spike").Click();
+
+        Assert.Equal(["spike"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ThrowsATypedEntryAwayOnEscapeOrAPressOutsideThePicker(bool escape)
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        TypeIntoTheBox(page, "spike");
+
+        if (escape)
+        {
+            page.Find(".bead-fact-picker").KeyDown(Key.Escape);
+        }
+        else
+        {
+            page.Find(".bead-fact-picker-backdrop").Click();
+        }
+
+        ThePress(page, "Labels, human").Click();
+
+        Assert.Equal(["docs", "human", "ops"], TheEntriesOfThePicker(page));
+    }
+
+    [Fact]
+    public void KeepsATypedEntryWithItsPlusThroughAReReadThatListsItsLabelNowhere()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        TypeIntoTheBox(page, "spike");
+
+        projects.Bd.PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadAtPriorityOne);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+
+        page.WaitForAssertion(() => Assert.Equal("p1", ThePress(page, "Priority, p1").TextContent.Trim()));
+        Assert.Equal(["docs", "human", "ops", "spike"], TheEntriesOfThePicker(page));
+        Assert.Equal(["spike"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+    }
+
+    [Fact]
+    public void DropsATypedAddThatAReReadMadeTrueAndLeavesOneEntryOfItsLabel()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        ThePress(page, "Labels, human").Click();
+        TypeIntoTheBox(page, "Spike");
+
+        projects.Bd.PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadOfHumanAndSpike);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+
+        page.WaitForAssertion(() => Assert.Equal(["human", "spike"], TheLabelsMarkedWith(page, ".bead-fact-tick")));
+        Assert.Equal(["docs", "human", "ops", "spike"], TheEntriesOfThePicker(page));
+        Assert.Empty(TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        Assert.Equal("Save 0 changes", page.Find(".bead-fact-save").TextContent.Trim());
+    }
+
+    [Fact]
+    public void MovesThePlusOfATypedEntryToTheEntryOfTheProjectOnceAReReadListsItsLabel()
+    {
+        var page = ThePageOfTheBeadThatBdWrites();
+        projects.Bd.Prints("update b-7 --add-label spike", string.Empty);
+        ThePress(page, "Labels, human").Click();
+        TypeIntoTheBox(page, "Spike");
+
+        projects.Bd.PrintsIn(projects.Second.Value, ListCommand, TheBacklogOfThatBeadBesideASpike);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+
+        page.WaitForAssertion(() => Assert.Equal(
+            ["docs", "human", "ops", "spike"],
+            TheEntriesOfThePicker(page)));
+        Assert.Equal(["spike"], TheLabelsMarkedWith(page, ".bead-fact-plus"));
+        var commandsBefore = projects.Bd.Invocations.ToList();
+
+        page.Find(".bead-fact-save").Click();
+
+        Assert.Equal(["update b-7 --add-label spike"], TheWritesOfLabelsSince(commandsBefore.Count));
     }
 
     [Fact]
@@ -1761,7 +2477,7 @@ public sealed class DetailMarkupTests : BunitContext
 
         Assert.Equal(
             ["no epic", "Choose the vendor", "Move the mail", "Ship the site"],
-            page.FindAll(".bead-fact-picker .bead-fact-choice").Select(TheWordsOf));
+            TheEntriesOfThePicker(page));
     }
 
     [Fact]
@@ -1853,6 +2569,31 @@ public sealed class DetailMarkupTests : BunitContext
     private static IElement ThePress(IRenderedComponent<DetailPage> page, string accessibleName) =>
         page.Find($".bead-fact-value button[aria-label='{accessibleName}']");
 
+    private static IReadOnlyList<string> TheLabelsMarkedWith(IRenderedComponent<DetailPage> page, string mark) =>
+    [
+        .. page.FindAll(".bead-fact-picker .bead-fact-choice")
+            .Where(entry => entry.QuerySelector(mark) is not null)
+            .Select(TheWordsOf),
+    ];
+
+    private static IReadOnlyList<string> TheEntriesOfThePicker(IRenderedComponent<DetailPage> page) =>
+        [.. page.FindAll(".bead-fact-picker .bead-fact-choice").Select(TheWordsOf)];
+
+    private static void TypeIntoTheBox(IRenderedComponent<DetailPage> page, string word)
+    {
+        page.Find(".bead-fact-new").Input(word);
+        page.Find(".bead-fact-add").Click();
+    }
+
+    private IReadOnlyList<string> TheWritesOfLabelsSince(int count) =>
+    [
+        .. projects.Bd.Invocations
+            .Skip(count)
+            .Where(command =>
+                command.StartsWith("update", StringComparison.Ordinal)
+                || command.StartsWith("label", StringComparison.Ordinal)),
+    ];
+
     private static IElement ThePick(IRenderedComponent<DetailPage> page, string text) =>
         page.FindAll(".bead-fact-picker .bead-fact-choice")
             .Single(entry => string.Equals(TheWordsOf(entry), text, StringComparison.Ordinal));
@@ -1869,12 +2610,13 @@ public sealed class DetailMarkupTests : BunitContext
             .Prints("update b-7 --status in_progress", string.Empty)
             .Prints("update b-7 --status open", string.Empty)
             .Prints("defer b-7", string.Empty)
-            .Prints("label add b-7 docs", string.Empty)
+            .Prints("update b-7 --add-label docs", string.Empty)
+            .Prints("update b-7 --add-label spike", string.Empty)
+            .Prints("update b-7 --add-label docs --remove-label human", string.Empty)
+            .Prints(TheSaveOfThreeLabels, string.Empty)
             .After(
-                "label add b-7 docs",
-                bd => bd.PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadOfTwoLabels))
-            .Prints("label add b-7 spike", string.Empty)
-            .Prints("label remove b-7 human", string.Empty)
+                TheSaveOfThreeLabels,
+                bd => bd.PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadOfDocsAndOps))
             .Prints("update b-7 --parent b-2", string.Empty)
             .Prints("update b-7 --parent ", string.Empty)
             .Prints("close b-7 --reason The vendor answered.", string.Empty)
@@ -1910,6 +2652,18 @@ public sealed class DetailMarkupTests : BunitContext
         return ThePageOfTheBead(TheBeadWithEveryFact, "[]");
     }
 
+    private IRenderedComponent<DetailPage> ThePageOfTheBeadWhoseUpdateHasNoLabelFlags()
+    {
+        projects.Bd
+            .DeclaresEveryWrite()
+            .Prints("update --help", """
+                Flags:
+                  -p, --priority string        Priority
+                  -s, --status string          New status
+                """);
+        return ThePageOfTheBead(TheBeadWithEveryFact, "[]");
+    }
+
     // The detail page of that bead, closed, read from a bd that takes every write of one bead, so
     // that a test presses the status of a bead which a person can reopen.
     private IRenderedComponent<DetailPage> ThePageOfTheClosedBeadThatBdWrites()
@@ -1936,8 +2690,44 @@ public sealed class DetailMarkupTests : BunitContext
             """;
     }
 
-    private static string TheBeadOfTwoLabels =>
-        TheBeadBdGivesBack("Pick a hosting plan", "task", 2, ["human", "docs"]);
+    private const string TheSaveOfThreeLabels =
+        "update b-7 --add-label docs --add-label ops --remove-label human";
+
+    private static string TheBeadOfDocsAndOps =>
+        TheBeadBdGivesBack("Pick a hosting plan", "task", 2, ["docs", "ops"]);
+
+    private static string TheBeadOfDocsAndHuman =>
+        TheBeadBdGivesBack("Pick a hosting plan", "task", 2, ["docs", "human"]);
+
+    private static string TheBeadOfHumanAndSpike =>
+        TheBeadBdGivesBack("Pick a hosting plan", "task", 2, ["human", "spike"]);
+
+    private static string TheBeadOfSpikeAlone =>
+        TheBeadBdGivesBack("Pick a hosting plan", "task", 2, ["spike"]);
+
+    private const string TheBacklogOfThatBeadBesideASpike =
+        $"[{TheRecordOfItsEpic}, {TheRecordOfASecondEpic}, {TheRecordOfThatBead}, "
+        + $"{TheRecordOfItsBlocker}, {TheRecordOfItsDependent}, {TheRecordOfASpike}]";
+
+    private const string TheRecordOfASpike =
+        """
+        {"id": "b-11", "title": "Try the cheap plan", "issue_type": "task", "priority": 3,
+         "status": "open", "parent": "b-1", "labels": ["spike"]}
+        """;
+
+    private const string TheRecordOfAHumanSpelledWithACapital =
+        """
+        {"id": "b-7", "title": "Pick a hosting plan", "issue_type": "task", "priority": 2,
+         "status": "open", "labels": ["Human"], "description": "Two plans remain."}
+        """;
+
+    private const string TheBacklogThatSpellsHumanInLowerCase =
+        """
+        [{"id": "b-9", "title": "Choose a registrar", "issue_type": "task", "status": "open",
+          "labels": ["human"]},
+         {"id": "b-7", "title": "Pick a hosting plan", "issue_type": "task", "priority": 2,
+          "status": "open", "labels": ["Human"], "description": "Two plans remain."}]
+        """;
 
     private const string TheWriteOfASharperTitle =
         "update b-7 --title A sharper title --description Two plans remain.";

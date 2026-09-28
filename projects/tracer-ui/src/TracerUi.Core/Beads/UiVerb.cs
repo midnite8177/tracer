@@ -70,6 +70,9 @@ public static class UiVerbs
     public static UiVerb LabelABead { get; } =
         new("Add and remove a label", "label", ["add", "remove"], []);
 
+    public static UiVerb ChangeTheLabels { get; } =
+        new("Change the labels of a bead", "update", [], ["--add-label", "--remove-label"]);
+
     public static UiVerb CloseWithAReason { get; } =
         new("Close a bead with a reason", "close", [], ["--reason"]);
 
@@ -103,6 +106,7 @@ public static class UiVerbs
         EditTheAcceptanceCriteria,
         RewriteTheNotes,
         LabelABead,
+        ChangeTheLabels,
         CloseWithAReason,
         DeferABead,
         UndeferABead,

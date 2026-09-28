@@ -72,8 +72,14 @@
     --tracer-detail-facts: 16.25rem;
     --tracer-detail-page: 80rem;
 
-    /* The stack order of the chrome: the top bar covers the page under it. */
+    /*
+        The top bar covers the page under it. The backdrop of an open fact picker
+        covers the top bar too, so a press anywhere outside the picker, a link of
+        the top bar included, only closes the picker.
+    */
     --tracer-layer-top-bar: 2;
+    --tracer-layer-picker-backdrop: 3;
+    --tracer-layer-picker: 4;
 }
 
 /* The light theme, which the app shows when no choice and no system asks for dark. */

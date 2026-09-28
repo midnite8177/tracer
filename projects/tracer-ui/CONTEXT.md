@@ -153,7 +153,8 @@ _Avoid_: Error banner, warning, notice, alert
 **Press to edit**:
 The rule that a value the detail page shows is the control that changes
 it. A press turns that one row into its picker, a pick writes at once,
-and the row shows the new value and says nothing else. The title, the
+and the row shows the new value and says nothing else. The labels wait
+for Save, so several of them change as one. The title, the
 description and the acceptance criteria follow the same rule, each with
 the box that its own text wants: one line for the title, and the box
 beside the live preview for the other two. The notes are the exception,
@@ -179,18 +180,30 @@ What a press to edit opens: the entries of one field, in the place that the
 row held. It marks the entry that the bead is in now, because the value of a
 row does not always print one of the entries. A field that a bead carries
 several of, such as the labels, ticks each entry that the bead carries, and
-a press on a ticked entry takes it off. A pick writes at once. A picker of one
-value then closes, and a picker of several stays open with its new marks,
-because the next press of it is another value of the same field. A pick that
+a press on a ticked entry marks it to come off. In a picker of one value a pick
+writes at once and the picker closes. In a picker of several a press makes
+an unsaved tick, and Save sends every unsaved tick as one change and closes
+the picker, because a person who changes one label often changes a second.
+A pick that
 needs words from a person writes nothing yet: a pick of closed opens the close
 reason, and nothing writes until the person answers it. A picker whose
 entries are the vocabulary of the project carries a box at its foot for a
 value that the project does not use yet, and a word that the project already
-uses writes the spelling that the project settled on. Escape closes the picker
-and writes nothing.
-A bd that cannot write that field gets the reason there instead of the
-entries.
+uses takes the spelling that the project settled on. A label cannot hold a
+comma, because bd reads one as two labels. Escape or a press outside closes
+the picker and writes nothing. A bd that cannot write that field gets the
+reason there instead of the entries.
 _Avoid_: Dropdown, menu, chooser, options list
+
+**Unsaved tick**:
+One press in a picker of several that Save has not sent: a label to add,
+marked with a plus, or one to take off, marked with a minus. A word typed
+into the box at the foot of the picker is an unsaved add too. Save counts
+them and presses nowhere while there are none. A re-read keeps them, and one
+that the re-read makes true drops out. Escape, a press outside the picker or
+a walk to another page throws them away. A Save that bd refuses keeps them
+all and says why, because nothing was written.
+_Avoid_: Pending change, draft, staged label, held label
 
 **Top bar**:
 The one strip of chrome, which every page carries. It names the app, it
@@ -716,7 +729,10 @@ nothing, so that one blanks the page and says it is reading. A read that
 a project watcher caused is no re-read: no person pressed anything, so
 the page says nothing and takes the new beads when they come. On the
 board, a read that fails after the board has shown beads keeps what is on
-the screen too, re-read or not, and says why it failed. See
+the screen too, re-read or not, and says why it failed. The detail page
+does the same for a read that a project watcher caused, and when such a
+read gives the bead and no backlog, the page takes the bead, keeps the
+backlog it showed and says why. See
 [ADR 0015](docs/adr/0015-a-re-read-keeps-what-is-on-the-screen.md).
 _Avoid_: Refresh, reload, loading, stale board
 
@@ -731,10 +747,10 @@ _Avoid_: Refresh spinner, loading indicator, stale banner
 **Project watcher**:
 The watch on the `.beads` directory of one project. An agent writes there
 while the app is open, so a change invalidates the backlog of that
-project and the board reads it again. Where the project has a Dolt
-journal, a change counts only when the journal check agrees. One command
-of `bd` writes several files, so the watch waits for a quiet period and
-invalidates once.
+project, and the board or the detail page that shows it reads it again.
+Where the project has a Dolt journal, a change counts only when the
+journal check agrees. One command of `bd` writes several files, so the
+watch waits for a quiet period and invalidates once.
 _Avoid_: File watcher, monitor, listener, poller
 
 **Report of a write**:

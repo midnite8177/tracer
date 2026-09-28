@@ -30,7 +30,8 @@ A field of one value and a field of many read differently in the same
 picker. A status picker marks the one entry that the bead stands in. A
 labels picker ticks each label that the bead carries, and a press on a
 ticked entry takes that label off. It stays open after a write, because a
-person who ticks one label often ticks a second. The labels picker also
+person who ticks one label often ticks a second. [ADR 0017](0017-the-labels-picker-waits-for-save.md)
+replaces that write with a Save of every tick at once. The labels picker also
 carries a box at its foot, because a list of the labels that the project
 already uses traps the person who has a new one. A word in that box which
 the project already uses writes the spelling of the project, so the one

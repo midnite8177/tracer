@@ -284,11 +284,9 @@ else
     private string whyTheBeadsAreFromBefore = string.Empty;
     private IDisposable? switchWalk;
 
-    private const string NoAnswerAgain = "bd has not answered again.";
-
     protected override void OnInitialized()
     {
-        Backlogs.Changed += OnBacklogChanged;
+        FollowTheBacklog(Backlogs, TheProject, TakeTheChange);
         switchWalk = Switches.WalkTo(BoardFilterAddress.OfEverythingIn);
     }
 
@@ -343,32 +341,14 @@ else
         Watchers.Watch(project);
     }
 
-    private void OnBacklogChanged(BacklogChange change)
+    private Task TakeTheChange(BacklogChange change)
     {
-        if (!TheProject.Shows(change.Project))
-        {
-            return;
-        }
-
         if (change.IsReRead)
         {
             nextReadIsAReread = true;
         }
 
-        _ = InvokeAsync(RereadOrHandTheThrowToTheRenderer);
-    }
-
-    // Nothing awaits this read, so a throw would otherwise vanish with the task.
-    private async Task RereadOrHandTheThrowToTheRenderer()
-    {
-        try
-        {
-            await Reread();
-        }
-        catch (Exception unexpected)
-        {
-            await DispatchExceptionAsync(unexpected);
-        }
+        return Reread();
     }
 
     // Reads the backlog again and draws the board. A read that arrives while another one runs waits
@@ -407,7 +387,7 @@ else
 
     public void Dispose()
     {
-        Backlogs.Changed -= OnBacklogChanged;
+        StopFollowingTheBacklog();
         switchWalk?.Dispose();
     }
 

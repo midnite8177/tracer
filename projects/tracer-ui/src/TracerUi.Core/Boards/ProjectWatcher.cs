@@ -4,7 +4,7 @@ namespace TracerUi.Core.Boards;
 
 /// <summary>
 /// The watch on the .beads directory of one project. An agent writes to .beads while the app is
-/// open, so a change there invalidates the backlog of that project and the board reads it again.
+/// open, so a change there invalidates the backlog of that project.
 /// </summary>
 /// <remarks>
 /// One command of bd writes several files, and the file system reports each write on its own. The

@@ -173,6 +173,34 @@ public sealed class BdAdapter
     public Task<BdWriteOutcome> RemoveLabelAsync(BeadAddress bead, BeadLabel label) =>
         WriteAsync(bead, UiVerbs.LabelABead, ["label", "remove", bead.Id, label.Word]);
 
+    /// <summary>
+    /// Adds and removes labels of a bead in one update. It names only the labels that change and
+    /// never the whole set, so a label that another writer put on the bead meanwhile stays. The
+    /// adapter refuses a change that names no label and runs nothing. bd splits the value of
+    /// --add-label and --remove-label at each comma, so a label with a comma lands as two labels.
+    /// </summary>
+    public Task<BdWriteOutcome> ChangeLabelsAsync(
+        BeadAddress bead,
+        IReadOnlyList<BeadLabel> adds,
+        IReadOnlyList<BeadLabel> removes)
+    {
+        if (adds.Count == 0 && removes.Count == 0)
+        {
+            return Task.FromResult(
+                BdWriteOutcome.Failure("A change of the labels needs a label to add or to take off."));
+        }
+
+        return WriteAsync(
+            bead,
+            UiVerbs.ChangeTheLabels,
+            [
+                "update",
+                bead.Id,
+                .. adds.SelectMany(label => new[] { "--add-label", label.Word }),
+                .. removes.SelectMany(label => new[] { "--remove-label", label.Word }),
+            ]);
+    }
+
     /// <summary>Sets the priority of a bead. bd takes a number from 0 to 4, where 0 is the most urgent.</summary>
     public Task<BdWriteOutcome> SetPriorityAsync(BeadAddress bead, long priority) =>
         WriteAsync(

@@ -143,10 +143,10 @@ public static class BulkVerbs
             value, BeadType.TryParse, type => bd.SetTypeAsync(bead, type), $"{value} is not a bead type.");
 
     private static Task<BdWriteOutcome> AddTheLabelAsync(BdAdapter bd, BeadAddress bead, string value) =>
-        CheckedWrite.Async(value, label => bd.AddLabelAsync(bead, label), "A label needs a word.");
+        CheckedWrite.Async(value, label => bd.AddLabelAsync(bead, label), BeadLabel.NeedsAWord);
 
     private static Task<BdWriteOutcome> RemoveTheLabelAsync(BdAdapter bd, BeadAddress bead, string value) =>
-        CheckedWrite.Async(value, label => bd.RemoveLabelAsync(bead, label), "A label needs a word.");
+        CheckedWrite.Async(value, label => bd.RemoveLabelAsync(bead, label), BeadLabel.NeedsAWord);
 }
 
 /// <summary>

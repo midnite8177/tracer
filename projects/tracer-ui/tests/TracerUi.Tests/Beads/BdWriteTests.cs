@@ -82,6 +82,84 @@ public sealed class BdWriteTests
     }
 
     [Fact]
+    public async Task AddsAndRemovesLabelsInOneUpdateWithAFlagForEachLabel()
+    {
+        var bd = BdThatWrites()
+            .Prints("update x-1 --add-label docs --add-label spike --remove-label human", string.Empty);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
+
+        var outcome = await adapter.ChangeLabelsAsync(Bead, [Label("docs"), Label("spike")], [Label("human")]);
+
+        Assert.True(outcome.Wrote);
+        Assert.Equal(
+            ["update x-1 --add-label docs --add-label spike --remove-label human"],
+            bd.Invocations.Where(command => command.StartsWith("update x-1", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task SendsOnlyAddLabelFlagsWhenTheChangeRemovesNoLabel()
+    {
+        var bd = BdThatWrites().Prints("update x-1 --add-label docs --add-label spike", string.Empty);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
+
+        var outcome = await adapter.ChangeLabelsAsync(Bead, [Label("docs"), Label("spike")], []);
+
+        Assert.True(outcome.Wrote);
+        Assert.Equal(
+            ["update x-1 --add-label docs --add-label spike"],
+            bd.Invocations.Where(command => command.StartsWith("update x-1", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task SendsOnlyRemoveLabelFlagsWhenTheChangeAddsNoLabel()
+    {
+        var bd = BdThatWrites().Prints("update x-1 --remove-label human --remove-label docs", string.Empty);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
+
+        var outcome = await adapter.ChangeLabelsAsync(Bead, [], [Label("human"), Label("docs")]);
+
+        Assert.True(outcome.Wrote);
+        Assert.Equal(
+            ["update x-1 --remove-label human --remove-label docs"],
+            bd.Invocations.Where(command => command.StartsWith("update x-1", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task RefusesALabelChangeThatAddsAndRemovesNothingAndRunsNoCommand()
+    {
+        var bd = BdThatWrites();
+        var adapter = new BdAdapter(bd, TimeProvider.System);
+
+        var outcome = await adapter.ChangeLabelsAsync(Bead, [], []);
+
+        Assert.False(outcome.Wrote);
+        Assert.Equal("A change of the labels needs a label to add or to take off.", outcome.Message);
+        Assert.DoesNotContain(bd.Invocations, command => command.StartsWith("update", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RefusesALabelChangeWhenTheUpdateOfTheInstalledBdHasNoAddLabelFlag()
+    {
+        var bd = new FakeBd()
+            .Prints("version", "bd version 1.0.0")
+            .Prints("--help", """
+                Working With Issues:
+                  update            Update one or more issues
+                """)
+            .Prints("update --help", """
+                Flags:
+                      --remove-label strings   Remove labels
+                """);
+        var adapter = new BdAdapter(bd, TimeProvider.System);
+
+        var outcome = await adapter.ChangeLabelsAsync(Bead, [Label("docs")], []);
+
+        Assert.False(outcome.Wrote);
+        Assert.Equal("bd update has no --add-label flag.", outcome.Message);
+        Assert.DoesNotContain("update x-1 --add-label docs", bd.Invocations);
+    }
+
+    [Fact]
     public async Task SetsThePriorityThroughTheUpdateCommandOfBd()
     {
         var bd = BdThatWrites().Prints("update x-1 --priority 1", string.Empty);

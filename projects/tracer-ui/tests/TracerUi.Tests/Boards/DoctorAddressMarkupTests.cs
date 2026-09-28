@@ -122,6 +122,23 @@ public sealed class DoctorAddressMarkupTests : BunitContext
         Assert.Equal(nextPage, Navigation.ToBaseRelativePath(TheAddress()));
     }
 
+    [Fact]
+    public void ListsTheChangeOfTheLabelsAsOneUpdateWithItsTwoFlags()
+    {
+        projects.Bd.DeclaresEveryWrite();
+
+        var doctor = TheDoctorAt(DoctorAddress.Of(projects.Second), theActiveProject: null);
+
+        doctor.WaitForAssertion(() =>
+        {
+            var row = doctor.FindAll("tbody tr")
+                .Single(verb => string.Equals(
+                    verb.QuerySelector("td")?.TextContent, "Change the labels of a bead", StringComparison.Ordinal));
+            Assert.Equal("bd update --add-label --remove-label", row.QuerySelector("code")?.TextContent);
+            Assert.Equal("available", row.QuerySelector(".text-success")?.TextContent);
+        });
+    }
+
     private static string TheVersionOn(IRenderedComponent<Doctor> doctor) =>
         doctor.FindAll("strong.machine-text").Select(version => version.TextContent).SingleOrDefault(string.Empty);
 

@@ -26,6 +26,12 @@ public sealed class DetailAddressMarkupTests : BunitContext
 
     private const string TheTitleOfTheOtherBeadOfTheSecondProject = "Book the venue";
 
+    private const string TheBeadOfTheSecondProjectThatCarriesDocs =
+        """[{"id": "b-7", "title": "Pick a hosting plan", "status": "open", "labels": ["docs"]}]""";
+
+    private const string TheOtherBeadOfTheSecondProjectThatCarriesDocs =
+        """[{"id": "b-9", "title": "Book the venue", "status": "open", "labels": ["docs"]}]""";
+
     private const string TheBeadOfTheFirstProject =
         """[{"id": "b-7", "title": "Name the release", "status": "open"}]""";
 
@@ -323,6 +329,35 @@ public sealed class DetailAddressMarkupTests : BunitContext
 
         page.WaitForState(() => page.RenderCount > renders);
         Assert.Single(page.FindAll(".re-read-mark"));
+    }
+
+    [Fact]
+    public void ThrowsTheUnsavedTicksAwayAndWritesNothingWhenTheAddressWalksToAnotherBead()
+    {
+        TheServicesOfThePageAt(TheAddressOfTheBead, theActiveProject: null);
+        projects.Bd
+            .DeclaresEveryWrite()
+            .PrintsIn(projects.Second.Value, "show b-7 --json", TheBeadOfTheSecondProjectThatCarriesDocs)
+            .PrintsIn(projects.Second.Value, "show b-9 --json", TheOtherBeadOfTheSecondProjectThatCarriesDocs)
+            .PrintsIn(projects.Second.Value, "comments b-9 --json", "[]");
+        var page = Render<DetailPage>(parameters => parameters.Add(detail => detail.Id, "b-7"));
+        page.WaitForAssertion(() => ThePress(page, "Labels, docs"));
+        ThePress(page, "Labels, docs").Click();
+        ThePick(page, "docs").Click();
+        var commandsBefore = projects.Bd.Invocations.Count;
+
+        TheRouterWalks(page, TheAddressIn(projects.Second, "b-9"), "b-9");
+        page.WaitForAssertion(() =>
+            Assert.Contains(TheTitleOfTheOtherBeadOfTheSecondProject, page.Find("h1").TextContent, StringComparison.Ordinal));
+
+        Assert.Empty(page.FindAll(".bead-fact-strip .bead-fact-picker"));
+        ThePress(page, "Labels, docs").Click();
+        Assert.Empty(page.FindAll(".bead-fact-picker .bead-fact-plus, .bead-fact-picker .bead-fact-minus"));
+        Assert.Equal("Save 0 changes", page.Find(".bead-fact-save").TextContent.Trim());
+        Assert.DoesNotContain(
+            projects.Bd.Invocations.Skip(commandsBefore),
+            command => command.StartsWith("update", StringComparison.Ordinal)
+                || command.StartsWith("label", StringComparison.Ordinal));
     }
 
     private NavigationManager Navigation => Services.GetRequiredService<NavigationManager>();

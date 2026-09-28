@@ -386,6 +386,16 @@ textarea.bead-prose-editor {
     display: flex;
     flex-direction: column;
     gap: var(--tracer-space-1);
+    /* Without these the backdrop covers the entries, and a pick only closes the picker. */
+    position: relative;
+    z-index: var(--tracer-layer-picker);
+}
+
+.bead-fact-picker-backdrop {
+    background: transparent;
+    inset: 0;
+    position: fixed;
+    z-index: var(--tracer-layer-picker-backdrop);
 }
 
 .bead-fact-choices {
@@ -434,6 +444,24 @@ textarea.bead-prose-editor {
 */
 .bead-fact-tick {
     margin-right: var(--tracer-space-1);
+}
+
+.bead-fact-plus,
+.bead-fact-minus {
+    margin-right: var(--tracer-space-1);
+    font-weight: 600;
+}
+
+.bead-fact-plus {
+    color: var(--tracer-success-fg);
+}
+
+.bead-fact-minus {
+    color: var(--tracer-danger-fg);
+}
+
+.bead-fact-save {
+    margin-top: var(--tracer-space-1);
 }
 
 /*

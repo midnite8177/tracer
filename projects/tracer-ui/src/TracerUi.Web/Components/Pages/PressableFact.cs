@@ -34,34 +34,54 @@ public sealed record PressableFact(
     FactPicker Picker);
 
 /// <summary>
-/// What a press to edit opens: the entries of one field, how many of them the bead stands in, and
-/// the box that makes an entry the field does not offer yet.
+/// What a press to edit opens: the entries of one field, as a picker of one value or a picker of
+/// several.
 /// </summary>
-/// <param name="Marks">How many entries of this picker the bead stands in.</param>
-/// <param name="Choices">What the picker offers, in the order that it draws them.</param>
-/// <param name="Addition">
-/// The box at the foot that makes a value the entries do not hold, or none when the entries are the
-/// whole field.
-/// </param>
-public sealed record FactPicker(
-    FactMarks Marks,
-    IReadOnlyList<FactChoice> Choices,
-    FactAddition? Addition)
+public abstract record FactPicker
 {
-    /// <summary>A picker of a field that holds one value, and offers no value beyond its entries.</summary>
-    public static FactPicker OfOneOf(IReadOnlyList<FactChoice> choices) =>
-        new(FactMarks.TheOneItIsIn, choices, null);
+    // Closes the hierarchy, so a row that handles these two kinds handles every picker.
+    private FactPicker()
+    {
+    }
+
+    /// <summary>
+    /// The picker of a field that holds one value. A pick writes at once, or asks its question
+    /// first, and closes the picker. It offers no value beyond its entries.
+    /// </summary>
+    /// <param name="Choices">What the picker offers, in the order that it draws them.</param>
+    public sealed record OfOneOf(IReadOnlyList<FactChoice> Choices) : FactPicker;
+
+    /// <summary>
+    /// The picker of a field that a bead carries several values of. A press of an entry writes
+    /// nothing and makes an unsaved tick, and Save sends every unsaved tick as one change, because
+    /// several ticks of one field are one change.
+    /// </summary>
+    /// <param name="Entries">What the picker offers, in the order that it draws them.</param>
+    /// <param name="Addition">
+    /// The box at the foot that ticks a typed word, on its entry when the project uses it, or on a new
+    /// entry at the foot.
+    /// </param>
+    /// <param name="Save">The write that Save runs with the change that the unsaved ticks make.</param>
+    public sealed record OfSeveral(
+        IReadOnlyList<FactTick> Entries,
+        FactAddition Addition,
+        Func<FactChange, Task<BdWriteOutcome>> Save) : FactPicker;
 }
 
 /// <summary>
-/// How many entries of one picker a bead stands in, which is what a mark on an entry means and how a
-/// reader hears it: the one value of the field, or each of the several that the bead carries.
+/// One entry of a picker of several: a label that the project uses, and the spelling of it that the
+/// bead carries. The two can differ in case, and bd holds the label as the bead spells it.
 /// </summary>
-public enum FactMarks
+/// <param name="Label">The spelling that the entry prints and that an add sends.</param>
+/// <param name="Carried">
+/// The spelling that the bead carries, which a removal sends, or null when the bead lacks the label.
+/// </param>
+public sealed record FactTick(BeadLabel Label, BeadLabel? Carried)
 {
-    /// <summary>The bead stands in one entry, thus a mark says which value the field holds.</summary>
-    TheOneItIsIn,
+    public string Text => Label.Word;
 
-    /// <summary>The bead carries any number of entries, thus each one is a mark that a press turns off.</summary>
-    EachOneItCarries,
+    public bool Marked => Carried is not null;
 }
+
+/// <summary>What one Save sends: the labels to put on, and the labels to take off as the bead spells them.</summary>
+public sealed record FactChange(IReadOnlyList<BeadLabel> Adds, IReadOnlyList<BeadLabel> Removes);

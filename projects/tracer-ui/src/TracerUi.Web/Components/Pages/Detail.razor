@@ -5,6 +5,8 @@
 @using AReadOfTheBacklog = TracerUi.Core.Boards.Read<TracerUi.Core.Boards.BacklogFacts>
 @using AReadOfTheBead = TracerUi.Core.Boards.Read<TracerUi.Core.Boards.BeadDetail>
 @inject BeadDetailReader Details
+@inject BacklogCache Backlogs
+@inject ProjectWatchers Watchers
 @inject ActiveProjectSelection Selection
 @inject SwitchAddress Switches
 @inject NavigationManager Navigation
@@ -41,7 +43,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
 
     <BeadHead Id="@detail.Bead.Id" Project="project">
         <Title>
-            <BeadTitleEdit Address="bead" Bead="detail.Bead" OnWritten="Reload" />
+            <BeadTitleEdit Address="bead" Bead="detail.Bead" OnWritten="ReadForThePerson" />
         </Title>
     </BeadHead>
 
@@ -54,18 +56,23 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
         </p>
     }
 
-    @if (staleReadMessage.Length > 0)
+    @if (fromBefore is { } before)
     {
-        <p class="text-danger bead-message bead-stale-read">@staleReadMessage</p>
+        <p class="text-danger bead-message bead-stale-read">
+            @before.Why<br />
+            @before.What
+        </p>
     }
 
-    <ReReadMark Rereading="rereading">
+    <ReReadMark Rereading="reads.Rereading">
         <div class="bead-columns">
-            <BeadFactStrip Address="bead"
+            @* Without the key, a walk to another bead keeps the rows, and an open picker carries its unsaved ticks onto that bead. *@
+            <BeadFactStrip @key="bead"
+                           Address="bead"
                            Detail="detail"
                            Epics="read.Epics"
                            Labels="read.Labels"
-                           OnWritten="Reload" />
+                           OnWritten="ReadForThePerson" />
 
             <div class="bead-prose-column">
                 @if (detail.Bead.HasCloseReason)
@@ -79,7 +86,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
                 <section class="bead-box">
                     <BeadDescriptionEdit Address="bead"
                                          Bead="detail.Bead"
-                                         OnWritten="Reload" />
+                                         OnWritten="ReadForThePerson" />
                 </section>
 
                 @if (facts is AReadOfTheBacklog.Given { Value: var answered })
@@ -87,14 +94,14 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
                     @if (answered.Held.Count > 0)
                     {
                         <section class="bead-box">
-                            <BeadHeldBeads Held="answered.Held" Address="bead" Detail="detail" OnCreated="Reload" />
+                            <BeadHeldBeads Held="answered.Held" Address="bead" Detail="detail" OnCreated="ReadForThePerson" />
                         </section>
                     }
                     else if (!answered.NamesNoBead)
                     {
                         <BeadAbsentLine Words="This bead holds no bead.">
                             <Presses>
-                                <BeadHeldCreate Address="bead" Detail="detail" OnCreated="Reload" />
+                                <BeadHeldCreate Address="bead" Detail="detail" OnCreated="ReadForThePerson" />
                             </Presses>
                         </BeadAbsentLine>
                     }
@@ -102,21 +109,21 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
                     <BeadDependencyEdges Address="bead"
                                          Facts="answered"
                                          Beads="read.Beads"
-                                         OnWritten="Reload">
+                                         OnWritten="ReadForThePerson">
                         <HeldPress>
-                            <BeadHeldCreate Address="bead" Detail="detail" OnCreated="Reload" />
+                            <BeadHeldCreate Address="bead" Detail="detail" OnCreated="ReadForThePerson" />
                         </HeldPress>
                     </BeadDependencyEdges>
                 }
 
                 <BeadAcceptanceAndNotes Address="bead"
                                         Bead="detail.Bead"
-                                        OnWritten="Reload" />
+                                        OnWritten="ReadForThePerson" />
 
                 <section class="bead-box">
                     <BeadComments Address="bead"
                                   Detail="detail"
-                                  OnWritten="Reload" />
+                                  OnWritten="ReadForThePerson" />
                 </section>
             </div>
         </div>
@@ -132,14 +139,20 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
     private PageProject? theProject;
     private IDisposable? switchWalk;
     private BeadAddress? theBeadRead;
-    private bool rereading;
-    private string staleReadMessage = string.Empty;
+    private FromBefore? fromBefore;
+    private readonly ReadSequence reads = new();
+    private bool watcherReading;
+    private bool watcherReadAgain;
 
-    private int readsBegun;
-    private int theLatestReadShown;
+    private const string TheBeadIsFromBefore = "The bead on the screen is the one from before.";
+    private const string TheBacklogIsFromBefore = "The backlog on the screen is the one from before.";
 
-    private const string StaleReadMessage =
-        "bd has not answered again. The bead on the screen is the one from before.";
+    // Why the page shows what an earlier read gave, and which part of the page that is.
+    private sealed record FromBefore(string Why, string What);
+
+    // A read whose backlog bd would not give, with the backlog on the screen in its place, and the
+    // reason bd gave.
+    private sealed record BacklogFromBefore(BeadDetailRead Read, string Why);
 
     private string TheTitleOfThisPage =>
         read?.Detail is AReadOfTheBead.Given { Value: var detail } ? detail.Bead.Title : Id;
@@ -153,6 +166,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
 
     protected override void OnInitialized()
     {
+        FollowTheBacklog(Backlogs, TheProject, TakeTheChange);
         // The id of a bead names nothing outside the project that holds it, so a switch walks to the
         // board of the picked project instead of to this id in it.
         switchWalk = Switches.WalkTo(BoardFilterAddress.OfEverythingIn);
@@ -160,7 +174,43 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
 
     private string TheAddressOfThisBeadIn(ProjectPath project) => BeadPageAddress.Of(new BeadAddress(project, Id));
 
-    public void Dispose() => switchWalk?.Dispose();
+    public void Dispose()
+    {
+        StopFollowingTheBacklog();
+        switchWalk?.Dispose();
+    }
+
+    // A change that a write of the app raised reads nothing: the page that wrote reads the bead again
+    // itself, and the project watcher reports the same write to every page.
+    private Task TakeTheChange(BacklogChange change) =>
+        change.Kind is BacklogChangeKind.Watch ? ReadForTheProjectWatcher() : Task.CompletedTask;
+
+    // A change that arrives while a read of the project watcher runs waits for it, and then the page
+    // reads once, so a burst of changes costs two reads and not one for each change.
+    private async Task ReadForTheProjectWatcher()
+    {
+        if (watcherReading)
+        {
+            watcherReadAgain = true;
+            return;
+        }
+
+        watcherReading = true;
+        try
+        {
+            do
+            {
+                watcherReadAgain = false;
+                await Read(ReadCause.TheProjectWatcher);
+                StateHasChanged();
+            }
+            while (watcherReadAgain);
+        }
+        finally
+        {
+            watcherReading = false;
+        }
+    }
 
     // Reads the bead when the address names a bead other than the one the page last began to read:
     // another id, or the same id in another project. The rewrite of an address that names no
@@ -181,6 +231,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
             return;
         }
 
+        Watchers.Watch(project);
         var bead = new BeadAddress(project, Id);
         if (bead.Equals(theBeadRead))
         {
@@ -191,22 +242,70 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
         await ReadTheBead();
     }
 
-    // Reads this bead from the start. The page holds no read while bd answers, so it says
-    // that it reads.
+    // Reads this bead from the start. The page drops what it showed and says that it reads, until
+    // this read answers or a read of the project watcher that began after it lands first.
     private async Task ReadTheBead()
     {
         read = null;
-        staleReadMessage = string.Empty;
+        fromBefore = null;
         StateHasChanged();
-        await Reload();
+        await ReadForThePerson();
         StateHasChanged();
     }
 
-    private int BeginARead() => ++readsBegun;
+    private Task ReadForThePerson() => Read(ReadCause.ThePerson);
 
-    private bool IsTheLatest(int aRead) => aRead == readsBegun;
+    // A failed read keeps the bead only when bd gave up or no person asked for the read, because
+    // the bead on the screen is then a better answer than the failure. See ADR 0015 and the Re-read
+    // entry of CONTEXT.md.
+    private string? WhyTheBeadStays(BeadDetailRead fresh, ReadCause cause)
+    {
+        if (fresh.Detail is not AReadOfTheBead.Unread { Reason: var reason })
+        {
+            return null;
+        }
 
-    private async Task Reload()
+        if (read?.Detail is not AReadOfTheBead.Given)
+        {
+            return null;
+        }
+
+        if (fresh.GaveUp)
+        {
+            return NoAnswerAgain;
+        }
+
+        return cause is ReadCause.TheProjectWatcher ? reason : null;
+    }
+
+    // A read of the project watcher that got the bead and no backlog takes the bead and keeps the
+    // backlog on the screen, because no person asked for the read and the pickers still offer the
+    // epics and the labels of that backlog.
+    private BacklogFromBefore? TheBacklogThatStays(BeadDetailRead fresh, ReadCause cause)
+    {
+        if (cause is not ReadCause.TheProjectWatcher)
+        {
+            return null;
+        }
+
+        if (fresh.Detail is not AReadOfTheBead.Given { Value: var detail }
+            || detail.BacklogFacts is not AReadOfTheBacklog.Unread { Reason: var reason })
+        {
+            return null;
+        }
+
+        if (read is not { Detail: AReadOfTheBead.Given { Value.BacklogFacts: AReadOfTheBacklog.Given facts } } shown)
+        {
+            return null;
+        }
+
+        var kept = detail with { Status = shown.Backlog.StatusOf(detail.Bead), BacklogFacts = facts };
+        return new BacklogFromBefore(
+            fresh with { Detail = new AReadOfTheBead.Given(kept), Backlog = shown.Backlog },
+            reason);
+    }
+
+    private async Task Read(ReadCause cause)
     {
         if (TheProjectOnTheScreen is not { } project)
         {
@@ -214,9 +313,8 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
         }
 
         var bead = new BeadAddress(project, Id);
-        var thisRead = BeginARead();
-        rereading = read is not null;
-        if (rereading)
+        var thisRead = reads.Begin(cause, read is not null);
+        if (cause is ReadCause.ThePerson && reads.Rereading)
         {
             StateHasChanged();
         }
@@ -228,34 +326,38 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
         }
         finally
         {
-            if (IsTheLatest(thisRead))
-            {
-                rereading = false;
-            }
+            reads.End(thisRead);
         }
 
-        // An answer lands only on the bead it was asked for, and never over the answer of a read
-        // that began after it. The re-read mark stays until the latest read answers.
-        if (!bead.Equals(theBeadRead) || thisRead < theLatestReadShown)
+        if (!bead.Equals(theBeadRead) || !reads.CanLand(thisRead))
         {
             return;
         }
 
-        // A re-read that gave up on bd has nothing new to show. The bead on the screen is one
-        // write old, same as it is through any re-read, so the page keeps it and says so instead
-        // of clearing itself to an error.
-        if (fresh.GaveUp && read?.Detail is AReadOfTheBead.Given)
+        if (WhyTheBeadStays(fresh, cause) is { } why)
         {
-            staleReadMessage = StaleReadMessage;
+            fromBefore = new FromBefore(why, TheBeadIsFromBefore);
             return;
         }
 
-        if (IsTheLatest(thisRead))
+        if (TheBacklogThatStays(fresh, cause) is { } kept)
         {
-            staleReadMessage = string.Empty;
+            fromBefore = new FromBefore(kept.Why, TheBacklogIsFromBefore);
+            Land(kept.Read, thisRead);
+            return;
         }
 
-        theLatestReadShown = thisRead;
-        read = fresh;
+        if (reads.IsTheLatest(thisRead))
+        {
+            fromBefore = null;
+        }
+
+        Land(fresh, thisRead);
+    }
+
+    private void Land(BeadDetailRead answer, int thisRead)
+    {
+        reads.Land(thisRead);
+        read = answer;
     }
 }

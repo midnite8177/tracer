@@ -412,7 +412,6 @@ public sealed class BoardAddressMarkupTests : BunitContext
         }
 
         projects.RegisterOn(Services);
-        Services.AddSingleton(new ProjectWatchers(projects.Backlogs, new FakeWriteReports()));
         Services.AddSingleton(new SavedFilterCatalog(projects.Store));
         Services.AddSingleton(new BulkWriter(projects.Adapter));
 

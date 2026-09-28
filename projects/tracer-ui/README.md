@@ -104,9 +104,10 @@ a marker while LAN mode holds. See
   four stored statuses and marks the one the bead is in, so one question
   covers the three verbs of `bd`: a pick of closed asks why the work ended
   before it writes, and a pick of open reopens a closed bead. Press the labels
-  and tick the ones this bead carries, out of every label the project uses; the
-  picker stays open for the next one, and a box at its foot takes a label that
-  is new. Press the epic and pick another one, or pick "no epic" to take the
+  and tick the ones this bead carries, out of every label the project uses. A
+  press marks a label to put on with a plus and one to take off with a minus,
+  and Save sends every mark in one `bd update`. A box at its foot takes a label
+  that is new. Press the epic and pick another one, or pick "no epic" to take the
   bead out of all of them. A small link beside the epic opens it. The page
   carries no triage section, because every control stands beside the value it
   changes. A narrow window puts the strip above the prose. A thing that the
