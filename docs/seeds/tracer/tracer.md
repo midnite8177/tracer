@@ -1,6 +1,6 @@
 # tracer — Matt Pocock's skills on a beads tracker
 
-Seed revision 35 (2026-09-27). Upstream pin `v1.2.3`; written against `bd` 1.2.2.
+Seed revision 38 (2026-09-29). Upstream pin: commit `d81f3a1` of `mattpocock/skills` (`main` as of 2026-09-29, the merged but not yet tagged v1.3 release; `v1.2.3` is still the latest tag); written against `bd` 1.2.2.
 
 ## If you were handed this document
 
@@ -36,7 +36,7 @@ When asked to adopt or align a project to it:
    `.claude/settings.local.json`, `.claude/statusline.py` and `.audit/`. Under stealth
    Block 1 goes in `AGENTS.local.md` and the pointer goes in
    `CLAUDE.local.md` (which Claude Code loads automatically); any existing
-   committed `AGENTS.md` or `CLAUDE.md` is left untouched. **`CONTEXT.md`
+   committed `AGENTS.md` or `CLAUDE.md` is left untouched. **`GLOSSARY.md`
    and `docs/adr/` are project documentation, not machinery: they commit
    normally.** Exclusion only hides files git does not already track; if
    one of these paths is already committed, say so and let the human decide
@@ -59,20 +59,25 @@ When asked to adopt or align a project to it:
    disk (no `find`, `where`, `Get-ChildItem`, no poking through pyenv,
    conda, uv or Homebrew); ask the human for the path or to install
    Python 3.8+, and stop until they answer.
-6. **Fetch upstream.** Pinned version: **`v1.2.3`** of
+6. **Fetch upstream.** Pinned commit: **`d81f3a1`** of
    `https://github.com/mattpocock/skills` (the pin is the one line that
-   changes when taking upstream updates). Clone it shallow at that tag into
-   a scratch directory **outside the repo**, copy what's needed, and delete
+   changes when taking upstream updates; when upstream tags `v1.3.0`, that
+   tag replaces the sha and the fetch below can go back to
+   `git clone --depth 1 --branch <tag>`). Fetch just that commit into a
+   scratch directory **outside the repo**, copy what's needed, and delete
    the clone in the same step. Nothing of the clone stays anywhere; the
    copied skills are the only artifact:
 
    ```bash
    scratch=$(mktemp -d)
-   git clone --quiet --depth 1 --branch v1.2.3 https://github.com/mattpocock/skills "$scratch/upstream"
+   git -C "$scratch" init --quiet upstream
+   git -C "$scratch/upstream" fetch --quiet --depth 1 https://github.com/mattpocock/skills d81f3a183412e71a5b1e84ca21bc1a35eea03a60
+   git -C "$scratch/upstream" checkout --quiet FETCH_HEAD
    mkdir -p .claude/skills/tracer/skills
    for d in "$scratch"/upstream/skills/engineering/* "$scratch"/upstream/skills/productivity/*; do
      name=$(basename "$d")
      [ "$name" = "setup-matt-pocock-skills" ] && continue
+     [ "$name" = "implement-spec" ] && continue   # parallel worktree batch engine; not tracer's model
      [ -f "$d/SKILL.md" ] || continue          # load-bearing: skips README.md
      rm -rf ".claude/skills/tracer/skills/$name"
      cp -R "$d" ".claude/skills/tracer/skills/$name"
@@ -81,11 +86,13 @@ When asked to adopt or align a project to it:
    rm -rf "$scratch"
    ```
 
-   The clone may print `warning: refs/tags/v1.2.3 ... is not a commit!`;
-   the tag is annotated oddly upstream, the checkout is correct, and the
-   warning is expected. The `SKILL.md` guard is what keeps the bucket
+   The `SKILL.md` guard is what keeps the bucket
    `README.md` files out; a plain `cp -R` of the bucket copies them.
-   Result: 24 skills, every one keeping its upstream name so the upstream
+   `implement-spec` is skipped on purpose: it runs implementer subagents
+   in parallel worktrees across the whole ticket graph on an integration
+   branch, which bypasses the bead conventions (claim, fixed point, close)
+   and is the unattended loop this seed does not run.
+   Result: 25 skills, every one keeping its upstream name so the upstream
    docs (`https://aihero.dev/skills-<name>`) still apply, except the
    router `ask-matt`, renamed to `guide` in step 6b (a person's name
    doesn't belong in a shared seed; its doc is at `.../skills-ask-matt`), with their sibling
@@ -94,7 +101,7 @@ When asked to adopt or align a project to it:
 
    ```json
    { "name": "tracer",
-     "version": "1.2.3+tracer.35",
+     "version": "1.3.0-pre.d81f3a1+tracer.38",
      "description": "Matt Pocock's skills on a beads tracker",
      "author": { "name": "<the human's name>" } }
    ```
@@ -102,35 +109,49 @@ When asked to adopt or align a project to it:
    The plugin loads automatically in this repo as `tracer@skills-dir`; its
    skills are `/tracer:<name>`. No settings entry is needed.
 6b. **Normalize the layout. Runs on every adopt, pin changed or not.**
-   The plugin's `skills/` directory must contain exactly these 31:
+   The plugin's `skills/` directory must contain exactly these 33:
 
    `adopt budget code-review codebase-design diagnosing-bugs
    domain-modeling grill-me grill-with-docs grilling guide handoff
    human-queue implement improve-codebase-architecture issues no-comments
-   prototype research resolving-merge-conflicts show-me-your-work tdd
+   pr prototype research retro show-me show-me-your-work tdd
    teach to-questionnaire to-spec to-tickets triage unslop wait-what
    wayfinder wizard writing-for-agents`
 
    and the plugin's `agents/` directory must contain `comment-sicko.md`
    (Block 4d).
 
-   Renames the seed has made so far:
+   Renames and removals the seed has made so far:
 
    - `ask-matt` → `guide` (revision 7): `mv skills/ask-matt skills/guide` if
      the old directory exists, then P6 fixes its frontmatter.
+   - `resolving-merge-conflicts` was removed upstream (revision 37):
+     delete the directory if present. `implement-spec` is never
+     installed: delete it if a previous fetch copied it.
+   - `GLOSSARY.md` (revision 37): upstream renamed `CONTEXT.md` to
+     `GLOSSARY.md` and `CONTEXT-MAP.md` to `GLOSSARY-MAP.md`, and every
+     skill now reads the new names. In the repo, once: for each of
+     `CONTEXT.md`, `CONTEXT-MAP.md`, and `src/*/CONTEXT.md` that exists
+     where the `GLOSSARY` name does not, `git mv` it; then replace the old
+     names in `AGENTS.md` (or `AGENTS.local.md`), `docs/agents/*.md`, and
+     `docs/adr/*.md`. Commit the rename on its own (it is project
+     documentation, not machinery). Report what moved.
 
    `ls .claude/skills/tracer/skills` and compare. A missing upstream
    directory means re-run the fetch for that one skill; a missing
    tracer-native one is written from Block 4, and `unslop`,
-   `no-comments`, `show-me-your-work` and the `comment-sicko` agent from
-   Block 4d; a directory present that
-   this list does not name is reported, not deleted. Note that thirteen
-   of the upstream skills carry `disable-model-invocation`, and the
+   `no-comments`, `show-me`, `show-me-your-work` and the `comment-sicko`
+   agent from Block 4d; a directory present that
+   this list does not name is reported, not deleted. Note that about half
+   of the installed skills carry `disable-model-invocation`, and the
    harness hides those from the list the model sees, so **the model's
    list of available skills is never evidence that a skill is missing;
    the directory is.**
 7. **Apply the patch list** in Block 3 to the copied skills. Each patch is a
-   small, described edit; make it, do not rewrite the skill. Record in the
+   small, described edit; make it, do not rewrite the skill. Anchors in the
+   patches are quoted without em-dashes (upstream removed every em-dash
+   at this pin; a phrase that once read `X — Y` now reads `X: Y` or
+   `X, Y`), so match on the words, not the punctuation. Record in the
    report any patch whose anchor text was not found (upstream changed) so it
    can be re-based.
 8. **Add the tracer-native skills** from Block 4 (`adopt`, `issues`,
@@ -138,7 +159,7 @@ When asked to adopt or align a project to it:
    the `issues.py` script from Block 4b beside the `issues` skill,
    `budget.py` from Block 4c beside the `budget` skill, `smells.md` from
    Block 4e beside the `code-review` skill, and the carried
-   third-party skills from Block 4d (`unslop`, `no-comments`,
+   third-party skills from Block 4d (`unslop`, `no-comments`, `show-me`,
    `show-me-your-work` with its `scripts/log.py` and
    `references/decision-log-template.tsv`, and the `comment-sicko` agent
    under the plugin's `agents/`), exactly as printed there. The
@@ -163,6 +184,40 @@ When asked to adopt or align a project to it:
     it under **Memory files** in `/context` after restarting. Only if the
     repo has no committed `CLAUDE.md` at all is an excluded `CLAUDE.md`
     an acceptable alternative; a tracked `CLAUDE.md` cannot be excluded.
+10b. **Tell the auto-mode classifier that comment cleanup is intended.**
+    Claude Code's auto mode routes edits through a classifier that reads
+    the project's memory files and blocks what looks destructive; a
+    comment sweep across several files has been blocked as one. Append
+    this paragraph, verbatim, to the file step 10 wrote the `@` line
+    into (`CLAUDE.md` on a normal install, `CLAUDE.local.md` under
+    stealth), directly, not behind the import, since it is not
+    documented whether the classifier follows imports:
+
+    ```
+    Comment cleanup is requested work in this repository: the no-comments
+    skill and the comment-sicko agent delete and rewrite code comments,
+    doc comments, docstrings, and commented-out code across the files a
+    task touched. Those edits are intended, not destructive. They never
+    remove tests or assertions.
+    ```
+
+    Then ask the human once whether they use auto mode. If yes, offer to
+    add one entry to `autoMode.allow` in `~/.claude/settings.json` (user
+    level; the docs say project-level `autoMode` values are ignored),
+    keeping `"$defaults"` so the built-in rules stay, and merging only
+    that key:
+
+    ```json
+    { "autoMode": { "allow": [ "$defaults",
+      "Removing or rewriting code comments, doc comments, docstrings, and commented-out code in a repository's source files is allowed: it is a comment-cleanup review step the user runs on purpose (the no-comments skill). It never touches tests or assertions." ] } }
+    ```
+
+    If `autoMode.allow` already exists, append the entry; never drop
+    what is there. Respect an existing yes or no at re-alignment. Tell
+    the human that if a sweep is still blocked, `/permissions` →
+    **Recently denied** shows the rule label, `r` on the denial retries
+    with a normal prompt, and `claude auto-mode defaults` prints the
+    built-in rules.
 11. **Status line, only if the human wants it: ask before installing.**
     Block 5 carries the whole procedure: ask user-wide or project-only
     (project-only under stealth), write the script, `--demo`, merge the
@@ -183,9 +238,9 @@ When asked to adopt or align a project to it:
     found. **Measure the context budget**: run
     `python3 .claude/skills/tracer/skills/budget/budget.py` and include
     its output in the report. Anything it flags ⚠ gets a sentence:
-    `CONTEXT.md` over 200 lines is the single most common cause of a
+    `GLOSSARY.md` over 200 lines is the single most common cause of a
     session starting large (suggest `/tracer:grill-with-docs make
-    CONTEXT.md concise and remove implementation detail`); a large
+    GLOSSARY.md concise and remove implementation detail`); a large
     `bd prime` means the remembered set is over the Block 1 ceiling, since
     it prints memories and rules, not the ready queue. The plugin only loads on
     the next Claude Code start, so the final check is the human's: tell
@@ -228,10 +283,10 @@ read by any skill that touches beads.
 | The loop, discovered work, house rules, memory rules | AGENTS.md | every context, every turn — keep it small |
 | How beads express tickets, specs, maps, claims, blocking | `docs/agents/issue-tracker.md` | skills that publish or fetch, on invocation |
 | Triage role → label mapping | `docs/agents/triage-labels.md` | `/tracer:triage` only |
-| Read `CONTEXT.md` and ADRs before exploring | `docs/agents/domain.md` | skills that explore the codebase |
+| Read `GLOSSARY.md` and ADRs before exploring | `docs/agents/domain.md` | skills that explore the codebase |
 | Upstream skills, patched | `.claude/skills/tracer/skills/*` | on invocation |
 | Adopt, issues view, budget, human queue | `.claude/skills/tracer/skills/{adopt,issues,budget,human-queue}` | on invocation |
-| Carried third-party skills (`unslop`, `no-comments`, `show-me-your-work`) | `.claude/skills/tracer/skills/{unslop,no-comments,show-me-your-work}` | on invocation |
+| Carried third-party skills (`unslop`, `no-comments`, `show-me`, `show-me-your-work`) | `.claude/skills/tracer/skills/{unslop,no-comments,show-me,show-me-your-work}` | on invocation |
 | Comment-sicko reviewer | `.claude/skills/tracer/agents/comment-sicko.md` | when `no-comments` spawns it |
 | Smell catalog (code + comments, C++/C#/Python) | `.claude/skills/tracer/skills/code-review/smells.md` | pasted into review lanes' briefs on invocation |
 | Decision trail | `.audit/<slug>.tsv` (uncommitted) | written by the session, read by the human |
@@ -254,7 +309,8 @@ why it is short.
 
 Work flows: `/tracer:grill-with-docs` → `/tracer:to-spec` → `/tracer:to-tickets`
 → `/tracer:implement <bead-id>` (one bead per session, `/clear` between)
-→ the human reads the diff. `/tracer:wayfinder` is the on-ramp for an
+→ the human reads the diff; `/tracer:retro` when a session went badly,
+to fix the environment rather than the code. `/tracer:wayfinder` is the on-ramp for an
 effort too big to grill in one session; `/tracer:issues` shows what is
 ready and what is blocked; `/tracer:guide` routes when unsure.
 
@@ -290,7 +346,7 @@ output style or a project style guide wins where they conflict;
 `unslop` applies where they are silent.
 
 **Committing work is not optional.** Any beads or stealth guidance about
-not committing covers the machinery only. Code, tests, `CONTEXT.md` and
+not committing covers the machinery only. Code, tests, `GLOSSARY.md` and
 ADRs the work produced are always committed.
 
 ## Discovered work: decide on the spot, and lean toward fixing
@@ -374,7 +430,7 @@ Reviewers may cite these; a violation is a legitimate finding.
 One home per kind of memory, priced by who must load it. Do not create
 new memory files.
 
-- **Vocabulary and decisions**: `CONTEXT.md` (glossary, what a thing *is*
+- **Vocabulary and decisions**: `GLOSSARY.md` (glossary, what a thing *is*
   in one or two sentences, rejected synonyms under *Avoid*) and
   `docs/adr/NNNN-slug.md` (one to three sentences: context, choice, reason;
   only for decisions that are hard to reverse, surprising without context,
@@ -477,7 +533,7 @@ A work bead is a tracer bullet: a narrow but complete vertical slice,
 demoable alone, sized for one fresh context window. Its description has:
 
     ## What
-    <the slice, in the project's CONTEXT.md vocabulary>
+    <the slice, in the project's GLOSSARY.md vocabulary>
 
     ## Demo
     <what a person can do or see once this is closed; one or two lines>
@@ -554,8 +610,8 @@ Edit the right-hand column to change.
 ```markdown
 # Domain docs
 
-Before exploring the codebase, read `CONTEXT.md` at the root (or
-`CONTEXT-MAP.md` and then each relevant context's `CONTEXT.md`), and the
+Before exploring the codebase, read `GLOSSARY.md` at the root (or
+`GLOSSARY-MAP.md` and then each relevant context's `GLOSSARY.md`), and the
 ADRs under `docs/adr/` for the area you are touching. If any of these do
 not exist, proceed silently; `domain-modeling` creates them lazily.
 
@@ -588,7 +644,7 @@ Replace the body with:
 > output of `git rev-parse HEAD`.
 >
 > **Research stays out of this context.** Read only the cheap things
-> here: the bead, `CONTEXT.md` (or the relevant context's `CONTEXT.md`),
+> here: the bead, `GLOSSARY.md` (or the relevant context's `GLOSSARY.md`),
 > and any file the bead names by path. If a prior run left a comment on
 > the bead starting `research brief:`, read that and skip to building.
 > If, after the cheap reads, you can already name the files to change and
@@ -596,7 +652,7 @@ Replace the body with:
 > read-only subagent (the `Explore` type, or the read-only agent this
 > host offers) and do not open further files yourself while it runs.
 > Its prompt: the bead's title, description and Demo line, the seam if
-> named, the `CONTEXT.md` glossary terms involved, the rules in
+> named, the `GLOSSARY.md` glossary terms involved, the rules in
 > `docs/agents/issue-tracker.md` under "Delegating to subagents", and
 > this return shape, under 2,500 words, nothing outside it:
 >
@@ -631,7 +687,7 @@ Replace the body with:
 > **A bead with no Demo or no Seams line gets a researched proposal, not
 > a bare question.** Do not ask the human to invent them cold. Send
 > **one** read-only subagent (the `Explore` type) with the bead's text,
-> the `CONTEXT.md` glossary, and the research brief if one exists, to
+> the `GLOSSARY.md` glossary, and the research brief if one exists, to
 > read the code and docs the bead touches and return, under 500 words:
 > what a person could see or do when this is done (two or three
 > candidate Demo lines, most demoable first); where a test could reach
@@ -954,6 +1010,9 @@ In the body, every self-reference (`/ask-matt`, "ask-matt") becomes
 `/tracer:guide`. Every other `/<name>` that names a skill becomes `/tracer:<name>`; the Claude
 Code built-ins `/clear` and `/compact` stay as they are. Replace
 references to `setup-matt-pocock-skills` with `/tracer:adopt`. In step 3,
+delete the `/implement-spec` sub-bullet and the sentence about
+`/implement-spec` in the "Either way" paragraph (that skill is not
+installed; see step 6); the `/implement` sub-bullet stays. In step 3,
 replace the sentence describing local `.scratch/` tickets and "native
 blocking links on a real tracker" with: "Tickets are beads under the spec
 epic with `bd dep` edges; `/tracer:issues` shows the frontier." Add these
@@ -962,7 +1021,10 @@ routes: "what is ready, what is blocked, show me a bead" →
 `/tracer:human-queue`; "update or repair the installation" → `/tracer:adopt`;
 "this reads like it was written by an AI, clean it up" → `/tracer:unslop`;
 "strip the comment noise from this diff" → `/tracer:no-comments`; "keep a
-decision trail I can review when I'm back" → `/tracer:show-me-your-work`.
+decision trail I can review when I'm back" → `/tracer:show-me-your-work`;
+"draw it, show me the call tree, what changes here" → `/tracer:show-me`.
+The `/pr` paragraph and the `/retro` step stay; they resolve to
+`/tracer:pr` and `/tracer:retro` under the rule above.
 Add one rule: "The skills directory `.claude/skills/tracer/skills` is the
 authority on what is installed; the list of skills you were shown omits
 user-invoked ones, so never tell the user a skill is missing without
@@ -971,6 +1033,50 @@ listing that directory."
 **P7 · `wayfinder` — no change to the body.** The tracker doc carries
 the beads mapping. Only check that "tell the user to run
 `/setup-matt-pocock-skills`" reads `/tracer:adopt`.
+
+**P9 · `retro` — tracer's homes for what it finds.**
+In the Reference section, replace the `CODING_STANDARDS.md` bullet with:
+"Standards live in the **House rules** section of `AGENTS.md` and in
+`.claude/skills/tracer/skills/code-review/smells.md`; `code-review` reads
+both, plus a `CODING_STANDARDS.md` if the repo has one. A mechanical rule
+becomes a linter or hook, not a line in any of these." After step 2 add:
+"Claude Code keeps session logs under `~/.claude/projects/<encoded repo
+path>/` as `.jsonl`; the current session is the newest file. Read the
+tail, not the whole file." After step 4 add: "A candidate the human
+accepts that needs more than a one-line edit becomes a `meta` bead per
+the discovered-work rule in `AGENTS.md`; one the human accepts that is a
+one-line edit to a steering file is made now. Nothing is filed or edited
+before the human picks." Keep `disable-model-invocation`.
+
+**P10 · `pr` — usable by hand as a review guide, for any range.**
+The body (the template and the Sections guidance) stays as upstream
+wrote it; it is a format reference and is model-invoked, so it also
+fires on its own when a PR body is being written. Add the frontmatter
+line `argument-hint: "[bead-id | <fixed-point>..HEAD | commit | nothing]"`
+and prepend to the body:
+
+> The output is a **review guide**: the same three sections whether it
+> becomes a pull request body, a Perforce review description, or a file
+> handed to a reviewer. Nothing here opens a PR or a changelist.
+> First pin the range, in the order `code-review` uses: a range or
+> commit the user passed; a bead id, whose `implement started at <sha>`
+> comment gives the fixed point (`bd show <id>`); otherwise the working
+> tree plus commits since the merge-base with the default branch, and
+> say which. Print `git log <range> --oneline` (or the shelved or
+> pending changelist's file list under Perforce) in one line so the
+> reader knows what is covered, then write the guide from the diff, not
+> from memory of the session. Read `GLOSSARY.md` for the vocabulary.
+> Evidence comes from things actually run or captured in this session;
+> never describe a test run that did not happen. Mermaid does not render
+> in a terminal: when the guide is going anywhere other than a Markdown
+> renderer, use the text forms (pseudocode, trees, diffs) instead.
+> Output the guide as Markdown in the reply, then offer once to write it
+> to a path the user names; do not write a file unasked, and never into
+> the repo unless they say so. Call the Skill tool with "unslop" on the
+> prose before presenting it.
+
+Bead ids and requirement ids follow the house rule: the guide names the
+work by title, never by id.
 
 **P8 · every skill** — where a body says "tell the user to run
 `/setup-matt-pocock-skills`", it says `/tracer:adopt` instead. Where a
@@ -1051,7 +1157,7 @@ what it blocks by title. `<epic-id>` expands one epic, `--all` lists everything.
 ```markdown
 ---
 name: budget
-description: Measure what loads into this repo's Claude Code sessions (CLAUDE/AGENTS files and imports, rules, CONTEXT.md, tracker docs, auto-memory, bd prime) and what each tracer skill costs when invoked, in KB and estimated tokens. Read-only. Use when the user asks where their context or tokens are going.
+description: Measure what loads into this repo's Claude Code sessions (CLAUDE/AGENTS files and imports, rules, GLOSSARY.md, tracker docs, auto-memory, bd prime) and what each tracer skill costs when invoked, in KB and estimated tokens. Read-only. Use when the user asks where their context or tokens are going.
 argument-hint: "[--min N]"
 ---
 
@@ -1059,8 +1165,8 @@ Run `python3 "${CLAUDE_PLUGIN_ROOT}/skills/budget/budget.py" $ARGUMENTS`
 and show its output to the user **verbatim**, in a code block. Do not
 summarize or re-render it; the script is the whole skill. After the
 block, add at most three lines: name the largest ⚠ item and the one
-command that shrinks it (for `CONTEXT.md`: `/tracer:grill-with-docs make
-CONTEXT.md concise and remove implementation detail`; for the auto-memory
+command that shrinks it (for `GLOSSARY.md`: `/tracer:grill-with-docs make
+GLOSSARY.md concise and remove implementation detail`; for the auto-memory
 index: `/memory` in Claude Code; for `bd prime`: the memory audit in
 AGENTS.md; for a tracker doc: trim it by hand). If nothing is flagged,
 say so in one line. Remind the user that `/context` inside a session
@@ -1123,7 +1229,7 @@ research starts. If the queue is empty, say so and stop.
 
 One read-only subagent per question (the `Explore` type), all dispatched
 in one message. Each prompt carries the bead's full text, the
-`CONTEXT.md` glossary terms involved, the "Delegating to subagents"
+`GLOSSARY.md` glossary terms involved, the "Delegating to subagents"
 rules from `docs/agents/issue-tracker.md` (edit nothing, run no `bd`
 command, spawn nothing, mark inference as inference), and asks for a
 plain-language report under 600 words:
@@ -1137,7 +1243,7 @@ plain-language report under 600 words:
    whether it is reversible.
 4. **A recommendation with its reasoning**, weighed against the house
    rules in AGENTS.md and the project's stated stage or constraints in
-   `CONTEXT.md`.
+   `GLOSSARY.md`.
 
 A report is a set of claims. Before presenting a question, verify
 yourself the one claim its recommendation leans on, above all a claim
@@ -1527,9 +1633,9 @@ if md:
 add("startup", "bd prime (SessionStart hook output)", measured=cmd_bytes("bd", "prime"))
 
 # ---- loads when implement runs (on top of startup) ----
-for name in ("CONTEXT.md", "CONTEXT-MAP.md"):
+for name in ("GLOSSARY.md", "GLOSSARY-MAP.md", "CONTEXT.md", "CONTEXT-MAP.md"):
     add("implement", name, os.path.join(ROOT, name))
-for p in sorted(glob.glob(os.path.join(ROOT, "src", "*", "CONTEXT.md"))): add("implement", os.path.relpath(p, ROOT), p)
+for p in sorted(glob.glob(os.path.join(ROOT, "src", "*", "GLOSSARY.md")) + glob.glob(os.path.join(ROOT, "src", "*", "CONTEXT.md"))): add("implement", os.path.relpath(p, ROOT), p)
 for p in sorted(glob.glob(os.path.join(ROOT, "docs", "agents", "*.md"))): add("implement", os.path.relpath(p, ROOT), p)
 adrs = sorted(glob.glob(os.path.join(ROOT, "docs", "adr", "*.md")))
 if adrs:
@@ -1773,6 +1879,151 @@ Every flag names code inside the scope and tells the truth. I invent nothing. I 
 
 Report only. Name touched files, deletion count, `MUST KILL` flags with one line each, and skips.
 ```
+
+### `show-me`
+
+Source: `https://github.com/humanlayer/skills`,
+`plugins/show-me/skills/show-me/SKILL.md` (MIT, HumanLayer; Dex Horthy).
+Written to `.claude/skills/tracer/skills/show-me/SKILL.md`. Upstream
+`pr` copies this skill's menu of visuals into its Summary section and
+credits it; this is the original, for use in conversation: "draw me the
+call tree", "show me what changes". The body is verbatim except the
+last bullet's open command, which upstream gives as macOS `open`; here
+it names the opener per platform. It keeps `disable-model-invocation`
+(a picture is the human's request). The fence is four backticks because
+the body contains three-backtick blocks; write the file with the inner
+fences as three.
+
+````markdown
+---
+name: show-me
+description: Help the user understand the current topic visually with concise diagrams, code-shape sketches, and focused HTML artifacts.
+disable-model-invocation: true
+---
+
+Help the user understand the current topic of conversation visually. Skip the preamble and keep prose brief. Pick the smallest view that makes the key point clear.
+
+- Show logic or an algorithm as pseudocode:
+
+```text
+on(save)
+  if content is unchanged
+    return cached result
+  write new content
+  return fresh result
+```
+
+- Show runtime control flow as a call tree:
+
+```text
+submitForm
+  createSession
+    persistPrompt
+    launchAgent
+  navigateToSession
+```
+
+- Show UI structure as a component tree, including state and module boundaries that matter:
+
+```tsx
+<SessionPage> (apps/example/src/routes/session.tsx)
+  useSessionEvents()
+  <SessionToolbar>
+    <RunSkillButton> (packages/ui)
+```
+
+- Show file responsibility or a broad refactor as a shallow file tree:
+
+```text
+src/
+├── commands/       # parses user actions
+├── sessions/       # owns session state
+└── transport/      # sends API requests
+```
+
+- Show component interaction, control flow, or data flow with Mermaid:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI
+    participant Daemon
+    User->>UI: choose command
+    UI->>Daemon: send expanded prompt
+    Daemon-->>UI: stream result
+```
+
+- Use `diff` when the point is what changes and the surrounding shape already exists. Match the diff shape to the topic.
+
+For a component change:
+
+```diff
+ <SessionPage>
+   useSessionEvents()
+   <SessionToolbar>
++    <RunSkillButton />
+   <SessionTimeline>
++    <SkillResultCard />
+```
+
+For a file-layout change:
+
+```diff
+ src/
+ ├── commands/
++│   └── show-me.ts       # expands the slash command
+ ├── sessions/
+-└── transport.ts
++└── transport/
++    ├── client.ts
++    └── stream.ts
+```
+
+For a call-tree or call-stack change:
+
+```diff
+ submitForm
+   createSession
+     persistPrompt
++    expandSkillMention
+     launchAgent
+-  navigateToSession
++  navigateToSession
++    subscribeToEvents
+```
+
+For a state or control-flow change:
+
+```diff
+ on(save)
+-  write content
++  if content is unchanged
++    return cached result
++  write new content
++  invalidate cache
+```
+
+- Show the whole block when most of it is new, when omitted context would hide ownership or order, or when the user needs a copyable target shape:
+
+```ts
+function expandSkill(command: string): string {
+  const skillName = command.slice(1)
+  return `use the ${skillName} skill`
+}
+```
+
+- For a visual UI, layout, state comparison, or concept too dense for Mermaid, write one focused HTML file — a diagram, an infographic, or a short slide deck, whichever fits the point. Match the product's colors, type, spacing, and components; use real labels and data; support desktop and mobile. Then open it for the user with the platform's opener: `open` on macOS, `xdg-open` on Linux, `start ""` on Windows:
+
+```
+Bash(open path/to/show-me-{description}.html)
+```
+
+### guidance
+
+Place each visual next to the short text it supports. Keep only the calls, files, props, states, and boundaries needed to answer the user's current question or the options to resolve the current discussion point.
+
+You may use one of these, you may use several, it is unlikely you will use all of them. Use your judgement and don't overwhelm the user.
+````
 
 ### `show-me-your-work`
 
@@ -2595,6 +2846,17 @@ if __name__ == "__main__":
   off, `/tracer:grill-with-docs <idea>`. Answer rounds. Without clearing:
   `/tracer:to-spec`, confirm seams, then `/tracer:to-tickets`, adjust
   slices. Close the session.
+- **A review guide for a change** (a PR body, a Perforce review
+  description, or a file for a reviewer): `/tracer:pr <bead-id or
+  range>`. Smallest visual that explains the change, before/after
+  evidence, one-way or two-way door and blast radius. Also fires on its
+  own when a PR body is being written.
+- **A session that fought you:** before `/clear`, `/tracer:retro`. It
+  proposes changes to the environment (navigation pointers, checks,
+  house rules, tooling), most severe first; you pick.
+- **"Just show me":** `/tracer:show-me` draws the call tree, file tree,
+  component tree, diff sketch, or Mermaid for whatever is being
+  discussed.
 - **Building:** `/tracer:issues` to pick. `/clear`. `/tracer:implement <id>`.
   Read the diff and the review. Repeat.
 - **Tiny change:** grill briefly, then `/tracer:implement` in the same
@@ -2636,6 +2898,9 @@ back in, that is the signal to reread this document.
 Read this first on a re-adopt. Each entry is what changed since the
 previous revision, so a same-pin re-adopt knows where to look.
 
+- **38**: P10: `pr` works typed by hand as a review guide for any range (bead id, range, commit, or the current work), pins the range the way `code-review` does, prints what it covers, uses text forms where Mermaid will not render, and offers to write to a named path instead of assuming a pull request.
+- **37**: Upstream moved to commit `d81f3a1` (main; v1.3 merged, untagged). New skills `pr` (model-invoked PR body format) and `retro` (P9 points it at AGENTS.md house rules, `smells.md`, Claude Code session logs, and `meta` beads); `resolving-merge-conflicts` removed upstream; `implement-spec` deliberately not installed. `CONTEXT.md` → `GLOSSARY.md` followed throughout, with a one-time `git mv` in step 6b and `budget.py` reading both names. `show-me` (HumanLayer, MIT) carried into Block 4d with a per-platform opener. P6 drops the `implement-spec` route and adds `show-me`; step 7 notes the upstream em-dash sweep. Manifest is 33 skills plus one agent.
+- **36**: Step 10b: auto-mode classifier. Adopt appends a "comment cleanup is intended" paragraph to `CLAUDE.md` (normal) or `CLAUDE.local.md` (stealth), directly rather than behind the import, and offers a user-level `autoMode.allow` entry to people who run auto mode; nothing touches shared files under stealth.
 - **35**: Field tweaks from daily use. Discovered work leans toward fixing: three outcomes (fix now, real work after `bd search`, one line in the close reason), comment work always fixed in place, expected new beads per run zero or one. **Test gate** house rule (`full` or `targeted`, set at adopt) replaces every blanket "full suite"; P1 and the build subagent read it and record targeted commands in the close reason. A bead with no Demo or Seams gets a researched proposal from an Explore subagent, written onto the bead once the human accepts. New native skill `human-queue`: research every `human` bead in parallel, present one decision at a time with a recommendation, record each answer; manifest is 31 skills plus one agent.
 - **34**: P1: the build subagent reads `unslop` by path before writing code and applies its pattern list to every comment and message it writes (soul off); the pre-commit `unslop` pass is scoped to every `+` prose line in the diff, with "pre-existing text" ruled out as an exemption, and ends with a checked/changed count.
 - **33**: P1: build report cap is per-section (lists one line per item, prose under 300 words) instead of a flat 600 words; a **Beads filed** section follows the TL;DR listing every bead the run created, by title with id, from `bd list` rather than memory; the review menu's closing report lists the beads it filed.
