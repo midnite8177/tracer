@@ -230,5 +230,5 @@ layer that carries it.
 
 ## Vocabulary
 
-[CONTEXT.md](CONTEXT.md) defines the words that this app uses. Read it
+[GLOSSARY.md](GLOSSARY.md) defines the words that this app uses. Read it
 before you change the code.

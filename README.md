@@ -22,7 +22,7 @@ shared code a deliberate act — see
 
 ## Vocabulary and decisions
 
-[CONTEXT-MAP.md](CONTEXT-MAP.md) points to the glossary of each project.
+[GLOSSARY-MAP.md](GLOSSARY-MAP.md) points to the glossary of each project.
 Decisions about the workspace are in `docs/adr/`. Decisions about a
 project are in that project's own `docs/adr/`.
 

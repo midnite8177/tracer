@@ -6,7 +6,7 @@ them.
 
 ## Contexts
 
-- [tracer-ui](projects/tracer-ui/CONTEXT.md) — a local web UI for the
+- [tracer-ui](projects/tracer-ui/GLOSSARY.md) — a local web UI for the
   browse and triage of beads issues.
 
 ## Decisions

@@ -7,7 +7,7 @@ solution file, its own source projects and its own test project. There is
 no solution at the root, and no code is shared between projects. See
 [ADR 0001](docs/adr/0001-one-directory-per-project.md).
 
-Read [CONTEXT-MAP.md](CONTEXT-MAP.md) and then the `CONTEXT.md` of the
+Read [GLOSSARY-MAP.md](GLOSSARY-MAP.md) and then the `GLOSSARY.md` of the
 project you touch, before you explore its code. Use the words that the
 glossary defines. Read the ADRs under `docs/adr/` and under the project's
 own `docs/adr/` for the area you change. If a change contradicts an ADR,

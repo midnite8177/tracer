@@ -257,7 +257,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
 
     // A failed read keeps the bead only when bd gave up or no person asked for the read, because
     // the bead on the screen is then a better answer than the failure. See ADR 0015 and the Re-read
-    // entry of CONTEXT.md.
+    // entry of GLOSSARY.md.
     private string? WhyTheBeadStays(BeadDetailRead fresh, ReadCause cause)
     {
         if (fresh.Detail is not AReadOfTheBead.Unread { Reason: var reason })
