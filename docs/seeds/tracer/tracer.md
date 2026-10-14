@@ -1,6 +1,6 @@
 # tracer — Matt Pocock's skills on a beads tracker
 
-Seed revision 38 (2026-09-29). Upstream pin: commit `d81f3a1` of `mattpocock/skills` (`main` as of 2026-09-29, the merged but not yet tagged v1.3 release; `v1.2.3` is still the latest tag); written against `bd` 1.2.2.
+Seed revision 42 (2026-10-14). Upstream pin `v1.3.1`; written against `bd` 1.2.2.
 
 ## If you were handed this document
 
@@ -59,25 +59,20 @@ When asked to adopt or align a project to it:
    disk (no `find`, `where`, `Get-ChildItem`, no poking through pyenv,
    conda, uv or Homebrew); ask the human for the path or to install
    Python 3.8+, and stop until they answer.
-6. **Fetch upstream.** Pinned commit: **`d81f3a1`** of
+6. **Fetch upstream.** Pinned version: **`v1.3.1`** of
    `https://github.com/mattpocock/skills` (the pin is the one line that
-   changes when taking upstream updates; when upstream tags `v1.3.0`, that
-   tag replaces the sha and the fetch below can go back to
-   `git clone --depth 1 --branch <tag>`). Fetch just that commit into a
-   scratch directory **outside the repo**, copy what's needed, and delete
+   changes when taking upstream updates). Clone it shallow at that tag into
+   a scratch directory **outside the repo**, copy what's needed, and delete
    the clone in the same step. Nothing of the clone stays anywhere; the
    copied skills are the only artifact:
 
    ```bash
    scratch=$(mktemp -d)
-   git -C "$scratch" init --quiet upstream
-   git -C "$scratch/upstream" fetch --quiet --depth 1 https://github.com/mattpocock/skills d81f3a183412e71a5b1e84ca21bc1a35eea03a60
-   git -C "$scratch/upstream" checkout --quiet FETCH_HEAD
+   git clone --quiet --depth 1 --branch v1.3.1 https://github.com/mattpocock/skills "$scratch/upstream"
    mkdir -p .claude/skills/tracer/skills
    for d in "$scratch"/upstream/skills/engineering/* "$scratch"/upstream/skills/productivity/*; do
      name=$(basename "$d")
      [ "$name" = "setup-matt-pocock-skills" ] && continue
-     [ "$name" = "implement-spec" ] && continue   # parallel worktree batch engine; not tracer's model
      [ -f "$d/SKILL.md" ] || continue          # load-bearing: skips README.md
      rm -rf ".claude/skills/tracer/skills/$name"
      cp -R "$d" ".claude/skills/tracer/skills/$name"
@@ -86,13 +81,10 @@ When asked to adopt or align a project to it:
    rm -rf "$scratch"
    ```
 
-   The `SKILL.md` guard is what keeps the bucket
-   `README.md` files out; a plain `cp -R` of the bucket copies them.
-   `implement-spec` is skipped on purpose: it runs implementer subagents
-   in parallel worktrees across the whole ticket graph on an integration
-   branch, which bypasses the bead conventions (claim, fixed point, close)
-   and is the unattended loop this seed does not run.
-   Result: 25 skills, every one keeping its upstream name so the upstream
+   A `warning: refs/tags/... is not a commit!` from the clone is the
+   tag's odd annotation upstream; the checkout is correct. The `SKILL.md`
+   guard is what keeps the bucket `README.md` files out; a plain `cp -R` of the bucket copies them.
+   Result: 26 skills, every one keeping its upstream name so the upstream
    docs (`https://aihero.dev/skills-<name>`) still apply, except the
    router `ask-matt`, renamed to `guide` in step 6b (a person's name
    doesn't belong in a shared seed; its doc is at `.../skills-ask-matt`), with their sibling
@@ -101,7 +93,7 @@ When asked to adopt or align a project to it:
 
    ```json
    { "name": "tracer",
-     "version": "1.3.0-pre.d81f3a1+tracer.38",
+     "version": "1.3.1+tracer.42",
      "description": "Matt Pocock's skills on a beads tracker",
      "author": { "name": "<the human's name>" } }
    ```
@@ -109,11 +101,12 @@ When asked to adopt or align a project to it:
    The plugin loads automatically in this repo as `tracer@skills-dir`; its
    skills are `/tracer:<name>`. No settings entry is needed.
 6b. **Normalize the layout. Runs on every adopt, pin changed or not.**
-   The plugin's `skills/` directory must contain exactly these 33:
+   The plugin's `skills/` directory must contain exactly these 34:
 
    `adopt budget code-review codebase-design diagnosing-bugs
    domain-modeling grill-me grill-with-docs grilling guide handoff
-   human-queue implement improve-codebase-architecture issues no-comments
+   human-queue implement implement-spec improve-codebase-architecture issues
+   no-comments
    pr prototype research retro show-me show-me-your-work tdd
    teach to-questionnaire to-spec to-tickets triage unslop wait-what
    wayfinder wizard writing-for-agents`
@@ -126,8 +119,7 @@ When asked to adopt or align a project to it:
    - `ask-matt` → `guide` (revision 7): `mv skills/ask-matt skills/guide` if
      the old directory exists, then P6 fixes its frontmatter.
    - `resolving-merge-conflicts` was removed upstream (revision 37):
-     delete the directory if present. `implement-spec` is never
-     installed: delete it if a previous fetch copied it.
+     delete the directory if present.
    - `GLOSSARY.md` (revision 37): upstream renamed `CONTEXT.md` to
      `GLOSSARY.md` and `CONTEXT-MAP.md` to `GLOSSARY-MAP.md`, and every
      skill now reads the new names. In the repo, once: for each of
@@ -317,7 +309,10 @@ ready and what is blocked; `/tracer:guide` routes when unsure.
 **Plan with the human, build alone, stop.** Planning skills interview the
 human and wait for answers; they never answer their own questions.
 `implement` builds exactly what the bead says, commits, reviews, closes
-the bead, and stops. Nothing in this repo runs a queue unattended.
+the bead, and stops. The one exception is `/tracer:implement-spec`,
+which the human starts on purpose to work a whole epic's frontier in
+parallel; even there, every bead is claimed, reviewed and closed by the
+tracker's rules. Nothing in this repo starts a queue by itself.
 
 **A skill's own subagents are authorized.** When a tracer skill's text
 says to run a subagent (the two `code-review` reviewers, the `research`
@@ -335,6 +330,30 @@ to implement; say so instead of building it.
 
 **Refer by name.** In anything the human reads, name beads by title, with
 the id in parentheses, never a bare id.
+
+**When the human has to read in order to decide, explain; do not
+abbreviate.** This covers every moment a skill stops for a person: the
+bead restatement at the start of `implement`, a Demo or Seams proposal,
+a design conflict, a grilling or wayfinder question, a `human-queue`
+item, a review menu, a `triage` brief. The reader knows this codebase
+but has been away from the problem since the design session and does
+not carry this workflow's vocabulary in their head. So: say what the
+thing is before saying what is wrong with it; define each workflow or
+domain term the first time it appears in that message, in a short
+parenthetical ("the seam, meaning the public boundary a test can call
+without reaching inside"); give one concrete example per question or
+option, drawn from this codebase where possible ("for instance,
+`PortScanner.Open` would reject a port name that is already in use
+instead of silently returning null"); spell out what each choice means
+in consequences, not in labels ("Option A: tests call the parser
+directly, so a change to the file format breaks parser tests only;
+Option B: tests go through the importer, so the same change also
+breaks the import tests"); and never use the seed's own shorthand
+("fixed point", "frontier", "P1", "smart zone") without the gloss.
+Terse is for the summary after the work, not for the moment of
+decision. Three plain sentences the human understands beat one they
+have to decode, and a question they have to ask about is a question
+that was not finished.
 
 **Prose a human reads follows `unslop`.** Before writing a summary, a
 spec, an ADR, a commit message, or a doc, call the Skill tool with
@@ -635,8 +654,14 @@ Replace the body with:
 > any bead assigned to this actor with an `implement started at` comment
 > and no close: that is a stranded run; offer to finish or release it
 > before starting anything new. Then resolve `$ARGUMENTS` as a bead id
-> with `bd show`, restate the title and Demo line back to the user, and
-> read the parent epic's description if there is one. Require a clean working tree
+> with `bd show`, read the parent epic's description if there is one,
+> and restate the bead to the user in plain language, per the "explain,
+> do not abbreviate" rule in AGENTS.md: what this slice is in a sentence
+> or two, why it exists (what the epic is for, and what this piece adds
+> to it), what a person will be able to do or see when it is done (the
+> Demo line, in words, with an example), and where the tests will sit
+> (the Seams line, glossed). This is a briefing, not a receipt; four to
+> eight sentences, no ids in the prose beyond the title's parenthetical. Require a clean working tree
 > (`git status --porcelain` empty) before starting; if it isn't, stop and
 > say so. Claim the bead (`bd update <id> --claim`) and in the same step
 > record the review's fixed point **on the bead**, not in your head:
@@ -662,8 +687,21 @@ Replace the body with:
 > Pattern to copy: path, and the key lines quoted (at most ~15 lines)
 > Tests to model on: path
 > Gotchas: anything that will bite (config, ordering, a second caller)
-> Open questions: only what the human must decide; empty is fine
+> Design conflicts: only where the code contradicts the bead, its epic, GLOSSARY.md, or an ADR; empty is the normal case
 > ```
+>
+> A design conflict is a specific, quoted contradiction: the bead's
+> premise is false in today's code (quote the line), the named seam does
+> not exist or is not public, an acceptance criterion cannot be met as
+> written, or the bead contradicts an ADR. Each one carries the bead's
+> words, the code's words with path and line, and why they cannot both
+> hold. The following are **not** conflicts and never appear in that
+> section: "confirm this is what you want", a recommendation that agrees
+> with the bead, a choice between options the design already settled, a
+> preference the subagent would have made differently, or anything the
+> discovered-work rule already covers. The human spent the grilling and
+> wayfinder sessions deciding; research exists to find where the code
+> disagrees with those decisions, not to reopen them.
 >
 > Every claim in the brief carries a path; the important ones quote the
 > line. The brief is pointers, not content: the code itself is read
@@ -682,7 +720,17 @@ Replace the body with:
 >
 > **Settle everything that needs a human before the build starts.** The
 > subagent below cannot reach the human; whatever is unsettled here it
-> will guess. Any open question in the brief: ask now.
+> will guess. If the brief's Design conflicts section is empty, say one
+> line, "research agrees with the bead", and go on to the build without
+> waiting; the human reads the brief on the bead if they want it. If it
+> is not empty, check each entry against the code yourself first (a
+> conflict that does not survive a `Read` of the cited line is dropped),
+> then present only the survivors, each as: the bead's words, the code's
+> words, and the smallest change to either that resolves it. Never pad
+> that list with confirmations, and never ask a question whose answer
+> is already in the bead or its epic. A question the human calls a
+> non-question is a defect in the brief: note it in the maintainer notes
+> and continue.
 >
 > **A bead with no Demo or no Seams line gets a researched proposal, not
 > a bare question.** Do not ask the human to invent them cold. Send
@@ -694,10 +742,15 @@ Replace the body with:
 > the behavior (candidate seams, each with path and symbol, and one line
 > on why that point and not the one above or below it); and anything in
 > the code that makes one candidate cheaper than another. Verify the
-> paths it names, then present the human a proposal: the recommended
-> Demo line and Seams line, the alternatives in one line each, and the
-> reason for the recommendation, in the project's vocabulary and with
-> no ids in the prose. Wait. When the human accepts or edits, write the
+> paths it names, then present the human a proposal, written per the
+> "explain, do not abbreviate" rule in AGENTS.md: first what a Demo line
+> and a Seams line are and why this bead needs them, in one sentence
+> each; then the recommended Demo line and Seams line, each followed by
+> a concrete example of what it means here ("a seam at `Importer.Load`
+> means the test hands it a file path and checks the returned records,
+> and never looks at the parser underneath"); then the alternatives,
+> each with the consequence that makes it worse; then the reason for the
+> recommendation. No ids in the prose. Wait. When the human accepts or edits, write the
 > result onto the bead (`bd update <id> --description` with the
 > `## Demo` and `## Seams` sections added to the existing description;
 > check `bd update --help` for the flag) so the bead is complete before
@@ -1010,9 +1063,6 @@ In the body, every self-reference (`/ask-matt`, "ask-matt") becomes
 `/tracer:guide`. Every other `/<name>` that names a skill becomes `/tracer:<name>`; the Claude
 Code built-ins `/clear` and `/compact` stay as they are. Replace
 references to `setup-matt-pocock-skills` with `/tracer:adopt`. In step 3,
-delete the `/implement-spec` sub-bullet and the sentence about
-`/implement-spec` in the "Either way" paragraph (that skill is not
-installed; see step 6); the `/implement` sub-bullet stays. In step 3,
 replace the sentence describing local `.scratch/` tickets and "native
 blocking links on a real tracker" with: "Tickets are beads under the spec
 epic with `bd dep` edges; `/tracer:issues` shows the frontier." Add these
@@ -1077,6 +1127,47 @@ and prepend to the body:
 
 Bead ids and requirement ids follow the house rule: the guide names the
 work by title, never by id.
+
+**P11 · `implement-spec` — beads as the task graph, one writer, tracer's
+close-out.** This is the one skill that works more than one bead in a
+run, so it is user-invoked (keep `disable-model-invocation`) and the
+human starts it knowing that. The body keeps upstream's shape (task
+graph, frontier, implementer subagents in worktrees, merger subagent,
+integration branch); these edits bind it to the bead conventions.
+Replace the setup sentence with: "The spec is an epic in beads; pass its
+id. Read it with `bd show <epic-id>`, the tickets with `bd list
+--parent=<epic-id>`, and the frontier with `bd ready --parent=<epic-id>`,
+per `docs/agents/issue-tracker.md`." In step 3 replace the draft-PR
+sentence with: "Create the integration branch from the current branch.
+Open no pull request unless the user asks for one." In step 4, before
+dispatching an implementer, the orchestrator (and only it) claims the
+bead (`bd update <id> --claim`, `BEADS_ACTOR` set) and records the fixed
+point (`bd comment <id> "implement started at <sha> on <branch>"` with
+the integration branch tip); each implementer's prompt carries the
+bead's title, description, Demo and Seams lines, the paths to the `tdd`
+and `unslop` skills with the same instructions P1 gives the build
+subagent, the AGENTS.md house rules by path including the **Test gate**,
+and the one-writer rule: it runs no `bd` command, spawns nothing, and
+returns P1's build report (files, tests by seam, commands run,
+discovered work, choices, not done). After each merge in step 5 the
+orchestrator runs the Test gate on the integration branch, applies the
+discovered-work rule to the report (fix now by default; `bd search`
+before filing; the rest in the close reason), calls the Skill tool with
+"no-comments" and then "unslop" on that bead's diff exactly as P1 does
+before a commit, and closes the bead: `bd close <id> --reason="<commit
+subject>: <what done meant>"`. Replace step 7's single review with:
+"call the Skill tool with "code-review" once per closed bead, passing
+the bead id, so each diff is reviewed against its own fixed point and
+spec; then once more over the whole integration branch for the Spec
+lane only." Replace step 8 with: "Every bead is closed as it merges
+(above). Run the tracker sweep from P1 on the integration branch, then
+report: the branch, one line per bead with its commit subject, the
+review verdicts, and **Beads filed** as P1 defines it. Set the epic's
+status to the tracker's done state only if the human says the spec is
+complete." Keep step 9 (clean up worktrees), and add: "Any bead still
+`in_progress` when the run stops is released (`bd update <id>
+--status=open --assignee=""`) and named in the report." The `/retro`
+hand-off in `guide` applies to this run as much as any.
 
 **P8 · every skill** — where a body says "tell the user to run
 `/setup-matt-pocock-skills`", it says `/tracer:adopt` instead. Where a
@@ -2857,6 +2948,12 @@ if __name__ == "__main__":
 - **"Just show me":** `/tracer:show-me` draws the call tree, file tree,
   component tree, diff sketch, or Mermaid for whatever is being
   discussed.
+- **A whole epic whose tickets are already sliced and you want it landed
+  in one run:** `/tracer:implement-spec <epic-id>`. Implementer subagents
+  work the ready frontier in parallel worktrees onto an integration
+  branch; each bead is claimed, built at its seams, reviewed, and closed
+  as it merges. Read the branch before merging it; this is the one place
+  more than one bead moves without you.
 - **Building:** `/tracer:issues` to pick. `/clear`. `/tracer:implement <id>`.
   Read the diff and the review. Repeat.
 - **Tiny change:** grill briefly, then `/tracer:implement` in the same
@@ -2887,9 +2984,11 @@ if __name__ == "__main__":
   at the start, and read `.audit/<slug>.tsv` when you're back.
 - **Unsure which of the above:** `/tracer:guide`.
 
-Two things this system deliberately does not do: run more than one bead
-without you, and refactor without a reason written down. If either creeps
-back in, that is the signal to reread this document.
+Two things this system deliberately does not do: start work you did not
+ask for, and refactor without a reason written down. `implement-spec` is
+the only command that moves several beads in one run, and you are the
+one who types it. If either creeps back in, that is the signal to reread
+this document.
 
 ---
 
@@ -2898,6 +2997,10 @@ back in, that is the signal to reread this document.
 Read this first on a re-adopt. Each entry is what changed since the
 previous revision, so a same-pin re-adopt knows where to look.
 
+- **42**: Block 1: "When the human has to read in order to decide, explain; do not abbreviate." Every stop for a person (implement's opening restatement, Demo/Seams proposals, design conflicts, grilling and wayfinder questions, human-queue items, review menus, triage briefs) defines its terms on first use, gives one concrete example per question or option, states choices as consequences, and never uses the seed's shorthand unglossed. P1's opening restatement becomes a short briefing and its Demo/Seams proposal explains the two concepts before proposing values.
+- **41**: P1: the brief's "Open questions" slot becomes "Design conflicts", defined as a quoted contradiction between the code and the bead, epic, GLOSSARY.md or an ADR, with confirmations, agreeing recommendations and already-settled choices ruled out by name. An empty section means "research agrees with the bead" and the build starts without waiting; non-empty entries are verified against the cited line before any are shown.
+- **40**: `implement-spec` installed (manifest 34). P11 binds it to the bead conventions: epic id as the spec, `bd ready --parent` as the frontier, the orchestrator alone claims and records a fixed point per bead, implementers get the P1 build-subagent prompt and run no `bd`, each merged bead goes through the Test gate, discovered-work rule, `no-comments`, `unslop`, `code-review` by bead id, and `bd close`; no PR unless asked; stranded beads released at the end. Block 1 and the day-to-day list name it as the one human-started multi-bead run.
+- **39**: Upstream pin moves from commit `d81f3a1` to the released tag `v1.3.1` (2026-10-04); the fetch is a tagged shallow clone again. The only skill change since that commit is one sentence in `ask-matt` routing post-bug reflection to `retro`, which P6 carries unchanged. `pr`, `retro`, the `GLOSSARY.md` rename and the `resolving-merge-conflicts` removal were already in revision 37; `implement-spec` stays uninstalled.
 - **38**: P10: `pr` works typed by hand as a review guide for any range (bead id, range, commit, or the current work), pins the range the way `code-review` does, prints what it covers, uses text forms where Mermaid will not render, and offers to write to a named path instead of assuming a pull request.
 - **37**: Upstream moved to commit `d81f3a1` (main; v1.3 merged, untagged). New skills `pr` (model-invoked PR body format) and `retro` (P9 points it at AGENTS.md house rules, `smells.md`, Claude Code session logs, and `meta` beads); `resolving-merge-conflicts` removed upstream; `implement-spec` deliberately not installed. `CONTEXT.md` → `GLOSSARY.md` followed throughout, with a one-time `git mv` in step 6b and `budget.py` reading both names. `show-me` (HumanLayer, MIT) carried into Block 4d with a per-platform opener. P6 drops the `implement-spec` route and adds `show-me`; step 7 notes the upstream em-dash sweep. Manifest is 33 skills plus one agent.
 - **36**: Step 10b: auto-mode classifier. Adopt appends a "comment cleanup is intended" paragraph to `CLAUDE.md` (normal) or `CLAUDE.local.md` (stealth), directly rather than behind the import, and offers a user-level `autoMode.allow` entry to people who run auto mode; nothing touches shared files under stealth.
