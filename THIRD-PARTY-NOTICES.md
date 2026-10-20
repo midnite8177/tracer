@@ -1,7 +1,7 @@
 # Third-party notices
 
-This repository is MIT licensed. See [LICENSE](LICENSE). Two upstream
-projects, both MIT, are named below. Only the first is redistributed here.
+This repository is MIT licensed. See [LICENSE](LICENSE). Three upstream
+projects are named below. Only the first is redistributed here.
 
 ## pstack, by Lauren Tan
 
@@ -73,3 +73,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## ai-software-factory, by Cole Medin
+
+No file from `https://github.com/coleam00/ai-software-factory` is copied
+into this repository. `reference/ai-software-factory` is a git submodule:
+the repository records only that URL and a pinned commit, and the files
+arrive when a clone runs `git submodule update --init`. The upstream
+repository carries no license, so its files are read as reference and are
+not redistributed, modified or copied into this repository's projects.

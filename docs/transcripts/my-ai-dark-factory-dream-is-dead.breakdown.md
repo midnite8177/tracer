@@ -3,7 +3,11 @@
 A reference distilled from the transcript of "My AI Dark Factory Dream Is
 Dead (Here's What Actually Works)". See the
 [transcript](my-ai-dark-factory-dream-is-dead.md) and the
-[video](https://www.youtube.com/watch?v=GQatuTWSRqY).
+[video](https://www.youtube.com/watch?v=GQatuTWSRqY). The presenter's
+factory is published as
+[ai-software-factory](https://github.com/coleam00/ai-software-factory),
+and this repository carries it as a read-only submodule at
+[`reference/ai-software-factory`](../../reference/ai-software-factory).
 
 The captions are auto-generated. "Labs" in the captions means "laps", and
 "Cloud Code" means Claude Code. "Jev" is a real model: a small decision

@@ -1,4 +1,10 @@
 {
+  "permissions": {
+    "deny": [
+      "Edit(/reference/**)",
+      "Write(/reference/**)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {

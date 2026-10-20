@@ -14,6 +14,11 @@ no solution at the root. This keeps the projects independent and makes
 shared code a deliberate act — see
 [ADR 0001](docs/adr/0001-one-directory-per-project.md) for the reason.
 
+`reference/` holds outside repositories kept for reading, each a git
+submodule pinned to a commit. Clone with `--recurse-submodules`, or run
+`git submodule update --init` afterwards, to fetch them. See
+[ADR 0002](docs/adr/0002-reference-repositories-are-submodules.md).
+
 ## Projects
 
 - **[tracer-ui](projects/tracer-ui/README.md)** — a local web UI for the
