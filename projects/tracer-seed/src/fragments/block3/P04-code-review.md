@@ -1,0 +1,126 @@
+P4 replaces the body. Upstream reviews on Standards and Spec axes against
+twelve inline smells. tracer runs three lanes (Comments, Standards, Spec),
+each in its own subagent, against the shipped `smells.md` catalog. The
+fixed point resolves strictly: the argument, then the bead's start
+comment, then ask; never inferred. Findings carry Why, Fix and
+Confidence, each lane gets its own verdict, the bead's research brief is
+read as context, and the skill never edits.
+
+<!-- seed -->
+**P4 · `code-review` — three lanes against `smells.md`, fixed point from the bead.**
+Replace the body with the text below, and set the frontmatter description
+to: "Review the changes since a fixed point along three lanes, each in
+its own subagent: Comments (Part 2 of smells.md), Standards (the repo's
+documented standards plus Part 1 of smells.md), and Spec (does the diff
+do what the bead or spec asked). Findings are hypotheses with file and
+line; the skill never edits code. Use when the user wants a branch, a
+bead's diff, or work since a fixed point reviewed." The catalog it
+reviews against is written beside the skill from Block 4e as
+`skills/code-review/smells.md`.
+
+> Review `git diff <fixed-point>...HEAD` along three lanes, each run as
+> its own subagent so a clean lane cannot hide a dirty one. Findings are
+> hypotheses: every one cites file and line, and the reader checks the
+> citation. This skill reports; it never edits code.
+>
+> **1. Pin the fixed point.** Resolution order, and nothing else: (1) a
+> commit, branch or tag the user passed; (2) if the argument is a bead
+> id, the SHA in that bead's `implement started at <sha>` comment
+> (`bd show <id>`); (3) ask. Never infer one from `main`, `HEAD~1`, the
+> last commit, or the conversation. Confirm it resolves
+> (`git rev-parse`), print `git log <fixed-point>..HEAD --oneline`, and
+> state in one line that these commits are the work under review. If the
+> diff is empty, or the list holds commits that are plainly not this
+> work, stop and say so. Uncommitted changes are invisible to a range;
+> say so if that is why the diff is empty. Capture the diff command
+> once: `git diff <fixed-point>...HEAD` (three-dot: merge-base).
+>
+> **2. Identify the spec source.** In order: the bead (`bd show <id>`,
+> plus its parent epic's description); a path the user passed; a spec
+> under `docs/` or `specs/` matching the branch or feature; else ask. If
+> there is none, the Spec lane is skipped and the report says so. If
+> the bead carries a `research brief:` comment, read it: its "Pattern
+> to copy" and "Gotchas" are Standards-lane context, and its "Files to
+> change" is a checklist for the Spec lane (a listed file left
+> untouched is a question worth asking). Do not research the codebase
+> beyond the diff and the files the brief names.
+>
+> **3. Identify the standards sources.** Anything in the repo documenting
+> how code should be written (`CODING_STANDARDS.md`, `CONTRIBUTING.md`,
+> the house rules in `AGENTS.md`), plus `smells.md` beside this skill.
+> Three rules bind the catalog: **the repo overrides** (a documented
+> repo standard wins; where it endorses something the catalog flags,
+> suppress the smell); **skip what tooling enforces** (formatter,
+> analyzer, linter) and name the tool; and **every smell is a labeled
+> hypothesis** ("possible Feature Envy"), never a hard violation, except
+> the mechanical ones the catalog's severity section lists, which are
+> flagged every time.
+>
+> **4. Scope.** Skip generated code (path convention or header marker)
+> and list the skipped files. Read enough surrounding code to judge
+> structure: the whole function for Long Function, the whole class for
+> Large Class and Feature Envy, callers for Shotgun Surgery and Message
+> Chains. Sticky Note (TODO, FIXME, HACK, XXX) is reported even in
+> unchanged lines the diff touches.
+>
+> **5. Spawn the three lanes in parallel.** Each brief carries the diff
+> command, the commit list, the relevant catalog part pasted in full
+> (the subagent has no other access to it), the standards sources, and
+> this line: "Do not invoke code-review or spawn additional agents:
+> perform this review directly."
+>
+> *Comments lane.* Part 2 of `smells.md`. Mechanical pass first, using
+> the catalog's severity section: Sticky Note, Zombie Code, Ship's Log,
+> Autograph, Fence Post, Breadcrumb, Costume, Prose Attribute, Price Tag,
+> Echo. Then a judgment pass on every comment in the diff with its
+> adjacent code: apply the Deodorant test; check Subtitles, Liar, Ghost
+> Reference, Gossip, Mumble, Riddle, Encyclopedia, Uniform, Empty Theater
+> (not in Python), and whether each Amplifier names its failure (one that
+> does not is a Mumble). Also flag as a hard finding any bead id,
+> requirement or user-story id (31d, R-918, US-12), date, work history,
+> or debugging narrative in a comment, log message, docstring, test name,
+> user-facing string, or commit message in this range: comments describe
+> the code, not the work or the paperwork. Then note good comments that
+> are *missing* (a non-obvious constraint, a cost the caller pays, a
+> load-bearing line with no Amplifier) as "missing", lower confidence.
+> Language notes decide what each smell looks like in C++, C# and Python;
+> Python docstrings on private members are never Empty Theater, and
+> `} // namespace foo` is a Breadcrumb with no exception.
+>
+> *Standards lane.* The repo's documented standards and house rules,
+> then Part 1 of `smells.md`, grouped as the catalog groups them
+> (Bloaters, Change Preventers, Dispensables, Couplers, OO Abusers), with
+> the language notes. For each smell decide present, absent, or not
+> judgeable from this diff; report present only. A documented-standard
+> breach can be hard; a catalog smell is a judgment call unless the
+> severity section calls it mechanical.
+>
+> *Spec lane.* Against the spec source: (a) requirements asked for that
+> are missing or partial; (b) behavior in the diff that was not asked
+> for (scope creep); (c) requirements that look implemented but wrong.
+> Quote the spec line for each finding. Under 400 words.
+>
+> **6. Aggregate.** Three sections in this order, comment findings first
+> because they are cheapest to fix: `## Comments`, `## Standards`,
+> `## Spec`. Present each lane's report verbatim or lightly cleaned; do
+> **not** merge or rerank across lanes, since a blended verdict lets the
+> passing lane hide the failing one. Each finding in this shape:
+>
+> ```
+> **<Smell or rule>** — <file>:<line>
+> <one line: what it looks like here>
+> Why: <one line>
+> Fix: <the refactoring, named as in the catalog>
+> Confidence: high | medium | low
+> ```
+>
+> Group by file, then by line. Mechanical findings are always high
+> confidence. If a lane finds nothing, one line says so. If the diff
+> produces more than about thirty findings, report the top thirty by
+> confidence and severity and say how many were cut. End with a count
+> per smell and one verdict per lane (clean, minor, needs work), never
+> one verdict across lanes.
+>
+> Run this in a fresh session when you can: the context that wrote the
+> code should not review it.
+

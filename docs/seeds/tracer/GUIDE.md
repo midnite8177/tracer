@@ -33,7 +33,7 @@ it" (or `/tracer:adopt` once the plugin exists). `--stealth` routes the
 workflow's machinery through `.git/info/exclude` instead of a commit:
 `.beads/`, `.claude/skills/tracer/`, `docs/agents/`, `docs/tracer.md`,
 `AGENTS.local.md`, and `CLAUDE.local.md` stay off collaborators' screens.
-`CONTEXT.md` and `docs/adr/` are project documentation, not machinery,
+`GLOSSARY.md` and `docs/adr/` are project documentation, not machinery,
 and commit normally either way. Drop `--stealth` from both commands if
 you want the whole setup checked in for collaborators to see.
 
@@ -47,7 +47,7 @@ Restart Claude Code afterward and confirm `/tracer:issues` is listed and
 ```
 
 Scope it if the repo is large: "just the API and data layer for now".
-This is what builds `CONTEXT.md` and the ADRs that later sessions read
+This is what builds `GLOSSARY.md` and the ADRs that later sessions read
 before touching code.
 
 **Step 2: get an existing backlog into beads.**
@@ -61,8 +61,8 @@ Don't group or plan, just import.
 ```
 
 If beads already exist in this project from before tracer, run
-`/tracer:migrate` instead. It's a one-time, guided move that freezes,
-reorients, and re-slices the backlog with you present.
+`/tracer:triage` over them, and `/tracer:to-tickets` for any that need
+re-slicing into tracer bullets.
 
 ## The two shapes of work
 

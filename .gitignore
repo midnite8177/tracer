@@ -147,3 +147,5 @@ docs/agents/
 docs/tracer.md
 docs/tracer-adopt-notes.md
 .audit/
+
+__pycache__/

@@ -18,6 +18,7 @@ say so; do not work around it.
 Each project README holds its own commands.
 
 - tracer-ui: [projects/tracer-ui/README.md](projects/tracer-ui/README.md)
+- tracer-seed: [projects/tracer-seed/README.md](projects/tracer-seed/README.md)
 
 ## Conventions
 

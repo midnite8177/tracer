@@ -8,6 +8,8 @@ them.
 
 - [tracer-ui](projects/tracer-ui/GLOSSARY.md) — a local web UI for the
   browse and triage of beads issues.
+- [tracer-seed](projects/tracer-seed/GLOSSARY.md) — the sources and the
+  build of the tracer seed.
 
 ## Decisions
 

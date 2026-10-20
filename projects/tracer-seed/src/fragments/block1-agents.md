@@ -1,0 +1,203 @@
+Block 1 carries only what every context needs, because it loads into
+every context, subagents included: the loop; plan with the human, build
+alone, stop; skill-requested subagents are authorized; beads are tracer
+bullets with Demo and Seams; refer by name; explain at the moment of
+decision; prose follows `unslop`; committing work is not optional; the
+three-outcome discovered-work rule; the house rules; where memory lives.
+
+**Tried and reversed.** A binary discovered-work rule (fix or file)
+opened beads faster than they closed. See
+[ADR 0004](../../docs/adr/0004-discovered-work-leans-toward-fixing.md).
+
+<!-- seed -->
+# Block 1 — AGENTS.md core
+
+The file begins with the heading `# AGENTS`, then the italic line
+*Reader: the agent. Written for a fresh context that has read nothing
+else.*, then everything below this paragraph, verbatim. It loads into
+every context, including every subagent, on every invocation. That is
+why it is short.
+
+## The loop
+
+Work flows: `/tracer:grill-with-docs` → `/tracer:to-spec` → `/tracer:to-tickets`
+→ `/tracer:implement <bead-id>` (one bead per session, `/clear` between)
+→ the human reads the diff; `/tracer:retro` when a session went badly,
+to fix the environment rather than the code. `/tracer:wayfinder` is the on-ramp for an
+effort too big to grill in one session; `/tracer:issues` shows what is
+ready and what is blocked; `/tracer:guide` routes when unsure.
+
+**Plan with the human, build alone, stop.** Planning skills interview the
+human and wait for answers; they never answer their own questions.
+`implement` builds exactly what the bead says, commits, reviews, closes
+the bead, and stops. The one exception is `/tracer:implement-spec`,
+which the human starts on purpose to work a whole epic's frontier in
+parallel; even there, every bead is claimed, reviewed and closed by the
+tracker's rules. Nothing in this repo starts a queue by itself.
+
+**A skill's own subagents are authorized.** When a tracer skill's text
+says to run a subagent (the two `code-review` reviewers, the `research`
+agent, the explorer in `improve-codebase-architecture`, a `grilling`
+fact-finder, `comment-sicko` from `no-comments`, the trail reviewer in
+`show-me-your-work`), invoking it is the human's standing request; do not
+pause to ask. Subagents the skill did not ask for are the session's own choice
+and follow the delegation rules in `docs/agents/issue-tracker.md`.
+
+**Beads are tracer bullets.** A work bead is a thin vertical slice that is
+demoable when closed. Its description carries a `## Demo` line (what a
+person can do or see once it's done) and a `## Seams` line (the public
+boundaries its tests observe at). A bead without a demo line is not ready
+to implement; say so instead of building it.
+
+**Refer by name.** In anything the human reads, name beads by title, with
+the id in parentheses, never a bare id.
+
+**When the human has to read in order to decide, explain; do not
+abbreviate.** This covers every moment a skill stops for a person: the
+bead restatement at the start of `implement`, a Demo or Seams proposal,
+a design conflict, a grilling or wayfinder question, a `human-queue`
+item, a review menu, a `triage` brief. The reader knows this codebase
+but has been away from the problem since the design session and does
+not carry this workflow's vocabulary in their head. So: say what the
+thing is before saying what is wrong with it; define each workflow or
+domain term the first time it appears in that message, in a short
+parenthetical ("the seam, meaning the public boundary a test can call
+without reaching inside"); give one concrete example per question or
+option, drawn from this codebase where possible ("for instance,
+`PortScanner.Open` would reject a port name that is already in use
+instead of silently returning null"); spell out what each choice means
+in consequences, not in labels ("Option A: tests call the parser
+directly, so a change to the file format breaks parser tests only;
+Option B: tests go through the importer, so the same change also
+breaks the import tests"); and never use the seed's own shorthand
+("fixed point", "frontier", "P1", "smart zone") without the gloss.
+Terse is for the summary after the work, not for the moment of
+decision. Three plain sentences the human understands beat one they
+have to decode, and a question they have to ask about is a question
+that was not finished.
+
+**Prose a human reads follows `unslop`.** Before writing a summary, a
+spec, an ADR, a commit message, or a doc, call the Skill tool with
+"unslop" (the file is `.claude/skills/tracer/skills/unslop/SKILL.md`).
+It is an editing pass, so it runs on text that exists, not before code
+is written; for prose inside code (comments, docstrings, messages) its
+pattern list applies and its "Adding soul" section does not. A host
+output style or a project style guide wins where they conflict;
+`unslop` applies where they are silent.
+
+**Committing work is not optional.** Any beads or stealth guidance about
+not committing covers the machinery only. Code, tests, `GLOSSARY.md` and
+ADRs the work produced are always committed.
+
+## Discovered work: decide on the spot, and lean toward fixing
+
+Anything found during work that is not the current bead's job gets a
+decision the moment it is noticed. A bead costs a full implement session;
+beads open faster than they close when filing is the reflex. Three
+outcomes, and the first is the default:
+
+- **Fix it now** — small, inside or next to the current bead's blast
+  radius, needs no plan of its own: fix it in this bead's commit and note
+  it in one line of the close reason. **Comment work is always this
+  outcome**: a stale or misleading comment, a work-journal comment, a
+  bead or requirement id, anything in `smells.md` Part 2, found in any
+  file this run reads or touches, is fixed here and never becomes a bead.
+- **Real work** — a defect a user or operator would hit, a correctness or
+  data-loss risk, or a change that needs its own plan or grilling: file
+  it, right then. First `bd search "<keywords>"`; when an open bead
+  already covers it, `bd comment` there instead of creating a duplicate.
+- **Everything else** — style nits outside the diff, nice-to-haves,
+  speculative ideas, "could be cleaner": one line in the close reason,
+  no bead. If it matters, it will be found again.
+
+No fourth option: no "later", no markdown note, no holding it in memory.
+The review menu's `fN` still files a bead, because the human chose it.
+
+```bash
+bd create --title="..." --description="what was seen and where" --type=bug \
+  --priority=2 --deps=discovered-from:<current-id>
+```
+
+For docs and text: fix wording, clarity and stale references on the spot;
+a change to *meaning* that a bead or another document relies on earns a
+bead.
+
+## House rules
+
+Reviewers may cite these; a violation is a legitimate finding.
+
+- **Prefer explicit parameters; avoid default parameter values** except
+  when the API design genuinely calls for one. Never add a default to make
+  a signature change easier to roll out; let the compiler find every
+  callsite.
+- **Test gate: full.** What "the tests" means before a commit. `full`
+  runs the whole suite once at the end of a build. `targeted` runs the
+  tests that cover the changed code: the test files or classes the
+  diff's seams reach, plus any test that references a changed public
+  type, using the project's filter syntax (for example
+  `dotnet test <project> --filter "FullyQualifiedName~<Class>"`,
+  `pytest <paths>`, `ctest -R <regex>`), with the exact commands
+  recorded in the close reason; the full suite is then CI's job on push.
+  Choose `targeted` when the full suite takes long enough to dominate an
+  implement run. Build or typecheck stays whole-project either way.
+  Edit this line to change the gate; `implement` and its build subagent
+  read it.
+- **Tests assert runtime behavior.** No test may inspect source text,
+  project files or package manifests. Those are lint concerns; file a bead
+  proposing the right tool and label it `human`.
+- **Comments describe the code, never the work.** No bead ids, dates,
+  "fixed as part of", debugging history, or what-was-tried in code
+  comments, doc comments, log messages, or user-facing strings. A comment
+  says what the code does or why it is shaped that way; the work journal
+  lives on the bead. Temporary instrumentation comes out before commit.
+  `no-comments` enforces this on a diff; `implement` runs it before
+  committing, and `code-review`'s Comments lane audits what survived
+  against the catalog in `skills/code-review/smells.md`.
+- **Bead ids and requirement ids never leave the tracker or the spec.**
+  Bead ids are local to this machine and appear in nothing that is
+  committed: not code, comments, commit messages, docs, or tests.
+  Requirement and user-story numbers from a spec or PRD ("31d", "R-918",
+  "US-12") are the same: they mean something only inside that document
+  and are meaningless in code. Neither goes in a comment, doc comment,
+  log, test name, or user-facing string; a test name says what behavior
+  it proves, not which line item asked for it. Commit messages describe
+  the change in the project's own terms. The link runs the other way:
+  the bead's close reason names the commit, and the spec names the
+  bead.
+
+## Where memory lives
+
+One home per kind of memory, priced by who must load it. Do not create
+new memory files.
+
+- **Vocabulary and decisions**: `GLOSSARY.md` (glossary, what a thing *is*
+  in one or two sentences, rejected synonyms under *Avoid*) and
+  `docs/adr/NNNN-slug.md` (one to three sentences: context, choice, reason;
+  only for decisions that are hard to reverse, surprising without context,
+  and a real trade-off). Written by `domain-modeling` during grilling.
+  Read by every skill that explores the codebase (see `docs/agents/domain.md`).
+- **Universal traps** — things any context must know before it knows it
+  needs them: AGENTS.md, one or two lines each.
+- **Chapters** — depth on one topic: `docs/<topic>.md`, unlimited size, with
+  a one-line pointer in memory: `bd remember --key=<slug> "read docs/<topic>.md before touching X"`.
+- **Insights and pointers**: `bd remember --key=<topic-slug> "insight"`.
+  Always pass `--key`.
+- **Work state**: the beads themselves, and nothing else. No MEMORY.md,
+  runbooks or progress notes. Specs live on their epic; decisions live on
+  the bead that made them.
+
+The remembered set has a ceiling: **25 memories or 20 KB.** Crossing it
+files a memory-audit bead. The audit sorts each memory: process → the
+skill or doc that executes it; long or clustered → a `docs/<topic>.md`
+chapter with a pointer; universal trap → AGENTS.md; duplicates merged,
+wrong memories corrected or forgotten (a wrong memory loads first and is
+believed); the rest trimmed to fact, why, and how to apply it.
+
+## Agent skills
+
+- **Issue tracker**: beads. See `docs/agents/issue-tracker.md`.
+- **Triage labels**: see `docs/agents/triage-labels.md`.
+- **Domain docs**: see `docs/agents/domain.md`.
+
+---
+
