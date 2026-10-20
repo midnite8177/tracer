@@ -10,6 +10,14 @@ them.
   browse and triage of beads issues.
 - [tracer-seed](projects/tracer-seed/GLOSSARY.md) — the sources and the
   build of the tracer seed.
+- [jidoka](projects/jidoka/GLOSSARY.md) — the tool that replaces tracer:
+  planning with the human, the factory, and acceptance.
+
+## Relationships
+
+- **jidoka and tracer-ui**: an epic in tracer-ui is any bead that holds
+  beads; an epic in jidoka holds only tasks. tracer-ui avoids "task" as a
+  word for a bead, while in jidoka a task is a bead inside an epic.
 
 ## Decisions
 
