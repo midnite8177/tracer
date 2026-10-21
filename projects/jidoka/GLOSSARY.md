@@ -64,9 +64,9 @@ did not merge gets a new lap that starts from the work left behind.
 _Avoid_: Run, attempt, iteration, loop
 
 **Parked**:
-Waiting on the human before the factory goes on. A task parks when its
-lap hits a cap or needs an answer; an epic parks when it runs out of
-passes or when its laps keep failing in the same way.
+Waiting on the human before the factory goes on. A task or an epic parks
+when the factory hits a cap or asks a question, and when the human parks
+it to stop new stages starting on it.
 _Avoid_: Stuck, on hold, needs-owner, escalated
 
 **Epic branch**:
@@ -127,6 +127,20 @@ A problem a lap or a pass finds outside the task or diff it is working
 on. It is filed as a bead, inside the epic when the epic cannot be
 accepted without it, and outside the epic otherwise.
 _Avoid_: Side quest, follow-up, tech debt
+
+### Asking the human
+
+**Question**:
+A worker's request for a decision from the human, which parks its task or
+its epic. It says what the worker found, the options, and the one it
+recommends; unparking without an answer takes the recommendation.
+_Avoid_: Escalation, prompt, ask, blocker
+
+**Assumption**:
+A choice a worker makes inside its task without asking, because it is
+cheap to reverse and leaves the task's Demo line as it was. Acceptance
+shows the human every one.
+_Avoid_: Guess, decision, note
 
 ### Holdouts
 
