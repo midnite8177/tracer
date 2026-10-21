@@ -63,6 +63,11 @@ stopped under it. A parked or interrupted task gets a new lap that starts
 from the work left behind.
 _Avoid_: Run, attempt, iteration, loop
 
+**Epic branch**:
+The branch that collects an epic's work while the factory holds it. Each
+lap merges into it, and acceptance merges it into main.
+_Avoid_: Feature branch, integration branch
+
 **Pass**:
 One trip of an epic through the factory: laps for its tasks, side by side
 where their dependencies allow, then the epic's own stages over all of its
