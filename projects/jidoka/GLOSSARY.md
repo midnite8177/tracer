@@ -54,3 +54,26 @@ _Avoid_: Round, cycle, sweep, loop; "pass" for a stage
 **Stage**:
 One step of a lap or of a pass, such as the build or the review.
 _Avoid_: Step, phase, node, pass
+
+### Running the factory
+
+**Host**:
+The harness session the human starts and works in. Planning runs in it,
+and after a handoff the factory's manager runs in it too.
+_Avoid_: Root session, driver, parent
+
+**Manager**:
+The agent in the host that works an epic through its passes, starting a
+worker for each stage.
+_Avoid_: Orchestrator, coordinator, root agent
+
+**Worker**:
+An agent the manager starts to run one stage, in the host's own harness
+or in another harness the host can reach.
+_Avoid_: Subagent, child, lane
+
+**Route**:
+How one machine runs a kind of worker: in the host's own harness, or in
+another harness on a named model. Each machine keeps its own routes, and
+a route that cannot run falls back to the host's harness.
+_Avoid_: Provider, backend, adapter
