@@ -92,7 +92,7 @@ _Avoid_: Route, path, class, weight, complexity
 
 **App check**:
 The lap stage in which an agent tests the running app from outside, against
-the holdouts the task could affect, before it reads the diff.
+the holdouts that name the task, before it reads the diff.
 _Avoid_: QA, black-box test, validation
 
 **Spec check**:
@@ -111,9 +111,15 @@ The last stage of a lap, a script with no model in it that merges the
 task into the epic branch only when the lap's record supports it.
 _Avoid_: Land, merge agent, approval
 
+**Test cleanup**:
+The first stage of a pass, which deletes the tests the epic added or
+changed that add neither confidence nor communication. Each deletion names
+the kept test that covers the same behavior.
+_Avoid_: Test pruning, test pass
+
 **Validation**:
-The last stage of a pass: the full test suite and every holdout, run on
-the epic branch.
+The last stage of a pass: the full test suite, the epic's holdouts and
+every standing holdout, run on the epic branch.
 _Avoid_: Test gate, app check, QA
 
 **Discovered work**:
@@ -121,6 +127,20 @@ A problem a lap or a pass finds outside the task or diff it is working
 on. It is filed as a bead, inside the epic when the epic cannot be
 accepted without it, and outside the epic otherwise.
 _Avoid_: Side quest, follow-up, tech debt
+
+### Holdouts
+
+**Holdout**:
+A scenario, in prose with exact expected values, of what a user does to
+the running app and what they then see. The human approves an epic's
+holdouts in planning, each one names the tasks it exercises, and no
+builder ever reads one.
+_Avoid_: Acceptance test, hidden test, secret test, eval
+
+**Standing holdout**:
+A holdout the human keeps at acceptance, which every later validation
+runs. An epic's other holdouts retire when the epic is accepted.
+_Avoid_: Regression suite, smoke test, golden test
 
 ### Running the factory
 
