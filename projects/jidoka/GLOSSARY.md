@@ -185,11 +185,25 @@ An agent the manager starts to run one stage, in the host's own harness
 or in another harness the host can reach.
 _Avoid_: Subagent, child, lane
 
+**Tier**:
+A grade of worker that a stage asks for, such as deep or light. A stage
+never names a model; each machine's routes say how it runs each tier.
+_Avoid_: Class, level, size, model
+
 **Route**:
-How one machine runs a kind of worker: in the host's own harness, or in
-another harness on a named model. Each machine keeps its own routes, and
-a route that cannot run falls back to the host's harness.
+How one machine runs a tier: a model and effort in the host's own
+harness, or in another harness. Each machine keeps its own routes, and a
+route that cannot run falls back to the host's harness.
 _Avoid_: Provider, backend, adapter
+
+**Budget**:
+The most an epic may spend, in dollars at list price, before it parks.
+_Avoid_: Spend cap, limit, quota ("cap" counts tries)
+
+**Reserve**:
+The share of a usage window that the factory leaves for the human. Past
+it, the factory starts no new stage.
+_Avoid_: Headroom, buffer, threshold
 
 **Area**:
 The part of the codebase a task is expected to touch. Handoff names one
