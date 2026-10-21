@@ -58,9 +58,9 @@ _Avoid_: Launch, kickoff, dispatch, submit
 **Lap**:
 One task's trip through the factory, from the start of its build to its
 merge into the epic branch, retries included. It ends merged, which closes
-the task; parked, waiting on the human; or interrupted, when the factory
-stopped under it. A parked or interrupted task gets a new lap that starts
-from the work left behind.
+the task; parked, waiting on the human; blocked, waiting on another task in
+the epic; or interrupted, when the factory stopped under it. A task that
+did not merge gets a new lap that starts from the work left behind.
 _Avoid_: Run, attempt, iteration, loop
 
 **Epic branch**:
@@ -78,6 +78,37 @@ _Avoid_: Round, cycle, sweep, loop; "pass" for a stage
 **Stage**:
 One step of a lap or of a pass, such as the build or the review.
 _Avoid_: Step, phase, node, pass
+
+**Track**:
+How much of a lap a task goes through: the simple track or the full
+track. The pass's stages are the same for every task.
+_Avoid_: Route, path, class, weight, complexity
+
+**App check**:
+The lap stage in which an agent tests the running app from outside, against
+the holdouts the task could affect, before it reads the diff.
+_Avoid_: QA, black-box test, validation
+
+**Spec check**:
+The lap stage that asks whether the task's diff does what the task says,
+and nothing more.
+_Avoid_: Review, spec review
+
+**Merge gate**:
+The last stage of a lap, a script with no model in it that merges the
+task into the epic branch only when the lap's record supports it.
+_Avoid_: Land, merge agent, approval
+
+**Validation**:
+The last stage of a pass: the full test suite and every holdout, run on
+the epic branch.
+_Avoid_: Test gate, app check, QA
+
+**Discovered work**:
+A problem a lap or a pass finds outside the task or diff it is working
+on. It is filed as a bead, inside the epic when the epic cannot be
+accepted without it, and outside the epic otherwise.
+_Avoid_: Side quest, follow-up, tech debt
 
 ### Running the factory
 
