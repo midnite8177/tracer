@@ -63,6 +63,12 @@ the epic; or interrupted, when the factory stopped under it. A task that
 did not merge gets a new lap that starts from the work left behind.
 _Avoid_: Run, attempt, iteration, loop
 
+**Parked**:
+Waiting on the human before the factory goes on. A task parks when its
+lap hits a cap or needs an answer; an epic parks when it runs out of
+passes or when its laps keep failing in the same way.
+_Avoid_: Stuck, on hold, needs-owner, escalated
+
 **Epic branch**:
 The branch that collects an epic's work while the factory holds it. Each
 lap merges into it, and acceptance merges it into main.
@@ -94,6 +100,12 @@ The lap stage that asks whether the task's diff does what the task says,
 and nothing more.
 _Avoid_: Review, spec review
 
+**Merge worker**:
+The worker a lap gets when newer work on the epic branch conflicts with
+its own or breaks its tests, and which reconciles the two in the lap's
+workspace.
+_Avoid_: Merge agent, conflict resolver
+
 **Merge gate**:
 The last stage of a lap, a script with no model in it that merges the
 task into the epic branch only when the lap's record supports it.
@@ -118,9 +130,14 @@ and after a handoff the factory's manager runs in it too.
 _Avoid_: Root session, driver, parent
 
 **Manager**:
-The agent in the host that works an epic through its passes, starting a
-worker for each stage.
+The agent in the host that works an epic through its passes. It starts the
+workers the scheduler calls for and reports back how each one ended.
 _Avoid_: Orchestrator, coordinator, root agent
+
+**Scheduler**:
+The script that reads an epic's beads and says what the manager does
+next. It applies the dependencies, areas and caps; the manager never does.
+_Avoid_: Orchestrator, dispatcher, engine, conductor
 
 **Worker**:
 An agent the manager starts to run one stage, in the host's own harness
@@ -132,3 +149,8 @@ How one machine runs a kind of worker: in the host's own harness, or in
 another harness on a named model. Each machine keeps its own routes, and
 a route that cannot run falls back to the host's harness.
 _Avoid_: Provider, backend, adapter
+
+**Area**:
+The part of the codebase a task is expected to touch. Handoff names one
+for each task, and two laps in the same area never run at the same time.
+_Avoid_: Zone, lane, component, scope
