@@ -142,6 +142,13 @@ cheap to reverse and leaves the task's Demo line as it was. Acceptance
 shows the human every one.
 _Avoid_: Guess, decision, note
 
+**Notification**:
+A message telling the human that the factory waits on them: a task or
+the epic parked, only parked tasks left, the epic at the acceptance gate,
+or the factory stopped with work left. It points at a bead, and the bead
+carries the question; missing a notification loses nothing.
+_Avoid_: Alert, ping, push, notice
+
 ### Holdouts
 
 **Holdout**:
