@@ -6,12 +6,31 @@ the result back for the human to accept.
 
 ## Language
 
-### Units of work
+### Modes of work
+
+**Planning**:
+The mode in which the human and an agent turn an idea into epics and
+tasks, settling the words and decisions they rest on. It runs from a
+wayfinder map down to one stray bug filed into an epic, and ships no code.
+_Avoid_: Design, grooming, refinement, intake
 
 **Factory**:
 The part of jidoka that works an epic unattended, from its handoff until
-the human accepts the result.
+the epic reaches the acceptance gate.
 _Avoid_: Pipeline, engine, loop
+
+**Acceptance**:
+The mode in which the human judges an epic the factory has brought to the
+acceptance gate, and either merges it or sends it back with new tasks.
+_Avoid_: Sign-off, approval, QA, review
+
+**Bench**:
+The mode in which the human and an agent build one bead together, a task
+or a stray bug, with the human answering and approving on the spot. Bench
+work is never a lap, and it can run while the factory works an epic.
+_Avoid_: Pairing, implement, manual mode, attended mode
+
+### Units of work
 
 **Milestone**:
 A bead that holds only epics: a container for planning, which the factory
@@ -45,10 +64,10 @@ from the work left behind.
 _Avoid_: Run, attempt, iteration, loop
 
 **Pass**:
-One trip of an epic through the factory: laps for its tasks, then the
-epic's own stages over all of its work. A pass ends clean, and the epic
-goes to the human for acceptance, or it ends with new tasks in the epic,
-and the next pass begins.
+One trip of an epic through the factory: laps for its tasks, side by side
+where their dependencies allow, then the epic's own stages over all of its
+work. A pass ends clean, and the epic goes to the human for acceptance,
+or it ends with new tasks in the epic, and the next pass begins.
 _Avoid_: Round, cycle, sweep, loop; "pass" for a stage
 
 **Stage**:
