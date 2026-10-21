@@ -69,6 +69,18 @@ when the factory hits a cap or asks a question, and when the human parks
 it to stop new stages starting on it.
 _Avoid_: Stuck, on hold, needs-owner, escalated
 
+**Paused**:
+Waiting on the clock, for a usage window's reset or the API's return,
+while the host still runs. Nothing new starts on what is paused, and the
+factory carries on by itself.
+_Avoid_: Held, throttled, sleeping
+
+**Stopped**:
+No manager running for an epic the factory has taken, because the host is
+gone or the human stopped it. Only the human starts it again, and the laps
+it was running end interrupted.
+_Avoid_: Crashed, dead, down, halted
+
 **Epic branch**:
 The branch that collects an epic's work while the factory holds it. Each
 lap merges into it, and acceptance merges it into main.
@@ -84,6 +96,12 @@ _Avoid_: Round, cycle, sweep, loop; "pass" for a stage
 **Stage**:
 One step of a lap or of a pass, such as the build or the review.
 _Avoid_: Step, phase, node, pass
+
+**Cut off**:
+Said of a stage whose worker ended because of a usage limit, an outage or
+a stop, not because of its own work. The stage reruns from its start, and
+the cutoff is not a try.
+_Avoid_: Failed, aborted, killed, crashed
 
 **Track**:
 How much of a lap a task goes through: the simple track or the full
@@ -196,13 +214,19 @@ harness, or in another harness. Each machine keeps its own routes, and a
 route that cannot run falls back to the host's harness.
 _Avoid_: Provider, backend, adapter
 
+**Account**:
+The login a harness runs on at the moment, with its own usage windows or
+its own bill: a subscription at home, an API key at work. The human may
+change it at any time; jidoka reads it and never chooses it.
+_Avoid_: Subscription, plan, login, seat
+
 **Budget**:
 The most an epic may spend, in dollars at list price, before it parks.
 _Avoid_: Spend cap, limit, quota ("cap" counts tries)
 
 **Reserve**:
-The share of a usage window that the factory leaves for the human. Past
-it, the factory starts no new stage.
+The share of an account's usage window that the factory leaves unused.
+Past it, the factory starts no new stage on that account.
 _Avoid_: Headroom, buffer, threshold
 
 **Area**:
