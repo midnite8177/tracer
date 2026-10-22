@@ -290,3 +290,18 @@ _Avoid_: Headroom, buffer, threshold
 The part of the codebase a task is expected to touch. Handoff names one
 for each task, and two laps in the same area never run at the same time.
 _Avoid_: Zone, lane, component, scope
+
+### Repos
+
+**Onboarding**:
+The one-time step that brings a repo under jidoka on one machine. Its
+beads start in stealth mode, and jidoka records what it needs to know
+about the repo and its apps.
+_Avoid_: Adopt, install, setup, enroll
+
+**App**:
+A program or a library that a repo ships, which app checks, holdouts and
+acceptance specs reach from outside. People reach a program through its
+command line, API or UI; programmers reach a library through its public
+API. A repo holds one or more.
+_Avoid_: Project, product, target, binary
