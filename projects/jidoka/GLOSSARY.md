@@ -175,6 +175,12 @@ or the factory stopped with work left. It points at a bead, and the bead
 carries the question; missing a notification loses nothing.
 _Avoid_: Alert, ping, push, notice
 
+**Page**:
+A web page that shows the human the work at a moment that needs them,
+such as a question or the acceptance gate, through diagrams and examples.
+It sits beside its bead, and the bead keeps the record in plain text.
+_Avoid_: Report, artifact, view, explainer, dashboard
+
 ### Holdouts
 
 **Holdout**:
