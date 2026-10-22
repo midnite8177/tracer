@@ -56,6 +56,13 @@ The step in which the human gives an epic to the factory. The epic's form
 is checked, its factory rules are agreed, and the factory takes it.
 _Avoid_: Launch, kickoff, dispatch, submit
 
+**Factory rules**:
+An epic's own settings and guidance, agreed at its handoff, which bind the
+factory only while it works that epic. A setting is a named value the
+scheduler reads, such as the lap limit. Guidance is prose that every
+worker follows and that the Spec check holds each diff to.
+_Avoid_: Epic config, run settings, policy, ruleset
+
 **Lap**:
 One task's trip through the factory, from the start of its build to its
 merge into the epic branch, retries included. It ends merged, which closes
