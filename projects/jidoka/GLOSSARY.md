@@ -11,7 +11,8 @@ the result back for the human to accept.
 **Planning**:
 The mode in which the human and an agent turn an idea into epics and
 tasks, settling the words and decisions they rest on. It runs from a
-wayfinder map down to one stray bug filed into an epic, and ships no code.
+wayfinder map down to one stray bug filed into an epic, and ships no
+product code.
 _Avoid_: Design, grooming, refinement, intake
 
 **Factory**:
@@ -132,12 +133,12 @@ _Avoid_: Land, merge agent, approval
 **Test cleanup**:
 The first stage of a pass, which deletes the tests the epic added or
 changed that add neither confidence nor communication. Each deletion names
-the kept test that covers the same behavior.
+the kept test or acceptance spec that covers the same behavior.
 _Avoid_: Test pruning, test pass
 
 **Validation**:
-The last stage of a pass: the full test suite, the epic's holdouts and
-every standing holdout, run on the epic branch.
+The last stage of a pass: the full test suite with every acceptance spec,
+the epic's holdouts and every standing holdout, run on the epic branch.
 _Avoid_: Test gate, app check, QA
 
 **Discovered work**:
@@ -180,6 +181,29 @@ _Avoid_: Acceptance test, hidden test, secret test, eval
 A holdout the human keeps at acceptance, which every later validation
 runs. An epic's other holdouts retire when the epic is accepted.
 _Avoid_: Regression suite, smoke test, golden test
+
+### Acceptance specs
+
+**Acceptance spec**:
+An executable example, in the words of the app's users, of one thing the
+app does. It runs against the real app and fails until the app does it.
+The human approves each one in planning, builders read and run them but
+never change them, and they stay with the app after the epic is accepted.
+_Avoid_: Acceptance test, executable spec, Gherkin scenario, feature file,
+BDD test
+
+**Protocol driver**:
+The code beneath an app's acceptance specs that reaches the running app
+through its command line, API or UI and makes the checks the specs ask
+for. Writing it fixes the app's interface.
+_Avoid_: Harness, adapter, fixture
+
+**Spec task**:
+The task that builds what an epic's new acceptance specs need from the
+protocol driver, so that they run and fail. Its lap is the only one that
+may change the code beneath the acceptance specs, and the tasks that make
+them pass wait on it.
+_Avoid_: Driver task, harness task
 
 ### Running the factory
 
