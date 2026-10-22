@@ -22,7 +22,7 @@ _Avoid_: Pipeline, engine, loop
 
 **Acceptance**:
 The mode in which the human judges an epic the factory has brought to the
-acceptance gate, and either merges it or sends it back with new tasks.
+acceptance gate, and merges it, sends it back with new tasks, or drops it.
 _Avoid_: Sign-off, approval, QA, review
 
 **Bench**:
@@ -89,9 +89,15 @@ gone or the human stopped it. Only the human starts it again, and the laps
 it was running end interrupted.
 _Avoid_: Crashed, dead, down, halted
 
+**Dropped**:
+Said of an epic the human gave up on. It closes without reaching main,
+its running laps end, and its epic branch stays until the human deletes
+it.
+_Avoid_: Abandoned, cancelled, withdrawn, killed
+
 **Epic branch**:
 The branch that collects an epic's work while the factory holds it. Each
-lap merges into it, and acceptance merges it into main.
+lap merges into it, and landing puts its work on main.
 _Avoid_: Feature branch, integration branch
 
 **Pass**:
@@ -147,6 +153,16 @@ _Avoid_: Test pruning, test pass
 The last stage of a pass: the full test suite with every acceptance spec,
 the epic's holdouts and every standing holdout, run on the epic branch.
 _Avoid_: Test gate, app check, QA
+
+**Acceptance gate**:
+Where the factory's work on an epic ends and the epic waits for the human
+to merge it, send it back with new tasks, or drop it.
+_Avoid_: Approval gate, sign-off
+
+**Landing**:
+Putting an accepted epic's work, or bench work, on main as one commit or
+one per task, after testing it again if main moved since validation.
+_Avoid_: Merge (a lap merges into the epic branch), ship, release, integrate
 
 **Discovered work**:
 A problem a lap or a pass finds outside the task or diff it is working
