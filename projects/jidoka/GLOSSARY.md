@@ -205,6 +205,39 @@ may change the code beneath the acceptance specs, and the tasks that make
 them pass wait on it.
 _Avoid_: Driver task, harness task
 
+### Keeping the code well built
+
+**Design finding**:
+A problem in how the code is built, named by a review or by the human. It
+stays a bead outside any epic until planning takes it up or the human
+closes it.
+_Avoid_: Tech debt, design debt, smell, cleanup item
+
+**Sighting**:
+A later pass or planning session meeting a design finding again, recorded
+on the finding. A finding's sightings show how often its code is worked on.
+_Avoid_: Hit, vote, occurrence
+
+**Design lane**:
+The review lane of a pass that judges the design of every module the epic
+touched, each read whole rather than as a diff.
+_Avoid_: Architecture review, design review
+
+**Prefactoring task**:
+A task that reshapes existing code so that a later task in the same epic
+is easy, and changes nothing a user sees.
+_Avoid_: Preparatory task, enabling task
+
+**Improvement epic**:
+An epic that changes how the code is built and nothing a user sees. Only
+the human starts one.
+_Avoid_: Refactoring epic, cleanup epic, tech-debt epic
+
+**Improvement share**:
+The part of recent epics' spend that went to prefactoring tasks and
+improvement epics.
+_Avoid_: Refactor ratio, investment
+
 ### Running the factory
 
 **Host**:
