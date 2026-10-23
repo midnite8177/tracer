@@ -334,3 +334,9 @@ acceptance specs reach from outside. People reach a program through its
 command line, API or UI; programmers reach a library through its public
 API. A repo holds one or more.
 _Avoid_: Project, product, target, binary
+
+**Untracer**:
+The script, run by the human in a terminal, that takes tracer's files out of
+one repo and first copies each original it touches to a backup under jidoka's
+home. It keeps the repo's beads, glossaries and ADRs.
+_Avoid_: Uninstall, cleanup, migration

@@ -19,6 +19,7 @@ Each project README holds its own commands.
 
 - tracer-ui: [projects/tracer-ui/README.md](projects/tracer-ui/README.md)
 - tracer-seed: [projects/tracer-seed/README.md](projects/tracer-seed/README.md)
+- jidoka: [projects/jidoka/README.md](projects/jidoka/README.md)
 
 ## Conventions
 
