@@ -47,12 +47,14 @@ older Python. Building the workspace takes a few seconds.
 | `release.py` | Raises the plugin version and makes the one commit that holds it |
 | `plugin/` | The local marketplace, committed in git. `plugin/jidoka/` is the plugin: its manifest and `bin/jidoka-run`, the launcher |
 | `plugin/jidoka/hooks/` | `hooks.json` wires the SessionStart hook, and `session_start.py` prints the rules block and the doc paths in a repo that has beads, and nothing elsewhere |
+| `plugin/jidoka/scripts/` | `land.py` puts a bead's branch on local main as one commit. It takes the merge lock under `<jidoka-home>/locks/`, rebases the branch on main, reruns the bead's recorded tests when main moved, fast-forwards main in the checkout that has it, closes the bead and removes the worktree and branch. It exits 3, naming the files, while uncommitted edits in main's checkout touch files the bead changed, and 4 when main has the commit but a closing step failed; running it again repeats those steps |
 | `plugin/jidoka/docs/` | `issue-tracker.md` and `domain.md`, the two docs the hook points each session at |
 | `untracer.py` | Takes tracer's files out of one repo, after copying each original to `<jidoka-home>/untracer/` |
 | `tests/test_install.py` | The installer tests, at the process seam |
 | `tests/test_release.py` | The release tests, at the process seam |
 | `tests/test_launcher.py` | The launcher tests, run as a process |
 | `tests/test_session_start.py` | The SessionStart hook tests, run as a process through the launcher against a stealth beads repo and its worktree |
+| `tests/test_land.py` | The landing tests, run as a process through the launcher against a stealth beads repo, its worktrees and a temporary jidoka home |
 | `tests/jidoka_fixture.py` | Builds the temporary checkout and the fake `claude`, `codex` and `bd` the installer tests run against |
 | `tests/test_untracer.py` | The untracer tests, at the process seam |
 | `tests/tracer_fixture.py` | Builds fixture repos with a tracer install, from the seed sources in this repo's git history |
