@@ -1,0 +1,5 @@
+interface:
+  display_name: "Show Me Your Work"
+  short_description: "Keep a decision trail a reviewer can check"
+policy:
+  allow_implicit_invocation: false
