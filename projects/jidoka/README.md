@@ -55,7 +55,7 @@ older Python. Building the workspace takes a few seconds.
 | `plugin/jidoka/skills/spec-check/` | jidoka's Spec check, rewritten from upstream `code-review`. It judges whether a bead's diff does what the bead says and nothing more, and ends with a JSON outcome block |
 | `plugin/jidoka/agents/` | `comment-sicko.md`, the subagent `no-comments` starts as `jidoka:comment-sicko` |
 | `plugin/jidoka/THIRD-PARTY-NOTICES.md` | The source, commit and MIT license of each upstream the skills and the agent come from |
-| `untracer.py` | Takes tracer's files out of one repo, after copying each original to `<jidoka-home>/untracer/` |
+| `untracer.py` | Takes tracer's files out of one repo, after copying each original to `<jidoka-home>/untracer/`. In the rules files it removes the lines that match the repo's `docs/tracer.md` and keeps the rest: a stealth file's own lines move into `CLAUDE.local.md`, and a committed file keeps them in place with the change staged, not committed. It lists the lines it kept, the tracer lines the repo changed, the lines that still name tracer and the tracer text it could not place. It refuses the rules files, and keeps `docs/tracer.md`, when that file is missing or differs from every seed revision it knows |
 | `tests/test_install.py` | The installer tests, at the process seam |
 | `tests/test_release.py` | The release tests, at the process seam |
 | `tests/test_launcher.py` | The launcher tests, run as a process |
@@ -65,5 +65,7 @@ older Python. Building the workspace takes a few seconds.
 | `tests/test_skill_scripts.py` | The tests of the scripts the skills carry, run as processes through the launcher from inside a stealth beads repo |
 | `tests/jidoka_fixture.py` | Builds the temporary checkout and the fake `claude`, `codex` and `bd` the installer tests run against |
 | `tests/test_untracer.py` | The untracer tests, at the process seam |
-| `tests/tracer_fixture.py` | Builds fixture repos with a tracer install, from the seed sources in this repo's git history |
+| `tests/tracer_fixture.py` | Builds fixture repos with a stealth or a committed tracer install, from the seed sources in this repo's git history and `tests/fixtures/` |
+| `tests/fixtures/tracer-seed-41.md` | Seed revision 41 byte for byte, which no commit in this repo holds |
+| `tests/fixtures/agents-local-42.md` | The `AGENTS.local.md` adopt writes from seed revision 42, checked by hand, which the fixture's own build must equal |
 | `docs/adr/` | Decisions about jidoka |

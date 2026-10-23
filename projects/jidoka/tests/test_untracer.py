@@ -105,6 +105,9 @@ class InstalledRepoTests(unittest.TestCase):
         self.home = self.root / "jidoka-home"
         self.repo = self.root / "work" / "shop"
         self.repo.parent.mkdir()
+        self.install()
+
+    def install(self) -> None:
         fixture.make_with_tracer(self.template, self.repo, self.REVISION)
 
     def tearDown(self):
@@ -241,8 +244,7 @@ class RemovalTests(InstalledRepoTests):
 
         after = fixture.read_tree(self.repo)
         untouched = [p for p in before if p.startswith((".beads/", ".git/hooks/", "docs/adr/", "apps/"))
-                     or p in ("CLAUDE.md", "GLOSSARY.md", "GLOSSARY-MAP.md", ".claude/settings.json",
-                              "AGENTS.local.md", "CLAUDE.local.md")
+                     or p in ("CLAUDE.md", "GLOSSARY.md", "GLOSSARY-MAP.md", ".claude/settings.json")
                      or p.startswith(".audit/")]
         self.assertGreater(len([p for p in untouched if p.startswith(".beads/")]), 0)
         self.assertGreater(len([p for p in untouched if p.startswith(".git/hooks/pre-commit")]), 0)
@@ -266,7 +268,7 @@ class RemovalTests(InstalledRepoTests):
         text = "\n".join(kept)
         for expected in (".beads/", ".git/hooks/pre-commit", "CLAUDE.md (bd's marked block)",
                          "GLOSSARY-MAP.md", "GLOSSARY.md", "apps/app/GLOSSARY.md", "docs/adr/",
-                         "apps/app/docs/adr/", "AGENTS.local.md (rules file", ".audit/",
+                         "apps/app/docs/adr/", ".audit/",
                          "~/.claude/settings.json"):
             self.assertIn("  " + expected, text)
 
@@ -312,19 +314,309 @@ class RevisionThirtyEightTests(InstalledRepoTests):
         self.assertIn("Seed revision 38", saved["docs/tracer.md"].decode("utf-8"))
 
 
+OWN_LINES = "\n## Build\n\nRun make check before a commit.\n"
+TEST_GATE_FULL = "- **Test gate: full.**"
+TEST_GATE_TARGETED = "- **Test gate: targeted.**"
+DOMAIN_DOCS_SEED = "- **Domain docs**: see `docs/agents/domain.md`."
+DOMAIN_DOCS_CHANGED = "- **Domain docs**: see `docs/domain.md`."
+READER_TWO_LINES = "*Reader: the agent. Written for a fresh context that has read nothing\nelse.*"
+READER_ONE_LINE = "*Reader: the agent. Written for a fresh context that has read nothing else.*"
+
+
+def section(stdout: str, heading: str) -> list:
+    lines = stdout.splitlines()
+    if heading not in lines:
+        return []
+    found = []
+    for line in lines[lines.index(heading) + 1:]:
+        if not line.startswith("  "):
+            break
+        found.append(line)
+    return found
+
+
+def git(repo: Path, *args: str) -> str:
+    return fixture.run(["git", *args], repo)
+
+
+class RulesFileTests(InstalledRepoTests):
+    def append(self, name: str, text: str) -> None:
+        path = self.repo / name
+        path.write_text(path.read_text(encoding="utf-8") + text, encoding="utf-8")
+
+    def prepend(self, name: str, text: str) -> None:
+        path = self.repo / name
+        path.write_text(text + path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    def replace(self, name: str, old: str, new: str) -> None:
+        path = self.repo / name
+        text = path.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        path.write_text(text.replace(old, new), encoding="utf-8")
+
+    def read(self, name: str) -> str:
+        return (self.repo / name).read_text(encoding="utf-8")
+
+
+class StealthRulesTests(RulesFileTests):
+    def setUp(self):
+        super().setUp()
+        self.append("AGENTS.local.md", OWN_LINES)
+        self.prepend("CLAUDE.local.md", "Use American spelling.\n\n")
+
+    def test_your_own_lines_take_the_place_of_the_import_line_and_agents_local_md_is_gone(self):
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertFalse((self.repo / "AGENTS.local.md").exists())
+        self.assertEqual("Use American spelling.\n\n## Build\n\nRun make check before a commit.\n",
+                         self.read("CLAUDE.local.md"))
+
+    def test_the_report_lists_your_own_lines_before_anything_changes(self):
+        done = run_untracer(self.repo, self.home)
+
+        own = section(done.stdout, "Your own lines:")
+        self.assertTrue(any(line.endswith("Run make check before a commit.") for line in own), own)
+        self.assertTrue(any(line.startswith("  AGENTS.local.md:") for line in own), own)
+        out = done.stdout.splitlines()
+        first_change = next(i for i, line in enumerate(out) if line.startswith(("removed ", "edited ")))
+        self.assertLess(out.index("Your own lines:"), first_change)
+
+    def test_a_tracer_line_you_changed_is_kept_and_reported(self):
+        self.replace("AGENTS.local.md", TEST_GATE_FULL, TEST_GATE_TARGETED)
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(
+            "Use American spelling.\n\n"
+            "- **Test gate: targeted.** What \"the tests\" means before a commit. `full`\n\n"
+            "## Build\n\nRun make check before a commit.\n",
+            self.read("CLAUDE.local.md"))
+        changed = section(done.stdout, "Tracer lines you changed (kept):")
+        self.assertEqual(1, len(changed), changed)
+        self.assertIn(TEST_GATE_TARGETED, changed[0])
+
+    def test_a_tracer_line_you_changed_at_the_end_of_block_one_is_kept_and_reported(self):
+        self.replace("AGENTS.local.md", DOMAIN_DOCS_SEED, DOMAIN_DOCS_CHANGED)
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(
+            "Use American spelling.\n\n" + DOMAIN_DOCS_CHANGED + "\n\n## Build\n\nRun make check before a commit.\n",
+            self.read("CLAUDE.local.md"))
+        changed = section(done.stdout, "Tracer lines you changed (kept):")
+        self.assertEqual(1, len(changed), changed)
+        self.assertIn(DOMAIN_DOCS_CHANGED, changed[0])
+        self.assertFalse(any(DOMAIN_DOCS_CHANGED in line for line in section(done.stdout, "Your own lines:")))
+
+    def test_a_kept_line_that_still_names_tracer_is_listed_and_left(self):
+        self.append("AGENTS.local.md", "\nSee projects/tracer-ui for the UI.\n")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertIn("See projects/tracer-ui for the UI.", self.read("CLAUDE.local.md"))
+        named = section(done.stdout, "Lines that still name tracer (left):")
+        self.assertEqual(1, len(named), named)
+        self.assertIn("See projects/tracer-ui for the UI.", named[0])
+
+    def test_a_reader_line_written_on_one_line_counts_as_tracers(self):
+        self.replace("AGENTS.local.md", READER_TWO_LINES, READER_ONE_LINE)
+
+        run_untracer(self.repo, self.home)
+
+        self.assertEqual("Use American spelling.\n\n## Build\n\nRun make check before a commit.\n",
+                         self.read("CLAUDE.local.md"))
+
+
+class StealthRulesRevisionFortyOneTests(StealthRulesTests):
+    REVISION = 41
+
+
+class StealthRulesRevisionThirtyEightTests(StealthRulesTests):
+    REVISION = 38
+
+
+class RulesPlacementTests(RulesFileTests):
+    def setUp(self):
+        super().setUp()
+        self.append("AGENTS.local.md", OWN_LINES)
+
+    def test_an_excluded_claude_md_keeps_only_bds_block_and_its_own_lines_move_to_claude_local_md(self):
+        bd_claude = self.read("CLAUDE.md")
+        begin = bd_claude.index("<!-- BEGIN BEADS INTEGRATION")
+        end = bd_claude.index("\n", bd_claude.index("<!-- END BEADS INTEGRATION")) + 1
+        bd_header, bd_block, bd_footer = bd_claude[:begin], bd_claude[begin:end], bd_claude[end:]
+        self.prepend("CLAUDE.md", "Use American spelling.\n\n" + self.read("CLAUDE.local.md") + "\n")
+        (self.repo / "CLAUDE.local.md").unlink()
+        self.append(".git/info/exclude", "CLAUDE.md\n")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(bd_block, self.read("CLAUDE.md"))
+        self.assertEqual(
+            "Use American spelling.\n\n## Build\n\nRun make check before a commit.\n\n"
+            + bd_header + bd_footer.lstrip("\n"),
+            self.read("CLAUDE.local.md"))
+        self.assertFalse((self.repo / "AGENTS.local.md").exists())
+
+    def test_an_excluded_claude_md_without_bds_block_goes_once_its_own_lines_move(self):
+        (self.repo / "CLAUDE.md").write_text(
+            "Use American spelling.\n\n" + self.read("CLAUDE.local.md"), encoding="utf-8")
+        (self.repo / "CLAUDE.local.md").unlink()
+        self.append(".git/info/exclude", "CLAUDE.md\n")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertFalse((self.repo / "CLAUDE.md").exists())
+        self.assertEqual("Use American spelling.\n\n## Build\n\nRun make check before a commit.\n",
+                         self.read("CLAUDE.local.md"))
+
+    def test_a_line_that_names_tracer_in_a_rules_file_the_run_leaves_alone_is_listed(self):
+        (self.repo / "AGENTS.md").write_text("# Notes\n\nSee projects/tracer-ui for the UI.\n", encoding="utf-8")
+        fixture.commit(self.repo, ["AGENTS.md"], "Add notes")
+        before = self.read("AGENTS.md")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(before, self.read("AGENTS.md"))
+        self.assertIn("  AGENTS.md:3: See projects/tracer-ui for the UI.",
+                      section(done.stdout, "Lines that still name tracer (left):"))
+
+    def test_tracer_text_in_a_file_git_neither_tracks_nor_ignores_is_listed_and_left(self):
+        self.prepend("CLAUDE.md", "@AGENTS.local.md\n\n")
+        before = self.read("CLAUDE.md")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(before, self.read("CLAUDE.md"))
+        self.assertIn("  CLAUDE.md:1: @AGENTS.local.md", section(done.stdout, "Could not place (left):"))
+        self.assertEqual("## Build\n\nRun make check before a commit.\n", self.read("CLAUDE.local.md"))
+
+    def test_a_single_line_of_your_own_that_equals_a_line_of_tracers_is_kept(self):
+        self.prepend("CLAUDE.local.md", "## House rules\n\nNo force pushes.\n\n")
+
+        run_untracer(self.repo, self.home)
+
+        self.assertEqual("## House rules\n\nNo force pushes.\n\n## Build\n\nRun make check before a commit.\n",
+                         self.read("CLAUDE.local.md"))
+
+    def test_a_missing_seed_copy_leaves_the_rules_files_and_names_the_reason(self):
+        (self.repo / "docs" / "tracer.md").unlink()
+        before = fixture.read_tree(self.repo)
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        after = fixture.read_tree(self.repo)
+        for name in ("AGENTS.local.md", "CLAUDE.local.md"):
+            self.assertEqual(before[name], after[name], name)
+        refused = section(done.stdout, "Refused:")
+        self.assertIn("  AGENTS.local.md (docs/tracer.md is missing)", refused)
+        self.assertIn("  CLAUDE.local.md (docs/tracer.md is missing)", refused)
+        self.assertFalse((self.repo / ".claude" / "skills" / "tracer").exists())
+
+    def test_an_edited_seed_copy_leaves_the_rules_files_and_the_seed_copy_and_names_the_reason(self):
+        self.append("docs/tracer.md", "\nA note of my own.\n")
+        before = fixture.read_tree(self.repo)
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        after = fixture.read_tree(self.repo)
+        for name in ("AGENTS.local.md", "CLAUDE.local.md", "docs/tracer.md"):
+            self.assertEqual(before[name], after[name], name)
+        refused = section(done.stdout, "Refused:")
+        self.assertIn("  AGENTS.local.md (docs/tracer.md differs from seed revision 42)", refused)
+        self.assertFalse((self.repo / "docs" / "agents").exists())
+
+    def test_a_seed_copy_of_a_revision_it_does_not_know_leaves_the_rules_files(self):
+        self.replace("docs/tracer.md", "Seed revision 42 ", "Seed revision 99 ")
+        before = fixture.read_tree(self.repo)
+
+        done = run_untracer(self.repo, self.home)
+
+        after = fixture.read_tree(self.repo)
+        self.assertEqual(before["AGENTS.local.md"], after["AGENTS.local.md"])
+        self.assertIn("  AGENTS.local.md (docs/tracer.md is seed revision 99, which untracer does not know)",
+                      section(done.stdout, "Refused:"))
+
+
+class CommittedRulesTests(RulesFileTests):
+    REVISION = 41
+
+    def install(self) -> None:
+        fixture.make_with_committed_tracer(self.template, self.repo, self.REVISION)
+        self.append("AGENTS.md", OWN_LINES)
+        fixture.commit(self.repo, ["AGENTS.md"], "Add a rule of my own")
+
+    def test_a_committed_file_keeps_your_own_lines_in_place_and_the_change_is_staged_not_committed(self):
+        head = git(self.repo, "rev-parse", "HEAD")
+        bd_claude = (self.template / "CLAUDE.md").read_text(encoding="utf-8")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(head, git(self.repo, "rev-parse", "HEAD"))
+        self.assertEqual("## Build\n\nRun make check before a commit.\n", self.read("AGENTS.md"))
+        self.assertEqual("@AGENTS.md\n\n" + bd_claude, self.read("CLAUDE.md"))
+        self.assertEqual(["AGENTS.md", "CLAUDE.md"], git(self.repo, "diff", "--cached", "--name-only").split())
+        self.assertEqual([], git(self.repo, "diff", "--name-only", "--", "AGENTS.md", "CLAUDE.md").split())
+        self.assertFalse((self.repo / "CLAUDE.local.md").exists())
+
+
 class BareRepoTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name) / "bare"
+        self.repo.mkdir()
+        fixture.run(["git", "init", "-q"], self.repo)
+        self.home = Path(self.tmp.name) / "home"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
     def test_a_git_repo_with_none_of_tracers_files_reports_that_and_writes_no_backup(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp) / "bare"
-            repo.mkdir()
-            fixture.run(["git", "init", "-q"], repo)
-            home = Path(tmp) / "home"
+        done = run_untracer(self.repo, self.home)
 
-            done = run_untracer(repo, home)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("Nothing of tracer's was found", done.stdout)
+        self.assertFalse(self.home.exists())
 
-            self.assertEqual(0, done.returncode, done.stderr)
-            self.assertIn("Nothing of tracer's was found", done.stdout)
-            self.assertFalse(home.exists())
+    def test_a_rules_file_that_still_imports_agents_local_md_is_refused_for_the_missing_seed_copy(self):
+        claude_local = self.repo / "CLAUDE.local.md"
+        claude_local.write_text("@AGENTS.local.md\n\nUse American spelling.\n", encoding="utf-8")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("Nothing of tracer's was found", done.stdout)
+        self.assertEqual(["  CLAUDE.local.md (docs/tracer.md is missing)"], section(done.stdout, "Refused:"))
+        self.assertEqual("@AGENTS.local.md\n\nUse American spelling.\n", claude_local.read_text(encoding="utf-8"))
+
+    def test_an_agents_heading_over_the_reader_line_is_refused_for_the_missing_seed_copy(self):
+        agents_local = self.repo / "AGENTS.local.md"
+        text = "# AGENTS\n\n" + READER_TWO_LINES + "\n\n" + OWN_LINES
+        agents_local.write_text(text, encoding="utf-8")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("Nothing of tracer's was found", done.stdout)
+        self.assertEqual(["  AGENTS.local.md (docs/tracer.md is missing)"], section(done.stdout, "Refused:"))
+        self.assertEqual(text, agents_local.read_text(encoding="utf-8"))
+
+
+class FixtureTests(unittest.TestCase):
+    def test_the_agents_local_md_built_for_revision_42_matches_the_hand_checked_copy(self):
+        expected = (fixture.FIXTURES / "agents-local-42.md").read_bytes()
+
+        self.assertEqual(expected, fixture.block_one(42).encode("utf-8"))
 
 
 if __name__ == "__main__":

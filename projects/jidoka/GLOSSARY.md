@@ -349,5 +349,6 @@ _Avoid_: Project, product, target, binary
 **Untracer**:
 The script, run by the human in a terminal, that takes tracer's files out of
 one repo and first copies each original it touches to a backup under jidoka's
-home. It keeps the repo's beads, glossaries and ADRs.
+home. It keeps the repo's beads, glossaries and ADRs, and the lines of the
+rules files that are the repo's own.
 _Avoid_: Uninstall, cleanup, migration

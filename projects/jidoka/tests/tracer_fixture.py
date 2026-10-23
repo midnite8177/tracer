@@ -1,9 +1,12 @@
 """Builds throwaway repos that carry a tracer install, for the untracer tests.
 
 The plugin's native files and the seed copy at docs/tracer.md come from this
-repository's git history. The statusline.sh, adopt notes, settings file and
-upstream skills are written by hand as stand-ins. Nothing is cloned or
-fetched.
+repository's git history, except the revision 41 seed, which no commit holds
+and which lives in tests/fixtures. The rules files hold what adopt writes from
+that seed: the `# AGENTS` heading, the Reader line and Block 1, the import
+line and the comment-cleanup paragraph. The statusline.sh, adopt notes,
+settings file and upstream skills are written by hand as stand-ins. Nothing
+is cloned or fetched.
 """
 import json
 import os
@@ -13,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 INSTALLED = "projects/tracer-seed/src/installed"
 
@@ -37,7 +41,7 @@ class FixtureError(Exception):
 @dataclass(frozen=True)
 class Revision:
     number: int
-    seed_commit: str
+    seed_commit: str | None
     seed_path: str
     native_commit: str
     plugin_version: str
@@ -45,8 +49,13 @@ class Revision:
 
 REVISIONS = {
     42: Revision(42, "03be712", "docs/seeds/tracer/tracer.md", "4ed3390", "1.3.1+tracer.42"),
+    41: Revision(41, None, "tracer-seed-41.md", "4ed3390", "1.3.1+tracer.41"),
     38: Revision(38, "d5674c3", "docs/seeds/tracer/tracer.md", "4ed3390", "1.3.0-pre.d81f3a1+tracer.38"),
 }
+
+BLOCK_ONE_HEADING = "# Block 1 — AGENTS.md core"
+READER_LINES = "*Reader: the agent. Written for a fresh context that has read nothing\nelse.*\n"
+COMMENT_CLEANUP_START = "Comment cleanup is requested work in this repository"
 
 
 def run(args: list, cwd: Path) -> str:
@@ -63,6 +72,34 @@ def git_show(commit: str, path: str) -> bytes:
             f"cannot read {path} at {commit} from the git history of {REPO_ROOT}: "
             f"{done.stderr.decode('utf-8', 'replace').strip()}")
     return done.stdout
+
+
+def seed_bytes(revision: int) -> bytes:
+    rev = REVISIONS[revision]
+    if rev.seed_commit is None:
+        return (FIXTURES / rev.seed_path).read_bytes()
+    return git_show(rev.seed_commit, rev.seed_path)
+
+
+def block_one(revision: int) -> str:
+    """The AGENTS file adopt writes from the seed: heading, Reader line, then Block 1 below its opening paragraph."""
+    lines = seed_bytes(revision).decode("utf-8").splitlines()
+    start = lines.index(BLOCK_ONE_HEADING) + 1
+    end = next(i for i in range(start, len(lines)) if lines[i].startswith("# Block 2"))
+    body = lines[start:end]
+    while body[0] == "":
+        body.pop(0)
+    body = body[body.index(""):]
+    while body[-1] in ("", "---"):
+        body.pop()
+    return "# AGENTS\n\n" + READER_LINES + "\n".join(body) + "\n"
+
+
+def comment_cleanup_paragraph(revision: int) -> str:
+    lines = seed_bytes(revision).decode("utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip().startswith(COMMENT_CLEANUP_START))
+    end = next(i for i in range(start, len(lines)) if lines[i].strip() == "```")
+    return "".join(line.strip() + "\n" for line in lines[start:end])
 
 
 def native_files(commit: str) -> list:
@@ -93,19 +130,43 @@ def write_text(root: Path, relative: str, text: str) -> None:
 
 
 def install_tracer(repo: Path, revision: int) -> None:
-    """Writes the files tracer's adopt leaves in a repo at the given seed revision."""
+    """Writes the files a stealth adopt leaves in a repo at the given seed revision."""
+    install_machinery(repo, revision)
+    write_text(repo, "AGENTS.local.md", block_one(revision))
+    write_text(repo, "CLAUDE.local.md", "@AGENTS.local.md\n\n" + comment_cleanup_paragraph(revision))
+
+
+def install_committed_tracer(repo: Path, revision: int) -> None:
+    """Writes the files a normal adopt leaves at the given seed revision and commits AGENTS.md and CLAUDE.md.
+
+    CLAUDE.md starts with the import line and the comment-cleanup paragraph and
+    keeps whatever the repo's CLAUDE.md already held below them.
+    """
+    install_machinery(repo, revision)
+    write_text(repo, "AGENTS.md", block_one(revision))
+    claude = repo / "CLAUDE.md"
+    before = claude.read_text(encoding="utf-8") if claude.is_file() else ""
+    write_text(repo, "CLAUDE.md", "@AGENTS.md\n\n" + comment_cleanup_paragraph(revision) + "\n" + before)
+    commit(repo, ["AGENTS.md", "CLAUDE.md"], "Install tracer")
+
+
+def commit(repo: Path, paths: list, message: str) -> None:
+    run(["git", "add", "--", *paths], repo)
+    run(["git", "commit", "-q", "--no-verify", "-m", message], repo)
+
+
+def install_machinery(repo: Path, revision: int) -> None:
+    """Writes the files of tracer's install that are not rules files."""
     rev = REVISIONS[revision]
     for source in native_files(rev.native_commit):
         write_bytes(repo, target_of(source), git_show(rev.native_commit, source))
-    write_bytes(repo, "docs/tracer.md", git_show(rev.seed_commit, rev.seed_path))
+    write_bytes(repo, "docs/tracer.md", seed_bytes(revision))
     write_text(repo, ".claude/skills/tracer/.claude-plugin/plugin.json",
                json.dumps({"name": "tracer", "version": rev.plugin_version}, indent=2) + "\n")
     write_text(repo, ".claude/skills/tracer/skills/tdd/SKILL.md", "# tdd\n\nStand-in for the upstream skill.\n")
     write_text(repo, ".claude/skills/tracer/skills/grilling/SKILL.md", "# grilling\n\nStand-in for the upstream skill.\n")
     write_text(repo, ".claude/statusline.sh", "#!/bin/sh\necho tracer\n")
     write_text(repo, "docs/tracer-adopt-notes.md", "# Adopt notes\n\nWhat adopt did here.\n")
-    write_text(repo, "AGENTS.local.md", "# AGENTS\n\nTracer's rules.\n")
-    write_text(repo, "CLAUDE.local.md", "@AGENTS.local.md\n")
     write_text(repo, ".audit/trail.tsv", "step\tresult\n")
     write_text(repo, ".claude/settings.local.json", json.dumps({
         "permissions": {"allow": ["Bash(bd:*)"]},
@@ -136,6 +197,11 @@ def build_bd_repo(repo: Path) -> None:
 def make_with_tracer(template: Path, destination: Path, revision: int) -> None:
     shutil.copytree(template, destination, symlinks=True)
     install_tracer(destination, revision)
+
+
+def make_with_committed_tracer(template: Path, destination: Path, revision: int) -> None:
+    shutil.copytree(template, destination, symlinks=True)
+    install_committed_tracer(destination, revision)
 
 
 def read_tree(root: Path) -> dict:
