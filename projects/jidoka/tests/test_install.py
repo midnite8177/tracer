@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,26 +60,38 @@ class InstallerTestCase(unittest.TestCase):
     def settings(self) -> dict:
         return json.loads((self.home / "settings.json").read_text(encoding="utf-8"))
 
+    def snapshot(self, version: str) -> Path:
+        return self.home.resolve() / "plugins" / version
+
+    def commit_plugin_edit(self) -> None:
+        domain = self.repo / "plugin" / "jidoka" / "docs" / "domain.md"
+        domain.write_text(domain.read_text(encoding="utf-8") + "\nAn edit made after the install.\n", encoding="utf-8")
+        fixture.git_commit_all(self.repo, "Edit the plugin")
+
+    def release(self) -> None:
+        done = fixture.run_script(self.repo, "release.py", ["--bump", "patch"], fixture.script_env(self.bin, self.user_home))
+        self.assertEqual(0, done.returncode, done.stderr)
+
 
 class InstallIntoConfigDirTests(InstallerTestCase):
     def test_each_named_config_dir_gets_the_marketplace_added_and_the_plugin_installed_at_user_scope(self):
         done = self.install(fixture.WITHOUT_CODEX, [self.config_a, self.config_b], "")
 
         self.assertEqual(0, done.returncode, done.stderr)
-        plugin_folder = str((self.repo / "plugin").resolve())
+        snapshot = str(self.snapshot("0.1.0"))
         for config_dir in [self.config_a, self.config_b]:
             commands = [call["argv"] for call in self.calls("claude") if call["config_dir"] == str(config_dir.resolve())]
-            self.assertEqual(["plugin", "marketplace", "add", plugin_folder], commands[0])
+            self.assertEqual(["plugin", "marketplace", "add", snapshot], commands[0])
             self.assertIn(["plugin", "install", "jidoka@jidoka", "--scope", "user"], commands)
-            self.assertLess(commands.index(["plugin", "marketplace", "add", plugin_folder]),
+            self.assertLess(commands.index(["plugin", "marketplace", "add", snapshot]),
                             commands.index(["plugin", "install", "jidoka@jidoka", "--scope", "user"]))
 
     def test_codex_gets_the_marketplace_and_the_plugin_when_it_is_on_the_path(self):
         done = self.install(fixture.ALL_TOOLS, [self.config_a], "")
 
         self.assertEqual(0, done.returncode, done.stderr)
-        plugin_folder = str((self.repo / "plugin").resolve())
-        self.assertEqual([["plugin", "marketplace", "add", plugin_folder], ["plugin", "add", "jidoka@jidoka"]],
+        snapshot = str(self.snapshot("0.1.0"))
+        self.assertEqual([["plugin", "marketplace", "add", snapshot], ["plugin", "add", "jidoka@jidoka"]],
                          [call["argv"] for call in self.calls("codex")])
 
     def test_codex_is_left_alone_when_it_is_not_on_the_path(self):
@@ -117,6 +131,194 @@ class InstallIntoConfigDirTests(InstallerTestCase):
         self.assertIn("--config-dir", done.stderr)
         self.assertFalse(self.home.exists())
         self.assertEqual([], fixture.read_log(self.log))
+
+
+class SnapshotTests(InstallerTestCase):
+    def test_the_snapshot_holds_the_marketplace_the_plugin_and_the_tree_it_came_from(self):
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        snapshot = self.snapshot("0.1.0")
+        self.assertEqual((self.repo / "plugin" / ".claude-plugin" / "marketplace.json").read_bytes(),
+                         (snapshot / ".claude-plugin" / "marketplace.json").read_bytes())
+        self.assertEqual((self.repo / "plugin" / "jidoka" / "hooks" / "session_start.py").read_bytes(),
+                         (snapshot / "jidoka" / "hooks" / "session_start.py").read_bytes())
+        tree = fixture.run(["git", "rev-parse", "HEAD:plugin"], self.repo).strip()
+        self.assertEqual(tree, (snapshot / install.TREE_FILE).read_text(encoding="utf-8").strip())
+
+    def test_a_version_that_cannot_name_a_folder_is_refused_and_nothing_is_written(self):
+        manifest = self.repo / "plugin" / "jidoka" / ".claude-plugin" / "plugin.json"
+        original = manifest.read_text(encoding="utf-8")
+        for version in ["../escape", "..", "", 1.5, None, "line\nbreak", "nul\u0000byte", "back\\slash"]:
+            with self.subTest(version=version):
+                data = json.loads(original)
+                data["version"] = version
+                manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+                fixture.git_commit_all(self.repo, "Break the version")
+
+                done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+                self.assertEqual(2, done.returncode)
+                self.assertIn("cannot name a snapshot folder", done.stderr)
+                self.assertNotIn("Traceback", done.stderr)
+                self.assertFalse(self.home.exists())
+                self.assertEqual([], fixture.read_log(self.log))
+
+    def test_a_file_git_ignores_never_reaches_the_snapshot(self):
+        (self.repo / ".git" / "info" / "exclude").write_text("__pycache__/\n", encoding="utf-8")
+        cache = self.repo / "plugin" / "jidoka" / "hooks" / "__pycache__"
+        cache.mkdir()
+        (cache / "session_start.cpython-310.pyc").write_bytes(b"compiled")
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertTrue((self.snapshot("0.1.0") / "jidoka" / "hooks" / "session_start.py").is_file())
+        self.assertFalse((self.snapshot("0.1.0") / "jidoka" / "hooks" / "__pycache__").exists())
+
+    def test_the_launcher_keeps_its_executable_bit_in_the_snapshot(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        source = self.repo / "plugin" / "jidoka" / "bin" / "jidoka-run"
+        launcher = self.snapshot("0.1.0") / "jidoka" / "bin" / "jidoka-run"
+        self.assertNotEqual(0, source.stat().st_mode & 0o100)
+        self.assertNotEqual(0, launcher.stat().st_mode & 0o100)
+
+    def test_a_symlink_in_the_plugin_is_a_symlink_in_the_snapshot(self):
+        (self.repo / "plugin" / "jidoka" / "docs" / "alias.md").symlink_to("domain.md")
+        fixture.git_commit_all(self.repo, "Add an alias")
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        alias = self.snapshot("0.1.0") / "jidoka" / "docs" / "alias.md"
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual("domain.md", os.readlink(alias))
+
+    @unittest.skipUnless(hasattr(tarfile, "data_filter"), "this Python has no tar extraction filters")
+    def test_a_symlink_that_points_outside_the_plugin_is_refused_and_no_snapshot_is_left(self):
+        (self.repo / "plugin" / "jidoka" / "docs" / "escape.md").symlink_to("../../../../outside.md")
+        fixture.git_commit_all(self.repo, "Add a link that leaves the plugin")
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("could not be unpacked", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertEqual([], list((self.home / "plugins").iterdir()))
+        self.assertEqual([], fixture.read_log(self.log))
+        self.assertFalse(self.home.joinpath("settings.json").exists())
+
+    def test_a_snapshot_without_its_tree_file_is_refused_with_advice_to_move_it_aside(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+        (self.snapshot("0.1.0") / install.TREE_FILE).unlink()
+        self.log.unlink()
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn(install.TREE_FILE, done.stderr)
+        self.assertIn("Move it aside", done.stderr)
+        self.assertNotIn("release.py", done.stderr)
+        self.assertEqual([], fixture.read_log(self.log))
+
+    def test_a_build_folder_left_by_a_killed_run_is_cleared_when_the_next_snapshot_is_made(self):
+        stale = self.home / "plugins" / ".0.1.0-leftover"
+        stale.mkdir(parents=True)
+        (stale / "half.txt").write_text("partial\n", encoding="utf-8")
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["0.1.0"], sorted(path.name for path in (self.home / "plugins").iterdir()))
+
+    def test_a_run_after_a_failed_claude_call_reuses_the_snapshot_and_finishes_the_install(self):
+        failed = self.install(fixture.WITHOUT_CODEX, [self.config_a], claude_fails_on="install")
+        self.assertEqual(2, failed.returncode)
+        marker = self.snapshot("0.1.0") / "marker.txt"
+        marker.write_text("left by a test\n", encoding="utf-8")
+        self.log.unlink()
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertTrue(marker.is_file())
+        self.assertIn(["plugin", "marketplace", "add", str(self.snapshot("0.1.0"))],
+                      [call["argv"] for call in self.calls("claude")])
+        self.assertIn(["plugin", "install", "jidoka@jidoka", "--scope", "user"],
+                      [call["argv"] for call in self.calls("claude")])
+
+    def test_a_config_dir_recorded_earlier_and_not_named_this_time_is_reported(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a, self.config_b], "")
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn(str(self.config_b.resolve()), done.stdout)
+        self.assertNotIn(f"  {self.config_a.resolve()}", done.stdout)
+
+    def test_naming_every_recorded_config_dir_again_reports_nothing_unnamed(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a, self.config_b], "")
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a, self.config_b], "")
+
+        self.assertNotIn("not named", done.stdout)
+
+    def test_the_plugins_folder_holds_only_the_finished_snapshot(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(["0.1.0"], sorted(path.name for path in (self.home / "plugins").iterdir()))
+
+    def test_running_again_at_the_same_content_reuses_the_snapshot_and_still_installs(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+        marker = self.snapshot("0.1.0") / "marker.txt"
+        marker.write_text("left by a test\n", encoding="utf-8")
+        self.log.unlink()
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertTrue(marker.is_file())
+        marketplace_add = ["plugin", "marketplace", "add", str(self.snapshot("0.1.0"))]
+        self.assertIn(marketplace_add, [call["argv"] for call in self.calls("claude")])
+
+    def test_a_committed_edit_without_a_version_bump_is_refused_and_names_release_py(self):
+        self.install(fixture.ALL_TOOLS, [self.config_a], "")
+        snapshot = self.snapshot("0.1.0")
+        domain_before = (snapshot / "jidoka" / "docs" / "domain.md").read_bytes()
+        tree_before = (snapshot / install.TREE_FILE).read_text(encoding="utf-8")
+        settings_before = (self.home / "settings.json").read_text(encoding="utf-8")
+        self.log.unlink()
+        self.commit_plugin_edit()
+
+        done = self.install(fixture.ALL_TOOLS, [self.config_b], "")
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("release.py", done.stderr)
+        self.assertIn("0.1.0", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertEqual(domain_before, (snapshot / "jidoka" / "docs" / "domain.md").read_bytes())
+        self.assertEqual(tree_before, (snapshot / install.TREE_FILE).read_text(encoding="utf-8"))
+        self.assertEqual(settings_before, (self.home / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual([], fixture.read_log(self.log))
+
+    def test_a_version_bump_after_an_edit_makes_a_second_snapshot_and_leaves_the_first_as_it_was(self):
+        self.install(fixture.ALL_TOOLS, [self.config_a], "")
+        first = self.snapshot("0.1.0")
+        domain_before = (first / "jidoka" / "docs" / "domain.md").read_bytes()
+        self.log.unlink()
+        self.commit_plugin_edit()
+        self.release()
+
+        done = self.install(fixture.ALL_TOOLS, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        second = self.snapshot("0.1.1")
+        self.assertEqual(domain_before, (first / "jidoka" / "docs" / "domain.md").read_bytes())
+        self.assertIn("An edit made after the install.", (second / "jidoka" / "docs" / "domain.md").read_text(encoding="utf-8"))
+        self.assertEqual(["0.1.0", "0.1.1"], sorted(path.name for path in (self.home / "plugins").iterdir()))
+        self.assertEqual(["plugin", "marketplace", "add", str(second)], self.calls("claude")[0]["argv"])
+        self.assertEqual(["plugin", "marketplace", "add", str(second)], self.calls("codex")[0]["argv"])
 
 
 class RecordedSettingsTests(InstallerTestCase):

@@ -22,10 +22,15 @@ python3 -m unittest discover -s projects/jidoka/tests                           
 
 `install.py`, `release.py` and `untracer.py` take `--jidoka-home` to use a
 folder other than `~/.jidoka`, and the launcher reads `JIDOKA_HOME`. Install
-refuses while `plugin/` has an uncommitted change, so commit first, and
-run `release.py` to give a change a new version. To try the installer
-without touching your own config, point `--config-dir` at an empty folder
-and set `CODEX_HOME` to another.
+refuses while `plugin/` has an uncommitted change, so commit first. It then
+writes the committed `plugin/` to `<jidoka-home>/plugins/<version>/` with
+`git archive` and adds that snapshot as the marketplace, so editing `plugin/`
+never changes the scripts under a running session. A snapshot is never
+rewritten. Install reuses one that came from the same plugin content, and
+refuses when the version's snapshot came from different content, so run
+`release.py` to give a change a new version. Old snapshots stay. To try the
+installer without touching your own config, point `--config-dir` at an empty
+folder and set `CODEX_HOME` to another.
 
 The tests run each script as a process against a temporary git repo that
 holds copies of the scripts and the plugin folder, a temporary jidoka home,
@@ -38,7 +43,7 @@ older Python. Building the workspace takes a few seconds.
 
 | Path | What it holds |
 |---|---|
-| `install.py` | Checks the tools, records the Python, config dirs and routes in `<jidoka-home>`, and installs the plugin into each named config dir and into Codex. Running it again updates |
+| `install.py` | Checks the tools, records the Python, config dirs and routes in `<jidoka-home>`, writes the committed plugin to `<jidoka-home>/plugins/<version>/`, and installs that snapshot into each named config dir and into Codex. Running it again updates |
 | `release.py` | Raises the plugin version and makes the one commit that holds it |
 | `plugin/` | The local marketplace, committed in git. `plugin/jidoka/` is the plugin: its manifest and `bin/jidoka-run`, the launcher |
 | `plugin/jidoka/hooks/` | `hooks.json` wires the SessionStart hook, and `session_start.py` prints the rules block and the doc paths in a repo that has beads, and nothing elsewhere |

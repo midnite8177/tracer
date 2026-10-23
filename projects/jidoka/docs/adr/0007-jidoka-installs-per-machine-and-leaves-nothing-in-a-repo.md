@@ -5,8 +5,8 @@ docs under `docs/agents/`, and its rules in `AGENTS.local.md`, hidden
 through `.git/info/exclude` or committed. An agent wrote all of it during
 adopt, and the auto-mode classifier judged every write under `.claude/`,
 so each install and update fought the classifier. jidoka installs once per
-machine instead. It is a user-scope plugin from a marketplace that is a
-folder in Jeff's tracer checkout, and a Python script Jeff runs in a
+machine instead. It is a user-scope plugin from a local marketplace folder
+built from Jeff's tracer checkout, and a Python script Jeff runs in a
 terminal installs and updates it, so no agent writes a file of the
 install. A repo holds its beads in stealth mode and nothing of jidoka's. A
 SessionStart hook in the plugin brings the standing rules and the paths of
