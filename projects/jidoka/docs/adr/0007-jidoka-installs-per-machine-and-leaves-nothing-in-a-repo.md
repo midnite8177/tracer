@@ -11,9 +11,14 @@ terminal installs and updates it, so no agent writes a file of the
 install. A repo holds its beads in stealth mode and nothing of jidoka's. A
 SessionStart hook in the plugin brings the standing rules and the paths of
 the tracker and domain docs to each session, and each machine's settings
-live in `~/.jidoka/`. Install copies a release into each harness's cache,
-so a factory that works an epic for hours keeps running the same scripts
-while Jeff edits jidoka. The skills-directory route that smells uses would
+live in `~/.jidoka/`. Claude Code runs a plugin from a folder marketplace
+in place rather than from its cache copy, so install first writes the
+committed plugin to `~/.jidoka/plugins/<version>/` and adds that snapshot
+as the marketplace, for Claude Code and Codex alike. A snapshot is never
+rewritten: install refuses when a version's snapshot came from different
+plugin content, and old snapshots stay because a running session may
+still read one. A factory that works an epic for hours keeps running the
+same scripts while Jeff edits jidoka. The skills-directory route that smells uses would
 load the working tree at every session start. The cost falls on per-repo
 text. A repo's own rules move to Claude Code's private `CLAUDE.local.md`,
 which Codex does not read, and per-repo settings such as the command list
