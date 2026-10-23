@@ -1,0 +1,2 @@
+# The root ignore file hides every bin/ folder; the plugin ships its launcher from one.
+!bin/

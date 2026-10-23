@@ -1,0 +1,21 @@
+#!/bin/sh
+# Runs a jidoka script with the Python that install.py recorded.
+
+if [ "$#" -eq 0 ]; then
+    echo "usage: jidoka-run <script.py> [args...]" >&2
+    exit 2
+fi
+
+home="${JIDOKA_HOME:-$HOME/.jidoka}"
+python=""
+if [ -r "$home/python" ]; then
+    IFS= read -r python < "$home/python" || :
+    python="${python%"$(printf '\r')"}"
+fi
+
+if [ -z "$python" ] || [ ! -x "$python" ]; then
+    echo "jidoka-run: no usable Python is recorded in $home/python. Run install.py from your jidoka checkout." >&2
+    exit 1
+fi
+
+exec "$python" "$@"

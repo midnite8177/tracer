@@ -1,0 +1,13 @@
+{
+  "name": "jidoka",
+  "owner": {
+    "name": "Jeff Slutter"
+  },
+  "plugins": [
+    {
+      "name": "jidoka",
+      "source": "./jidoka",
+      "description": "The factory that builds beads while Jeff is away."
+    }
+  ]
+}
