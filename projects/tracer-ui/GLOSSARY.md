@@ -1,8 +1,9 @@
 # tracer-ui
 
 A local web UI for the browse and triage of beads issues. It reads and
-writes through the installed `bd` program, and it holds a list of the
-repositories that the person cares about.
+writes through the installed `bd` program, writes what jidoka owns through
+jidoka's scripts, and holds a list of the repositories that the person
+cares about.
 
 ## Language
 
@@ -223,7 +224,7 @@ _Avoid_: Project switcher, dropdown, selector, combo box
 
 **Project**:
 A repository that holds a `.beads/` directory, which the person added to
-the app.
+the app or jidoka onboarded.
 _Avoid_: Repository, workspace, folder
 
 **Project path**:
@@ -241,6 +242,13 @@ _Avoid_: Root, drive, volume
 The stored list of project paths. It lives in the user configuration
 directory, not in any repository.
 _Avoid_: Settings, configuration, project list
+
+**Onboarded project**:
+A project that the app lists because jidoka onboarded it, which it reads
+from jidoka's machine settings beside the registry. It appears wherever a
+project of the registry appears. The app never writes jidoka's settings,
+so only jidoka takes one off the list.
+_Avoid_: Imported project, jidoka repo
 
 **Project catalog**:
 The registry together with the rules that guard an addition. The catalog
@@ -704,6 +712,41 @@ A project whose beads `bd` did not give when the needs-you view asked. The
 view names it and the reason, so one repository that fails hides no other.
 _Avoid_: Failed project, offline project, error
 
+### jidoka
+
+**jidoka page**:
+A web page that jidoka wrote for one bead, which the app serves at an
+address of its own beside that bead and fills with its own controls. Once
+the bead has moved on, the page stays readable and its controls stop
+working, because the bead wins.
+_Avoid_: Explainer, report, page alone
+
+**Answer panel**:
+The control the app draws for a question that jidoka asked on a bead, from
+the options and the recommendation that the bead carries. The same panel
+appears on the detail page, in the needs-you view and in a jidoka page.
+_Avoid_: Reply box, answer form
+
+**Factory view**:
+Every epic that jidoka's factory holds, from every project of the
+registry, in one list, each with the lap of every bead it holds.
+_Avoid_: Dashboard, status page, pipeline view
+
+**Spend view**:
+What jidoka's workers cost, from jidoka's ledger, across every project:
+spend by week, then each epic with its cost, its merged tasks and its cost
+per merged task, grouped by tier, model, effort or track. A figure priced
+at list price on a subscription carries a ≈, so that it never reads as a
+bill.
+_Avoid_: Cost page, billing, usage
+
+**Rules box**:
+The press-to-edit box on an epic's detail page that shows the epic's
+factory rules. Each setting is a picker whose choices jidoka's rules
+script lists, and Save runs that script, which can refuse a value and say
+why.
+_Avoid_: Settings panel, config editor
+
 ### Freshness
 
 **Backlog cache**:
@@ -776,7 +819,8 @@ _Avoid_: Poll, heartbeat, fallback
 
 **bd**:
 The beads command-line program that the person installed. It is the only
-way that the app reaches a project's data.
+way that the app reaches a project's beads: a jidoka script that the app
+starts writes through it too.
 _Avoid_: The CLI, the backend, the tracker
 
 **Read**:
@@ -788,9 +832,18 @@ the comments.
 _Avoid_: Result, outcome, maybe, optional
 
 **bd adapter**:
-The one layer that owns every `bd` invocation. No other code starts a
-process.
+The one layer that owns every `bd` invocation. Besides the jidoka adapter,
+no other code starts a process.
 _Avoid_: Client, wrapper, gateway
+
+**jidoka adapter**:
+The one layer that starts jidoka's scripts. A metadata key that jidoka
+owns, such as the gate's decision or an epic's factory rules, has one
+writer, jidoka's script, so the app changes it only through this layer
+and never through `bd` directly. A comment, a label or a close stays a
+plain `bd` write. See
+[ADR 0018](docs/adr/0018-jidokas-keys-are-written-only-through-jidokas-scripts.md).
+_Avoid_: Python bridge, script runner, jidoka client
 
 **Capability probe**:
 The set of questions that the adapter asks an installed `bd` once per

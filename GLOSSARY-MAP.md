@@ -17,7 +17,9 @@ them.
 
 - **jidoka and tracer-ui**: an epic in tracer-ui is any bead that holds
   beads; an epic in jidoka holds only tasks. tracer-ui avoids "task" as a
-  word for a bead, while in jidoka a task is a bead inside an epic.
+  word for a bead, while in jidoka a task is a bead inside an epic. A page
+  in jidoka is a file it writes for a bead; tracer-ui calls it a jidoka
+  page, because tracer-ui's own screens are pages too.
 
 ## Decisions
 
