@@ -54,12 +54,17 @@ def git_commit_all(repo: Path, message: str) -> None:
     run(["git", "commit", "-q", "-m", message], repo)
 
 
-def build_checkout(repo: Path) -> None:
-    """Makes a committed git repo that holds copies of the scripts and the plugin folder."""
+def init_repo(repo: Path) -> None:
+    """Makes an empty git repo that can commit."""
     repo.mkdir(parents=True, exist_ok=True)
     run(["git", "init", "-q"], repo)
     run(["git", "config", "user.email", "fixture@example.com"], repo)
     run(["git", "config", "user.name", "Fixture"], repo)
+
+
+def build_checkout(repo: Path) -> None:
+    """Makes a committed git repo that holds copies of the scripts and the plugin folder."""
+    init_repo(repo)
     for name in SHIPPED:
         shutil.copy2(PROJECT / name, repo / name)
     shutil.copytree(PROJECT / "plugin", repo / "plugin", symlinks=True)

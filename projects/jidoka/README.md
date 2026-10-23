@@ -41,10 +41,13 @@ older Python. Building the workspace takes a few seconds.
 | `install.py` | Checks the tools, records the Python, config dirs and routes in `<jidoka-home>`, and installs the plugin into each named config dir and into Codex. Running it again updates |
 | `release.py` | Raises the plugin version and makes the one commit that holds it |
 | `plugin/` | The local marketplace, committed in git. `plugin/jidoka/` is the plugin: its manifest and `bin/jidoka-run`, the launcher |
+| `plugin/jidoka/hooks/` | `hooks.json` wires the SessionStart hook, and `session_start.py` prints the rules block and the doc paths in a repo that has beads, and nothing elsewhere |
+| `plugin/jidoka/docs/` | `issue-tracker.md` and `domain.md`, the two docs the hook points each session at |
 | `untracer.py` | Takes tracer's files out of one repo, after copying each original to `<jidoka-home>/untracer/` |
 | `tests/test_install.py` | The installer tests, at the process seam |
 | `tests/test_release.py` | The release tests, at the process seam |
 | `tests/test_launcher.py` | The launcher tests, run as a process |
+| `tests/test_session_start.py` | The SessionStart hook tests, run as a process through the launcher against a stealth beads repo and its worktree |
 | `tests/jidoka_fixture.py` | Builds the temporary checkout and the fake `claude`, `codex` and `bd` the installer tests run against |
 | `tests/test_untracer.py` | The untracer tests, at the process seam |
 | `tests/tracer_fixture.py` | Builds fixture repos with a tracer install, from the seed sources in this repo's git history |
