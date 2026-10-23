@@ -3,18 +3,19 @@
 
 Claude Code runs this at every session start and sends the session as JSON on
 stdin. In a repo that uses beads, the script prints the rules block and the
-paths of the tracker doc and the domain doc that ship in the plugin. Anywhere
-else it prints nothing. A failure also prints nothing, because this hook must
-never keep a session from starting.
+paths of the tracker doc and the domain doc that ship in the plugin, and a
+line saying to run onboarding when jidoka's home holds no settings for the
+repo. Anywhere else it prints nothing. A failure also prints nothing,
+because this hook must never keep a session from starting.
 """
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
-DOCS = Path(__file__).resolve().parents[1] / "docs"
+PLUGIN = Path(__file__).resolve().parents[1]
+DOCS = PLUGIN / "docs"
 GIT_TIMEOUT_SECONDS = 5
 
 RULES = """\
@@ -30,6 +31,8 @@ jidoka rules for this repo, which uses beads.
 - Comment cleanup is requested work. Deleting and rewriting comments, doc comments and commented-out code in the files a task touched is intended. It never removes tests or assertions.
 - jidoka works in four modes: Planning, Factory, Acceptance and Bench.
 """
+
+ONBOARDING = "jidoka has no settings for this repo on this machine. Run /jidoka:onboard to record them.\n"
 
 
 def session_folder(raw: str) -> Path:
@@ -54,22 +57,35 @@ def beads_folder_above(folder: Path) -> bool:
     return False
 
 
-def main_checkout_has_beads(folder: Path) -> bool:
-    """A stealth workspace keeps .beads in the main checkout only, so a linked worktree has to ask git where that is.
+def repo_settings():
+    """The settings script, imported inside start() so that a broken import prints nothing."""
+    scripts = str(PLUGIN / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import repo_settings as script
+    return script
 
-    The common dir is the main checkout's .git, and git may print it relative to the folder.
+
+def main_tree_of(folder: Path) -> Path | None:
+    """The main worktree, or None when git cannot name one.
+
+    Without a main worktree there is no settings key, so the hook leaves out the onboarding line.
     """
-    done = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=folder, capture_output=True,
-                          text=True, encoding="utf-8", timeout=GIT_TIMEOUT_SECONDS)
-    common = done.stdout.strip()
-    if done.returncode != 0 or not common:
-        return False
-    main_checkout = (folder / common).resolve().parent
-    return (main_checkout / ".beads").is_dir()
+    script = repo_settings()
+    try:
+        return script.main_worktree(folder, GIT_TIMEOUT_SECONDS)
+    except script.SettingsError:
+        return None
 
 
-def is_beads_repo(folder: Path) -> bool:
-    return beads_folder_above(folder) or main_checkout_has_beads(folder)
+def is_beads_repo(folder: Path, main_tree: Path | None) -> bool:
+    """A stealth workspace keeps .beads in the main worktree only, so a linked worktree has to look there."""
+    return beads_folder_above(folder) or (main_tree is not None and (main_tree / ".beads").is_dir())
+
+
+def has_settings(main_tree: Path) -> bool:
+    script = repo_settings()
+    return script.settings_path(script.jidoka_home(None), main_tree).is_file()
 
 
 def announcement() -> str:
@@ -81,7 +97,13 @@ def announcement() -> str:
 
 def start(raw: str) -> str:
     try:
-        return announcement() if is_beads_repo(session_folder(raw)) else ""
+        folder = session_folder(raw)
+        main_tree = main_tree_of(folder)
+        if not is_beads_repo(folder, main_tree):
+            return ""
+        if main_tree is not None and not has_settings(main_tree):
+            return announcement() + ONBOARDING
+        return announcement()
     except Exception:
         return ""
 

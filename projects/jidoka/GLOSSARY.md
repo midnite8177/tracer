@@ -59,7 +59,8 @@ _Avoid_: Launch, kickoff, dispatch, submit
 **Factory rules**:
 An epic's own settings and guidance, agreed at its handoff, which bind the
 factory only while it works that epic. A setting is a named value the
-scheduler reads, such as the lap limit. Guidance is prose that every
+scheduler reads, such as the lap limit, which starts from the repo
+settings' lap limit and can only go lower. Guidance is prose that every
 worker follows and that the Spec check holds each diff to.
 _Avoid_: Epic config, run settings, policy, ruleset
 
@@ -327,6 +328,13 @@ The one-time step that brings a repo under jidoka on one machine. Its
 beads start in stealth mode, and jidoka records what it needs to know
 about the repo and its apps.
 _Avoid_: Adopt, install, setup, enroll
+
+**Repo settings**:
+What onboarding records about one repo on one machine, in jidoka's home and
+keyed by the repo's main worktree: its build, the commands lap workers may
+run, how a lap tests and uses its slot, the lap limit, and each app's build,
+run and test commands.
+_Avoid_: Repo config, profile, manifest
 
 **App**:
 A program or a library that a repo ships, which app checks, holdouts and

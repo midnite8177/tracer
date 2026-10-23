@@ -1,0 +1,5 @@
+interface:
+  display_name: "Onboard"
+  short_description: "Record this repo's settings for jidoka"
+policy:
+  allow_implicit_invocation: false
