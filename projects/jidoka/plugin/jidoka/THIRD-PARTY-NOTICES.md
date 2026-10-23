@@ -11,14 +11,16 @@ Each section's license covers the text copied from that project.
 Source: `https://github.com/mattpocock/skills`, tag `v1.3.1`, commit
 `24fe0ef7737efae15c87225755e9f6f5965e4888`. The skills come from
 `skills/engineering/` and `skills/productivity/`, each with its
-`agents/openai.yaml`. In `guide`'s, the display name is "Guide".
+`agents/openai.yaml`. In `guide`'s, the display name is "Guide". A
+rewritten skill's `agents/openai.yaml` is jidoka's own.
 
 - Copied whole: `codebase-design`, `diagnosing-bugs`, `grill-me`, `grill-with-docs`, `grilling`,
   `improve-codebase-architecture`, `prototype`, `tdd`, `teach`,
   `to-questionnaire`, `wait-what`, `wizard`, `writing-for-agents`
 - Copied and edited: `domain-modeling`, `guide` (upstream `ask-matt`),
   `pr`, `research`, `retro`, `to-spec`, `to-tickets`, `triage`, `wayfinder`
-- Rewritten from upstream: `code-review`
+- Rewritten from upstream: `code-review`, and `spec-check` (from
+  upstream `code-review`)
 
 ```
 MIT License

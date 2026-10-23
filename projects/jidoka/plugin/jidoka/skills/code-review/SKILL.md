@@ -83,10 +83,11 @@ judgeable from this diff; report present only. A documented-standard
 breach can be hard; a catalog smell is a judgment call unless the
 severity section calls it mechanical.
 
-*Spec lane.* Against the spec source: (a) requirements asked for that
-are missing or partial; (b) behavior in the diff that was not asked
-for (scope creep); (c) requirements that look implemented but wrong.
-Quote the spec line for each finding. Under 400 words.
+*Spec lane.* Follow steps 3 and 4 of `../spec-check/SKILL.md`, relative
+to the folder that holds this SKILL.md: missing work, including work
+built wrong, and extra work, each quoting the spec line. Report in
+this skill's finding shape, not spec-check's outcome block. Under 400
+words.
 
 **6. Aggregate.** Three sections in this order, comment findings first
 because they are cheapest to fix: `## Comments`, `## Standards`,

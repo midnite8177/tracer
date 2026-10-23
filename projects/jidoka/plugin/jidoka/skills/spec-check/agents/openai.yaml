@@ -1,0 +1,3 @@
+interface:
+  display_name: "Spec Check"
+  short_description: "Judge whether a diff does what its bead says"

@@ -67,7 +67,8 @@ def build_checkout(repo: Path) -> None:
     init_repo(repo)
     for name in SHIPPED:
         shutil.copy2(PROJECT / name, repo / name)
-    shutil.copytree(PROJECT / "plugin", repo / "plugin", symlinks=True)
+    shutil.copytree(PROJECT / "plugin", repo / "plugin", symlinks=True,
+                    ignore=shutil.ignore_patterns("__pycache__"))
     manifest = repo / "plugin" / "jidoka" / ".claude-plugin" / "plugin.json"
     data = json.loads(manifest.read_text(encoding="utf-8"))
     data["version"] = STARTING_VERSION

@@ -52,6 +52,7 @@ older Python. Building the workspace takes a few seconds.
 | `plugin/jidoka/docs/` | `issue-tracker.md` and `domain.md`, the two docs the hook points each session at |
 | `plugin/jidoka/skills/` | jidoka's own copy of each skill it carries from tracer. A copied `SKILL.md` names its upstream and the upstream commit in `metadata.upstream` and `metadata.upstream-base`. `agents/openai.yaml` in a skill holds its Codex display name and invocation policy. A skill names its scripts and the tracker doc by paths relative to its own folder, because Codex does not expand `${CLAUDE_PLUGIN_ROOT}`. It runs its scripts through `bin/jidoka-run` |
 | `plugin/jidoka/skills/onboard/` | jidoka's own skill, not a copy: it proposes a repo's settings from its README, build files and `CLAUDE.local.md`, and runs `repo_settings.py` once the human confirms them |
+| `plugin/jidoka/skills/spec-check/` | jidoka's Spec check, rewritten from upstream `code-review`. It judges whether a bead's diff does what the bead says and nothing more, and ends with a JSON outcome block |
 | `plugin/jidoka/agents/` | `comment-sicko.md`, the subagent `no-comments` starts as `jidoka:comment-sicko` |
 | `plugin/jidoka/THIRD-PARTY-NOTICES.md` | The source, commit and MIT license of each upstream the skills and the agent come from |
 | `untracer.py` | Takes tracer's files out of one repo, after copying each original to `<jidoka-home>/untracer/` |

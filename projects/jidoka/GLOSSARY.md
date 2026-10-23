@@ -129,8 +129,11 @@ the holdouts that name the task, before it reads the diff.
 _Avoid_: QA, black-box test, validation
 
 **Spec check**:
-The lap stage that asks whether the task's diff does what the task says,
-and nothing more.
+The stage, in a lap or at the bench, that asks whether a bead's diff does
+what the bead says, and nothing more. It ends as pass, send back or
+cannot judge. Its send back returns the diff to the builder with
+findings; the human's send back at the acceptance gate is a different
+act.
 _Avoid_: Review, spec review
 
 **Merge worker**:
