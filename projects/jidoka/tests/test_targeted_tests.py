@@ -68,7 +68,12 @@ def git(repo: Path, *args: str) -> str:
     return fixture.run(["git", *args], repo).strip()
 
 
-class TargetedTestsTests(unittest.TestCase):
+class TargetedTestsCase(unittest.TestCase):
+    """The shop repo, its repo settings and the helpers of the targeted tests script tests.
+
+    Each subclass sets up its own.
+    """
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -86,7 +91,7 @@ class TargetedTestsTests(unittest.TestCase):
         fixture.git_commit_all(cls.repo, "Start")
         git(cls.repo, "branch", "-M", "main")
         cls.bd = fixture.real_tool("bd")
-        fixture.run([cls.bd, "init", "--stealth", "--non-interactive"], cls.repo)
+        fixture.add_stealth_beads(cls.repo)
         cls.test_command = f'"{sys.executable}" "{cls.runner}" "{cls.runs}"'
         cls.write_settings()
         cls.count = 0
@@ -170,6 +175,8 @@ class TargetedTestsTests(unittest.TestCase):
     def main_head(self) -> str:
         return git(self.repo, "rev-parse", "main")
 
+
+class RecordedRunTests(TargetedTestsCase):
     def test_a_passing_run_posts_the_exact_command_and_records_a_pass_on_the_bead(self):
         bead = self.new_bead()
 
@@ -213,23 +220,6 @@ class TargetedTestsTests(unittest.TestCase):
         self.assertEqual(f"{branch_head} {self.main_head()}", git(bead.worktree, "log", "-1", "--format=%P"))
         self.assertEqual(self.main_head(), self.metadata(bead)["tests.base"])
 
-    def test_a_conflict_with_main_stops_the_run_names_the_file_and_records_nothing(self):
-        bead = self.new_bead()
-        (self.repo / f"greeting-{self.count}.txt").write_text("a different hello\n", encoding="utf-8")
-        fixture.git_commit_all(self.repo, "Add a different greeting")
-        branch_head = git(bead.worktree, "rev-parse", "HEAD")
-
-        done = self.targeted_tests(bead, "shop", "test_greeting", self.home)
-
-        self.assertEqual(1, done.returncode)
-        self.assertIn("conflict", done.stderr)
-        self.assertIn(f"greeting-{self.count}.txt", done.stderr)
-        self.assertEqual([], self.runs_of(bead))
-        self.assertEqual({}, self.metadata(bead))
-        self.assertEqual([], self.comments(bead))
-        self.assertEqual(branch_head, git(bead.worktree, "rev-parse", "HEAD"))
-        self.assertEqual("", git(bead.worktree, "status", "--porcelain"))
-
     def test_when_main_moves_during_the_run_it_merges_again_and_reruns_once_and_records_the_rerun(self):
         bead = self.new_bead()
         first_base = self.main_head()
@@ -248,6 +238,25 @@ class TargetedTestsTests(unittest.TestCase):
         [comment] = self.comments(bead)
         self.assertIn(moved, comment)
         self.assertIn("passed", comment)
+
+
+class RefusedRunTests(TargetedTestsCase):
+    def test_a_conflict_with_main_stops_the_run_names_the_file_and_records_nothing(self):
+        bead = self.new_bead()
+        (self.repo / f"greeting-{self.count}.txt").write_text("a different hello\n", encoding="utf-8")
+        fixture.git_commit_all(self.repo, "Add a different greeting")
+        branch_head = git(bead.worktree, "rev-parse", "HEAD")
+
+        done = self.targeted_tests(bead, "shop", "test_greeting", self.home)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("conflict", done.stderr)
+        self.assertIn(f"greeting-{self.count}.txt", done.stderr)
+        self.assertEqual([], self.runs_of(bead))
+        self.assertEqual({}, self.metadata(bead))
+        self.assertEqual([], self.comments(bead))
+        self.assertEqual(branch_head, git(bead.worktree, "rev-parse", "HEAD"))
+        self.assertEqual("", git(bead.worktree, "status", "--porcelain"))
 
     def test_an_app_the_repo_settings_do_not_name_is_refused_and_nothing_runs(self):
         bead = self.new_bead()
@@ -269,6 +278,18 @@ class TargetedTestsTests(unittest.TestCase):
         self.assertEqual([], self.runs_of(bead))
         self.assertEqual({}, self.metadata(bead))
 
+    def test_a_repo_with_no_settings_is_refused_with_a_pointer_to_onboarding(self):
+        bead = self.new_bead()
+
+        done = self.targeted_tests(bead, "shop", "test_greeting", self.bare_home)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("/jidoka:onboard", done.stderr)
+        self.assertEqual([], self.runs_of(bead))
+        self.assertEqual({}, self.metadata(bead))
+
+
+class FilterTests(TargetedTestsCase):
     def test_a_filter_that_repeats_the_text_before_the_placeholder_is_refused_with_the_filter_to_pass(self):
         bead = self.new_bead()
 
@@ -308,6 +329,8 @@ class TargetedTestsTests(unittest.TestCase):
         self.assertEqual(["FullyQualifiedName~BindAddressTests"], self.runs_of(bead))
         self.assertEqual("pass", self.metadata(bead)["tests.result"])
 
+
+class NoTestsExecutedTests(TargetedTestsCase):
     def test_a_run_whose_output_says_no_test_matches_the_filter_is_refused_and_records_nothing(self):
         bead = self.new_bead()
         self.queue_outputs(bead, NO_TEST_MATCHES)
@@ -366,16 +389,6 @@ class TargetedTestsTests(unittest.TestCase):
         self.assertEqual(2, len(self.runs_of(bead)))
         self.assertEqual({}, self.metadata(bead))
         self.assertEqual([], self.comments(bead))
-
-    def test_a_repo_with_no_settings_is_refused_with_a_pointer_to_onboarding(self):
-        bead = self.new_bead()
-
-        done = self.targeted_tests(bead, "shop", "test_greeting", self.bare_home)
-
-        self.assertEqual(1, done.returncode)
-        self.assertIn("/jidoka:onboard", done.stderr)
-        self.assertEqual([], self.runs_of(bead))
-        self.assertEqual({}, self.metadata(bead))
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ QUESTION = "Which payment provider fits a shop this size?"
 CLAUDE_MD_BYTES = 2048
 
 
-class SkillScriptTests(unittest.TestCase):
+class SkillScriptCase(unittest.TestCase):
     """Runs each script a skill carries the way the skill names it: sh, the launcher, then the script, from inside the repo."""
 
     @classmethod
@@ -42,17 +42,7 @@ class SkillScriptTests(unittest.TestCase):
         (cls.repo / "CLAUDE.md").write_text("x" * (CLAUDE_MD_BYTES - 1) + "\n", encoding="utf-8")
         fixture.git_commit_all(cls.repo, "Start")
         cls.bd = fixture.real_tool("bd")
-        fixture.run([cls.bd, "init", "--stealth", "--non-interactive"], cls.repo)
-        cls.greeting = cls.create_bead(cls.repo, "Print the greeting", WITH_DEMO, ["--type=task"])
-        cls.farewell = cls.create_bead(cls.repo, "Print the farewell", WITHOUT_DEMO, ["--type=task"])
-
-        cls.atlas = cls.root / "atlas"
-        fixture.init_repo(cls.atlas)
-        fixture.run([cls.bd, "init", "--stealth", "--non-interactive"], cls.atlas)
-        cls.map = cls.create_bead(cls.atlas, "Take payments", MAP, ["--type=epic", "--labels=wayfinder:map"])
-        cls.question = cls.create_bead(cls.atlas, "Pick a payment provider", QUESTION,
-                                       ["--type=task", f"--parent={cls.map}", "--labels=wayfinder:research"])
-        cls.receipt = cls.create_bead(cls.atlas, "Print the receipt", WITH_DEMO, ["--type=task", "--labels=bench"])
+        fixture.add_stealth_beads(cls.repo)
 
     @classmethod
     def tearDownClass(cls):
@@ -68,6 +58,14 @@ class SkillScriptTests(unittest.TestCase):
         env = {**os.environ, "JIDOKA_HOME": str(self.home), "HOME": home}
         return subprocess.run(["sh", str(LAUNCHER), str(script), *args], capture_output=True, text=True,
                               encoding="utf-8", env=env, cwd=cwd)
+
+
+class ShopIssuesTests(SkillScriptCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.greeting = cls.create_bead(cls.repo, "Print the greeting", WITH_DEMO, ["--type=task"])
+        cls.farewell = cls.create_bead(cls.repo, "Print the farewell", WITHOUT_DEMO, ["--type=task"])
 
     def test_issues_lists_the_ready_beads_on_the_board(self):
         done = self.run_script(ISSUES, [], os.environ["HOME"], self.repo)
@@ -91,18 +89,31 @@ class SkillScriptTests(unittest.TestCase):
         self.assertIn("next: no Demo line — /jidoka:grill-with-docs or /jidoka:to-tickets before implementing",
                       done.stdout)
 
+    def test_issues_says_a_ready_bead_with_a_demo_line_is_ready_to_build(self):
+        done = self.run_script(ISSUES, [self.greeting], os.environ["HOME"], self.repo)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn(f"next: ready to build with /jidoka:bench {self.greeting}", done.stdout)
+
+
+class AtlasIssuesTests(SkillScriptCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.atlas = cls.root / "atlas"
+        fixture.init_repo(cls.atlas)
+        fixture.add_stealth_beads(cls.atlas)
+        cls.map = cls.create_bead(cls.atlas, "Take payments", MAP, ["--type=epic", "--labels=wayfinder:map"])
+        cls.question = cls.create_bead(cls.atlas, "Pick a payment provider", QUESTION,
+                                       ["--type=task", f"--parent={cls.map}", "--labels=wayfinder:research"])
+        cls.receipt = cls.create_bead(cls.atlas, "Print the receipt", WITH_DEMO, ["--type=task", "--labels=bench"])
+
     def test_issues_sends_a_wayfinder_bead_to_the_wayfinder_with_its_map(self):
         done = self.run_script(ISSUES, [self.question], os.environ["HOME"], self.atlas)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"next: /jidoka:wayfinder {self.map}", done.stdout)
         self.assertNotIn("no Demo line", done.stdout)
-
-    def test_issues_says_a_ready_bead_with_a_demo_line_is_ready_to_build(self):
-        done = self.run_script(ISSUES, [self.greeting], os.environ["HOME"], self.repo)
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.assertIn(f"next: ready to build with /jidoka:bench {self.greeting}", done.stdout)
 
     def test_issues_counts_a_bench_bead_as_needing_you(self):
         done = self.run_script(ISSUES, [], os.environ["HOME"], self.atlas)
@@ -117,6 +128,8 @@ class SkillScriptTests(unittest.TestCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"next: needs you at the bench, /jidoka:bench {self.receipt}", done.stdout)
 
+
+class DecisionLogAndBudgetTests(SkillScriptCase):
     def test_the_decision_log_gets_its_header_and_the_row_it_was_given_relative_to_the_repo(self):
         cells = ["build", "kept the old parser", "the new one drops comments", "commit 3a9f1c2", "tests green"]
 

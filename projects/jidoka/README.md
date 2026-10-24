@@ -18,7 +18,8 @@ python3 projects/jidoka/release.py --bump patch                                 
 python3 projects/jidoka/untracer.py --repo <path>                                  # backups go to ~/.jidoka
 sh projects/jidoka/plugin/jidoka/bin/jidoka-run <script.py> [args...]              # how hooks and skills reach Python
 sh projects/jidoka/plugin/jidoka/bin/jidoka-run projects/jidoka/plugin/jidoka/scripts/repo_settings.py show   # the settings of the repo you are in
-python3 -m unittest discover -s projects/jidoka/tests                              # all tests, from the repo root
+python3 projects/jidoka/tests/run_suite.py                                         # all tests, from the repo root
+python3 projects/jidoka/tests/run_suite.py -k <part of a test's dotted name>       # only the tests it matches; repeat -k for more
 ```
 
 `install.py`, `release.py` and `untracer.py` take `--jidoka-home` to use a
@@ -35,12 +36,22 @@ folder and set `CODEX_HOME` to another.
 
 The tests run each script as a process against a temporary git repo that
 holds copies of the scripts and the plugin folder, a temporary jidoka home,
-and a real `bd init --stealth` workspace. The `claude` and `codex` they find
+and a real stealth beads workspace. The `claude` and `codex` they find
 are small fakes that record their arguments. The fake `codex` also keeps its
 marketplaces in a file, and refuses to add one it already has from a
 different source, as Codex does. The Python version check is
 the one test that calls a function, because no process can run under an
-older Python. Building the workspace takes a few seconds.
+older Python.
+
+Each stealth beads workspace is a copy of one that `bd init --stealth` made
+once, because bd init takes seconds and a copy does not. Every copy keeps
+that workspace's bead id prefix. `run_suite.py` runs the test classes side
+by side, one class at a time in each of up to `os.cpu_count()` worker
+processes, so a class's `setUpClass` still holds for all of its tests. The
+first worker that needs the workspace makes it, and the others copy from
+it. The runner prints unittest's summary and exits as unittest does: 0
+when all pass, 1 when one fails, 5 when no test ran. `python3 -m unittest discover -s projects/jidoka/tests` still runs
+the same tests one at a time, and makes the workspace once in its process.
 
 ## Where things are
 
@@ -68,7 +79,10 @@ older Python. Building the workspace takes a few seconds.
 | `tests/test_bench.py` | The bench script's tests, run as a process through the launcher against a stealth beads repo, its worktrees and a temporary jidoka home |
 | `tests/test_onboard.py` | The repo settings and onboarding line tests, run as processes through the launcher against stealth beads repos, a worktree and a temporary jidoka home |
 | `tests/test_skill_scripts.py` | The tests of the scripts the skills carry, run as processes through the launcher from inside a stealth beads repo |
-| `tests/jidoka_fixture.py` | Builds the temporary checkout and the fake `claude`, `codex` and `bd` the installer tests run against |
+| `tests/jidoka_fixture.py` | Builds the temporary checkout and the fake `claude`, `codex` and `bd` the installer tests run against, and gives a test repo a stealth beads workspace copied from the one bd init made for the run |
+| `tests/test_jidoka_fixture.py` | The test of the copied stealth beads workspace, against real bd |
+| `tests/run_suite.py` | Runs the test classes in parallel worker processes, takes unittest's `-k`, and prints and exits as unittest does |
+| `tests/test_run_suite.py` | The suite runner tests, run as a process over throwaway test modules |
 | `tests/test_untracer.py` | The untracer tests, at the process seam |
 | `tests/tracer_fixture.py` | Builds fixture repos with a stealth or a committed tracer install, from the seed sources in this repo's git history and `tests/fixtures/` |
 | `tests/fixtures/tracer-seed-41.md` | Seed revision 41 byte for byte, which no commit in this repo holds |

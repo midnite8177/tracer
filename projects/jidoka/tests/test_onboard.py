@@ -55,17 +55,16 @@ class OnboardingTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.tmp.name).resolve()
-        cls.bd = fixture.real_tool("bd")
 
         cls.repo = cls.root / "shop"
         init_committed_repo(cls.repo)
-        fixture.run([cls.bd, "init", "--stealth", "--non-interactive"], cls.repo)
+        fixture.add_stealth_beads(cls.repo)
         cls.worktree = cls.root / "shop-feature"
         fixture.run(["git", "worktree", "add", "-q", "-b", "feature", str(cls.worktree)], cls.repo)
 
         cls.other_repo = cls.root / "kiosk"
         init_committed_repo(cls.other_repo)
-        fixture.run([cls.bd, "init", "--stealth", "--non-interactive"], cls.other_repo)
+        fixture.add_stealth_beads(cls.other_repo)
 
         cls.plain_repo = cls.root / "plain"
         init_committed_repo(cls.plain_repo)

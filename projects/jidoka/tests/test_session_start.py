@@ -46,7 +46,7 @@ class SessionStartTests(unittest.TestCase):
         cls.beads_repo = root / "shop"
         cls.bd = fixture.real_tool("bd")
         init_committed_repo(cls.beads_repo)
-        fixture.run([cls.bd, "init", "--stealth", "--non-interactive"], cls.beads_repo)
+        fixture.add_stealth_beads(cls.beads_repo)
         (cls.beads_repo / "src" / "deep").mkdir(parents=True)
 
         cls.worktree = root / "shop-feature"

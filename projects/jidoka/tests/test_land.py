@@ -82,7 +82,9 @@ def first_line_within(stream, seconds: float) -> str | None:
     return lines[0] if lines else None
 
 
-class LandTests(unittest.TestCase):
+class LandingCase(unittest.TestCase):
+    """The shop repo, its repo settings and the helpers of the landing tests; each subclass sets up its own."""
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -106,7 +108,7 @@ class LandTests(unittest.TestCase):
         fixture.git_commit_all(cls.repo, "Start")
         git(cls.repo, "branch", "-M", "main")
         cls.bd = fixture.real_tool("bd")
-        fixture.run([cls.bd, "init", "--stealth", "--non-interactive"], cls.repo)
+        fixture.add_stealth_beads(cls.repo)
         cls.write_settings()
         cls.count = 0
 
@@ -230,6 +232,8 @@ class LandTests(unittest.TestCase):
         log = self.suite_runs / f"{bead.worktree.name}.log"
         return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
 
+
+class LandingTests(LandingCase):
     def test_landing_puts_the_branch_on_main_as_one_commit_with_the_given_message(self):
         bead = self.new_bead("pass")
         before = self.main_count()
@@ -257,6 +261,19 @@ class LandTests(unittest.TestCase):
         self.assertNotIn(bead.branch, git(self.repo, "branch", "--list"))
         self.assertNotIn(str(bead.worktree), git(self.repo, "worktree", "list"))
 
+    def test_a_branch_with_no_work_of_its_own_on_main_is_not_taken_for_a_landed_one(self):
+        bead = self.new_bead("pass")
+        git(bead.worktree, "reset", "--hard", "-q", "main")
+        head = git(self.repo, "rev-parse", "main")
+
+        done = self.land(bead, "Land nothing at all")
+
+        self.assertNotEqual(0, done.returncode)
+        self.assertEqual(head, git(self.repo, "rev-parse", "main"))
+        self.assertEqual("open", self.shown(bead.id)["status"])
+
+
+class RefusedMessageTests(LandingCase):
     def test_a_message_that_holds_the_beads_own_id_is_refused_before_anything_changes(self):
         bead = self.new_bead("pass")
         head = git(self.repo, "rev-parse", "main")
@@ -294,15 +311,6 @@ class LandTests(unittest.TestCase):
         self.assertNotEqual(0, done.returncode)
         self.assertIn(other, done.stderr)
 
-    def test_a_message_with_a_word_shaped_like_an_id_that_is_not_a_bead_is_accepted(self):
-        bead = self.new_bead("pass")
-        prefix = bead.id.rsplit("-", 1)[0]
-
-        done = self.land(bead, f"Fix the {prefix}-ui layout")
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(f"Fix the {prefix}-ui layout", git(self.repo, "log", "-1", "--format=%B", "main"))
-
     def test_an_empty_message_is_refused_before_anything_changes(self):
         bead = self.new_bead("pass")
         head = git(self.repo, "rev-parse", "main")
@@ -312,6 +320,17 @@ class LandTests(unittest.TestCase):
         self.assertNotEqual(0, done.returncode)
         self.assertIn("message is empty", done.stderr)
         self.assert_nothing_landed(bead, head)
+
+
+class AcceptedMessageTests(LandingCase):
+    def test_a_message_with_a_word_shaped_like_an_id_that_is_not_a_bead_is_accepted(self):
+        bead = self.new_bead("pass")
+        prefix = bead.id.rsplit("-", 1)[0]
+
+        done = self.land(bead, f"Fix the {prefix}-ui layout")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(f"Fix the {prefix}-ui layout", git(self.repo, "log", "-1", "--format=%B", "main"))
 
     def test_a_message_whose_first_line_is_blank_closes_the_bead_with_its_first_written_line(self):
         bead = self.new_bead("pass")
@@ -329,6 +348,8 @@ class LandTests(unittest.TestCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
 
+
+class RecordedTestsAndSettingsTests(LandingCase):
     def test_a_bead_with_no_recorded_tests_is_refused_and_main_is_unchanged(self):
         bead = self.new_bead(None)
         head = git(self.repo, "rev-parse", "main")
@@ -353,6 +374,22 @@ class LandTests(unittest.TestCase):
         self.assert_nothing_landed(bead, head)
         self.assertEqual(tip, self.tip(bead))
 
+    def test_a_repo_with_no_settings_is_refused_with_a_pointer_to_onboarding_and_nothing_lands(self):
+        bead = self.new_bead("pass")
+        head = git(self.repo, "rev-parse", "main")
+        tip = self.tip(bead)
+        self.jidoka_home = self.bare_home
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(1, done.returncode, done.stderr)
+        self.assertIn("/jidoka:onboard", done.stderr)
+        self.assertEqual([], self.suite_runs_of(bead))
+        self.assert_nothing_landed(bead, head)
+        self.assertEqual(tip, self.tip(bead))
+
+
+class FullSuiteTests(LandingCase):
     def test_landing_runs_every_apps_full_suite_once_in_app_order_on_the_branch_rebased_on_main(self):
         bead = self.new_bead("pass")
         moved_file = f"other-{self.count}.txt"
@@ -418,20 +455,8 @@ class LandTests(unittest.TestCase):
             self.assertIn(output, done.stderr)
         self.assert_nothing_landed(bead, head)
 
-    def test_a_repo_with_no_settings_is_refused_with_a_pointer_to_onboarding_and_nothing_lands(self):
-        bead = self.new_bead("pass")
-        head = git(self.repo, "rev-parse", "main")
-        tip = self.tip(bead)
-        self.jidoka_home = self.bare_home
 
-        done = self.land(bead, MESSAGE)
-
-        self.assertEqual(1, done.returncode, done.stderr)
-        self.assertIn("/jidoka:onboard", done.stderr)
-        self.assertEqual([], self.suite_runs_of(bead))
-        self.assert_nothing_landed(bead, head)
-        self.assertEqual(tip, self.tip(bead))
-
+class MainCheckoutTests(LandingCase):
     def test_a_branch_that_conflicts_with_main_stops_the_landing_and_leaves_no_rebase_behind(self):
         bead = self.new_bead("pass")
         branch_head = git(bead.worktree, "rev-parse", "HEAD")
@@ -510,6 +535,8 @@ class LandTests(unittest.TestCase):
         self.assertTrue((self.repo / f"scratch-{self.count}.txt").is_file())
         self.assertTrue((self.repo / f"greeting-{self.count}-1.txt").is_file())
 
+
+class MergeLockAndRecoveryTests(LandingCase):
     def test_a_second_landing_waits_on_the_merge_lock_until_the_first_finishes(self):
         bead = self.new_bead("pass")
         head = git(self.repo, "rev-parse", "main")
@@ -563,17 +590,6 @@ class LandTests(unittest.TestCase):
         self.assertEqual(f"{sha}: Add the greeting", shown["close_reason"])
         self.assertFalse(bead.worktree.exists())
         self.assertNotIn(bead.branch, git(self.repo, "branch", "--list"))
-
-    def test_a_branch_with_no_work_of_its_own_on_main_is_not_taken_for_a_landed_one(self):
-        bead = self.new_bead("pass")
-        git(bead.worktree, "reset", "--hard", "-q", "main")
-        head = git(self.repo, "rev-parse", "main")
-
-        done = self.land(bead, "Land nothing at all")
-
-        self.assertNotEqual(0, done.returncode)
-        self.assertEqual(head, git(self.repo, "rev-parse", "main"))
-        self.assertEqual("open", self.shown(bead.id)["status"])
 
     def test_output_from_bd_that_is_not_json_stops_the_landing_with_a_clear_message(self):
         bead = self.new_bead("pass")

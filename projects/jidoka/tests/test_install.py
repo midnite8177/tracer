@@ -546,7 +546,7 @@ class StealthWorkspaceTests(unittest.TestCase):
         cls.template_dir = tempfile.TemporaryDirectory()
         cls.template = Path(cls.template_dir.name) / "checkout"
         fixture.build_checkout(cls.template)
-        fixture.run(["bd", "init", "--stealth", "--non-interactive"], cls.template)
+        fixture.add_stealth_beads(cls.template)
         fixture.run(["bd", "create", "--title=Carry on", "--type=task"], cls.template)
 
     @classmethod

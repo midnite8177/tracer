@@ -15,6 +15,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import jidoka_fixture
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -183,7 +185,7 @@ def build_bd_repo(repo: Path) -> None:
     run(["git", "init", "-q"], repo)
     run(["git", "config", "user.email", "fixture@example.com"], repo)
     run(["git", "config", "user.name", "Fixture"], repo)
-    run(["bd", "init", "--stealth", "--non-interactive"], repo)
+    jidoka_fixture.add_stealth_beads(repo)
     run(["bd", "setup", "claude", "--stealth"], repo)
     run(["bd", "hooks", "install"], repo)
     run(["bd", "create", "--title=Carry on", "--type=task"], repo)

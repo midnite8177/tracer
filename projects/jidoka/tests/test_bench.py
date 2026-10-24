@@ -23,7 +23,9 @@ def git(repo: Path, *args: str) -> str:
     return fixture.run(["git", *args], repo).strip()
 
 
-class BenchTests(unittest.TestCase):
+class BenchCase(unittest.TestCase):
+    """The shop repo and the helpers of the bench script tests; each subclass sets up its own."""
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -39,7 +41,7 @@ class BenchTests(unittest.TestCase):
         fixture.git_commit_all(cls.repo, "Start")
         git(cls.repo, "branch", "-M", "main")
         cls.bd = fixture.real_tool("bd")
-        fixture.run([cls.bd, "init", "--stealth", "--non-interactive"], cls.repo)
+        fixture.add_stealth_beads(cls.repo)
         cls.count = 0
 
     @classmethod
@@ -71,6 +73,8 @@ class BenchTests(unittest.TestCase):
     def comments(self, bead: str) -> list[dict]:
         return json.loads(fixture.run([self.bd, "comments", bead, "--json"], self.repo) or "[]") or []
 
+
+class BenchStartTests(BenchCase):
     def test_starting_bench_work_assigns_the_bead_to_the_git_user_by_name_and_posts_a_start_comment(self):
         bead = self.new_bead("task")
 
@@ -100,6 +104,28 @@ class BenchTests(unittest.TestCase):
         self.assertNotIn(bead, printed["branch"] + printed["worktree"])
         self.assertEqual("", git(self.repo, "status", "--porcelain", "--untracked-files=all"))
 
+    def test_a_second_start_without_a_release_reuses_the_workspace_and_keeps_the_assignee(self):
+        bead = self.new_bead("task")
+        first = self.bench(self.caller_env(), "start", bead)
+        self.assertEqual(0, first.returncode, first.stderr)
+
+        done = self.bench(self.caller_env(), "start", bead)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(json.loads(first.stdout), json.loads(done.stdout))
+        self.assertEqual(JEFF, self.shown(bead).get("assignee"))
+
+    def test_start_takes_a_task_under_an_epic_the_factory_does_not_hold(self):
+        epic = self.new_bead("epic")
+        bead = self.new_task_under(epic)
+
+        done = self.bench(self.caller_env(), "start", bead)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(JEFF, self.shown(bead).get("assignee"))
+
+
+class BenchReleaseAndEndTests(BenchCase):
     def test_releasing_clears_the_assignee_and_keeps_the_worktree_and_its_commits(self):
         bead = self.new_bead("task")
         worktree = Path(json.loads(self.bench(self.caller_env(), "start", bead).stdout)["worktree"])
@@ -138,6 +164,17 @@ class BenchTests(unittest.TestCase):
         exclude = Path(git(self.repo, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "info" / "exclude"
         self.assertEqual(1, exclude.read_text(encoding="utf-8").splitlines().count(".worktrees/"))
 
+    def test_ending_posts_the_outcome_on_the_bead_under_the_git_user_name(self):
+        bead = self.new_bead("task")
+
+        done = self.bench(self.caller_env(), "end", bead, "landed as 3a9f1c2")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([("bench ended: landed as 3a9f1c2", JEFF)],
+                         [(c["text"], c["author"]) for c in self.comments(bead)])
+
+
+class BenchRefusedBeadTests(BenchCase):
     def test_start_refuses_an_epic_and_claims_nothing(self):
         epic = self.new_bead("epic")
 
@@ -148,6 +185,33 @@ class BenchTests(unittest.TestCase):
         self.assertEqual("", self.shown(epic).get("assignee", ""))
         self.assertEqual([], self.comments(epic))
 
+    def test_start_refuses_a_bead_someone_else_claimed_and_makes_no_worktree(self):
+        bead = self.new_bead("task")
+        fixture.run([self.bd, "update", bead, "--assignee", "Someone Else"], self.repo)
+
+        done = self.bench(self.caller_env(), "start", bead)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("Someone Else", done.stderr)
+        self.assertEqual("Someone Else", self.shown(bead).get("assignee"))
+        self.assertFalse((self.repo / ".worktrees" / f"print-the-receipt-{self.count}").exists())
+        self.assertEqual([], self.comments(bead))
+
+    def test_start_refuses_a_task_whose_epic_the_factory_holds_and_claims_nothing(self):
+        epic = self.new_bead("epic")
+        fixture.run([self.bd, "label", "add", epic, "factory"], self.repo)
+        bead = self.new_task_under(epic)
+
+        done = self.bench(self.caller_env(), "start", bead)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("factory", done.stderr)
+        self.assertEqual("", self.shown(bead).get("assignee", ""))
+        self.assertFalse((self.repo / ".worktrees" / f"print-the-receipt-{self.count}").exists())
+        self.assertEqual([], self.comments(bead))
+
+
+class BenchRefusedWorkspaceTests(BenchCase):
     def test_start_refuses_when_the_repo_has_no_git_user_name_and_claims_nothing(self):
         bead = self.new_bead("task")
         git(self.repo, "config", "--unset", "user.name")
@@ -161,29 +225,6 @@ class BenchTests(unittest.TestCase):
         self.assertEqual(1, done.returncode)
         self.assertIn("user.name is not set", done.stderr)
         self.assertEqual("", self.shown(bead).get("assignee", ""))
-
-    def test_a_second_start_without_a_release_reuses_the_workspace_and_keeps_the_assignee(self):
-        bead = self.new_bead("task")
-        first = self.bench(self.caller_env(), "start", bead)
-        self.assertEqual(0, first.returncode, first.stderr)
-
-        done = self.bench(self.caller_env(), "start", bead)
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(json.loads(first.stdout), json.loads(done.stdout))
-        self.assertEqual(JEFF, self.shown(bead).get("assignee"))
-
-    def test_start_refuses_a_bead_someone_else_claimed_and_makes_no_worktree(self):
-        bead = self.new_bead("task")
-        fixture.run([self.bd, "update", bead, "--assignee", "Someone Else"], self.repo)
-
-        done = self.bench(self.caller_env(), "start", bead)
-
-        self.assertEqual(1, done.returncode)
-        self.assertIn("Someone Else", done.stderr)
-        self.assertEqual("Someone Else", self.shown(bead).get("assignee"))
-        self.assertFalse((self.repo / ".worktrees" / f"print-the-receipt-{self.count}").exists())
-        self.assertEqual([], self.comments(bead))
 
     def test_start_refuses_when_the_worktree_path_is_a_plain_folder_and_leaves_the_bead_unclaimed(self):
         bead = self.new_bead("task")
@@ -200,37 +241,8 @@ class BenchTests(unittest.TestCase):
         self.assertEqual("", shown.get("assignee", ""))
         self.assertEqual([], self.comments(bead))
 
-    def test_start_refuses_a_task_whose_epic_the_factory_holds_and_claims_nothing(self):
-        epic = self.new_bead("epic")
-        fixture.run([self.bd, "label", "add", epic, "factory"], self.repo)
-        bead = self.new_task_under(epic)
 
-        done = self.bench(self.caller_env(), "start", bead)
-
-        self.assertEqual(1, done.returncode)
-        self.assertIn("factory", done.stderr)
-        self.assertEqual("", self.shown(bead).get("assignee", ""))
-        self.assertFalse((self.repo / ".worktrees" / f"print-the-receipt-{self.count}").exists())
-        self.assertEqual([], self.comments(bead))
-
-    def test_start_takes_a_task_under_an_epic_the_factory_does_not_hold(self):
-        epic = self.new_bead("epic")
-        bead = self.new_task_under(epic)
-
-        done = self.bench(self.caller_env(), "start", bead)
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(JEFF, self.shown(bead).get("assignee"))
-
-    def test_ending_posts_the_outcome_on_the_bead_under_the_git_user_name(self):
-        bead = self.new_bead("task")
-
-        done = self.bench(self.caller_env(), "end", bead, "landed as 3a9f1c2")
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual([("bench ended: landed as 3a9f1c2", JEFF)],
-                         [(c["text"], c["author"]) for c in self.comments(bead)])
-
+class BenchRouteTests(BenchCase):
     def test_route_prints_the_route_this_machine_records_for_the_tier(self):
         light = {"harness": "claude", "model": "haiku", "version": "5.5", "effort": "medium"}
         home = self.root / "home-with-routes"

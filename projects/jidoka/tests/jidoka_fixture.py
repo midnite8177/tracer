@@ -4,19 +4,32 @@ A checkout is a temporary git repo holding copies of install.py, release.py
 and plugin/. The claude, codex and bd stand-ins are small executables in a
 bin folder that becomes the whole PATH, so a test decides which tools exist.
 Each stand-in appends one JSON line per call to a log file.
+
+A stealth beads workspace is a copy of one that bd init made in a template
+repo, because bd init takes seconds and a copy takes milliseconds. A suite
+run through run_suite.py makes the template once, in the folder its workers
+share; any other process makes its own the first time a test asks for one.
 """
+import atexit
+import functools
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from run_suite import SHARED_FOLDER
+
 PROJECT = Path(__file__).resolve().parents[1]
 SHIPPED = ["install.py", "release.py"]
 STARTING_VERSION = "0.1.0"
+TEMPLATE_WAIT_SECONDS = 300
+TEMPLATE_POLL_SECONDS = 0.2
 
 
 class FixtureError(Exception):
@@ -60,6 +73,82 @@ def init_repo(repo: Path) -> None:
     run(["git", "init", "-q"], repo)
     run(["git", "config", "user.email", "fixture@example.com"], repo)
     run(["git", "config", "user.name", "Fixture"], repo)
+
+
+def make_beads_template(template: Path) -> None:
+    """Runs bd init in a new repo and keeps what it wrote: .beads, its info/exclude lines and its git config."""
+    repo = template / "repo"
+    init_repo(repo)
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude_before = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    config_before = set(run(["git", "config", "--local", "--list"], repo).splitlines())
+    run([real_tool("bd"), "init", "--stealth", "--non-interactive"], repo)
+    exclude_after = exclude.read_text(encoding="utf-8")
+    if not exclude_after.startswith(exclude_before):
+        raise FixtureError(f"bd init rewrote {exclude} instead of adding to it")
+    added_config = [line.split("=", 1) for line in run(["git", "config", "--local", "--list"], repo).splitlines()
+                    if line not in config_before]
+    shutil.move(repo / ".beads", template / "beads")
+    (template / "exclude").write_text(exclude_after[len(exclude_before):], encoding="utf-8")
+    (template / "config.json").write_text(json.dumps(added_config), encoding="utf-8")
+    shutil.rmtree(repo)
+
+
+def take_template_lock(lock: Path, template: Path) -> bool:
+    """Creates the lock file exclusively and returns True, or returns False once another process made the template.
+
+    It polls while another process holds the lock, and gives up when the template never appears.
+    """
+    deadline = time.monotonic() + TEMPLATE_WAIT_SECONDS
+    while True:
+        try:
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return True
+        except FileExistsError:
+            if template.exists():
+                return False
+            if time.monotonic() > deadline:
+                raise FixtureError(f"no beads template appeared in {TEMPLATE_WAIT_SECONDS} s while {lock} was held")
+            time.sleep(TEMPLATE_POLL_SECONDS)
+
+
+@functools.cache
+def beads_template() -> Path:
+    """The folder add_stealth_beads copies from, made at most once per suite run.
+
+    Workers of one run share a folder, and the first to create the lock file in it makes the template
+    while the others wait for it to appear. A process outside such a run uses a folder of its own.
+    """
+    shared = os.environ.get(SHARED_FOLDER)
+    if shared is None:
+        shared = tempfile.mkdtemp(prefix="jidoka-beads-template-")
+        atexit.register(shutil.rmtree, shared, True)
+    template = Path(shared) / "beads-template"
+    lock = Path(shared) / "beads-template.lock"
+    if take_template_lock(lock, template):
+        try:
+            if not template.exists():
+                partial = Path(tempfile.mkdtemp(prefix="beads-template-", dir=shared))
+                make_beads_template(partial)
+                partial.rename(template)
+        finally:
+            lock.unlink()
+    return template
+
+
+def add_stealth_beads(repo: Path) -> None:
+    """Gives a git repo what `bd init --stealth --non-interactive` gives it, by copying the template.
+
+    Every copy keeps the template's bead id prefix and database name, whatever the repo's folder is called.
+    """
+    template = beads_template()
+    shutil.copytree(template / "beads", repo / ".beads", symlinks=True)
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(exist_ok=True)
+    with open(exclude, "a", encoding="utf-8", newline="") as fh:
+        fh.write((template / "exclude").read_text(encoding="utf-8"))
+    for key, value in json.loads((template / "config.json").read_text(encoding="utf-8")):
+        run(["git", "config", key, value], repo)
 
 
 def build_checkout(repo: Path) -> None:
