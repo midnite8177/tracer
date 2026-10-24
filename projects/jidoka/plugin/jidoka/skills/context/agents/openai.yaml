@@ -1,0 +1,3 @@
+interface:
+  display_name: "Context"
+  short_description: "Measure what loads into this repo's sessions"

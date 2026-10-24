@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""tracer context budget. Measures what loads into a Claude Code session in
-this repo and what each tracer skill pulls in when invoked. No LLM involved.
+"""jidoka's context report. Measures what loads into a Claude Code session in
+this repo and what each jidoka skill pulls in when invoked. No LLM involved.
 
 Usage:
-  budget.py            the report
-  budget.py --min N    hide rows under N KB (default 1)
+  context.py            the report
+  context.py --min N    hide rows under N KB (default 1)
 
 Token figures are estimates (bytes / 4); real counts vary by content.
 """
-import glob, os, re, signal, subprocess, sys
+import glob, json, os, re, signal, subprocess, sys
 if hasattr(signal, "SIGPIPE"): signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # quiet exit when piped; absent on Windows
 try: sys.stdout.reconfigure(encoding="utf-8", errors="replace")            # Windows consoles default to cp1252
 except Exception: pass
 
 HOME = os.path.expanduser("~")
 ROOT = os.path.normpath(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or os.getcwd())
-PLUGIN = os.path.join(ROOT, ".claude", "skills", "tracer")
+INSTALLED_PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+BENCH_SKILLS = ("bench", "tdd", "unslop", "spec-check", "no-comments")
 WARN_BYTES, WARN_LINES = 16 * 1024, 200
 
 def size(path):
@@ -48,13 +49,13 @@ def memory_dir():
              if os.path.basename(os.path.dirname(d)).strip("-").lower() == enc.lower()]
     return cands[0] if cands else None
 
-def cmd_bytes(*args):
+def cmd_bytes(args, stdin):
     try:
-        out = subprocess.run(args, capture_output=True, text=True, timeout=20).stdout
+        out = subprocess.run(args, input=stdin, capture_output=True, text=True, timeout=20, cwd=ROOT).stdout
         return len(out.encode()), out.count("\n") + 1
     except Exception: return None
 
-rows = {"startup": [], "invoke": [], "implement": []}
+rows = {"startup": [], "invoke": [], "bench": []}
 
 def add(group, label, path=None, measured=None):
     m = measured if measured is not None else (size(path) if path else None)
@@ -77,22 +78,26 @@ if md:
     idx = os.path.join(md, "MEMORY.md")
     if os.path.isfile(idx):
         m = size(idx); add("startup", "auto-memory MEMORY.md (first 200 lines / 25 KB load)", measured=(min(m[0], 25 * 1024), min(m[1], 200)))
-add("startup", "bd prime (SessionStart hook output)", measured=cmd_bytes("bd", "prime"))
+add("startup", "bd prime (SessionStart hook output)", measured=cmd_bytes(["bd", "prime"], ""))
+add("startup", "jidoka SessionStart hook output", measured=cmd_bytes(
+    ["sh", os.path.join(INSTALLED_PLUGIN_ROOT, "bin", "jidoka-run"), os.path.join(INSTALLED_PLUGIN_ROOT, "hooks", "session_start.py")],
+    json.dumps({"cwd": ROOT, "hook_event_name": "SessionStart", "source": "startup"})))
 
 for name in ("GLOSSARY.md", "GLOSSARY-MAP.md", "CONTEXT.md", "CONTEXT-MAP.md"):
-    add("implement", name, os.path.join(ROOT, name))
-for p in sorted(glob.glob(os.path.join(ROOT, "src", "*", "GLOSSARY.md")) + glob.glob(os.path.join(ROOT, "src", "*", "CONTEXT.md"))): add("implement", os.path.relpath(p, ROOT), p)
-for p in sorted(glob.glob(os.path.join(ROOT, "docs", "agents", "*.md"))): add("implement", os.path.relpath(p, ROOT), p)
+    add("bench", name, os.path.join(ROOT, name))
+for p in sorted(glob.glob(os.path.join(ROOT, "src", "*", "GLOSSARY.md")) + glob.glob(os.path.join(ROOT, "src", "*", "CONTEXT.md"))): add("bench", os.path.relpath(p, ROOT), p)
 adrs = sorted(glob.glob(os.path.join(ROOT, "docs", "adr", "*.md")))
 if adrs:
-    tot = [size(p) for p in adrs]; add("implement", f"docs/adr/*.md ({len(adrs)} files, read as relevant)", measured=(sum(x[0] for x in tot), sum(x[1] for x in tot)))
-for sk in ("implement", "tdd", "code-review"):
-    d = os.path.join(PLUGIN, "skills", sk)
+    tot = [size(p) for p in adrs]; add("bench", f"docs/adr/*.md ({len(adrs)} files, read as relevant)", measured=(sum(x[0] for x in tot), sum(x[1] for x in tot)))
+add("bench", "tracker doc (jidoka docs/issue-tracker.md)", os.path.join(INSTALLED_PLUGIN_ROOT, "docs", "issue-tracker.md"))
+add("bench", "domain doc (jidoka docs/domain.md)", os.path.join(INSTALLED_PLUGIN_ROOT, "docs", "domain.md"))
+for sk in BENCH_SKILLS:
+    d = os.path.join(INSTALLED_PLUGIN_ROOT, "skills", sk)
     files = sorted(glob.glob(os.path.join(d, "*.md")))
     if files:
-        tot = [size(p) for p in files]; add("implement", f"skill {sk} ({len(files)} files)", measured=(sum(x[0] for x in tot), sum(x[1] for x in tot)))
+        tot = [size(p) for p in files]; add("bench", f"skill {sk} ({len(files)} files)", measured=(sum(x[0] for x in tot), sum(x[1] for x in tot)))
 
-for d in sorted(glob.glob(os.path.join(PLUGIN, "skills", "*"))):
+for d in sorted(glob.glob(os.path.join(INSTALLED_PLUGIN_ROOT, "skills", "*"))):
     files = sorted(glob.glob(os.path.join(d, "*.md")))
     if not files: continue
     tot = [size(p) for p in files]; add("invoke", os.path.basename(d), measured=(sum(x[0] for x in tot), sum(x[1] for x in tot)))
@@ -112,9 +117,9 @@ def fmt(rows_, title, note, minkb):
 if __name__ == "__main__":
     a = sys.argv[1:]; minkb = 1
     if "--min" in a: minkb = float(a[a.index("--min") + 1])
-    print(f"context budget for {ROOT}")
+    print(f"context for {ROOT}")
     fmt(rows["startup"], "Loads every session, before you type anything", None, minkb)
-    fmt(rows["implement"], "Added when /tracer:implement runs (plus the bead itself and any files it opens)", None, minkb)
+    fmt(rows["bench"], "Added when /jidoka:bench runs (plus the bead itself and any files it opens)", None, minkb)
     fmt(rows["invoke"], "Each skill, loaded only when invoked", "for reference; not part of startup", minkb)
     print(f"\n⚠ = over {WARN_BYTES//1024} KB or {WARN_LINES} lines. Tokens are bytes/4, an estimate.")
     print("Not measurable here: the system prompt and tool definitions (tens of thousands of tokens, fixed), and the conversation itself. Run /context inside a session for the live breakdown.")
