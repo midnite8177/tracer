@@ -11,10 +11,12 @@ cares about.
 
 **Bind address**:
 The address that the app binds when it starts, which the command-line
-arguments decide. The loopback address is the default; the `--listen`
-flag gives the address that binds every interface of this machine. An
-argument that only looks like the flag stops the app, so no mistake binds
-a wider address than the person asked for.
+arguments decide. The loopback address on port 5099 is the default. The
+`--listen` flag gives the address that binds every interface of this
+machine, and the `--port` flag, with a port number after it, gives
+another port. An argument that only looks like either flag stops the app,
+so no mistake binds a wider address or another port than the person asked
+for.
 _Avoid_: Host, endpoint, listen address, URL
 
 **LAN mode**:

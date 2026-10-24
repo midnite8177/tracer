@@ -29,8 +29,20 @@ dotnet test projects/tracer-ui/TracerUi.slnx
 dotnet run --project projects/tracer-ui/src/TracerUi.Web
 ```
 
-The app listens on `http://localhost:5099` and opens a browser tab when it
-starts.
+The app listens on `http://localhost:5099` by default and opens a browser
+tab when it starts.
+
+To run a second copy beside the first, give it another port with the
+`--port` flag:
+
+```bash
+dotnet run --project projects/tracer-ui/src/TracerUi.Web -- --port 5101
+```
+
+The port is a number from 1 to 65535, in plain digits with no leading
+zero. A value that is not one, a `--port` with no value after it, or a
+second `--port` stops the app with a message. Both copies read and write
+the same registry file.
 
 To reach the board from another machine, add the `--listen` flag:
 
@@ -41,8 +53,8 @@ dotnet run --project projects/tracer-ui/src/TracerUi.Web -- --listen
 **Caution: LAN mode has no password and no transport security. Use it on a
 trusted network only.** The app then binds every interface, and every
 machine on your network reaches your backlog and writes to it. On your
-phone, open `http://<the address of this machine>:5099`. Every page shows
-a marker while LAN mode holds. See
+phone, open `http://<the address of this machine>:5099`, or the port that
+`--port` named. Every page shows a marker while LAN mode holds. See
 [ADR 0003](docs/adr/0003-localhost-by-default.md).
 
 ## What it does today
