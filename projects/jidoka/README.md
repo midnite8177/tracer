@@ -36,7 +36,9 @@ folder and set `CODEX_HOME` to another.
 The tests run each script as a process against a temporary git repo that
 holds copies of the scripts and the plugin folder, a temporary jidoka home,
 and a real `bd init --stealth` workspace. The `claude` and `codex` they find
-are small fakes that record their arguments. The Python version check is
+are small fakes that record their arguments. The fake `codex` also keeps its
+marketplaces in a file, and refuses to add one it already has from a
+different source, as Codex does. The Python version check is
 the one test that calls a function, because no process can run under an
 older Python. Building the workspace takes a few seconds.
 

@@ -19,7 +19,7 @@ class ReleaseTests(unittest.TestCase):
         self.repo = self.root / "checkout"
         self.bin = self.root / "bin"
         fixture.build_checkout(self.repo)
-        fixture.build_bin(self.bin, fixture.ALL_TOOLS, self.root / "calls.log", "")
+        fixture.build_bin(self.bin, fixture.ALL_TOOLS, self.root / "calls.log", "", self.root / "codex-marketplaces.json", "")
 
     def tearDown(self):
         self.tmp.cleanup()

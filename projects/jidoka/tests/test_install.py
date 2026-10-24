@@ -37,6 +37,7 @@ class InstallerTestCase(unittest.TestCase):
         self.repo = self.root / "checkout"
         self.home = self.root / "jidoka-home"
         self.log = self.root / "calls.log"
+        self.codex_state = self.root / "codex-marketplaces.json"
         self.bin = self.root / "bin"
         self.user_home = self.root / "user"
         self.user_home.mkdir()
@@ -48,7 +49,7 @@ class InstallerTestCase(unittest.TestCase):
         self.tmp.cleanup()
 
     def install(self, tools: fixture.ToolsOnPath, config_dirs: list, claude_fails_on: str) -> subprocess.CompletedProcess:
-        fixture.build_bin(self.bin, tools, self.log, claude_fails_on)
+        fixture.build_bin(self.bin, tools, self.log, claude_fails_on, self.codex_state, "")
         args = ["--jidoka-home", str(self.home)]
         for config_dir in config_dirs:
             args += ["--config-dir", str(config_dir)]
@@ -56,6 +57,12 @@ class InstallerTestCase(unittest.TestCase):
 
     def calls(self, tool: str) -> list:
         return [call for call in fixture.read_log(self.log) if call["tool"] == tool]
+
+    def codex_marketplaces(self) -> dict:
+        """What `codex plugin marketplace list --json` shows, as marketplace name -> source."""
+        listed = subprocess.run([str(self.bin / "codex"), "plugin", "marketplace", "list", "--json"],
+                                capture_output=True, text=True, encoding="utf-8", check=True)
+        return {entry["name"]: entry["marketplaceSource"]["source"] for entry in json.loads(listed.stdout)["marketplaces"]}
 
     def settings(self) -> dict:
         return json.loads((self.home / "settings.json").read_text(encoding="utf-8"))
@@ -90,9 +97,39 @@ class InstallIntoConfigDirTests(InstallerTestCase):
         done = self.install(fixture.ALL_TOOLS, [self.config_a], "")
 
         self.assertEqual(0, done.returncode, done.stderr)
-        snapshot = str(self.snapshot("0.1.0"))
-        self.assertEqual([["plugin", "marketplace", "add", snapshot], ["plugin", "add", "jidoka@jidoka"]],
-                         [call["argv"] for call in self.calls("codex")])
+        self.assertIn(["plugin", "add", "jidoka@jidoka"], [call["argv"] for call in self.calls("codex")])
+        self.assertEqual({"jidoka": str(self.snapshot("0.1.0"))}, self.codex_marketplaces())
+
+    def test_an_install_after_a_release_moves_codex_to_the_new_snapshot(self):
+        self.install(fixture.ALL_TOOLS, [self.config_a], "")
+        self.release()
+
+        done = self.install(fixture.ALL_TOOLS, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({"jidoka": str(self.snapshot("0.1.1"))}, self.codex_marketplaces())
+
+    def test_running_it_again_at_the_same_version_keeps_the_codex_marketplace_instead_of_removing_it(self):
+        self.install(fixture.ALL_TOOLS, [self.config_a], "")
+        self.log.unlink()
+
+        done = self.install(fixture.ALL_TOOLS, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn(["plugin", "marketplace", "remove", "jidoka"], [call["argv"] for call in self.calls("codex")])
+        self.assertIn(["plugin", "add", "jidoka@jidoka"], [call["argv"] for call in self.calls("codex")])
+
+    def test_a_failing_codex_command_stops_the_run_and_names_the_command(self):
+        fixture.build_bin(self.bin, fixture.ALL_TOOLS, self.log, "", self.codex_state, "list")
+
+        done = fixture.run_script(self.repo, "install.py", ["--jidoka-home", str(self.home), "--config-dir", str(self.config_a)],
+                                  fixture.script_env(self.bin, self.user_home))
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("plugin marketplace list --json", done.stderr)
+        self.assertIn("the fake refuses this call", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertNotIn("Installed jidoka 0.1.0 into Codex", done.stdout)
 
     def test_codex_is_left_alone_when_it_is_not_on_the_path(self):
         done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
@@ -318,7 +355,7 @@ class SnapshotTests(InstallerTestCase):
         self.assertIn("An edit made after the install.", (second / "jidoka" / "docs" / "domain.md").read_text(encoding="utf-8"))
         self.assertEqual(["0.1.0", "0.1.1"], sorted(path.name for path in (self.home / "plugins").iterdir()))
         self.assertEqual(["plugin", "marketplace", "add", str(second)], self.calls("claude")[0]["argv"])
-        self.assertEqual(["plugin", "marketplace", "add", str(second)], self.calls("codex")[0]["argv"])
+        self.assertEqual({"jidoka": str(second)}, self.codex_marketplaces())
 
 
 class RecordedSettingsTests(InstallerTestCase):
@@ -373,7 +410,7 @@ class RecordedSettingsTests(InstallerTestCase):
         self.assertFalse((self.home / "python").exists())
 
     def test_the_home_defaults_to_the_jidoka_folder_in_the_users_home(self):
-        fixture.build_bin(self.bin, fixture.WITHOUT_CODEX, self.log, "")
+        fixture.build_bin(self.bin, fixture.WITHOUT_CODEX, self.log, "", self.codex_state, "")
 
         done = fixture.run_script(self.repo, "install.py", ["--config-dir", str(self.config_a)],
                                   fixture.script_env(self.bin, self.user_home))
@@ -416,7 +453,7 @@ class PrerequisiteTests(InstallerTestCase):
         old_python = older_python()
         if old_python is None:
             self.skipTest("no Python older than 3.10 on this machine")
-        fixture.build_bin(self.bin, fixture.WITHOUT_CODEX, self.log, "")
+        fixture.build_bin(self.bin, fixture.WITHOUT_CODEX, self.log, "", self.codex_state, "")
 
         done = subprocess.run([old_python, str(self.repo / "install.py"), "--config-dir", str(self.config_a),
                                "--jidoka-home", str(self.home)],
@@ -493,7 +530,7 @@ class DirtyPluginFolderTests(InstallerTestCase):
         loose.mkdir()
         shutil.copy2(fixture.PROJECT / "install.py", loose / "install.py")
         shutil.copytree(fixture.PROJECT / "plugin", loose / "plugin")
-        fixture.build_bin(self.bin, fixture.ALL_TOOLS, self.log, "")
+        fixture.build_bin(self.bin, fixture.ALL_TOOLS, self.log, "", self.codex_state, "")
 
         done = fixture.run_script(loose, "install.py", ["--jidoka-home", str(self.home), "--config-dir", str(self.config_a)],
                                   fixture.script_env(self.bin, self.user_home))
@@ -520,7 +557,7 @@ class StealthWorkspaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             tools = fixture.ToolsOnPath(git=True, bd=fixture.Bd.REAL, claude=True, codex=False)
-            fixture.build_bin(root / "bin", tools, root / "calls.log", "")
+            fixture.build_bin(root / "bin", tools, root / "calls.log", "", root / "codex-marketplaces.json", "")
             user = root / "user"
             user.mkdir()
 

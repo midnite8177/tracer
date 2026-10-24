@@ -151,12 +151,14 @@ def record(home: Path, python: str, config_dirs: list[Path], routes: dict[str, R
                                         encoding="utf-8", newline="\n")
 
 
-def run_tool(executable: str, args: list[str], env: dict[str, str]) -> None:
+def run_tool(executable: str, args: list[str], env: dict[str, str]) -> str:
+    """Runs the tool and returns what it printed to stdout. A nonzero exit raises an error that names the command."""
     done = subprocess.run([executable, *args], capture_output=True, text=True, encoding="utf-8", env=env)
     if done.returncode != 0:
         shown = " ".join([Path(executable).stem, *args])
         detail = (done.stderr.strip() or done.stdout.strip() or "no output")
         raise InstallerError(f"`{shown}` failed with exit {done.returncode}: {detail}")
+    return done.stdout
 
 
 def plugin_tree_id(git: str, plugin_folder: Path) -> str:
@@ -236,9 +238,29 @@ def install_into_claude(claude: str, config_dir: Path, snapshot: Path) -> None:
     run_tool(claude, ["plugin", "update", PLUGIN_ID, "--scope", "user"], env)
 
 
+def codex_marketplace_source(codex: str, env: dict[str, str]) -> str | None:
+    """The source Codex has for the jidoka marketplace, or None when Codex has no marketplace by that name."""
+    listed = run_tool(codex, ["plugin", "marketplace", "list", "--json"], env)
+    try:
+        marketplaces = json.loads(listed)["marketplaces"]
+        for marketplace in marketplaces:
+            if marketplace["name"] == MARKETPLACE:
+                return marketplace["marketplaceSource"]["source"]
+    except (ValueError, KeyError, TypeError) as err:
+        raise InstallerError("`codex plugin marketplace list --json` printed a list the installer cannot read: "
+                             + listed.strip()) from err
+    return None
+
+
 def install_into_codex(codex: str, snapshot: Path) -> None:
-    run_tool(codex, ["plugin", "marketplace", "add", str(snapshot)], dict(os.environ))
-    run_tool(codex, ["plugin", "add", PLUGIN_ID], dict(os.environ))
+    """Codex refuses to add a marketplace whose name it already has from another source,
+    so this first removes a jidoka marketplace that points at an older snapshot."""
+    env = dict(os.environ)
+    source = codex_marketplace_source(codex, env)
+    if source is not None and source != str(snapshot):
+        run_tool(codex, ["plugin", "marketplace", "remove", MARKETPLACE], env)
+    run_tool(codex, ["plugin", "marketplace", "add", str(snapshot)], env)
+    run_tool(codex, ["plugin", "add", PLUGIN_ID], env)
 
 
 def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[int, int], python: str) -> None:

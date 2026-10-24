@@ -106,11 +106,60 @@ def write_recorder(path: Path, name: str, log: Path, fail_on: str) -> None:
         ""]))
 
 
+def write_codex(path: Path, log: Path, state: Path, fail_on: str) -> None:
+    """Writes a codex that logs its arguments, keeps its marketplaces in state, and fails when an argument equals fail_on.
+
+    It answers `plugin marketplace add <source>`, `plugin marketplace remove <name>`,
+    `plugin marketplace list --json` and `plugin add <plugin>@<marketplace>`. An add
+    takes the marketplace name from the source's .claude-plugin/marketplace.json.
+    """
+    write_executable(path, "\n".join([
+        f"#!{sys.executable}",
+        "import json, os, sys",
+        "from pathlib import Path",
+        "argv = sys.argv[1:]",
+        f"with open({str(log)!r}, 'a', encoding='utf-8') as fh:",
+        "    fh.write(json.dumps({'tool': 'codex', 'argv': argv, "
+        "'config_dir': os.environ.get('CLAUDE_CONFIG_DIR')}) + '\\n')",
+        f"if {fail_on!r} in argv:",
+        "    print('the fake refuses this call', file=sys.stderr)",
+        "    sys.exit(1)",
+        f"state = Path({str(state)!r})",
+        "marketplaces = json.loads(state.read_text(encoding='utf-8')) if state.exists() else {}",
+        "def refuse(message):",
+        "    print(f'Error: {message}', file=sys.stderr)",
+        "    sys.exit(1)",
+        "if argv[:3] == ['plugin', 'marketplace', 'add']:",
+        "    source = argv[3]",
+        "    manifest = Path(source) / '.claude-plugin' / 'marketplace.json'",
+        "    name = json.loads(manifest.read_text(encoding='utf-8'))['name']",
+        "    if marketplaces.get(name, source) != source:",
+        "        refuse(f\"marketplace '{name}' is already added from a different source; remove it before adding this source\")",
+        "    marketplaces[name] = source",
+        "elif argv[:3] == ['plugin', 'marketplace', 'remove']:",
+        "    if argv[3] not in marketplaces:",
+        "        refuse(f\"marketplace '{argv[3]}' is not added\")",
+        "    del marketplaces[argv[3]]",
+        "elif argv[:4] == ['plugin', 'marketplace', 'list', '--json']:",
+        "    print(json.dumps({'marketplaces': [",
+        "        {'name': name, 'root': source, 'marketplaceSource': {'sourceType': 'local', 'source': source}}",
+        "        for name, source in marketplaces.items()]}))",
+        "elif argv[:2] == ['plugin', 'add']:",
+        "    marketplace = argv[2].partition('@')[2]",
+        "    if marketplace not in marketplaces:",
+        "        refuse(f\"marketplace '{marketplace}' is not added\")",
+        "else:",
+        "    refuse('the fake codex does not know this command')",
+        "state.write_text(json.dumps(marketplaces), encoding='utf-8')",
+        ""]))
+
+
 def write_shim(path: Path, target: str) -> None:
     write_executable(path, f'#!/bin/sh\nexec "{target}" "$@"\n')
 
 
-def build_bin(bin_dir: Path, tools: ToolsOnPath, log: Path, claude_fails_on: str) -> None:
+def build_bin(bin_dir: Path, tools: ToolsOnPath, log: Path, claude_fails_on: str, codex_state: Path,
+              codex_fails_on: str) -> None:
     """Fills bin_dir with the tools the test wants on its PATH. The git and real bd entries run the real programs."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     if tools.git:
@@ -122,7 +171,7 @@ def build_bin(bin_dir: Path, tools: ToolsOnPath, log: Path, claude_fails_on: str
     if tools.claude:
         write_recorder(bin_dir / "claude", "claude", log, claude_fails_on)
     if tools.codex:
-        write_recorder(bin_dir / "codex", "codex", log, "")
+        write_codex(bin_dir / "codex", log, codex_state, codex_fails_on)
 
 
 def read_log(log: Path) -> list:
