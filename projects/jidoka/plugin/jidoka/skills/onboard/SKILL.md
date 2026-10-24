@@ -11,8 +11,8 @@ where the skill folder is the directory that holds this SKILL.md. Run it
 from inside the repo; any worktree of the repo finds the same settings.
 
 1. Run the script with `show`. When it prints settings, this is a rerun:
-   show them to the user, and from here on propose only the changes
-   `$ARGUMENTS` or the user asks for.
+   show them to the user, with each null value in words, and from here on
+   propose only the changes `$ARGUMENTS` or the user asks for.
 2. Read the repo's README, its build files (solution and project files,
    `package.json`, `pyproject.toml`, `Makefile`, build scripts) and its
    `CLAUDE.local.md`. Find each app the repo ships.
@@ -26,7 +26,8 @@ from inside the repo; any worktree of the repo finds the same settings.
    object on stdin. On a rerun, pass only the keys that change; `apps`
    replaces the whole app list. When the script refuses, show its stderr,
    fix the values with the user, and run it again.
-6. Run `show` and show the user what it prints.
+6. Run `show` and show the user what it prints, with each null value in
+   words.
 
 The settings:
 
@@ -43,6 +44,11 @@ The settings:
   `build`, `run` (commands, or `null`), `test` (the app's own test command)
   and `test_target` (how to run one test).
 - `moved_lines`: the exact lines to take out of `CLAUDE.local.md`.
+
+A person never reads `null`. When you offer a null value as a choice or show
+one, label it by what it means: `slot_use` "No slot use: app checks take
+turns", `way_in` "No way in recorded", `build` "No build step", `run` "No run
+command". The word `null` appears only in the JSON you pass to `write`.
 
 The script derives the repo's build from every app's `build` and the full
 suite from every app's `test`, so it refuses settings in which no app has a
