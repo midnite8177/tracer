@@ -108,7 +108,10 @@ message, which says to run the installer, and go to step 11 with
 9. **Commit message, light tier.** Start one worker that reads
    `git log -15` on main and the diff, and proposes one commit message in
    the repo's style. The message names no bead id; `land.py` refuses one.
-   Show it to the human, and edit it as they say.
+   It has no `Co-Authored-By` line or other attribution trailer, whatever
+   the host's attribution guidance says, in the worker's proposal and in
+   the message passed to `land`. Show it to the human, and edit it as
+   they say.
 10. **Land.** Nothing lands until the human says so in this session. On
     their OK, run `land --repo . --bead <bead-id> --branch <branch>
     --worktree <worktree> --message "<message>" --jidoka-home ...` with the
