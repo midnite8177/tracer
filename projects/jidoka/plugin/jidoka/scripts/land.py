@@ -23,15 +23,15 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from commands import CommandError, capture, run, run_test_command
+
 MAIN_REF = "refs/heads/main"
 LOCK_POLL_SECONDS = 0.1
-COMMAND_TIMEOUT_SECONDS = 120
 WAITING_ON_EDITS_EXIT_CODE = 3
 PARTLY_LANDED_EXIT_CODE = 4
 
@@ -51,24 +51,6 @@ class Landed:
     """The commit that is on main, and the closing steps that did not succeed."""
     sha: str
     failed_steps: list[str]
-
-
-def capture(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
-    try:
-        return subprocess.run(args, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=COMMAND_TIMEOUT_SECONDS)
-    except OSError as error:
-        raise LandingError(f"cannot run {args[0]}: {error}") from error
-    except subprocess.TimeoutExpired as error:
-        raise LandingError(f"{' '.join(args[:3])} did not finish in {COMMAND_TIMEOUT_SECONDS} seconds") from error
-
-
-def run(args: list[str], cwd: Path) -> str:
-    done = capture(args, cwd)
-    if done.returncode != 0:
-        detail = done.stderr.strip() or done.stdout.strip()
-        raise LandingError(f"{' '.join(args[:3])} failed: {detail}")
-    return done.stdout
 
 
 def lock_holder(lock: Path) -> str:
@@ -202,11 +184,7 @@ def rebase_on_main(worktree: Path) -> None:
 
 
 def rerun_tests(command: str, worktree: Path) -> None:
-    try:
-        done = subprocess.run(command, cwd=worktree, shell=True, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace")
-    except OSError as error:
-        raise LandingError(f"cannot run the recorded tests: {error}") from error
+    done = run_test_command(command, worktree)
     if done.returncode != 0:
         raise LandingError(f"main moved since the recorded run and the tests failed with exit {done.returncode}. "
                            f"Main is unchanged.\n{done.stdout}{done.stderr}".rstrip())
@@ -251,7 +229,7 @@ def squash_onto_main(bead: str, branch: str, worktree: Path, message: str, check
 def attempt(name: str, args: list[str], cwd: Path, failed: list[str]) -> bool:
     try:
         run(args, cwd)
-    except LandingError as error:
+    except (LandingError, CommandError) as error:
         failed.append(f"{name}: {error}")
         return False
     return True
@@ -300,7 +278,7 @@ def main() -> int:
     try:
         checkout = main_checkout(args.repo)
         refuse_bad_message(args.message, args.bead, checkout)
-    except LandingError as error:
+    except (LandingError, CommandError) as error:
         print(f"land: {error}", file=sys.stderr)
         return 1
 
@@ -313,7 +291,7 @@ def main() -> int:
         for name in waiting.files:
             print(f"  {name}")
         return WAITING_ON_EDITS_EXIT_CODE
-    except LandingError as error:
+    except (LandingError, CommandError) as error:
         print(f"land: {error}", file=sys.stderr)
         return 1
     finally:
