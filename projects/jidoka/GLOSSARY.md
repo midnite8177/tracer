@@ -168,7 +168,9 @@ _Avoid_: Approval gate, sign-off
 
 **Landing**:
 Putting an accepted epic's work, or bench work, on main as one commit or
-one per task, after testing it again if main moved since validation.
+one per task. Bench work runs the full test suite once, at landing, on the
+branch rebased on main; an epic's work is tested again if main moved since
+validation.
 _Avoid_: Merge (a lap merges into the epic branch), ship, release, integrate
 
 **Discovered work**:

@@ -19,11 +19,13 @@ Exit codes:
   0  the tests passed, and the pass is recorded.
   1  refused or stopped. When it stops before a run is recorded, nothing is
      set on the bead: no repo settings, an unknown or incomplete app, a
-     test_target without one placeholder, a filter that starts with the text
-     the test_target puts before its placeholder, a merge conflict with
-     main, a run that executed no tests, or a failed git command. When bd
-     fails while recording, the metadata may be set without the comment.
+     test_target without one placeholder, a merge conflict with main, or a
+     failed git command. When bd fails while recording, the metadata may be
+     set without the comment.
   3  the tests failed, and the failure is recorded.
+  4  the filter needs fixing, and nothing is recorded. It starts with the
+     text the test_target puts before its placeholder, or the run executed
+     no tests. Run it again with a corrected filter.
 """
 from __future__ import annotations
 
@@ -38,6 +40,7 @@ from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, head_of, ru
 
 MAIN_REF = "refs/heads/main"
 TESTS_FAILED_EXIT_CODE = 3
+FILTER_REFUSED_EXIT_CODE = 4
 PLACEHOLDER = re.compile(r"<[^<>]+>")
 DOTNET_SUMMARY = re.compile(r"[A-Za-z]+!\s+-\s+Failed:\s*\d+,\s*Passed:\s*\d+,\s*Skipped:\s*\d+,\s*Total:\s*(\d+)")
 DOTNET_NO_MATCH = "No test matches the given testcase filter"
@@ -46,6 +49,10 @@ UNITTEST_SUMMARY = re.compile(r"^Ran (\d+) tests? in ", re.MULTILINE)
 
 class TestRunError(Exception):
     """A reason the script records no result, worded for the person who reads the output."""
+
+
+class FilterRefused(Exception):
+    """A filter that selects no tests or repeats the test_target's text, worded for the builder who fixes it."""
 
 
 class NoTestsExecuted(Exception):
@@ -130,7 +137,7 @@ def test_command(app: App, test_filter: str) -> str:
 
 
 def refuse_a_repeated_prefix(app: App, test_filter: str, prefix: str) -> None:
-    """Raises TestRunError when the filter starts with text the test_target already puts before it.
+    """Raises FilterRefused when the filter starts with text the test_target already puts before it.
 
     The text is the whole prefix, such as "--filter FullyQualifiedName~" or "-k ", or the part of it after
     its last whitespace, such as "FullyQualifiedName~", because a filter copied from a working command line
@@ -141,7 +148,7 @@ def refuse_a_repeated_prefix(app: App, test_filter: str, prefix: str) -> None:
     last_word = re.split(r"\s", prefix)[-1]
     for repeated in (whole, last_word):
         if repeated and test_filter.startswith(repeated):
-            raise TestRunError(
+            raise FilterRefused(
                 f"the filter {test_filter!r} starts with {repeated!r}, which the test_target of app "
                 f"{app.name!r}, {app.test_target!r}, already puts before the filter, so the command would "
                 f"hold it twice. Nothing ran; pass \"{test_filter[len(repeated):]}\" instead")
@@ -235,9 +242,9 @@ def targeted_tests(bead: str, worktree: Path, app: str, test_filter: str, home: 
     try:
         outcome = run_on_merged_head(command, worktree)
     except NoTestsExecuted as error:
-        raise TestRunError(f"the run on the worktree merged with main at {error.base} executed no tests, so "
-                           f"nothing is recorded on the bead. Check the --filter {test_filter!r} against the "
-                           f"test_target of app {app!r}, {settings.test_target!r}, and the output above") from error
+        raise FilterRefused(f"the run on the worktree merged with main at {error.base} executed no tests, so "
+                            f"nothing is recorded on the bead. Check the --filter {test_filter!r} against the "
+                            f"test_target of app {app!r}, {settings.test_target!r}, and the output above") from error
     record(bead, outcome, main_tree)
     return outcome.recorded
 
@@ -255,6 +262,9 @@ def main() -> int:
     try:
         recorded = targeted_tests(args.bead, args.worktree.resolve(), args.app, args.filter,
                                   args.jidoka_home.expanduser().resolve())
+    except FilterRefused as error:
+        print(f"targeted_tests: {error}", file=sys.stderr)
+        return FILTER_REFUSED_EXIT_CODE
     except (TestRunError, CommandError) as error:
         print(f"targeted_tests: {error}", file=sys.stderr)
         return 1

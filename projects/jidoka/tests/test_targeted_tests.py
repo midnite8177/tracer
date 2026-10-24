@@ -18,6 +18,7 @@ TARGETED_TESTS = PLUGIN / "scripts" / "targeted_tests.py"
 SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 
 TESTS_FAILED_EXIT_CODE = 3
+FILTER_REFUSED_EXIT_CODE = 4
 NO_TEST_MATCHES = ("[xUnit.net 00:00:00.07] Shop.Tests: Exception filtering tests: Incorrect format for "
                    "TestCaseFilter Error: Invalid Condition 'FullyQualifiedName~FullyQualifiedName~Cart'\n"
                    "No test matches the given testcase filter `FullyQualifiedName~FullyQualifiedName~Cart` "
@@ -273,7 +274,7 @@ class TargetedTestsTests(unittest.TestCase):
 
         done = self.targeted_tests(bead, "dotnet-shop", "FullyQualifiedName~BindAddressTests", self.home)
 
-        self.assertEqual(1, done.returncode)
+        self.assertEqual(FILTER_REFUSED_EXIT_CODE, done.returncode, done.stderr)
         self.assertIn('pass "BindAddressTests"', done.stderr)
         self.assertEqual([], self.runs_of(bead))
         self.assertEqual({}, self.metadata(bead))
@@ -284,7 +285,7 @@ class TargetedTestsTests(unittest.TestCase):
 
         done = self.targeted_tests(bead, "shop", "-k test_greeting", self.home)
 
-        self.assertEqual(1, done.returncode)
+        self.assertEqual(FILTER_REFUSED_EXIT_CODE, done.returncode, done.stderr)
         self.assertIn('pass "test_greeting"', done.stderr)
         self.assertEqual([], self.runs_of(bead))
         self.assertEqual({}, self.metadata(bead))
@@ -313,7 +314,7 @@ class TargetedTestsTests(unittest.TestCase):
 
         done = self.targeted_tests(bead, "dotnet-shop", "Cart", self.home)
 
-        self.assertEqual(1, done.returncode)
+        self.assertEqual(FILTER_REFUSED_EXIT_CODE, done.returncode, done.stderr)
         self.assertIn("executed no tests", done.stderr)
         self.assertIn("--filter 'Cart'", done.stderr)
         self.assertIn("--filter FullyQualifiedName~<name>", done.stderr)
@@ -338,7 +339,7 @@ class TargetedTestsTests(unittest.TestCase):
 
         done = self.targeted_tests(bead, "shop", "test_nothing", self.home)
 
-        self.assertEqual(1, done.returncode)
+        self.assertEqual(FILTER_REFUSED_EXIT_CODE, done.returncode, done.stderr)
         self.assertIn("executed no tests", done.stderr)
         self.assertEqual({}, self.metadata(bead))
         self.assertEqual([], self.comments(bead))
@@ -360,7 +361,7 @@ class TargetedTestsTests(unittest.TestCase):
 
         done = self.targeted_tests(bead, "dotnet-shop", "Cart", self.home)
 
-        self.assertEqual(1, done.returncode)
+        self.assertEqual(FILTER_REFUSED_EXIT_CODE, done.returncode, done.stderr)
         self.assertIn("executed no tests", done.stderr)
         self.assertEqual(2, len(self.runs_of(bead)))
         self.assertEqual({}, self.metadata(bead))

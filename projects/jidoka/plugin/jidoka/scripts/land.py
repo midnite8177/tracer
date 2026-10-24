@@ -1,21 +1,30 @@
 #!/usr/bin/env python3
 """Lands a bead's branch on local main as one commit.
 
-Behind the merge lock, the script rebuilds the branch on main's head and
-squashes it to one commit with the message it was given. It fast-forwards
-main in the checkout that has main checked out, closes the bead with the
+Behind the merge lock, the script rebuilds the branch on main's head, runs
+the full suite on it, and squashes it to one commit with the message it was
+given. The full suite is the full_suite list in the repo settings, every
+app's test command in app order, and every command runs even after one
+fails. The bead's recorded targeted tests must have passed, but they do not
+run again, because the full suite holds them. The script fast-forwards main
+in the checkout that has main checked out, closes the bead with the
 commit's sha in the reason, and removes the bead's worktree and branch. It
 never pushes and never opens a pull request.
 
 Exit codes:
   0  landed and closed.
-  1  refused or failed before the fast-forward, with main unchanged.
+  1  refused or failed before the fast-forward, with main unchanged. The script
+     refuses a repo with no repo settings, or settings with no full suite,
+     before it takes the merge lock.
   3  waiting, because uncommitted edits in main's checkout touch files the
      bead changed. The caller runs the script again later; the script does
      not sleep on it.
   4  main has the commit but a closing step failed. The sha is printed and
      the failed steps are named. Running the script again with the same
      arguments finds the branch already on main and repeats the closing steps.
+  5  the full suite failed on the rebased branch, and main is unchanged.
+     Each failing command is printed with its exit code and output. The
+     branch stays rebased on main, where the fix goes.
 """
 from __future__ import annotations
 
@@ -28,11 +37,14 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from commands import CommandError, bd_show, capture, head_of, run, run_test_command, worktree_list
+import repo_settings
+from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, head_of, run, run_test_command,
+                      worktree_list)
 
 LOCK_POLL_SECONDS = 0.1
 WAITING_ON_EDITS_EXIT_CODE = 3
 PARTLY_LANDED_EXIT_CODE = 4
+FULL_SUITE_FAILED_EXIT_CODE = 5
 
 
 class LandingError(Exception):
@@ -43,6 +55,20 @@ class WaitingOnEdits(Exception):
     def __init__(self, files: list[str]) -> None:
         super().__init__("uncommitted edits in main's checkout touch files the bead changed")
         self.files = files
+
+
+@dataclass(frozen=True)
+class SuiteFailure:
+    """One command of the full suite that exited nonzero, with what it printed."""
+    command: str
+    exit_code: int
+    output: str
+
+
+class FullSuiteFailed(Exception):
+    def __init__(self, failures: list[SuiteFailure]) -> None:
+        super().__init__("the full suite failed on the branch rebased on main, so nothing landed and main is unchanged")
+        self.failures = failures
 
 
 @dataclass(frozen=True)
@@ -92,6 +118,22 @@ def main_checkout(repo: Path) -> Path:
         if tree.branch == "main":
             return tree.path
     raise LandingError("no checkout has main checked out")
+
+
+def full_suite(checkout: Path, home: Path) -> list[str]:
+    """The full_suite commands from the repo settings of the repo whose main checkout this is."""
+    try:
+        main_tree = repo_settings.main_worktree(checkout, COMMAND_TIMEOUT_SECONDS)
+        path = repo_settings.settings_path(home, main_tree)
+        settings = repo_settings.load(path)
+    except repo_settings.SettingsError as error:
+        raise LandingError(str(error)) from error
+    if not settings:
+        raise LandingError(f"no settings for {main_tree} in {path.parent}. Run /jidoka:onboard to record them")
+    commands = settings.get("full_suite")
+    if not isinstance(commands, list) or not commands or not all(repo_settings.is_text(c) for c in commands):
+        raise LandingError(f"{path} holds no full_suite list of test commands. Run /jidoka:onboard to record it")
+    return commands
 
 
 def tracker_ids(checkout: Path) -> set[str]:
@@ -168,11 +210,16 @@ def rebase_on_main(worktree: Path) -> None:
                        f"{done.stdout.strip()}\n{done.stderr.strip()}".rstrip())
 
 
-def rerun_tests(command: str, worktree: Path) -> None:
-    done = run_test_command(command, worktree)
-    if done.returncode != 0:
-        raise LandingError(f"main moved since the recorded run and the tests failed with exit {done.returncode}. "
-                           f"Main is unchanged.\n{done.stdout}{done.stderr}".rstrip())
+def run_full_suite(commands: list[str], worktree: Path) -> None:
+    """Runs every command in the worktree and raises FullSuiteFailed naming each one that failed."""
+    failures = []
+    for command in commands:
+        print(f"running: {command}", flush=True)
+        done = run_test_command(command, worktree)
+        if done.returncode != 0:
+            failures.append(SuiteFailure(command, done.returncode, f"{done.stdout}{done.stderr}"))
+    if failures:
+        raise FullSuiteFailed(failures)
 
 
 def subject(message: str) -> str:
@@ -197,14 +244,13 @@ def landed_commit(branch: str, message: str, checkout: Path) -> str | None:
     return tip if tip_subject == subject(message) else None
 
 
-def squash_onto_main(bead: str, branch: str, worktree: Path, message: str, checkout: Path) -> str:
+def squash_onto_main(bead: str, branch: str, worktree: Path, message: str, checkout: Path,
+                     suite: list[str]) -> str:
     """Rebuilds the branch as one commit on main's head and fast-forwards main to it; returns the new sha."""
-    tests = recorded_tests(bead, checkout)
-    check_recorded(tests)
+    check_recorded(recorded_tests(bead, checkout))
     refuse_overlapping_edits(branch, checkout)
     rebase_on_main(worktree)
-    if head_of("main", checkout) != head_of(tests["base"], checkout):
-        rerun_tests(tests["command"], worktree)
+    run_full_suite(suite, worktree)
     run(["git", "reset", "--soft", "main"], worktree, None)
     run(["git", "commit", "-q", "-m", message], worktree, None)
     run(["git", "merge", "--ff-only", branch], checkout, None)
@@ -235,10 +281,10 @@ def close_out(bead: str, branch: str, worktree: Path, message: str, sha: str, ch
     return Landed(sha, failed)
 
 
-def land(bead: str, branch: str, worktree: Path, message: str, checkout: Path) -> Landed:
+def land(bead: str, branch: str, worktree: Path, message: str, checkout: Path, suite: list[str]) -> Landed:
     sha = landed_commit(branch, message, checkout)
     if sha is None:
-        sha = squash_onto_main(bead, branch, worktree, message, checkout)
+        sha = squash_onto_main(bead, branch, worktree, message, checkout, suite)
     return close_out(bead, branch, worktree, message, sha, checkout)
 
 
@@ -263,6 +309,7 @@ def main() -> int:
     try:
         checkout = main_checkout(args.repo)
         refuse_bad_message(args.message, args.bead, checkout)
+        suite = full_suite(checkout, args.jidoka_home)
     except (LandingError, CommandError) as error:
         print(f"land: {error}", file=sys.stderr)
         return 1
@@ -270,12 +317,17 @@ def main() -> int:
     lock = args.jidoka_home / "locks" / "merge.lock"
     acquire_lock(lock)
     try:
-        landed = land(args.bead, args.branch, args.worktree, args.message, checkout)
+        landed = land(args.bead, args.branch, args.worktree, args.message, checkout, suite)
     except WaitingOnEdits as waiting:
         print(f"land: {waiting}. Main is unchanged. Commit or set aside:")
         for name in waiting.files:
             print(f"  {name}")
         return WAITING_ON_EDITS_EXIT_CODE
+    except FullSuiteFailed as failed:
+        print(f"land: {failed}. The failing commands:", file=sys.stderr)
+        for failure in failed.failures:
+            print(f"\n{failure.command}\nexited {failure.exit_code}:\n{failure.output.rstrip()}", file=sys.stderr)
+        return FULL_SUITE_FAILED_EXIT_CODE
     except (LandingError, CommandError) as error:
         print(f"land: {error}", file=sys.stderr)
         return 1
