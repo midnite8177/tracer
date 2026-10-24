@@ -13,8 +13,8 @@ citation. This skill reports; it never edits code.
 
 **1. Pin the fixed point.** Resolution order, and nothing else: (1) a
 commit, branch or tag the user passed; (2) if the argument is a bead
-id, the SHA in that bead's `implement started at <sha>` comment
-(`bd show <id>`); (3) ask. Never infer one from `main`, `HEAD~1`, the
+id, the SHA in that bead's `bench started at <sha>` or `implement
+started at <sha>` comment (`bd show <id>`); (3) ask. Never infer one from `main`, `HEAD~1`, the
 last commit, or the conversation. Confirm it resolves
 (`git rev-parse`), print `git log <fixed-point>..HEAD --oneline`, and
 state in one line that these commits are the work under review. If the

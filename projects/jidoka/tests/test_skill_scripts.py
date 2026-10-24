@@ -102,7 +102,7 @@ class SkillScriptTests(unittest.TestCase):
         done = self.run_script(ISSUES, [self.greeting], os.environ["HOME"], self.repo)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertIn("next: ready to build", done.stdout)
+        self.assertIn(f"next: ready to build with /jidoka:bench {self.greeting}", done.stdout)
 
     def test_issues_counts_a_bench_bead_as_needing_you(self):
         done = self.run_script(ISSUES, [], os.environ["HOME"], self.atlas)
@@ -115,7 +115,7 @@ class SkillScriptTests(unittest.TestCase):
         done = self.run_script(ISSUES, [self.receipt], os.environ["HOME"], self.atlas)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertIn("next: needs you at the bench", done.stdout)
+        self.assertIn(f"next: needs you at the bench, /jidoka:bench {self.receipt}", done.stdout)
 
     def test_the_decision_log_gets_its_header_and_the_row_it_was_given_relative_to_the_repo(self):
         cells = ["build", "kept the old parser", "the new one drops comments", "commit 3a9f1c2", "tests green"]

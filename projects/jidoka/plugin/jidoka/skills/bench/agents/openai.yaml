@@ -1,0 +1,5 @@
+interface:
+  display_name: "Bench"
+  short_description: "Build one bead with the human and land it"
+policy:
+  allow_implicit_invocation: false

@@ -26,12 +26,10 @@ The route most work travels. You have an idea and want it built.
    - **`/jidoka:prototype`** to answer the question with throwaway code,
    - **`/tracer:handoff`** back what you learned, and reference it from the original idea thread.
 3. **Branch: is this a multi-session build?**
-   - **Yes** → **`/jidoka:to-spec`** (turn the thread into a spec), then **`/jidoka:to-tickets`** to split it into tracer-bullet tickets, each declaring its **blocking edges**. Then work the tickets one of two ways:
-     - **`/tracer:implement`** per ticket, **`/clear`ing context between each one**. Tickets are beads under the spec epic with `bd dep` edges; `/jidoka:issues` shows the frontier. Each ticket is self-contained, so the last one's context is disposable.
-     - **`/tracer:implement-spec`** for the whole spec in one run. It reads the tickets as a **task graph**, runs implementer subagents across the ready **frontier** in parallel, and lands everything on one **integration branch**. Reach for it when you'd rather orchestrate the build than drive each ticket yourself.
-   - **No** → Write one bead with Demo and Seams lines. Then use **`/tracer:implement <bead-id>`**. It requires a bead id even for a small job.
+   - **Yes** → **`/jidoka:to-spec`** (turn the thread into a spec), then **`/jidoka:to-tickets`** to split it into tracer-bullet tickets, each declaring its **blocking edges**. Then build the tickets with **`/jidoka:bench`**, one ticket per session, **`/clear`ing context between each one**. Tickets are beads under the spec epic with `bd dep` edges; `/jidoka:issues` shows the frontier. Each ticket is self-contained, so the last one's context is disposable.
+   - **No** → Write one bead with Demo and Seams lines. Then use **`/jidoka:bench <bead-id>`**. It requires a bead id even for a small job.
 
-   Both build routes use **`/jidoka:tdd`** for test-first work. **`/jidoka:code-review`** checks Comments, Standards, and Spec. `/tracer:implement` reviews its bead; `/tracer:implement-spec` reviews each bead and the integration branch. Use **`/jidoka:tdd`** alone for a test-first change without a full spec. Use **`/jidoka:code-review`** alone to review work against a fixed point.
+   The bench's build worker uses **`/jidoka:tdd`** for test-first work, and **`/jidoka:spec-check`** holds each bead's diff to the bead before you see it. **`/jidoka:code-review`** checks Comments, Standards, and Spec. Use **`/jidoka:tdd`** alone for a test-first change without a full spec. Use **`/jidoka:code-review`** alone to review work against a fixed point.
 
    When the work goes up as a pull request, **`/jidoka:pr`** shapes the body: the smallest visual that shows the change, before/after evidence that it works, and a one-way or two-way door call. It's model-invoked, so the agent reaches for it whenever it writes a PR.
 
@@ -39,7 +37,7 @@ The route most work travels. You have an idea and want it built.
 
 ### Context hygiene
 
-Keep steps 1–3 in **one unbroken context window** (don't compact or clear until after `/jidoka:to-tickets`) so the grilling, spec, and tickets all build on the same thinking. Each `/tracer:implement` then starts fresh, working from the ticket. Run `/jidoka:retro` in the session it's looking back on, before you clear; after clearing, point it at that session's log instead.
+Keep steps 1–3 in **one unbroken context window** (don't compact or clear until after `/jidoka:to-tickets`) so the grilling, spec, and tickets all build on the same thinking. Each `/jidoka:bench` then starts fresh, working from the ticket. Run `/jidoka:retro` in the session it's looking back on, before you clear; after clearing, point it at that session's log instead.
 
 The limit on this is the **[smart zone](https://www.aihero.dev/ai-coding-dictionary/smart-zone)**: the window (~150k tokens on state-of-the-art models) within which the model still reasons sharply. If a session approaches it before `/jidoka:to-tickets`, don't push on degraded; `/compact` at the nearest phase boundary and carry on (see Phase boundaries).
 
@@ -47,7 +45,7 @@ The limit on this is the **[smart zone](https://www.aihero.dev/ai-coding-diction
 
 A starting situation that generates work, then merges onto the main flow.
 
-- **Bugs and requests piling up** → **`/jidoka:triage`**. It moves issues through triage roles and produces agent-ready issues, which **`/tracer:implement`** later picks up.
+- **Bugs and requests piling up** → **`/jidoka:triage`**. It moves issues through triage roles and produces agent-ready issues, which **`/jidoka:bench`** later picks up.
 
   Triage is only for issues **you didn't create**: bug reports, incoming feature requests, anything that arrives raw. Tickets that `/jidoka:to-tickets` produced are already agent-ready, so **don't triage them**.
 
@@ -55,7 +53,7 @@ A starting situation that generates work, then merges onto the main flow.
 
 - **A huge, foggy effort: a greenfield project or a huge feature build, too big for one session** → **`/jidoka:wayfinder`**, the most cognitively demanding flow here. When the way from here to the destination isn't visible yet, it charts a **shared map** of **decision tickets** on the issue tracker and resolves them one at a time, producing **decisions, not deliverables**, until the fog is pushed back and the way is clear. Where **`/jidoka:grill-with-docs`** sharpens an idea you can hold in one session, wayfinder is for the idea you can't, and it's slower and denser, so save it for exactly that, never a well-scoped feature.
 
-  When the map clears, **it hands off, it doesn't build**: merge onto the main flow at **`/jidoka:to-spec`**, which collapses the map's linked decisions into a buildable plan, then `/jidoka:to-tickets` and `/tracer:implement` as usual. Looping the map straight into `/tracer:implement` skips that collapse and throws the linked detail away, so go straight to `/tracer:implement` only when the effort turned out genuinely small.
+  When the map clears, **it hands off, it doesn't build**: merge onto the main flow at **`/jidoka:to-spec`**, which collapses the map's linked decisions into a buildable plan, then `/jidoka:to-tickets` and `/jidoka:bench` as usual. Looping the map straight into `/jidoka:bench` skips that collapse and throws the linked detail away, so go straight to `/jidoka:bench` only when the effort turned out genuinely small.
 
 ## Quick routes
 

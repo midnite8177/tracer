@@ -200,8 +200,8 @@ def next_step(b, p, st, bl):
     if any(l.startswith("wayfinder:") for l in lb): return f"/jidoka:wayfinder {p or f(b, 'id')}"
     if not demo_line(b) and f(b, "type") != "epic": return "no Demo line — /jidoka:grill-with-docs or /jidoka:to-tickets before implementing"
     if "human" in lb: return "needs you — see description"
-    if "bench" in lb: return "needs you at the bench"
-    if st == "ready": return "ready to build"
+    if "bench" in lb: return f"needs you at the bench, /jidoka:bench {f(b, 'id')}"
+    if st == "ready": return f"ready to build with /jidoka:bench {f(b, 'id')}"
     if st.startswith("blocked"): return f"look at the blocker first ({bl[0] if bl else '?'})"
     if st.startswith("in progress"): return "a session claimed this; finish or release it"
     return None

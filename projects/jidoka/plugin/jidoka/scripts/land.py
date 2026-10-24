@@ -28,9 +28,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from commands import CommandError, capture, run, run_test_command
+from commands import CommandError, bd_show, capture, head_of, run, run_test_command, worktree_list
 
-MAIN_REF = "refs/heads/main"
 LOCK_POLL_SECONDS = 0.1
 WAITING_ON_EDITS_EXIT_CODE = 3
 PARTLY_LANDED_EXIT_CODE = 4
@@ -89,30 +88,21 @@ def release_lock(lock: Path) -> None:
 
 def main_checkout(repo: Path) -> Path:
     """The checkout that has main checked out, found from the worktree list of any checkout of the repo."""
-    listing = run(["git", "worktree", "list", "--porcelain"], repo)
-    path: Path | None = None
-    for line in listing.splitlines():
-        if line.startswith("worktree "):
-            path = Path(line[len("worktree "):])
-        elif line == f"branch {MAIN_REF}" and path is not None:
-            return path
+    for tree in worktree_list(repo):
+        if tree.branch == "main":
+            return tree.path
     raise LandingError("no checkout has main checked out")
 
 
-def bd_json(args: list[str], checkout: Path) -> list:
-    output = run(["bd", *args, "--json"], checkout)
+def tracker_ids(checkout: Path) -> set[str]:
+    output = run(["bd", "list", "--all", "--limit", "0", "--json"], checkout, None)
     try:
         parsed = json.loads(output)
     except ValueError as error:
-        raise LandingError(f"bd {args[0]} did not print JSON: {output.strip()[:200]!r}") from error
+        raise LandingError(f"bd list did not print JSON: {output.strip()[:200]!r}") from error
     if not isinstance(parsed, list):
-        raise LandingError(f"bd {args[0]} printed JSON that is not a list")
-    return parsed
-
-
-def tracker_ids(checkout: Path) -> set[str]:
-    return {str(item["id"]) for item in bd_json(["list", "--all", "--limit", "0"], checkout)
-            if isinstance(item, dict) and "id" in item}
+        raise LandingError("bd list printed JSON that is not a list")
+    return {str(item["id"]) for item in parsed if isinstance(item, dict) and "id" in item}
 
 
 def bead_ids_in(message: str, bead: str, checkout: Path) -> list[str]:
@@ -125,16 +115,16 @@ def bead_ids_in(message: str, bead: str, checkout: Path) -> list[str]:
 
 
 def recorded_tests(bead: str, checkout: Path) -> dict[str, str]:
-    try:
-        metadata = bd_json(["show", bead], checkout)[0].get("metadata") or {}
-    except (IndexError, AttributeError) as error:
-        raise LandingError(f"bd show printed nothing usable for {bead}") from error
+    shown = bd_show(bead, checkout)
+    if shown is None:
+        raise LandingError(f"bd show printed nothing usable for {bead}")
+    metadata = shown.get("metadata") or {}
     return {key: str(metadata.get(f"tests.{key}", "")) for key in ("command", "base", "result")}
 
 
 def edited_paths(checkout: Path) -> set[str]:
     """Every path git status reports in the checkout, untracked files included and both sides of a rename."""
-    status = run(["git", "status", "--porcelain", "-z", "--untracked-files=all"], checkout)
+    status = run(["git", "status", "--porcelain", "-z", "--untracked-files=all"], checkout, None)
     entries = status.split("\0")
     paths: set[str] = set()
     index = 0
@@ -152,7 +142,7 @@ def edited_paths(checkout: Path) -> set[str]:
 
 
 def changed_paths(branch: str, checkout: Path) -> set[str]:
-    listed = run(["git", "diff", "--name-only", "--no-renames", "-z", f"main...{branch}"], checkout)
+    listed = run(["git", "diff", "--name-only", "--no-renames", "-z", f"main...{branch}"], checkout, None)
     return {path for path in listed.split("\0") if path}
 
 
@@ -169,16 +159,11 @@ def check_recorded(tests: dict[str, str]) -> None:
         raise LandingError(f"the recorded tests did not pass, the recorded result is {tests['result']}")
 
 
-def head_of(ref: str, cwd: Path) -> str | None:
-    done = capture(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd)
-    return done.stdout.strip() if done.returncode == 0 else None
-
-
 def rebase_on_main(worktree: Path) -> None:
-    done = capture(["git", "rebase", "main"], worktree)
+    done = capture(["git", "rebase", "main"], worktree, None)
     if done.returncode == 0:
         return
-    capture(["git", "rebase", "--abort"], worktree)
+    capture(["git", "rebase", "--abort"], worktree, None)
     raise LandingError("the branch conflicts with main, so the rebase was aborted and main is unchanged\n"
                        f"{done.stdout.strip()}\n{done.stderr.strip()}".rstrip())
 
@@ -206,9 +191,9 @@ def landed_commit(branch: str, message: str, checkout: Path) -> str | None:
     tip = head_of(branch, checkout)
     if tip is None:
         raise LandingError(f"branch {branch} does not exist")
-    if capture(["git", "merge-base", "--is-ancestor", tip, "main"], checkout).returncode != 0:
+    if capture(["git", "merge-base", "--is-ancestor", tip, "main"], checkout, None).returncode != 0:
         return None
-    tip_subject = subject(run(["git", "log", "-1", "--format=%B", tip], checkout))
+    tip_subject = subject(run(["git", "log", "-1", "--format=%B", tip], checkout, None))
     return tip if tip_subject == subject(message) else None
 
 
@@ -220,15 +205,15 @@ def squash_onto_main(bead: str, branch: str, worktree: Path, message: str, check
     rebase_on_main(worktree)
     if head_of("main", checkout) != head_of(tests["base"], checkout):
         rerun_tests(tests["command"], worktree)
-    run(["git", "reset", "--soft", "main"], worktree)
-    run(["git", "commit", "-q", "-m", message], worktree)
-    run(["git", "merge", "--ff-only", branch], checkout)
-    return run(["git", "rev-parse", "HEAD"], checkout).strip()
+    run(["git", "reset", "--soft", "main"], worktree, None)
+    run(["git", "commit", "-q", "-m", message], worktree, None)
+    run(["git", "merge", "--ff-only", branch], checkout, None)
+    return run(["git", "rev-parse", "HEAD"], checkout, None).strip()
 
 
 def attempt(name: str, args: list[str], cwd: Path, failed: list[str]) -> bool:
     try:
-        run(args, cwd)
+        run(args, cwd, None)
     except (LandingError, CommandError) as error:
         failed.append(f"{name}: {error}")
         return False

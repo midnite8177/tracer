@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import repo_settings
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, run, run_test_command
+from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, head_of, run, run_test_command
 
 MAIN_REF = "refs/heads/main"
 TESTS_FAILED_EXIT_CODE = 3
@@ -112,7 +112,10 @@ def test_command(app: App, test_filter: str) -> str:
 
 
 def main_head(worktree: Path) -> str:
-    return run(["git", "rev-parse", "--verify", f"{MAIN_REF}^{{commit}}"], worktree).strip()
+    head = head_of(MAIN_REF, worktree)
+    if head is None:
+        raise TestRunError("the repo has no main branch to merge into the worktree")
+    return head
 
 
 def merge_main(worktree: Path) -> str:
@@ -121,11 +124,11 @@ def merge_main(worktree: Path) -> str:
     On a conflict it aborts the merge, so the worktree is as it was, and raises TestRunError naming the files.
     """
     base = main_head(worktree)
-    done = capture(["git", "merge", "--no-edit", base], worktree)
+    done = capture(["git", "merge", "--no-edit", base], worktree, None)
     if done.returncode == 0:
         return base
-    conflicted = run(["git", "diff", "--name-only", "--diff-filter=U"], worktree).split()
-    capture(["git", "merge", "--abort"], worktree)
+    conflicted = run(["git", "diff", "--name-only", "--diff-filter=U"], worktree, None).split()
+    capture(["git", "merge", "--abort"], worktree, None)
     if conflicted:
         raise TestRunError("the worktree conflicts with main, so the script aborted the merge and ran no tests. "
                            "Conflicting files:\n" + "\n".join(f"  {name}" for name in conflicted))
@@ -158,8 +161,8 @@ def record(bead: str, outcome: TestOutcome, main_tree: Path) -> None:
     run(["bd", "update", bead,
          "--set-metadata", f"tests.command={outcome.command}",
          "--set-metadata", f"tests.base={outcome.recorded.base}",
-         "--set-metadata", f"tests.result={outcome.recorded.result}"], main_tree)
-    run(["bd", "comment", bead, outcome.comment()], main_tree)
+         "--set-metadata", f"tests.result={outcome.recorded.result}"], main_tree, None)
+    run(["bd", "comment", bead, outcome.comment()], main_tree, None)
 
 
 def targeted_tests(bead: str, worktree: Path, app: str, test_filter: str, home: Path) -> TestRun:
