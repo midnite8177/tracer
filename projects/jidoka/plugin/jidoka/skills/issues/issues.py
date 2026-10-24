@@ -7,7 +7,7 @@ Usage:
   issues.py <epic-id>       one epic, all its open children
   issues.py <bead-id>       issue page for one bead
   issues.py --label <name>  board filtered to one label (also: label:<name>);
-                            human and meta work as bare shortcuts
+                            human and bench work as bare shortcuts
   issues.py --labels        every label in use on open beads, with counts
   issues.py <words...>      search: open beads whose title, description or labels
                             contain every word (case-insensitive), grouped by epic
@@ -100,9 +100,14 @@ def load():
     by_id = {f(b, "id"): b for b in open_}
     return by_id, ready, blocked
 
+NEEDS_YOU = ("human", "bench")
+
+def needs_you(b):
+    return any(l in NEEDS_YOU for l in labels(b))
+
 def status_of(b, ready, blocked, by_id):
     bid = f(b, "id"); st = f(b, "status", "")
-    if "human" in labels(b): return "needs you"
+    if needs_you(b): return "needs you"
     if st == "deferred": return "deferred"
     if st == "in_progress": return f"in progress ({f(b, 'assignee', '?')})"
     if bid in ready: return "ready"
@@ -142,9 +147,9 @@ def board(limit, show_all=False, only_label=None, only_epic=None, words=None):
     order = lambda b: (0 if f(b,"id") in ready else 1, f(b, "priority", 9) or 9, f(b, "title", ""))
     out, shown, total_ready, total_blocked, total_you = [], 0, 0, 0, 0
     def count(bs):
-        r = sum(1 for b in bs if f(b,"id") in ready and "human" not in labels(b))
+        r = sum(1 for b in bs if f(b,"id") in ready and not needs_you(b))
         bl = sum(1 for b in bs if f(b,"id") in blocked)
-        y = sum(1 for b in bs if "human" in labels(b))
+        y = sum(1 for b in bs if needs_you(b))
         return r, bl, y
     groups = [(eid, epics[eid], children.get(eid, [])) for eid in epics] + [("_none", None, children.get("_none", []))]
     for eid, epic, bs in groups:
@@ -186,13 +191,20 @@ def page(bid):
             if isinstance(c, dict): print(f"  [{c.get('created_at') or c.get('timestamp') or ''}] {c.get('author') or ''}: {c.get('text') or c.get('body') or c.get('content') or ''}")
             else: print(f"  {c}")
     print()
-    lb = labels(b); st = status_of(b, ready, blocked, by_id)
-    if not demo_line(b) and f(b, "type") != "epic": print("next: no Demo line — /jidoka:grill-with-docs or /jidoka:to-tickets before implementing")
-    elif any(l.startswith("wayfinder:") for l in lb): print(f"next: /jidoka:wayfinder {p or bid}")
-    elif "human" in lb: print("next: needs you — see description")
-    elif st == "ready": print(f"next: /tracer:implement {bid}")
-    elif st.startswith("blocked"): print(f"next: look at the blocker first ({bl[0] if bl else '?'})")
-    elif st.startswith("in progress"): print("next: a session claimed this; finish or release it")
+    step = next_step(b, p, status_of(b, ready, blocked, by_id), bl)
+    if step: print(f"next: {step}")
+
+def next_step(b, p, st, bl):
+    lb = labels(b)
+    # A map bead has no Demo line, so the Demo check would send it to grilling.
+    if any(l.startswith("wayfinder:") for l in lb): return f"/jidoka:wayfinder {p or f(b, 'id')}"
+    if not demo_line(b) and f(b, "type") != "epic": return "no Demo line — /jidoka:grill-with-docs or /jidoka:to-tickets before implementing"
+    if "human" in lb: return "needs you — see description"
+    if "bench" in lb: return "needs you at the bench"
+    if st == "ready": return "ready to build"
+    if st.startswith("blocked"): return f"look at the blocker first ({bl[0] if bl else '?'})"
+    if st.startswith("in progress"): return "a session claimed this; finish or release it"
+    return None
 
 def label_counts():
     by_id, ready, blocked = load()
@@ -210,7 +222,7 @@ def doctor():
     if res:
         print("bd show <first> --json →"); print(json.dumps(bd("show", f(res[0], "id"))[0], indent=1)[:2000])
 
-ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+$")
+ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(\.[0-9]+)*$")
 
 if __name__ == "__main__":
     a = sys.argv[1:]; limit = 8
@@ -227,7 +239,7 @@ if __name__ == "__main__":
     elif a[0] == "--labels": label_counts()
     elif a[0] == "--all": board(limit, show_all=True)
     elif a[0] == "--doctor": doctor()
-    elif len(a) == 1 and a[0] in ("human", "meta"): board(limit, show_all=True, only_label=a[0])
+    elif len(a) == 1 and a[0] in NEEDS_YOU: board(limit, show_all=True, only_label=a[0])
     elif len(a) == 1 and ID_RE.match(a[0]):
         res = bd("show", a[0])
         if res and f(res[0], "type") == "epic": board(limit, only_epic=a[0])

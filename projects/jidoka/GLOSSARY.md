@@ -28,7 +28,8 @@ _Avoid_: Sign-off, approval, QA, review
 **Bench**:
 The mode in which the human and an agent build one bead together, a task
 or a stray bug, with the human answering and approving on the spot. Bench
-work is never a lap, and it can run while the factory works an epic.
+work is never a lap, and it can run while the factory works an epic. A
+bead labeled `bench` waits for bench work.
 _Avoid_: Pairing, implement, manual mode, attended mode
 
 ### Units of work
@@ -36,7 +37,9 @@ _Avoid_: Pairing, implement, manual mode, attended mode
 **Milestone**:
 A bead that holds only epics: a container for planning, which the factory
 never takes. Milestones wait only on milestones, as epics wait only on
-epics and tasks only on tasks.
+epics and tasks only on tasks. A wayfinder map is the one milestone that
+holds other beads, the questions it resolves before its outcome becomes
+epics and tasks.
 _Avoid_: Initiative, program, theme, saga
 
 **Epic**:

@@ -11,6 +11,12 @@ only tasks, and it is the unit the factory takes. A task is a bead inside
 an epic. A milestone waits only on milestones, an epic only on epics, and a
 task only on tasks. A task never waits on an open bead outside its epic.
 
+A wayfinder map is the one milestone that holds beads other than epics.
+Its map beads are its direct children, one for each research, prototype,
+grilling or task step that `/jidoka:wayfinder` works, and they wait only on
+each other. The factory never takes a milestone, so it never takes a map.
+When the map resolves, its outcome becomes epics and tasks.
+
 ## Conventions
 
 - **Create**: `bd create --title="..." --description="..." --type=<epic|task|bug> --priority=<0-4> [--parent=<epic-id>] [--labels=a,b] [--acceptance="..."] [--deps=<type>:<id>]`
@@ -46,6 +52,42 @@ paths and no code, because they go stale. A task with no Demo line is not
 ready. Say so instead of building it. If it cannot state a Demo line, it
 is either a prefactoring task (say so in the title) or fog that needs
 planning.
+
+## Labels
+
+- `human`: a question on this bead is waiting on the human.
+- `bench`: the bead waits for bench work, built with the human answering on the spot. The factory does not take it.
+- `wayfinder:map`, `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, `wayfinder:task`: see Wayfinding operations.
+- Triage roles: see Triage labels.
+
+`/jidoka:issues` counts a bead labeled `human` or `bench` under "needs you".
+
+## Triage labels
+
+`/jidoka:triage` names its roles. This table maps each role to beads.
+
+| Triage role | In beads |
+|---|---|
+| bug | bead type `bug`, no label |
+| enhancement | bead type `task`, no label |
+| needs-triage | label `needs-triage` |
+| needs-info | label `needs-info` |
+| ready-for-agent | no label. A bead is ready when `bd ready` lists it and it has a Demo line |
+| ready-for-human | label `bench` |
+| wontfix | close with reason `wontfix: <why>` |
+
+## Wayfinding operations
+
+`/jidoka:wayfinder` uses these.
+
+- **Map**: a milestone labeled `wayfinder:map`, status `in_progress`. beads has no milestone type, so create it with `--type=epic`. The label marks it as a map and keeps the factory off it. Its description is the map body: Destination, Notes, Decisions so far, Not yet specified, Out of scope. The description has no append form, so read the current one, then rewrite it with `bd update <map-id> --description="..."`.
+- **Map bead**: a direct child of the map, `--parent=<map-id>`, labeled `wayfinder:<type>` (`research`, `prototype`, `grilling` or `task`). Its description is the question. It is not a task, so it needs no Demo line. It carries `human` only while a question on it waits on the human. Research beads run without the human. Prototype and grilling beads need the human. A task bead the agent cannot do alone also carries `bench`.
+- **Blocking**: `bd dep add <map-bead> --blocked-by <other>`.
+- **Frontier**: `bd ready --parent=<map-id>`. The first in map order wins.
+- **Claim**: `bd update <id> --claim` as the session's first write, with `BEADS_ACTOR` set.
+- **Resolve**: `bd comment <id>` with the answer under an `## Answer` heading, then `bd close <id> --reason="<one-line gist>"`, then add one line to the map's Decisions so far: `- <map bead title> (<id>): <gist>`.
+- **Out of scope**: close the map bead with reason `out of scope: <why>` and add one line to the map's Out of scope section.
+- **Map resolved**: when the way is clear, `/jidoka:to-spec` and `/jidoka:to-tickets` turn the map's outcome into epics and tasks.
 
 ## Discovered work
 

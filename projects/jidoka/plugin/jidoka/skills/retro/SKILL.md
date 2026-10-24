@@ -30,7 +30,7 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
 
 4. Present these candidates to the user, in order of severity.
 
-   A candidate the human accepts that needs more than a one-line edit becomes a `meta` bead per the discovered-work rule in `AGENTS.md`; one the human accepts that is a one-line edit to a steering file is made now. Nothing is filed or edited before the human picks.
+   A candidate the human accepts that needs more than a one-line edit becomes a bead per the discovered-work rule in the tracker doc; one the human accepts that is a one-line edit to a steering file is made now. Nothing is filed or edited before the human picks.
 
 ## Reference
 

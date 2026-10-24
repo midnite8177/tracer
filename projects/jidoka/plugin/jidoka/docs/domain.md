@@ -15,7 +15,7 @@ reopening because ...") and do not work around it.
 
 These hold in any repo jidoka works in.
 
-- **Milestone.** A bead that holds only epics. The factory never takes one.
+- **Milestone.** A bead that holds only epics. The factory never takes one. A wayfinder map is the one milestone that also holds other beads. See the tracker doc.
 - **Epic.** A bead that holds only tasks, and the unit the factory takes. It is self-contained. Neither it nor any of its tasks waits on an open bead outside it.
 - **Task.** A bead inside an epic that is not itself an epic. Each task carries a Demo line and a Seams line. See the tracker doc.
 - **Handoff.** The step in which the human gives an epic to the factory.

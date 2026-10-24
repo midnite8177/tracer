@@ -1,14 +1,14 @@
 ---
 name: issues
 description: Browse beads the way you'd browse an issue tracker — what's ready, what's blocked and by what, and the full content of one bead with its suggested next command. Read-only. Use when the user asks what's ready, what's blocked, or to show a bead.
-argument-hint: "[bead-id | epic-id | label:<name> | --labels | human | meta | search words | --all | --demo | --limit N]"
+argument-hint: "[bead-id | epic-id | label:<name> | --labels | human | bench | search words | --all | --demo | --limit N]"
 ---
 
 Translate `$ARGUMENTS` into script arguments, then run
 `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/issues.py" <args>`,
 where the skill folder is the directory that holds this SKILL.md, and
 show its output to the user **verbatim**, in a code block. Translation:
-a bead or epic id, `human`, `meta`, `--all`, `--labels`, `--demo`, `--limit N`
+a bead or epic id, `human`, `bench`, `--all`, `--labels`, `--demo`, `--limit N`
 pass through unchanged ("with demos", "show the demo lines" → `--demo`); "label X", "labeled X", "with the X label" or
 `label:X` becomes `--label X` (a label filter, exact name,
 case-insensitive; combine with words to search within that label);
