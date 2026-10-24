@@ -10,13 +10,19 @@ then posts one comment on the bead that quotes the command, the result and
 the main sha the run merged in. The only commit it makes is the merge commit
 git makes.
 
+A run that executed no tests records nothing. The script reads that from the
+output: dotnet test's summary lines, summed over the test assemblies, or its
+"No test matches the given testcase filter" with no summary line, and
+unittest's "Ran N tests". Output in neither shape is judged by the exit code.
+
 Exit codes:
   0  the tests passed, and the pass is recorded.
   1  refused or stopped. When it stops before a run is recorded, nothing is
      set on the bead: no repo settings, an unknown or incomplete app, a
-     test_target without one placeholder, a merge conflict with main, or a
-     failed git command. When bd fails while recording, the metadata may be
-     set without the comment.
+     test_target without one placeholder, a filter that starts with the text
+     the test_target puts before its placeholder, a merge conflict with
+     main, a run that executed no tests, or a failed git command. When bd
+     fails while recording, the metadata may be set without the comment.
   3  the tests failed, and the failure is recorded.
 """
 from __future__ import annotations
@@ -33,10 +39,21 @@ from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, head_of, ru
 MAIN_REF = "refs/heads/main"
 TESTS_FAILED_EXIT_CODE = 3
 PLACEHOLDER = re.compile(r"<[^<>]+>")
+DOTNET_SUMMARY = re.compile(r"[A-Za-z]+!\s+-\s+Failed:\s*\d+,\s*Passed:\s*\d+,\s*Skipped:\s*\d+,\s*Total:\s*(\d+)")
+DOTNET_NO_MATCH = "No test matches the given testcase filter"
+UNITTEST_SUMMARY = re.compile(r"^Ran (\d+) tests? in ", re.MULTILINE)
 
 
 class TestRunError(Exception):
     """A reason the script records no result, worded for the person who reads the output."""
+
+
+class NoTestsExecuted(Exception):
+    """A run whose output shows it executed no tests, on the worktree merged with main at base."""
+
+    def __init__(self, base: str):
+        super().__init__(base)
+        self.base = base
 
 
 @dataclass(frozen=True)
@@ -103,12 +120,31 @@ def app_settings(home: Path, main_tree: Path, name: str) -> App:
 
 
 def test_command(app: App, test_filter: str) -> str:
-    placeholders = PLACEHOLDER.findall(app.test_target)
+    placeholders = list(PLACEHOLDER.finditer(app.test_target))
     if len(placeholders) != 1:
         raise TestRunError(f"the test_target of app {app.name!r} is {app.test_target!r}, which needs exactly "
                            f"one <...> placeholder for the filter and has {len(placeholders)}")
+    refuse_a_repeated_prefix(app, test_filter, app.test_target[:placeholders[0].start()])
     # A replacement string would read backslashes in the filter as escapes and \1 as a group reference.
     return f"{app.test} {PLACEHOLDER.sub(lambda _: test_filter, app.test_target)}"
+
+
+def refuse_a_repeated_prefix(app: App, test_filter: str, prefix: str) -> None:
+    """Raises TestRunError when the filter starts with text the test_target already puts before it.
+
+    The text is the whole prefix, such as "--filter FullyQualifiedName~" or "-k ", or the part of it after
+    its last whitespace, such as "FullyQualifiedName~", because a filter copied from a working command line
+    often carries that part. An empty part repeats nothing, so a test_target of only the placeholder never
+    refuses.
+    """
+    whole = prefix.lstrip()
+    last_word = re.split(r"\s", prefix)[-1]
+    for repeated in (whole, last_word):
+        if repeated and test_filter.startswith(repeated):
+            raise TestRunError(
+                f"the filter {test_filter!r} starts with {repeated!r}, which the test_target of app "
+                f"{app.name!r}, {app.test_target!r}, already puts before the filter, so the command would "
+                f"hold it twice. Nothing ran; pass \"{test_filter[len(repeated):]}\" instead")
 
 
 def main_head(worktree: Path) -> str:
@@ -135,17 +171,40 @@ def merge_main(worktree: Path) -> str:
     raise TestRunError(f"git merge main failed: {done.stderr.strip() or done.stdout.strip()}")
 
 
-def run_tests(command: str, worktree: Path) -> int:
+def tests_executed(output: str) -> int | None:
+    """Returns how many tests a run's output says it executed, or None for output in no known shape.
+
+    A dotnet run prints one summary line per test assembly, and an assembly the filter matches nothing in
+    prints no summary, so the count is the sum of the summaries' totals. Python's unittest prints one
+    "Ran N tests" line.
+    """
+    counts = [int(total) for total in DOTNET_SUMMARY.findall(output)]
+    counts += [int(ran) for ran in UNITTEST_SUMMARY.findall(output)]
+    if counts:
+        return sum(counts)
+    if DOTNET_NO_MATCH in output:
+        return 0
+    return None
+
+
+def run_tests(command: str, worktree: Path, base: str) -> TestRun:
+    """Runs the command on the worktree merged with main at base.
+
+    It raises NoTestsExecuted for a run that tested nothing, whatever its exit code, and reads output in
+    no known shape by the exit code alone.
+    """
     done = run_test_command(command, worktree)
     sys.stdout.write(done.stdout)
     sys.stdout.write(done.stderr)
     sys.stdout.flush()
-    return done.returncode
+    if tests_executed(f"{done.stdout}\n{done.stderr}") == 0:
+        raise NoTestsExecuted(base)
+    return TestRun(base, done.returncode)
 
 
 def run_on_merged_head(command: str, worktree: Path) -> TestOutcome:
     base = merge_main(worktree)
-    first = TestRun(base, run_tests(command, worktree))
+    first = run_tests(command, worktree, base)
     if main_head(worktree) == base:
         return TestOutcome(command, first, None)
     print("main moved during the run, so the tests run again on the worktree merged with main")
@@ -154,7 +213,7 @@ def run_on_merged_head(command: str, worktree: Path) -> TestOutcome:
     except TestRunError as error:
         raise TestRunError(f"the run on main at {base} exited {first.exit_code} and is not recorded, "
                            f"because main moved during it and the merge again failed: {error}") from error
-    return TestOutcome(command, TestRun(second_base, run_tests(command, worktree)), first)
+    return TestOutcome(command, run_tests(command, worktree, second_base), first)
 
 
 def record(bead: str, outcome: TestOutcome, main_tree: Path) -> None:
@@ -170,9 +229,15 @@ def targeted_tests(bead: str, worktree: Path, app: str, test_filter: str, home: 
         main_tree = repo_settings.main_worktree(worktree, COMMAND_TIMEOUT_SECONDS)
     except repo_settings.SettingsError as error:
         raise TestRunError(str(error)) from error
-    command = test_command(app_settings(home, main_tree, app), test_filter)
+    settings = app_settings(home, main_tree, app)
+    command = test_command(settings, test_filter)
     print(f"running: {command}", flush=True)
-    outcome = run_on_merged_head(command, worktree)
+    try:
+        outcome = run_on_merged_head(command, worktree)
+    except NoTestsExecuted as error:
+        raise TestRunError(f"the run on the worktree merged with main at {error.base} executed no tests, so "
+                           f"nothing is recorded on the bead. Check the --filter {test_filter!r} against the "
+                           f"test_target of app {app!r}, {settings.test_target!r}, and the output above") from error
     record(bead, outcome, main_tree)
     return outcome.recorded
 

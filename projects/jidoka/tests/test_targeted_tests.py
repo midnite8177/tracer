@@ -18,10 +18,16 @@ TARGETED_TESTS = PLUGIN / "scripts" / "targeted_tests.py"
 SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 
 TESTS_FAILED_EXIT_CODE = 3
+NO_TEST_MATCHES = ("[xUnit.net 00:00:00.07] Shop.Tests: Exception filtering tests: Incorrect format for "
+                   "TestCaseFilter Error: Invalid Condition 'FullyQualifiedName~FullyQualifiedName~Cart'\n"
+                   "No test matches the given testcase filter `FullyQualifiedName~FullyQualifiedName~Cart` "
+                   "in /shop/Shop.Tests/bin/Debug/net10.0/Shop.Tests.dll")
+THIRTY_THREE_PASSED = ("Passed!  - Failed:     0, Passed:    33, Skipped:     0, Total:    33, Duration: 18 ms "
+                       "- Shop.Tests.dll (net10.0)")
 RUN_TIMEOUT_SECONDS = 120
 
 RUNNER = """\
-import os, subprocess, sys
+import json, os, subprocess, sys
 from pathlib import Path
 folder = Path(sys.argv[1])
 name = Path.cwd().name
@@ -40,6 +46,12 @@ if codes.exists():
     lines = codes.read_text(encoding="utf-8").split()
     code = int(lines[0])
     codes.write_text("\\n".join(lines[1:]), encoding="utf-8")
+outputs = folder / f"outputs-{name}"
+if outputs.exists():
+    queued = json.loads(outputs.read_text(encoding="utf-8"))
+    if queued:
+        print(queued[0])
+        outputs.write_text(json.dumps(queued[1:]), encoding="utf-8")
 print("runner output", code)
 sys.exit(code)
 """
@@ -101,6 +113,10 @@ class TargetedTestsTests(unittest.TestCase):
                  "run": None, "test": cls.test_command, "test_target": "-k <name>"},
                 {"name": "untargeted", "kind": "library", "way_in": "its public API", "build": None,
                  "run": None, "test": cls.test_command, "test_target": "--all"},
+                {"name": "dotnet-shop", "kind": "program", "way_in": "its web pages", "build": "true",
+                 "run": None, "test": cls.test_command, "test_target": "--filter FullyQualifiedName~<name>"},
+                {"name": "bare", "kind": "library", "way_in": "its public API", "build": None,
+                 "run": None, "test": cls.test_command, "test_target": "<name>"},
             ],
         }
         done = subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), "write"], input=json.dumps(settings),
@@ -124,6 +140,9 @@ class TargetedTestsTests(unittest.TestCase):
     def queue_exit_codes(self, bead: Bead, *codes: int) -> None:
         (self.runs / f"exit-codes-{bead.worktree.name}").write_text(
             "\n".join(str(code) for code in codes), encoding="utf-8")
+
+    def queue_outputs(self, bead: Bead, *outputs: str) -> None:
+        (self.runs / f"outputs-{bead.worktree.name}").write_text(json.dumps(outputs), encoding="utf-8")
 
     def move_main_during_the_next_run(self, bead: Bead) -> None:
         (self.runs / f"move-main-{bead.worktree.name}").write_text(str(self.repo), encoding="utf-8")
@@ -248,6 +267,104 @@ class TargetedTestsTests(unittest.TestCase):
         self.assertIn("placeholder", done.stderr)
         self.assertEqual([], self.runs_of(bead))
         self.assertEqual({}, self.metadata(bead))
+
+    def test_a_filter_that_repeats_the_text_before_the_placeholder_is_refused_with_the_filter_to_pass(self):
+        bead = self.new_bead()
+
+        done = self.targeted_tests(bead, "dotnet-shop", "FullyQualifiedName~BindAddressTests", self.home)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn('pass "BindAddressTests"', done.stderr)
+        self.assertEqual([], self.runs_of(bead))
+        self.assertEqual({}, self.metadata(bead))
+        self.assertEqual([], self.comments(bead))
+
+    def test_a_filter_that_repeats_a_whole_test_target_prefix_with_its_space_is_refused(self):
+        bead = self.new_bead()
+
+        done = self.targeted_tests(bead, "shop", "-k test_greeting", self.home)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn('pass "test_greeting"', done.stderr)
+        self.assertEqual([], self.runs_of(bead))
+        self.assertEqual({}, self.metadata(bead))
+
+    def test_a_plain_filter_runs_inside_a_test_target_that_puts_text_before_its_placeholder(self):
+        bead = self.new_bead()
+
+        done = self.targeted_tests(bead, "dotnet-shop", "BindAddressTests", self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["--filter FullyQualifiedName~BindAddressTests"], self.runs_of(bead))
+        self.assertEqual("pass", self.metadata(bead)["tests.result"])
+
+    def test_any_filter_runs_when_the_test_target_is_only_the_placeholder(self):
+        bead = self.new_bead()
+
+        done = self.targeted_tests(bead, "bare", "FullyQualifiedName~BindAddressTests", self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["FullyQualifiedName~BindAddressTests"], self.runs_of(bead))
+        self.assertEqual("pass", self.metadata(bead)["tests.result"])
+
+    def test_a_run_whose_output_says_no_test_matches_the_filter_is_refused_and_records_nothing(self):
+        bead = self.new_bead()
+        self.queue_outputs(bead, NO_TEST_MATCHES)
+
+        done = self.targeted_tests(bead, "dotnet-shop", "Cart", self.home)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("executed no tests", done.stderr)
+        self.assertIn("--filter 'Cart'", done.stderr)
+        self.assertIn("--filter FullyQualifiedName~<name>", done.stderr)
+        self.assertEqual(["--filter FullyQualifiedName~Cart"], self.runs_of(bead))
+        self.assertEqual({}, self.metadata(bead))
+        self.assertEqual([], self.comments(bead))
+
+    def test_a_run_where_one_assembly_matches_no_test_and_another_runs_tests_records_a_pass(self):
+        bead = self.new_bead()
+        self.queue_outputs(bead, f"{NO_TEST_MATCHES}\n{THIRTY_THREE_PASSED}")
+
+        done = self.targeted_tests(bead, "dotnet-shop", "Cart", self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("pass", self.metadata(bead)["tests.result"])
+
+    def test_a_unittest_run_that_ran_no_tests_is_refused_and_records_nothing(self):
+        bead = self.new_bead()
+        self.queue_exit_codes(bead, 5)
+        self.queue_outputs(bead, "\n----------------------------------------------------------------------\n"
+                                 "Ran 0 tests in 0.000s\n\nNO TESTS RAN")
+
+        done = self.targeted_tests(bead, "shop", "test_nothing", self.home)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("executed no tests", done.stderr)
+        self.assertEqual({}, self.metadata(bead))
+        self.assertEqual([], self.comments(bead))
+
+    def test_a_unittest_run_that_ran_tests_and_failed_records_a_failure(self):
+        bead = self.new_bead()
+        self.queue_exit_codes(bead, 1)
+        self.queue_outputs(bead, "Ran 3 tests in 0.004s\n\nFAILED (failures=1)")
+
+        done = self.targeted_tests(bead, "shop", "test_greeting", self.home)
+
+        self.assertEqual(TESTS_FAILED_EXIT_CODE, done.returncode, done.stderr)
+        self.assertEqual("fail", self.metadata(bead)["tests.result"])
+
+    def test_a_rerun_after_main_moved_that_executed_no_tests_is_refused_and_records_nothing(self):
+        bead = self.new_bead()
+        self.queue_outputs(bead, THIRTY_THREE_PASSED, NO_TEST_MATCHES)
+        self.move_main_during_the_next_run(bead)
+
+        done = self.targeted_tests(bead, "dotnet-shop", "Cart", self.home)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("executed no tests", done.stderr)
+        self.assertEqual(2, len(self.runs_of(bead)))
+        self.assertEqual({}, self.metadata(bead))
+        self.assertEqual([], self.comments(bead))
 
     def test_a_repo_with_no_settings_is_refused_with_a_pointer_to_onboarding(self):
         bead = self.new_bead()
