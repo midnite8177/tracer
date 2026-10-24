@@ -2556,7 +2556,9 @@ public sealed class DetailMarkupTests : BunitContext
     [
         .. JSInterop.Invocations
             .Where(call => call.Identifier.EndsWith("focus", StringComparison.Ordinal))
-            .Select(call => ((ElementReference)call.Arguments[0]!).Id),
+            .Select(call => call.Arguments[0] is ElementReference element
+                ? element.Id
+                : throw new InvalidOperationException("A focus call named no element.")),
     ];
 
     // The name that the browser knows this element by, which a move of the keyboard names.

@@ -32,7 +32,8 @@ public class DirectoryBrowserTests
     [Fact]
     public void GivesNoParentAtTheRootOfTheFilesystem()
     {
-        var root = Path.GetPathRoot(Path.GetTempPath())!;
+        var root = Path.GetPathRoot(Path.GetTempPath())
+            ?? throw new InvalidOperationException("The temp path has no root.");
 
         var listing = DirectoryBrowser.Browse(root);
 

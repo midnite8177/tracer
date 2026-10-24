@@ -162,7 +162,7 @@
                 <p class="text-danger board-bulk-message">@plan.Problem(Epics)</p>
             }
 
-            @if (!Ended)
+            @if (report is not { } finished)
             {
                 <button id="bulk-commit" class="btn btn-sm btn-danger" disabled="@(!plan.IsReady(Epics) || committing)"
                         aria-busy="@CommittingAriaBusy"
@@ -172,8 +172,8 @@
             }
             else
             {
-                <p class="@(report!.Whole ? "text-success" : "text-danger") board-bulk-message">@report.Summary</p>
-                @if (report.Failures.Count > 0)
+                <p class="@(finished.Whole ? "text-success" : "text-danger") board-bulk-message">@finished.Summary</p>
+                @if (finished.Failures.Count > 0)
                 {
                     <button id="bulk-retry" class="btn btn-sm btn-outline-danger" @onclick="SelectTheFailures">
                         Select the beads that failed

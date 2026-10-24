@@ -30,6 +30,33 @@ public sealed class AddProjectMarkupTests : BunitContext
         Assert.Empty(store.Load().Projects);
     }
 
+    [Fact]
+    public void ListsTheSubdirectoriesOfATypedPathAndMarksTheOneThatHoldsABeadsDirectory()
+    {
+        var repository = temp.CreateSubdirectory("tracer");
+        Directory.CreateDirectory(Path.Combine(repository, ".beads"));
+        temp.CreateSubdirectory("not-a-project");
+        Services.AddSingleton(new ProjectCatalog(
+            new InMemoryProjectRegistryStore(),
+            new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System)));
+        var page = Render<AddProjectPage>();
+
+        page.Find("input[aria-label='Path']").Input(temp.Path);
+        page.FindAll("button").Single(button => button.TextContent == "Go").Click();
+
+        page.WaitForAssertion(() =>
+        {
+            var rows = page.FindAll(".browser-row");
+            Assert.Equal(
+                [".. (up one level)", "not-a-project", "tracer"],
+                rows.Select(row => row.QuerySelector(".browser-name")?.TextContent));
+            Assert.Equal(
+                ["tracer"],
+                rows.Where(row => row.QuerySelector(".badge")?.TextContent == "beads project")
+                    .Select(row => row.QuerySelector(".browser-name")?.TextContent));
+        });
+    }
+
     protected override void Dispose(bool disposing)
     {
         temp.Dispose();

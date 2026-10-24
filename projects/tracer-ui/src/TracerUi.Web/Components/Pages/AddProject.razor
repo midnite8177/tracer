@@ -1,4 +1,5 @@
 @page "/projects/add"
+@using System.Diagnostics.CodeAnalysis
 @inject ProjectCatalog Catalog
 @inject NavigationManager Navigation
 
@@ -56,14 +57,15 @@
 }
 
 @code {
-    private DirectoryListing listing = null!;
-    private ProjectPathValidation validation = null!;
+    private DirectoryListing listing;
+    private ProjectPathValidation validation;
     private string refusal = string.Empty;
     private string pathInput = string.Empty;
 
-    protected override void OnInitialized() =>
+    public AddProject() =>
         Browse(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
 
+    [MemberNotNull(nameof(listing), nameof(validation))]
     private void Browse(string path)
     {
         listing = DirectoryBrowser.Browse(path);
