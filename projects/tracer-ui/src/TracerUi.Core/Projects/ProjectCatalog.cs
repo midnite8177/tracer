@@ -46,7 +46,7 @@ public sealed class ProjectCatalog
         var path = ProjectPath.From(candidatePath);
         if (Find(path) is not null)
         {
-            return ProjectPathValidation.Invalid("This project is in the registry already.");
+            return AlreadyThere;
         }
 
         var outcome = await bd.ReadyAsync(path);
@@ -55,8 +55,16 @@ public sealed class ProjectCatalog
             return ProjectPathValidation.Invalid($"bd does not answer in this directory. {outcome.Message}");
         }
 
-        var registry = store.Load();
-        store.Save(registry with { Projects = [.. registry.Projects, path] });
-        return ProjectPathValidation.Valid();
+        var update = store.Update(registry => registry.Adding(path));
+        return update switch
+        {
+            RegistryUpdate.Written => ProjectPathValidation.Valid(),
+            RegistryUpdate.Unchanged => AlreadyThere,
+            RegistryUpdate.Busy => ProjectPathValidation.Invalid(RegistryBusy.Message),
+            var other => throw new ArgumentOutOfRangeException(nameof(update), other, "This update has no outcome."),
+        };
     }
+
+    private static ProjectPathValidation AlreadyThere =>
+        ProjectPathValidation.Invalid("This project is in the registry already.");
 }

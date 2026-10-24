@@ -74,7 +74,7 @@ public sealed class SavedFilterCatalogTests
     public void LeavesTheProjectsAloneWhenItSavesAFilter()
     {
         var store = new InMemoryProjectRegistryStore();
-        store.Save(new ProjectRegistry([Tracer], []));
+        store.Hold(new ProjectRegistry([Tracer], []));
 
         Over(store).Save(Tracer, "Triage", BoardFilter.NeedsYou);
 
@@ -91,5 +91,29 @@ public sealed class SavedFilterCatalogTests
         Over(store).Remove(Tracer, "Inventory");
 
         Assert.Equal(savesAfterTheFilter, store.Saves);
+    }
+
+    [Fact]
+    public void AnswersBusyAndKeepsNoFilterWhenTheStoreIsBusy()
+    {
+        var store = new InMemoryProjectRegistryStore { Busy = true };
+
+        var outcome = Over(store).Save(Tracer, "Triage", BoardFilter.NeedsYou);
+
+        Assert.Equal(RegistryUpdate.Busy, outcome);
+        Assert.Empty(Over(store).Filters(Tracer));
+    }
+
+    [Fact]
+    public void AnswersBusyAndKeepsTheFilterWhenTheStoreIsBusyAtARemove()
+    {
+        var store = new InMemoryProjectRegistryStore();
+        Over(store).Save(Tracer, "Triage", BoardFilter.NeedsYou);
+        store.Busy = true;
+
+        var outcome = Over(store).Remove(Tracer, "Triage");
+
+        Assert.Equal(RegistryUpdate.Busy, outcome);
+        Assert.Single(Over(store).Filters(Tracer));
     }
 }

@@ -5,5 +5,9 @@ public interface IProjectRegistryStore
 {
     ProjectRegistry Load();
 
-    void Save(ProjectRegistry registry);
+    /// <summary>
+    /// Reads the registry, applies the change, and writes what the change gives, with no other update
+    /// between the read and the write. A change that returns null leaves the registry as it is.
+    /// </summary>
+    RegistryUpdate Update(Func<ProjectRegistry, ProjectRegistry?> change);
 }

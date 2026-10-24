@@ -49,6 +49,39 @@ public class ProjectCatalogTests
     }
 
     [Fact]
+    public async Task AddsAProjectOnceWhenTwoAddsOfItWaitOnBdAtTheSameTime()
+    {
+        using var temp = new TempDirectory();
+        var repository = Repository(temp, "tracer");
+        var bd = new FakeBd().Holds("ready --json");
+        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(bd, TimeProvider.System));
+
+        var firstAdd = catalog.AddAsync(repository);
+        var secondAdd = catalog.AddAsync(repository);
+        bd.Answers("ready --json", "[]");
+        var results = await Task.WhenAll(firstAdd, secondAdd);
+
+        Assert.Single(catalog.Projects());
+        Assert.Single(results, result => result.IsValid);
+        Assert.Single(results, result => result.Message == "This project is in the registry already.");
+    }
+
+    [Fact]
+    public async Task SaysTheRegistryIsBusyAndAddsNothingWhenTheStoreIsBusy()
+    {
+        using var temp = new TempDirectory();
+        var repository = Repository(temp, "tracer");
+        var store = new InMemoryProjectRegistryStore { Busy = true };
+        var catalog = new ProjectCatalog(store, new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
+
+        var result = await catalog.AddAsync(repository);
+
+        Assert.False(result.IsValid);
+        Assert.Equal("The registry is busy. Try again.", result.Message);
+        Assert.Empty(catalog.Projects());
+    }
+
+    [Fact]
     public async Task FindsAProjectWhateverFormOfThePathTheCallerGives()
     {
         using var temp = new TempDirectory();

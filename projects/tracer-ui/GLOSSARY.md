@@ -242,7 +242,9 @@ _Avoid_: Root, drive, volume
 
 **Project registry**:
 The stored list of project paths. It lives in the user configuration
-directory, not in any repository.
+directory, not in any repository. A change takes a lock first, and when
+another copy of the app holds it for 2 seconds, the page says the registry
+is busy.
 _Avoid_: Settings, configuration, project list
 
 **Onboarded project**:

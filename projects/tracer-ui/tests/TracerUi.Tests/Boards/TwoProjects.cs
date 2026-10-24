@@ -25,7 +25,7 @@ public sealed class TwoProjects : IDisposable
         First = ProjectPath.From(directory.CreateSubdirectory("first"));
         Second = ProjectPath.From(directory.CreateSubdirectory("second"));
         Store = new InMemoryProjectRegistryStore();
-        Store.Save(new ProjectRegistry([First, Second], []));
+        Store.Hold(new ProjectRegistry([First, Second], []));
         Adapter = new BdAdapter(Bd, Clock);
         Backlogs = new BacklogCache(new BacklogReader(Adapter), Adapter);
         Watchers = new ProjectWatchers(Backlogs, WriteReports);
@@ -58,7 +58,7 @@ public sealed class TwoProjects : IDisposable
 
     /// <summary>Takes a project out of the registry, as another window of the app can.</summary>
     public void Forget(ProjectPath project) =>
-        Store.Save(new ProjectRegistry([.. Store.Load().Projects.Where(held => !held.Equals(project))], []));
+        Store.Hold(new ProjectRegistry([.. Store.Load().Projects.Where(held => !held.Equals(project))], []));
 
     /// <summary>Gives a page the services that it reads whichever page it is.</summary>
     public void RegisterOn(IServiceCollection services)

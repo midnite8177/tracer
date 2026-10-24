@@ -60,6 +60,11 @@ else
                OnSave="SaveTheFilter"
                OnForget="Forget" />
 
+    @if (registryBusy)
+    {
+        <p class="text-danger board-message">@RegistryBusy.Message</p>
+    }
+
     <QuickCreate Project="project"
                  Epics="epics" />
 
@@ -274,6 +279,7 @@ else
     private IReadOnlyList<string> labels = [];
     private IReadOnlyList<Bead> epics = [];
     private IReadOnlyList<SavedFilter> savedFilters = [];
+    private bool registryBusy;
     private readonly IdSet selection = new();
     private readonly CollapsedRows collapsed = new();
     private readonly NewTabFeedback newTab = new();
@@ -338,6 +344,7 @@ else
     private void StartOn(ProjectPath project)
     {
         savedFilters = SavedFilters.Filters(project);
+        registryBusy = false;
         Watchers.Watch(project);
     }
 
@@ -448,7 +455,7 @@ else
             return;
         }
 
-        SavedFilters.Save(project, name, filter);
+        registryBusy = SavedFilters.Save(project, name, filter) is RegistryUpdate.Busy;
         savedFilters = SavedFilters.Filters(project);
     }
 
@@ -459,7 +466,7 @@ else
             return;
         }
 
-        SavedFilters.Remove(project, saved.Name);
+        registryBusy = SavedFilters.Remove(project, saved.Name) is RegistryUpdate.Busy;
         savedFilters = SavedFilters.Filters(project);
     }
 

@@ -28,7 +28,7 @@ public sealed class AnAppOverHttp : WebApplicationFactory<TracerUi.Web.Component
         builder.ConfigureServices(services =>
         {
             var store = new InMemoryProjectRegistryStore();
-            store.Save(new ProjectRegistry(Projects, []));
+            store.Hold(new ProjectRegistry(Projects, []));
 
             // Without the stand-in below, every test run opens a browser tab on the machine.
             services.RemoveAll<IStartupBrowser>();

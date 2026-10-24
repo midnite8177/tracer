@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using TracerUi.Core.Boards;
 
@@ -12,11 +13,18 @@ public sealed class FileProjectRegistryStore : IProjectRegistryStore
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
-    private readonly string filePath;
+    /// <summary>How long an update waits for another one to let go of the registry.</summary>
+    public static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(2);
 
-    public FileProjectRegistryStore(string filePath)
+    private static readonly TimeSpan RetryInterval = TimeSpan.FromMilliseconds(20);
+
+    private readonly string filePath;
+    private readonly TimeSpan lockTimeout;
+
+    public FileProjectRegistryStore(string filePath, TimeSpan lockTimeout)
     {
         this.filePath = filePath;
+        this.lockTimeout = lockTimeout;
     }
 
     public ProjectRegistry Load()
@@ -26,9 +34,17 @@ public sealed class FileProjectRegistryStore : IProjectRegistryStore
             return ProjectRegistry.Empty;
         }
 
-        var json = File.ReadAllText(filePath);
-        var file = JsonSerializer.Deserialize<RegistryFile>(json, SerializerOptions);
+        var file = JsonSerializer.Deserialize<RegistryFile>(ReadTheFile(), SerializerOptions);
         return file is null ? ProjectRegistry.Empty : ToRegistry(file);
+    }
+
+    // Lets an update move a new file over this one while the read runs. Windows refuses to replace a
+    // file that a reader opened without FileShare.Delete.
+    private string ReadTheFile()
+    {
+        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     // The shape of the registry file. Every list is absent until a version of the app writes it, so
@@ -83,14 +99,68 @@ public sealed class FileProjectRegistryStore : IProjectRegistryStore
                 ShowDeferred: filter.ShowDeferred,
                 ShowClosed: filter.ShowClosed);
 
-    public void Save(ProjectRegistry registry)
+    /// <summary>
+    /// Reads the registry, applies the change, and writes what the change gives, while it holds a lock
+    /// that every store over this file takes.
+    /// </summary>
+    /// <remarks>
+    /// The lock is a separate file beside the registry, and nothing renames it. Each write goes to a
+    /// temporary file that then moves over the registry, so a read never sees half a file. That move
+    /// would carry off a lock held on the registry file itself.
+    /// </remarks>
+    public RegistryUpdate Update(Func<ProjectRegistry, ProjectRegistry?> change)
+    {
+        CreateTheDirectory();
+        using var held = TryTakeTheLock();
+        if (held is null)
+        {
+            return RegistryUpdate.Busy;
+        }
+
+        if (change(Load()) is not { } changed)
+        {
+            return RegistryUpdate.Unchanged;
+        }
+
+        Write(changed);
+        return RegistryUpdate.Written;
+    }
+
+    private void CreateTheDirectory()
     {
         var directory = Path.GetDirectoryName(filePath);
         if (!string.IsNullOrEmpty(directory))
         {
             Directory.CreateDirectory(directory);
         }
+    }
 
-        File.WriteAllText(filePath, JsonSerializer.Serialize(registry, SerializerOptions));
+    // Windows refuses a second handle that FileShare.None guards, and .NET on macOS and Linux takes an
+    // exclusive flock for it, so either way the open throws while another handle holds the file.
+    private FileStream? TryTakeTheLock()
+    {
+        var waited = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                return new FileStream(filePath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (waited.Elapsed >= lockTimeout)
+            {
+                return null;
+            }
+            catch (IOException)
+            {
+                Thread.Sleep(RetryInterval);
+            }
+        }
+    }
+
+    private void Write(ProjectRegistry registry)
+    {
+        var temporary = filePath + ".tmp";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(registry, SerializerOptions));
+        File.Move(temporary, filePath, overwrite: true);
     }
 }

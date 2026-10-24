@@ -947,7 +947,7 @@ public sealed class BoardMarkupTests : BunitContext
     {
         var project = ProjectPath.From(directory.Path);
         var store = new InMemoryProjectRegistryStore();
-        store.Save(new ProjectRegistry([project], []));
+        store.Hold(new ProjectRegistry([project], []));
 
         bd = new FakeBd()
             .Prints(TheListCommand, backlog.Beads)

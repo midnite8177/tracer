@@ -137,7 +137,7 @@ public sealed class NeedsYouReaderTests
     private static NeedsYouReader ReaderOver(FakeBd bd, params ProjectPath[] projects)
     {
         var store = new InMemoryProjectRegistryStore();
-        store.Save(ProjectRegistry.Empty with { Projects = [.. projects] });
+        store.Hold(ProjectRegistry.Empty with { Projects = [.. projects] });
         var adapter = new BdAdapter(bd, TimeProvider.System);
         return new NeedsYouReader(
             new ProjectCatalog(store, adapter),

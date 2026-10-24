@@ -32,7 +32,7 @@ public sealed class BeadDestinationTests
     private static InMemoryProjectRegistryStore AStoreHolding(params ProjectPath[] projects)
     {
         var store = new InMemoryProjectRegistryStore();
-        store.Save(ProjectRegistry.Empty with { Projects = [.. projects] });
+        store.Hold(ProjectRegistry.Empty with { Projects = [.. projects] });
         return store;
     }
 
