@@ -70,6 +70,7 @@ class ShopIssuesTests(SkillScriptCase):
         super().setUpClass()
         cls.greeting = cls.create_bead(cls.repo, "Print the greeting", WITH_DEMO, ["--type=task"])
         cls.farewell = cls.create_bead(cls.repo, "Print the farewell", WITHOUT_DEMO, ["--type=task"])
+        cls.goodbye = cls.create_bead(cls.repo, "Wave goodbye", WITH_DEMO, ["--type=task", f"--deps={cls.greeting}"])
 
     def test_issues_lists_the_ready_beads_on_the_board(self):
         done = self.run_script(ISSUES, [], os.environ["HOME"], self.repo)
@@ -77,7 +78,7 @@ class ShopIssuesTests(SkillScriptCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"Print the greeting ({self.greeting}) · ready ✓", done.stdout)
         self.assertIn(f"Print the farewell ({self.farewell}) · ready · no demo", done.stdout)
-        self.assertIn("ready 2 · blocked 0 · needs you 0", done.stdout)
+        self.assertIn("ready 2 · blocked 1 · needs you 0", done.stdout)
 
     def test_issues_shows_one_bead_with_its_description(self):
         done = self.run_script(ISSUES, [self.greeting], os.environ["HOME"], self.repo)
@@ -98,6 +99,20 @@ class ShopIssuesTests(SkillScriptCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"next: ready to build with /jidoka:bench {self.greeting}", done.stdout)
+
+    def test_issues_sends_a_blocked_bead_to_its_blocker(self):
+        done = self.run_script(ISSUES, [self.goodbye], os.environ["HOME"], self.repo)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn(f"next: look at the blocker first ({self.greeting})", done.stdout)
+
+    def test_issues_never_points_a_ready_unplanned_or_blocked_bead_at_a_tracer_command(self):
+        for args in [[], [self.greeting], [self.farewell], [self.goodbye]]:
+            with self.subTest(args=args):
+                done = self.run_script(ISSUES, args, os.environ["HOME"], self.repo)
+
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assertNotIn("/tracer:", done.stdout)
 
 
 class AtlasIssuesTests(SkillScriptCase):
@@ -131,6 +146,15 @@ class AtlasIssuesTests(SkillScriptCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"next: needs you at the bench, /jidoka:bench {self.receipt}", done.stdout)
+
+    def test_issues_never_points_at_a_tracer_command(self):
+        views = [[], [self.receipt], [self.question], ["--label", "wayfinder:research"], ["bench"], ["receipt"]]
+        for args in views:
+            with self.subTest(args=args):
+                done = self.run_script(ISSUES, args, os.environ["HOME"], self.atlas)
+
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assertNotIn("/tracer:", done.stdout)
 
 
 class DecisionLogTests(SkillScriptCase):

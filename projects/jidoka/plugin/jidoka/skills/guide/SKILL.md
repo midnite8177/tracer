@@ -1,6 +1,6 @@
 ---
 name: guide
-description: Ask which tracer skill or flow fits your situation. A router over the skills in this plugin.
+description: Ask which jidoka skill or flow fits your situation. A router over the skills in this plugin.
 disable-model-invocation: true
 license: MIT
 metadata:
@@ -21,10 +21,7 @@ A **flow** is a path through the skills. Most paths run along one **main flow**,
 The route most work travels. You have an idea and want it built.
 
 1. **`/jidoka:grill-with-docs`** sharpens the idea by interview. Start here whenever you are **working in a working directory**: it's stateful, retaining what it learns in `GLOSSARY.md` and ADRs. (No working directory? Use `/jidoka:grill-me` instead, covered under Standalone. Both run the same `/jidoka:grilling` primitive; `grill-with-docs` is the one that leaves a paper trail, which makes it the better of the two whenever a repo is there to leave it in.)
-2. **Branch: can you settle every question in conversation?** If a question needs a runnable answer (state, business logic, a UI you have to see), detour through a prototype, bridged by **`/tracer:handoff`** in both directions (a prototype lives in its own directory, which is exactly what `/tracer:handoff` is for; see Phase boundaries):
-   - **`/tracer:handoff`** out, then open a fresh session against that file,
-   - **`/jidoka:prototype`** to answer the question with throwaway code,
-   - **`/tracer:handoff`** back what you learned, and reference it from the original idea thread.
+2. **Branch: can you settle every question in conversation?** If a question needs a runnable answer (state, business logic, a UI you have to see), detour through **`/jidoka:prototype`** in the same session. It answers the question with throwaway code and folds the validated decision into the real code. It commits the prototype to a throwaway branch out of main, and leaves a pointer to that branch on the bead with the verdict and the question it settled.
 3. **Branch: is this a multi-session build?**
    - **Yes** → **`/jidoka:to-spec`** (turn the thread into a spec), then **`/jidoka:to-tickets`** to split it into tracer-bullet tickets, each declaring its **blocking edges**. Then build the tickets with **`/jidoka:bench`**, one ticket per session, **`/clear`ing context between each one**. Tickets are beads under the spec epic with `bd dep` edges; `/jidoka:issues` shows the frontier. Each ticket is self-contained, so the last one's context is disposable.
    - **No** → Write one bead with Demo and Seams lines. Then use **`/jidoka:bench <bead-id>`**. It requires a bead id even for a small job.
@@ -53,13 +50,15 @@ A starting situation that generates work, then merges onto the main flow.
 
 - **A huge, foggy effort: a greenfield project or a huge feature build, too big for one session** → **`/jidoka:wayfinder`**, the most cognitively demanding flow here. When the way from here to the destination isn't visible yet, it charts a **shared map** of **decision tickets** on the issue tracker and resolves them one at a time, producing **decisions, not deliverables**, until the fog is pushed back and the way is clear. Where **`/jidoka:grill-with-docs`** sharpens an idea you can hold in one session, wayfinder is for the idea you can't, and it's slower and denser, so save it for exactly that, never a well-scoped feature.
 
-  When the map clears, **it hands off, it doesn't build**: merge onto the main flow at **`/jidoka:to-spec`**, which collapses the map's linked decisions into a buildable plan, then `/jidoka:to-tickets` and `/jidoka:bench` as usual. Looping the map straight into `/jidoka:bench` skips that collapse and throws the linked detail away, so go straight to `/jidoka:bench` only when the effort turned out genuinely small.
+  When the map clears, **it stops at decisions, it doesn't build**: merge onto the main flow at **`/jidoka:to-spec`**, which collapses the map's linked decisions into a buildable plan, then `/jidoka:to-tickets` and `/jidoka:bench` as usual. Looping the map straight into `/jidoka:bench` skips that collapse and throws the linked detail away, so go straight to `/jidoka:bench` only when the effort turned out genuinely small.
 
 ## Quick routes
 
+- "What do I build next?" → `/jidoka:bench <bead-id>` on a ready bead; `/jidoka:issues` shows the frontier and names the bead.
 - "What is ready, what is blocked, show me a bead" → `/jidoka:issues`.
-- "What is waiting on me, let's decide them" → `/tracer:human-queue`.
-- "Update or repair the installation" → `/tracer:adopt`.
+- "What is waiting on me, let's decide them" → `/jidoka:issues human`.
+- "Record or change this repo's settings: its apps and their test commands" → `/jidoka:onboard`.
+- "Where are my context or tokens going?" → `/jidoka:context`.
 - "This reads like it was written by an AI, clean it up" → `/jidoka:unslop`.
 - "Strip the comment noise from this diff" → `/jidoka:no-comments`.
 - "Keep a decision trail I can review when I'm back" → `/jidoka:show-me-your-work`.
@@ -80,15 +79,14 @@ Two model-invoked references that run *beneath* the other skills, each the singl
 
 ## Phase boundaries
 
-A **phase** is a chunk of work inside a session: the grilling, the implementation, the QA. At the **boundary** between two of them you have five options, and picking between them is the fuzziest decision in this whole map:
+A **phase** is a chunk of work inside a session: the grilling, the implementation, the QA. At the **boundary** between two of them you have four options, and picking between them is the fuzziest decision in this whole map:
 
 - **Continue**: stay put. Costs nothing, loses nothing.
 - **`/clear`**: empty the window, when nothing here matters to what's next.
-- **`/tracer:handoff`** writes a portable markdown file. Narrow: only for a **new harness**, a **new directory**, a **colleague**, or forking a side task **mid-phase**. What it buys is portability.
 - **Subagent**: send a tightly-scoped task to its own window and get a report back.
 - **`/compact`** compresses this context and seeds a fresh session with it. The **default**, at the bottom of the tree rather than the first reach.
 
-Read [PHASE-BOUNDARIES.md](PHASE-BOUNDARIES.md) for the ordered tree: the five questions, the reasoning behind each branch, and why the primary-source cost makes **Continue** the one to rule out first. Make the decision **at** a boundary; mid-phase, continue or split the rest into subagents.
+Read [PHASE-BOUNDARIES.md](PHASE-BOUNDARIES.md) for the ordered tree: the four questions, the reasoning behind each branch, and why the primary-source cost makes **Continue** the one to rule out first. Make the decision **at** a boundary; mid-phase, continue or split the rest into subagents.
 
 ## Standalone
 
@@ -106,4 +104,4 @@ Off the main flow entirely.
 
 ## Precondition
 
-**`/tracer:adopt`**: run before your first engineering flow to install the beads tracker conventions, triage labels, and doc layout the other skills assume.
+**`/jidoka:onboard`**: run it once per repo, before your first `/jidoka:bench`. It records the repo settings that bench and landing read: each app with its build, run and test commands, and the commands lap workers may run. Rerun it to change them.
