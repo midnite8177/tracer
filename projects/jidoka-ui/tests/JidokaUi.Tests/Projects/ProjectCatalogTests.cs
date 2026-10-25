@@ -54,7 +54,8 @@ public class ProjectCatalogTests
         using var temp = new TempDirectory();
         var repository = Repository(temp, "campfire");
         var bd = new FakeBd().Holds("ready --json");
-        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(bd, TimeProvider.System));
+        var store = new InMemoryProjectRegistryStore();
+        var catalog = new ProjectCatalog(store, new BdAdapter(bd, TimeProvider.System));
 
         var firstAdd = catalog.AddAsync(repository);
         var secondAdd = catalog.AddAsync(repository);
@@ -62,6 +63,7 @@ public class ProjectCatalogTests
         var results = await Task.WhenAll(firstAdd, secondAdd);
 
         Assert.Single(catalog.Projects());
+        Assert.Equal(1, store.Saves);
         Assert.Single(results, result => result.IsValid);
         Assert.Single(results, result => result.Message == "This project is in the registry already.");
     }
