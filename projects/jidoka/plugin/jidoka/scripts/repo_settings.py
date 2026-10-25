@@ -15,6 +15,9 @@ lines of the main worktree's CLAUDE.local.md that the settings now hold; the
 script removes one copy of the line for each time it is named and keeps every
 other byte of the file.
 
+It refuses while git tracks the main worktree's .beads/, naming the
+beads_stealth.py command that switches the workspace to stealth mode.
+
 `show` prints the stored settings, or exits 1 when the repo has none.
 """
 from __future__ import annotations
@@ -36,6 +39,9 @@ MOVED_LINES = "moved_lines"
 APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_target"]
 TEST_SCOPES = ["targeted", "full"]
 APP_KINDS = ["program", "library"]
+BEADS_WORKSPACE = ".beads"
+SCRIPTS = Path(__file__).resolve().parent
+SWITCH_COMMAND = f'sh "{SCRIPTS.parent / "bin" / "jidoka-run"}" "{SCRIPTS / "beads_stealth.py"}"'
 
 
 class SettingsError(Exception):
@@ -58,6 +64,20 @@ def main_worktree(folder: Path, timeout_seconds: float) -> Path:
     if done.returncode != 0 or not common:
         raise SettingsError(f"{folder} is not inside a git repo")
     return (folder / common).resolve().parent
+
+
+def refuse_tracked_beads(main_tree: Path, timeout_seconds: float) -> None:
+    try:
+        done = subprocess.run(["git", "ls-files", "--", BEADS_WORKSPACE], cwd=main_tree, capture_output=True,
+                              text=True, encoding="utf-8", timeout=timeout_seconds)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise SettingsError(f"git could not run in {main_tree}: {error}") from error
+    if done.returncode != 0:
+        raise SettingsError(f"git ls-files failed in {main_tree}: {done.stderr.strip()}")
+    if done.stdout.strip():
+        raise SettingsError(f"nothing was written: git tracks {main_tree / BEADS_WORKSPACE}, and jidoka keeps "
+                            f"a repo's beads out of git. Switch them to stealth mode with {SWITCH_COMMAND}, "
+                            "which untracks them and stages the removal for you to commit")
 
 
 def settings_path(home: Path, main_tree: Path) -> Path:
@@ -196,6 +216,7 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
     if not isinstance(given, dict):
         raise SettingsError("the input is not a JSON object")
     main_tree = main_worktree(cwd, GIT_TIMEOUT_SECONDS)
+    refuse_tracked_beads(main_tree, GIT_TIMEOUT_SECONDS)
     path = settings_path(home, main_tree)
     local = main_tree / LOCAL_RULES
     moved = given.pop(MOVED_LINES, [])

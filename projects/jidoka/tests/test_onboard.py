@@ -14,6 +14,7 @@ import jidoka_fixture as fixture  # noqa: E402
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
+STEALTH_SCRIPT = PLUGIN / "scripts" / "beads_stealth.py"
 HOOK = PLUGIN / "hooks" / "session_start.py"
 ONBOARDING_LINE = "/jidoka:onboard"
 
@@ -289,6 +290,37 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn("Test: make check", done.stderr)
         self.assertEqual([], self.stored_files())
         self.assertEqual("Build: make\n", local.read_text(encoding="utf-8"))
+
+    def committed_beads_repo(self) -> Path:
+        repo = self.root / f"depot-{self.count}"
+        init_committed_repo(repo)
+        fixture.add_committed_beads(repo)
+        return repo
+
+    def test_refuses_settings_while_git_tracks_the_beads_and_says_how_to_switch(self):
+        repo = self.committed_beads_repo()
+        worktree = self.root / f"depot-{self.count}-feature"
+        fixture.run(["git", "worktree", "add", "-q", "-b", "feature", str(worktree)], repo)
+
+        for cwd in (repo, worktree):
+            with self.subTest(cwd=cwd):
+                done = self.write(cwd, tracer_settings())
+
+                self.assertEqual(1, done.returncode)
+                self.assertIn(".beads", done.stderr)
+                self.assertIn("beads_stealth.py", done.stderr)
+                self.assertEqual([], self.stored_files())
+
+    def test_writes_settings_once_the_switch_has_untracked_the_beads(self):
+        repo = self.committed_beads_repo()
+        switched = subprocess.run([str(LAUNCHER), str(STEALTH_SCRIPT)], capture_output=True, text=True,
+                                  encoding="utf-8", env=self.env(), cwd=repo)
+
+        done = self.write(repo, tracer_settings())
+
+        self.assertEqual(0, switched.returncode, switched.stderr)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(1, len(self.stored_files()))
 
     def test_the_session_hook_says_to_onboard_a_beads_repo_without_settings(self):
         for cwd in (self.repo, self.worktree):

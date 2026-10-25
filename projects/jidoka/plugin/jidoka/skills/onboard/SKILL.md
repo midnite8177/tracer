@@ -1,32 +1,64 @@
 ---
 name: onboard
-description: Record this repo's settings for jidoka on this machine, or change them on a rerun.
+description: Put this repo's beads in stealth mode and record its settings for jidoka on this machine, or change them on a rerun.
 disable-model-invocation: true
 argument-hint: "[the settings or apps to change]"
 ---
 
 The settings script is
 `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py"`,
-where the skill folder is the directory that holds this SKILL.md. Run it
-from inside the repo; any worktree of the repo finds the same settings.
+and the stealth script is
+`sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/beads_stealth.py"`,
+where the skill folder is the directory that holds this SKILL.md. Run them
+from inside the repo; any worktree of the repo finds the same settings and
+the same beads.
 
-1. Run the script with `show`. When it prints settings, this is a rerun:
-   show them to the user, with each null value in words, and from here on
-   propose only the changes `$ARGUMENTS` or the user asks for.
-2. Read the repo's README, its build files (solution and project files,
+1. Put the beads in stealth mode before anything else. Run
+   `git ls-files -- .beads` in the main worktree, the first path that
+   `git worktree list` prints.
+   - When it prints nothing, run the stealth script. It runs
+     `bd init --stealth` when the repo has no beads yet. In a clone that
+     pulled a commit that took the beads out of git, it writes back the
+     files that commit removed. Otherwise it says the beads are already in
+     stealth mode.
+   - When it prints files, the repo commits its beads, and jidoka keeps a
+     repo's beads out of git. Tell the user what the stealth script does.
+     It untracks `.beads/` and the files beside it that plain `bd init`
+     committed and that hold only bd's text. It takes bd's blocks out of a
+     `CLAUDE.md` or `AGENTS.md` that also holds the repo's own text. It
+     adds what it untracked to the repo's `info/exclude`, stages all of it
+     and never commits. The files stay on disk, so bd keeps every bead.
+     Other clones that pull the commit lose those files, so each of them
+     runs the stealth script after the pull to get them back.
+     Ask whether to switch. On yes, run the script, show its output and
+     `git status --short`, and tell the user the commit is theirs to make.
+     A hook file the script names as still committed holds
+     the repo's own entries beside bd's; it stays as it is unless the user
+     edits it.
+     On no, stop here: the settings script refuses while git tracks the
+     beads, so the repo stays off jidoka.
+   - When the script refuses because the index holds other staged changes,
+     or because `CLAUDE.md` or `AGENTS.md` has changes that are not staged,
+     show its stderr. The user commits, unstages or stashes them, then you
+     run it again.
+2. Run the settings script with `show`. When it prints settings, this is a
+   rerun: show them to the user, with each null value in words, and from
+   here on propose only the changes `$ARGUMENTS` or the user asks for.
+3. Read the repo's README, its build files (solution and project files,
    `package.json`, `pyproject.toml`, `Makefile`, build scripts) and its
    `CLAUDE.local.md`. Find each app the repo ships.
-3. Propose every setting below, each with the line from the repo it comes
+4. Propose every setting below, each with the line from the repo it comes
    from, quoted with its file. Mark a setting you could not find as a
    question. The step is done when the user has confirmed or edited every
    proposed value.
-4. Ask which lines of `CLAUDE.local.md` the settings now hold. Only lines of
+5. Ask which lines of `CLAUDE.local.md` the settings now hold. Only lines of
    `CLAUDE.local.md` itself move, never lines of a file it imports.
-5. Pipe the confirmed settings to the script with `write`, as one JSON
+6. Pipe the confirmed settings to the script with `write`, as one JSON
    object on stdin. On a rerun, pass only the keys that change; `apps`
    replaces the whole app list. When the script refuses, show its stderr,
-   fix the values with the user, and run it again.
-6. Run `show` and show the user what it prints, with each null value in
+   fix the values with the user, and run it again. When it refuses because
+   git tracks `.beads`, go back to step 1 and offer the switch.
+7. Run `show` and show the user what it prints, with each null value in
    words.
 
 The settings:

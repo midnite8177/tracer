@@ -6,8 +6,9 @@ bin folder that becomes the whole PATH, so a test decides which tools exist.
 Each stand-in appends one JSON line per call to a log file.
 
 A stealth beads workspace is a copy of one that bd init made in a template
-repo, because bd init takes seconds and a copy takes milliseconds. A suite
-run through run_suite.py makes the template once, in the folder its workers
+repo, because bd init takes seconds and a copy takes milliseconds. What plain
+bd init commits is copied the same way from a template of its own. A suite
+run through run_suite.py makes each template once, in the folder its workers
 share; any other process makes its own the first time a test asks for one.
 """
 import atexit
@@ -112,28 +113,53 @@ def take_template_lock(lock: Path, template: Path) -> bool:
             time.sleep(TEMPLATE_POLL_SECONDS)
 
 
-@functools.cache
-def beads_template() -> Path:
-    """The folder add_stealth_beads copies from, made at most once per suite run.
+def shared_template(name: str, make) -> Path:
+    """The folder a template named name lives in, which make fills at most once per suite run.
 
     Workers of one run share a folder, and the first to create the lock file in it makes the template
     while the others wait for it to appear. A process outside such a run uses a folder of its own.
     """
     shared = os.environ.get(SHARED_FOLDER)
     if shared is None:
-        shared = tempfile.mkdtemp(prefix="jidoka-beads-template-")
+        shared = tempfile.mkdtemp(prefix=f"jidoka-{name}-")
         atexit.register(shutil.rmtree, shared, True)
-    template = Path(shared) / "beads-template"
-    lock = Path(shared) / "beads-template.lock"
+    template = Path(shared) / name
+    lock = Path(shared) / f"{name}.lock"
     if take_template_lock(lock, template):
         try:
             if not template.exists():
-                partial = Path(tempfile.mkdtemp(prefix="beads-template-", dir=shared))
-                make_beads_template(partial)
+                partial = Path(tempfile.mkdtemp(prefix=f"{name}-", dir=shared))
+                make(partial)
                 partial.rename(template)
         finally:
             lock.unlink()
     return template
+
+
+@functools.cache
+def beads_template() -> Path:
+    return shared_template("beads-template", make_beads_template)
+
+
+def make_bd_init_template(template: Path) -> None:
+    """Runs plain bd init in a new repo and keeps its .beads and every other file of the commit bd init made."""
+    repo = template / "repo"
+    init_repo(repo)
+    run([real_tool("bd"), "init", "--non-interactive"], repo)
+    committed = run(["git", "ls-files"], repo).splitlines()
+    others = [path for path in committed if not path.startswith(".beads/")]
+    if not others or run(["git", "status", "--porcelain"], repo):
+        raise FixtureError(f"bd init in {repo} did not commit its files and leave a clean status")
+    shutil.move(repo / ".beads", template / "beads")
+    for path in others:
+        (template / "files" / path).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(repo / path, template / "files" / path)
+    shutil.rmtree(repo)
+
+
+@functools.cache
+def bd_init_template() -> Path:
+    return shared_template("bd-init-template", make_bd_init_template)
 
 
 def add_stealth_beads(repo: Path) -> None:
@@ -149,6 +175,32 @@ def add_stealth_beads(repo: Path) -> None:
         fh.write((template / "exclude").read_text(encoding="utf-8"))
     for key, value in json.loads((template / "config.json").read_text(encoding="utf-8")):
         run(["git", "config", key, value], repo)
+
+
+def add_committed_beads(repo: Path) -> None:
+    """Gives a git repo the template's beads workspace and commits it, as a repo that shares its beads through git.
+
+    The workspace's own .gitignore keeps the Dolt data out, so git tracks only its config and text files.
+    """
+    template = beads_template()
+    shutil.copytree(template / "beads", repo / ".beads", symlinks=True)
+    for key, value in json.loads((template / "config.json").read_text(encoding="utf-8")):
+        run(["git", "config", key, value], repo)
+    run(["git", "add", "--", ".beads"], repo)
+    run(["git", "commit", "-q", "-m", "Track the beads"], repo)
+
+
+def add_committed_bd_init(repo: Path) -> None:
+    """Gives a git repo what plain `bd init` commits, as a repo that shares its beads through git, and commits it.
+
+    That is the workspace, bd's blocks in CLAUDE.md and AGENTS.md, its skill, its Claude Code and Codex hook files
+    and its .gitignore block. The repo gets no core.hooksPath, so its commits run no bd hook.
+    """
+    template = bd_init_template()
+    shutil.copytree(template / "beads", repo / ".beads", symlinks=True)
+    shutil.copytree(template / "files", repo, symlinks=True, dirs_exist_ok=True)
+    run(["git", "add", "-A"], repo)
+    run(["git", "commit", "-q", "-m", "Track the beads"], repo)
 
 
 def build_checkout(repo: Path) -> None:
