@@ -30,7 +30,7 @@ The route most work travels. You have an idea and want it built.
 
    When the work goes up as a pull request, **`/jidoka:pr`** shapes the body: the smallest visual that shows the change, before/after evidence that it works, and a one-way or two-way door call. It's model-invoked, so the agent reaches for it whenever it writes a PR.
 
-4. **`/jidoka:retro`** closes the loop. After a build, and especially one that went sideways, it looks back over the session and suggests changes to the agent's **environment**, not the code: navigation pointers, automated checks, the coding standards `/jidoka:code-review` enforces, steering files, tooling. Mechanical mistakes become deterministic checks; judgement calls become coding standards. The next build then starts from a better environment.
+4. **`/jidoka:retro`** closes the loop. After a build, and especially one that went sideways, it looks back over a session or a whole epic and suggests changes to the agent's **environment**, not the code: navigation pointers, automated checks, the repo's rules files, jidoka's own skills, tooling. Mechanical mistakes become deterministic checks, and judgement calls become rules. A fix to jidoka itself becomes a bead in jidoka's source repo. The next build then starts from a better environment.
 
 ### Context hygiene
 

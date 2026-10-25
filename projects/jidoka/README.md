@@ -57,7 +57,7 @@ the same tests one at a time, and makes the workspace once in its process.
 
 | Path | What it holds |
 |---|---|
-| `install.py` | Checks the tools, records the Python, config dirs and routes in `<jidoka-home>`, writes the committed plugin to `<jidoka-home>/plugins/<version>/`, and installs that snapshot into each named config dir and into Codex. Running it again updates |
+| `install.py` | Checks the tools, records the Python, config dirs, routes and jidoka's source repo in `<jidoka-home>`, writes the committed plugin to `<jidoka-home>/plugins/<version>/`, and installs that snapshot into each named config dir and into Codex. Running it again updates. The source repo is the main worktree of the checkout it runs from, and retro files fixes to jidoka there |
 | `release.py` | Raises the plugin version and makes the one commit that holds it |
 | `plugin/` | The local marketplace, committed in git. `plugin/jidoka/` is the plugin: its manifest and `bin/jidoka-run`, the launcher |
 | `plugin/jidoka/hooks/` | `hooks.json` wires the SessionStart hook, and `session_start.py` prints the rules block and the doc paths in a repo that has beads, and nothing elsewhere. In a beads repo with no repo settings it adds one line saying to run `/jidoka:onboard` |

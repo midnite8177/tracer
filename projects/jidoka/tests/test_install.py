@@ -49,11 +49,15 @@ class InstallerTestCase(unittest.TestCase):
         self.tmp.cleanup()
 
     def install(self, tools: fixture.ToolsOnPath, config_dirs: list, claude_fails_on: str) -> subprocess.CompletedProcess:
+        return self.install_from(self.repo, tools, config_dirs, claude_fails_on)
+
+    def install_from(self, checkout: Path, tools: fixture.ToolsOnPath, config_dirs: list,
+                     claude_fails_on: str) -> subprocess.CompletedProcess:
         fixture.build_bin(self.bin, tools, self.log, claude_fails_on, self.codex_state, "")
         args = ["--jidoka-home", str(self.home)]
         for config_dir in config_dirs:
             args += ["--config-dir", str(config_dir)]
-        return fixture.run_script(self.repo, "install.py", args, fixture.script_env(self.bin, self.user_home))
+        return fixture.run_script(checkout, "install.py", args, fixture.script_env(self.bin, self.user_home))
 
     def calls(self, tool: str) -> list:
         return [call for call in fixture.read_log(self.log) if call["tool"] == tool]
@@ -396,6 +400,31 @@ class RecordedSettingsTests(InstallerTestCase):
         settings = self.settings()
         self.assertEqual({"weekly": 40}, settings["budget"])
         self.assertEqual([str(self.config_b.resolve())], settings["config_dirs"])
+
+    def test_the_settings_hold_the_checkout_the_installer_ran_from_as_the_source_repo(self):
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(str(self.repo.resolve()), self.settings()["source_repo"])
+
+    def test_an_install_from_another_checkout_records_that_checkout_as_the_source_repo(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+        other = self.root / "other-checkout"
+        fixture.build_checkout(other)
+
+        done = self.install_from(other, fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(str(other.resolve()), self.settings()["source_repo"])
+
+    def test_an_install_from_a_linked_worktree_records_the_main_worktree_as_the_source_repo(self):
+        linked = self.root / "linked"
+        fixture.run(["git", "worktree", "add", "-q", str(linked)], self.repo)
+
+        done = self.install_from(linked, fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(str(self.repo.resolve()), self.settings()["source_repo"])
 
     def test_a_settings_file_that_is_not_json_stops_the_run_before_anything_is_installed(self):
         self.home.mkdir()

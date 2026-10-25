@@ -18,8 +18,8 @@ rewritten skill's `agents/openai.yaml` is jidoka's own.
   `improve-codebase-architecture`, `prototype`, `tdd`, `teach`,
   `to-questionnaire`, `wait-what`, `wizard`, `writing-for-agents`
 - Copied and edited: `domain-modeling`, `guide` (upstream `ask-matt`),
-  `pr`, `research`, `retro`, `to-spec`, `to-tickets`, `triage`, `wayfinder`
-- Rewritten from upstream: `code-review`, and `spec-check` (from
+  `pr`, `research`, `to-spec`, `to-tickets`, `triage`, `wayfinder`
+- Rewritten from upstream: `code-review`, `retro`, and `spec-check` (from
   upstream `code-review`)
 
 ```

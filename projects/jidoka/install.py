@@ -8,12 +8,15 @@ changes, so what gets installed is a commit. It writes that commit's plugin
 to <jidoka-home>/plugins/<version>/, a snapshot, because Claude Code runs a
 plugin from a folder marketplace in place and an edit to the checkout would
 otherwise change the scripts under a running session. It records the Python
-it runs under, the config dirs and a native route for each tier in
-<jidoka-home>, then adds the snapshot as a local marketplace and installs the
-plugin at user scope into each named config dir, and into Codex when codex is
-on the PATH. A snapshot is never rewritten. A version whose snapshot came
-from different plugin content is refused until release.py gives the change
-a new version.
+it runs under, the config dirs, a native route for each tier and jidoka's
+source repo in <jidoka-home>, then adds the snapshot as a local marketplace
+and installs the plugin at user scope into each named config dir, and into
+Codex when codex is on the PATH. A snapshot is never rewritten. A version
+whose snapshot came from different plugin content is refused until
+release.py gives the change a new version. The source repo is the main
+worktree of the repo this file is in, found with git, so an install from a
+linked worktree records the main checkout. Retro files a fix to jidoka
+there, from whatever repo it runs in.
 """
 from __future__ import annotations
 
@@ -37,7 +40,7 @@ PLUGIN_ID = "jidoka@jidoka"
 PLUGIN_FOLDER = Path(__file__).resolve().parent / "plugin"
 PLUGIN_MANIFEST = Path("jidoka") / ".claude-plugin" / "plugin.json"
 TREE_FILE = "plugin-tree-id"
-OWNED_SETTINGS = ["python", "config_dirs", "routes"]
+OWNED_SETTINGS = ["python", "config_dirs", "routes", "source_repo"]
 
 
 class InstallerError(Exception):
@@ -105,6 +108,15 @@ def dirty_files(git: str, folder: Path) -> list[str]:
     return [line[3:] for line in status.stdout.splitlines() if line]
 
 
+def main_worktree(git: str, folder: Path) -> Path:
+    """The common dir is the main worktree's .git, and git may print it relative to the folder."""
+    found = git_run(git, folder, ["rev-parse", "--git-common-dir"])
+    common = found.stdout.strip()
+    if found.returncode != 0 or not common:
+        raise InstallerError(f"git could not find the repository that holds {folder}: {found.stderr.strip()}")
+    return (folder / common).resolve().parent
+
+
 def refuse_if_dirty(git: str, folder: Path) -> None:
     dirty = dirty_files(git, folder)
     if dirty:
@@ -137,7 +149,8 @@ def load_settings(home: Path) -> dict:
     return data
 
 
-def record(home: Path, python: str, config_dirs: list[Path], routes: dict[str, Route], previous: dict) -> None:
+def record(home: Path, python: str, config_dirs: list[Path], routes: dict[str, Route], source_repo: Path,
+           previous: dict) -> None:
     home.mkdir(parents=True, exist_ok=True)
     (home / "python").write_text(python + "\n", encoding="utf-8", newline="\n")
     kept = {key: value for key, value in previous.items() if key not in OWNED_SETTINGS}
@@ -145,6 +158,7 @@ def record(home: Path, python: str, config_dirs: list[Path], routes: dict[str, R
         "python": python,
         "config_dirs": [str(path) for path in config_dirs],
         "routes": {tier: asdict(route) for tier, route in routes.items()},
+        "source_repo": str(source_repo),
         **kept,
     }
     (home / "settings.json").write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
@@ -272,10 +286,11 @@ def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[in
         raise InstallerError(f"the plugin folder {PLUGIN_FOLDER} does not exist")
     refuse_if_dirty(tools.git, PLUGIN_FOLDER)
     version = read_version(PLUGIN_FOLDER)
+    source_repo = main_worktree(tools.git, PLUGIN_FOLDER.parent)
     previous = load_settings(jidoka_home)
     snapshot = ensure_snapshot(tools.git, PLUGIN_FOLDER, jidoka_home, version)
     unnamed = unnamed_config_dirs(previous, config_dirs)
-    record(jidoka_home, python, config_dirs, default_routes(tools.codex is not None), previous)
+    record(jidoka_home, python, config_dirs, default_routes(tools.codex is not None), source_repo, previous)
     print(f"Recorded {python} and {len(config_dirs)} config dir(s) in {jidoka_home}")
     for config_dir in config_dirs:
         install_into_claude(tools.claude, config_dir, snapshot)
