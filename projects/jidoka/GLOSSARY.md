@@ -378,5 +378,6 @@ _Avoid_: Manual tests, skipped tests, excluded tests, slow tests
 The script, run by the human in a terminal, that takes tracer's files out of
 one repo and first copies each original it touches to a backup under jidoka's
 home. It keeps the repo's beads, glossaries and ADRs, and the lines of the
-rules files that are the repo's own.
+rules files that are the repo's own, with any rule of tracer's that the repo
+edited kept whole.
 _Avoid_: Uninstall, cleanup, migration

@@ -219,7 +219,7 @@ class RemovalTests(InstalledRepoTests):
         for gone in fixture.EXCLUDE_HEADING, ".claude/skills/tracer/", ".claude/statusline.py", \
                 ".claude/statusline.sh", "docs/agents/", "docs/tracer.md", "docs/tracer-adopt-notes.md":
             self.assertNotIn(gone, lines)
-        for kept in "AGENTS.local.md", "CLAUDE.local.md", ".audit/":
+        for kept in "# Local agent files", "AGENTS.local.md", "CLAUDE.local.md", ".audit/":
             self.assertIn(kept, lines)
 
     def test_an_exclude_block_without_its_heading_loses_only_tracers_known_lines(self):
@@ -236,6 +236,62 @@ class RemovalTests(InstalledRepoTests):
         self.assertIn("my-own-note.txt", lines)
         self.assertIn("AGENTS.local.md", lines)
         self.assertIn(".beads/", lines)
+
+    def test_a_header_over_only_tracers_known_lines_goes_with_them(self):
+        exclude = self.repo / ".git" / "info" / "exclude"
+        template_exclude = (self.template / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+        exclude.write_text(template_exclude + "\n# Local tracer files\ndocs/agents/\ndocs/tracer.md\n"
+                           + "\n# My notes\nmy-own-note.txt\n", encoding="utf-8")
+
+        run_untracer(self.repo, self.home)
+
+        after = exclude.read_text(encoding="utf-8")
+        self.assertTrue(after.startswith(template_exclude))
+        lines = after.splitlines()
+        for gone in "# Local tracer files", "docs/agents/", "docs/tracer.md":
+            self.assertNotIn(gone, lines)
+        for kept in "# My notes", "my-own-note.txt":
+            self.assertIn(kept, lines)
+
+    def test_a_header_left_alone_by_an_earlier_run_goes_on_the_next_run(self):
+        run_untracer(self.repo, self.home)
+        exclude = self.repo / ".git" / "info" / "exclude"
+        before = exclude.read_text(encoding="utf-8")
+        exclude.write_text(before + "\n# Local tracer files\n", encoding="utf-8")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("  .git/info/exclude (remove tracer's lines)", section(done.stdout, "Will edit:"))
+        self.assertEqual(before.rstrip("\n"), exclude.read_text(encoding="utf-8").rstrip("\n"))
+
+    def test_a_header_over_a_line_of_your_own_stays_with_that_line(self):
+        exclude = self.repo / ".git" / "info" / "exclude"
+        template_exclude = (self.template / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+        exclude.write_text(template_exclude + "\n# Local tracer files\ndocs/tracer.md\nmy-own-note.txt\n",
+                           encoding="utf-8")
+
+        run_untracer(self.repo, self.home)
+
+        self.assertEqual(template_exclude + "\n# Local tracer files\nmy-own-note.txt\n",
+                         exclude.read_text(encoding="utf-8"))
+
+    def test_a_tracer_header_over_lines_untracer_keeps_is_reworded_and_a_second_run_leaves_it(self):
+        exclude = self.repo / ".git" / "info" / "exclude"
+        template_exclude = (self.template / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+        exclude.write_text(template_exclude + "\n# tracer machinery (stealth adoption)\n.claude/skills/tracer/\n"
+                           + "docs/agents/\ndocs/tracer.md\nAGENTS.local.md\n.audit/\n", encoding="utf-8")
+
+        first = run_untracer(self.repo, self.home)
+        reworded = exclude.read_text(encoding="utf-8")
+        again = run_untracer(self.repo, self.home)
+
+        self.assertEqual(template_exclude + "\n# Local agent files\nAGENTS.local.md\n.audit/\n", reworded)
+        self.assertIn("  .git/info/exclude (remove tracer's lines, and reword tracer's heading to # Local agent files)",
+                      section(first.stdout, "Will edit:"))
+        self.assertEqual(0, again.returncode, again.stderr)
+        self.assertIn("Nothing of tracer's was found", again.stdout)
+        self.assertEqual(reworded, exclude.read_text(encoding="utf-8"))
 
     def test_bds_workspace_hooks_and_marked_block_and_the_project_docs_are_unchanged(self):
         before = fixture.read_tree(self.repo)
@@ -317,6 +373,23 @@ class RevisionThirtyEightTests(InstalledRepoTests):
 OWN_LINES = "\n## Build\n\nRun make check before a commit.\n"
 TEST_GATE_FULL = "- **Test gate: full.**"
 TEST_GATE_TARGETED = "- **Test gate: targeted.**"
+TEST_GATE_RULE = (
+    "- **Test gate: full.** What \"the tests\" means before a commit. `full`\n"
+    "  runs the whole suite once at the end of a build. `targeted` runs the\n"
+    "  tests that cover the changed code: the test files or classes the\n"
+    "  diff's seams reach, plus any test that references a changed public\n"
+    "  type, using the project's filter syntax (for example\n"
+    "  `dotnet test <project> --filter \"FullyQualifiedName~<Class>\"`,\n"
+    "  `pytest <paths>`, `ctest -R <regex>`), with the exact commands\n"
+    "  recorded in the close reason; the full suite is then CI's job on push.\n"
+    "  Choose `targeted` when the full suite takes long enough to dominate an\n"
+    "  implement run. Build or typecheck stays whole-project either way.\n"
+    "  Edit this line to change the gate; `implement` and its build subagent\n"
+    "  read it.\n")
+TEST_GATE_LAST_LINE = "  read it.\n"
+REFER_BY_NAME = ("**Refer by name.** In anything the human reads, name beads by title, with\n"
+                 "the id in parentheses, never a bare id.\n")
+REFER_BY_NAME_CHANGED = REFER_BY_NAME.replace("by title", "by their title")
 DOMAIN_DOCS_SEED = "- **Domain docs**: see `docs/agents/domain.md`."
 DOMAIN_DOCS_CHANGED = "- **Domain docs**: see `docs/domain.md`."
 READER_TWO_LINES = "*Reader: the agent. Written for a fresh context that has read nothing\nelse.*"
@@ -382,20 +455,62 @@ class StealthRulesTests(RulesFileTests):
         first_change = next(i for i, line in enumerate(out) if line.startswith(("removed ", "edited ")))
         self.assertLess(out.index("Your own lines:"), first_change)
 
-    def test_a_tracer_line_you_changed_is_kept_and_reported(self):
+    def test_a_tracer_line_you_changed_is_kept_with_the_whole_rule_it_sits_in(self):
         self.replace("AGENTS.local.md", TEST_GATE_FULL, TEST_GATE_TARGETED)
 
         done = run_untracer(self.repo, self.home)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(
-            "Use American spelling.\n\n"
-            "- **Test gate: targeted.** What \"the tests\" means before a commit. `full`\n\n"
-            "## Build\n\nRun make check before a commit.\n",
+            "Use American spelling.\n\n" + TEST_GATE_RULE.replace(TEST_GATE_FULL, TEST_GATE_TARGETED)
+            + "\n## Build\n\nRun make check before a commit.\n",
             self.read("CLAUDE.local.md"))
-        changed = section(done.stdout, "Tracer lines you changed (kept):")
+        changed = section(done.stdout, "Tracer rules you changed (kept whole):")
         self.assertEqual(1, len(changed), changed)
         self.assertIn(TEST_GATE_TARGETED, changed[0])
+
+    def test_a_tracer_line_you_rewrote_keeps_the_whole_rule_it_sits_in_and_the_rule_is_listed_once(self):
+        rewritten = "  read it, and so does the nightly job that our CI team runs.\n"
+        self.replace("AGENTS.local.md", TEST_GATE_RULE, TEST_GATE_RULE.replace(TEST_GATE_LAST_LINE, rewritten))
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(
+            "Use American spelling.\n\n" + TEST_GATE_RULE.replace(TEST_GATE_LAST_LINE, rewritten)
+            + "\n## Build\n\nRun make check before a commit.\n",
+            self.read("CLAUDE.local.md"))
+        changed = section(done.stdout, "Tracer rules you changed (kept whole):")
+        self.assertEqual(1, len(changed), changed)
+        self.assertIn(TEST_GATE_FULL, changed[0])
+        self.assertFalse(any("nightly job" in line for line in section(done.stdout, "Your own lines:")))
+
+    def test_a_line_of_your_own_added_inside_a_tracer_rule_keeps_the_whole_rule(self):
+        added = "  Our CI runs the full suite on every push.\n"
+        self.replace("AGENTS.local.md", TEST_GATE_RULE, TEST_GATE_RULE + added)
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(
+            "Use American spelling.\n\n" + TEST_GATE_RULE + added + "\n## Build\n\nRun make check before a commit.\n",
+            self.read("CLAUDE.local.md"))
+        changed = section(done.stdout, "Tracer rules you changed (kept whole):")
+        self.assertEqual(1, len(changed), changed)
+        self.assertIn(TEST_GATE_FULL, changed[0])
+
+    def test_a_tracer_line_you_changed_outside_a_rule_keeps_the_whole_paragraph_it_sits_in(self):
+        self.replace("AGENTS.local.md", REFER_BY_NAME, REFER_BY_NAME_CHANGED)
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(
+            "Use American spelling.\n\n" + REFER_BY_NAME_CHANGED + "\n## Build\n\nRun make check before a commit.\n",
+            self.read("CLAUDE.local.md"))
+        changed = section(done.stdout, "Tracer rules you changed (kept whole):")
+        self.assertEqual(1, len(changed), changed)
+        self.assertIn("**Refer by name.**", changed[0])
 
     def test_a_tracer_line_you_changed_at_the_end_of_block_one_is_kept_and_reported(self):
         self.replace("AGENTS.local.md", DOMAIN_DOCS_SEED, DOMAIN_DOCS_CHANGED)
@@ -406,10 +521,64 @@ class StealthRulesTests(RulesFileTests):
         self.assertEqual(
             "Use American spelling.\n\n" + DOMAIN_DOCS_CHANGED + "\n\n## Build\n\nRun make check before a commit.\n",
             self.read("CLAUDE.local.md"))
-        changed = section(done.stdout, "Tracer lines you changed (kept):")
+        changed = section(done.stdout, "Tracer rules you changed (kept whole):")
         self.assertEqual(1, len(changed), changed)
         self.assertIn(DOMAIN_DOCS_CHANGED, changed[0])
         self.assertFalse(any(DOMAIN_DOCS_CHANGED in line for line in section(done.stdout, "Your own lines:")))
+
+    def test_a_tracer_line_you_deleted_from_inside_a_rule_keeps_the_rest_of_the_rule(self):
+        deleted = "  `dotnet test <project> --filter \"FullyQualifiedName~<Class>\"`,\n"
+        shortened = TEST_GATE_RULE.replace(deleted, "")
+        self.assertEqual(11, len(shortened.splitlines()))
+        self.replace("AGENTS.local.md", TEST_GATE_RULE, shortened)
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(
+            "Use American spelling.\n\n" + shortened + "\n## Build\n\nRun make check before a commit.\n",
+            self.read("CLAUDE.local.md"))
+        changed = section(done.stdout, "Tracer rules you changed (kept whole):")
+        self.assertEqual(1, len(changed), changed)
+        self.assertIn(TEST_GATE_FULL, changed[0])
+
+    def test_a_tracer_rule_you_deleted_whole_keeps_none_of_its_neighbors(self):
+        self.replace("AGENTS.local.md", TEST_GATE_RULE, "")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("Use American spelling.\n\n## Build\n\nRun make check before a commit.\n",
+                         self.read("CLAUDE.local.md"))
+        self.assertEqual([], section(done.stdout, "Tracer rules you changed (kept whole):"))
+
+    def test_a_tracer_paragraph_you_deleted_whole_keeps_none_of_its_neighbors(self):
+        self.replace("AGENTS.local.md", REFER_BY_NAME + "\n", "")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("Use American spelling.\n\n## Build\n\nRun make check before a commit.\n",
+                         self.read("CLAUDE.local.md"))
+        self.assertEqual([], section(done.stdout, "Tracer rules you changed (kept whole):"))
+
+    def test_tracer_text_left_with_no_seed_copy_and_no_mark_is_listed_and_left_alone(self):
+        (self.repo / "docs" / "tracer.md").unlink()
+        agents = self.repo / "AGENTS.local.md"
+        agents.write_text("## Build\n\nRun make check before a commit.\n\n" + TEST_GATE_RULE, encoding="utf-8")
+        before = agents.read_bytes()
+        (self.repo / "CLAUDE.local.md").write_text("Use American spelling.\n", encoding="utf-8")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([], section(done.stdout, "Refused:"))
+        self.assertEqual(before, agents.read_bytes())
+        self.assertEqual("Use American spelling.\n", self.read("CLAUDE.local.md"))
+        self.assertEqual([f"  AGENTS.local.md:{5 + n}: {' '.join(line.split())}"
+                          for n, line in enumerate(TEST_GATE_RULE.splitlines())],
+                         section(done.stdout, "Tracer text with no seed copy (left):"))
+        self.assertEqual([], section(done.stdout, "Lines that still name tracer (left):"))
 
     def test_a_kept_line_that_still_names_tracer_is_listed_and_left(self):
         self.append("AGENTS.local.md", "\nSee projects/tracer-ui for the UI.\n")
@@ -598,6 +767,36 @@ class BareRepoTests(unittest.TestCase):
         self.assertNotIn("Nothing of tracer's was found", done.stdout)
         self.assertEqual(["  CLAUDE.local.md (docs/tracer.md is missing)"], section(done.stdout, "Refused:"))
         self.assertEqual("@AGENTS.local.md\n\nUse American spelling.\n", claude_local.read_text(encoding="utf-8"))
+
+    def test_a_leftover_exclude_line_is_removed_and_a_rules_file_without_tracers_mark_is_left_unrefused(self):
+        exclude = self.repo / ".git" / "info" / "exclude"
+        exclude.write_text(exclude.read_text(encoding="utf-8") + "\ndocs/agents/\n", encoding="utf-8")
+        claude_local = self.repo / "CLAUDE.local.md"
+        claude_local.write_text("Use American spelling.\n", encoding="utf-8")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("docs/agents/", exclude.read_text(encoding="utf-8").splitlines())
+        self.assertEqual([], section(done.stdout, "Refused:"))
+        self.assertEqual("Use American spelling.\n", claude_local.read_text(encoding="utf-8"))
+
+    def test_an_unmarked_tracer_rule_as_the_only_leftover_is_listed_in_a_plan_and_nothing_changes(self):
+        agents = self.repo / "AGENTS.local.md"
+        agents.write_text("## Build\n\nRun make check before a commit.\n\n" + TEST_GATE_RULE, encoding="utf-8")
+        before = agents.read_bytes()
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("Nothing of tracer's was found", done.stdout)
+        self.assertIn(f"Plan for {self.repo.resolve()}", done.stdout)
+        self.assertEqual([f"  AGENTS.local.md:{5 + n}: {' '.join(line.split())}"
+                          for n, line in enumerate(TEST_GATE_RULE.splitlines())],
+                         section(done.stdout, "Tracer text with no seed copy (left):"))
+        self.assertFalse(any(line.startswith(("removed ", "edited ", "Backup:")) for line in done.stdout.splitlines()))
+        self.assertEqual(before, agents.read_bytes())
+        self.assertFalse(self.home.exists())
 
     def test_an_agents_heading_over_the_reader_line_is_refused_for_the_missing_seed_copy(self):
         agents_local = self.repo / "AGENTS.local.md"

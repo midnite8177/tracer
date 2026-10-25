@@ -7,13 +7,21 @@ workspace, hooks and marked block, the glossaries and the ADRs.
 
 The rules files lose the lines adopt wrote from docs/tracer.md, matched as
 runs of lines with whitespace ignored, and keep every other line as the
-repo's own. A stealth file's own lines move into CLAUDE.local.md in place of
-the import line, and bd's marked block stays where it is. A committed file
-keeps its own lines in place, and the script stages the change and never
-commits it. When docs/tracer.md is missing or is not a seed revision this
-script knows byte for byte, the script refuses the rules files and leaves
-them and docs/tracer.md alone. Otherwise docs/tracer.md goes last, because
-it is the file that says what tracer installed.
+repo's own. A rule or paragraph of tracer's that the repo edited, added to
+or deleted a line from stays whole as the repo left it, so no kept line is
+a piece of a sentence. A stealth
+file's own lines move into CLAUDE.local.md in place of the import line, and
+bd's marked block stays where it is. A committed file keeps its own lines in
+place, and the script stages the change and never commits it. When
+docs/tracer.md is not a seed revision this script knows byte for byte, or is
+missing while a rules file still holds tracer's import line or AGENTS
+heading, the script refuses the rules files and leaves them and
+docs/tracer.md alone. With docs/tracer.md missing and no such mark, the
+script changes no rules file and lists the lines that still match a seed
+revision it knows, whose runs tracer-seed-runs.json beside it holds. When
+that text is all it finds, it prints the plan and changes nothing.
+Otherwise docs/tracer.md goes last, because it is the file that says what
+tracer installed.
 """
 import argparse
 import difflib
@@ -39,10 +47,13 @@ EXCLUDE_FILE = ".git/info/exclude"
 
 EXCLUDE_HEADING = "# tracer machinery (stealth)"
 EXCLUDE_LINES_REMOVED = [PLUGIN_DIR, *STATUSLINE_FILES, AGENTS_DOCS_DIR, SEED_COPY, ADOPT_NOTES]
+LOCAL_AGENT_FILES_HEADING = "# Local agent files"
 
 BD_BLOCK_MARKER = "BEGIN BEADS INTEGRATION"
 BD_BLOCK_END = "END BEADS INTEGRATION"
 RULES_FILES = ["AGENTS.md", "CLAUDE.md", "AGENTS.local.md", "CLAUDE.local.md"]
+AUDIT_DIR = ".audit/"
+EXCLUDE_LINES_KEPT = frozenset({*RULES_FILES, AUDIT_DIR})
 STEALTH_AGENTS = "AGENTS.local.md"
 STEALTH_CLAUDE = "CLAUDE.local.md"
 SHARED_AGENTS = "AGENTS.md"
@@ -56,6 +67,7 @@ SEED_HASHES = {
     42: "961054abbdc94e638ac8b326f3191e5842314dafd5f1d92c9917aceec70de6f6",
 }
 SEED_REVISION = re.compile(r"^Seed revision (\d+) ")
+KNOWN_SEED_RUNS = Path(__file__).resolve().parent / "tracer-seed-runs.json"
 BLOCK_ONE_HEADING = "# Block 1 — AGENTS.md core"
 BLOCK_TWO_PREFIX = "# Block 2"
 AGENTS_HEADING = "# AGENTS"
@@ -94,10 +106,11 @@ class RulesReport:
     names_tracer: list[str]
     unplaced: list[str]
     refused: list[str]
+    without_seed: list[str]
 
     @classmethod
     def empty(cls) -> "RulesReport":
-        return cls([], [], [], [], [])
+        return cls([], [], [], [], [], [])
 
 
 @dataclass(frozen=True)
@@ -142,17 +155,21 @@ class Place(Enum):
 OWN_KINDS = frozenset({LineKind.OWN, LineKind.CHANGED})
 TRACER_TEXT = frozenset({LineKind.TRACER, LineKind.CHANGED, LineKind.STEALTH_IMPORT, LineKind.SHARED_IMPORT})
 MOVE_MARKS = frozenset({LineKind.TRACER, LineKind.CHANGED, LineKind.STEALTH_IMPORT})
+GROUPED_KINDS = frozenset({LineKind.TRACER, LineKind.CHANGED, LineKind.OWN})
 BD_ONLY = frozenset({LineKind.BD})
+SEED_TEXT_KINDS = frozenset({LineKind.TRACER, LineKind.CHANGED})
 IMPORT_KINDS = {STEALTH_IMPORT: LineKind.STEALTH_IMPORT, SHARED_IMPORT: LineKind.SHARED_IMPORT}
 GAP = None
 
 
 @dataclass(frozen=True)
 class Line:
+    """One unit of a rules file and its kind; follows_deletion is set when seed lines the repo deleted sat above it."""
     number: int
     text: str
     key: str
     kind: LineKind
+    follows_deletion: bool
 
 
 @dataclass(frozen=True)
@@ -187,10 +204,59 @@ def write_text(path: Path, text: str) -> None:
         fh.write(text)
 
 
-def strip_tracer_exclude_lines(text: str) -> str:
-    dropped = {EXCLUDE_HEADING, *EXCLUDE_LINES_REMOVED}
-    kept = [line for line in text.splitlines(keepends=True) if line.rstrip("\r\n") not in dropped]
+def lines_under_comment(keys: list[str], start: int) -> list[str]:
+    """The lines below the comment at start, up to the next blank line or comment line."""
+    block = []
+    for key in keys[start + 1:]:
+        if key.strip() == "" or key.startswith("#"):
+            break
+        block.append(key)
+    return block
+
+
+def names_tracer(key: str) -> bool:
+    return key != LOCAL_AGENT_FILES_HEADING and (key == EXCLUDE_HEADING or "tracer" in key.lower())
+
+
+def is_spent_tracer_heading(key: str, block: list[str]) -> bool:
+    """True for a comment over only tracer's known lines, or a comment naming tracer whose lines are already gone."""
+    holds_only_known_lines = all(entry in EXCLUDE_LINES_REMOVED for entry in block)
+    return holds_only_known_lines and (bool(block) or names_tracer(key))
+
+
+def is_dropped_tracer_heading(key: str, block: list[str]) -> bool:
+    """True for tracer's known heading over any lines, or a spent tracer heading."""
+    return key == EXCLUDE_HEADING or is_spent_tracer_heading(key, block)
+
+
+def is_tracer_heading_over_kept_lines(key: str, block: list[str]) -> bool:
+    """True for a comment naming tracer over lines tracer wrote that untracer keeps, and no line of the user's."""
+    kept = [entry for entry in block if entry not in EXCLUDE_LINES_REMOVED]
+    return names_tracer(key) and bool(kept) and all(entry in EXCLUDE_LINES_KEPT for entry in kept)
+
+
+def exclude_without_tracer(text: str) -> str:
+    """The exclude file without tracer's known lines and spent headings, and with tracer's other headings reworded."""
+    lines = text.splitlines(keepends=True)
+    keys = [line.rstrip("\r\n") for line in lines]
+    kept = []
+    for index, (line, key) in enumerate(zip(lines, keys)):
+        if key in EXCLUDE_LINES_REMOVED:
+            continue
+        if key.startswith("#"):
+            block = lines_under_comment(keys, index)
+            if is_tracer_heading_over_kept_lines(key, block):
+                kept.append(LOCAL_AGENT_FILES_HEADING + line[len(key):])
+                continue
+            if is_dropped_tracer_heading(key, block):
+                continue
+        kept.append(line)
     return "".join(kept)
+
+
+def exclude_edit_summary(text: str, new: str) -> str:
+    reworded = new.splitlines().count(LOCAL_AGENT_FILES_HEADING) > text.splitlines().count(LOCAL_AGENT_FILES_HEADING)
+    return "remove tracer's lines" + (f", and reword tracer's heading to {LOCAL_AGENT_FILES_HEADING}" if reworded else "")
 
 
 def parse_settings(path: Path) -> dict:
@@ -232,7 +298,7 @@ def find_keeps(repo: Path) -> list[str]:
             adrs.append(prefix)
     keeps += sorted(glossaries) + sorted(adrs)
     if (repo / ".audit").is_dir():
-        keeps.append(".audit/")
+        keeps.append(AUDIT_DIR)
     if (repo / ".claude" / "settings.json").is_file():
         keeps.append(".claude/settings.json")
     keeps.append(f"{USER_SETTINGS} (user-wide, never touched)")
@@ -337,6 +403,7 @@ def replaced_pairs(before_claimed: bool, after_claimed: bool, at_edge: bool,
 def classify(units: list[Unit], runs: list[list[str]]) -> list[Line]:
     """Marks each unit as tracer's, a tracer line the repo changed, the repo's own, an import line or bd's."""
     kinds = [first_kind(unit) for unit in units]
+    follows_deletion = [False] * len(units)
     keys = [unit.key if kinds[i] is LineKind.OWN else unmatchable_key(i) for i, unit in enumerate(units)]
     for run in runs:
         opcodes = difflib.SequenceMatcher(None, run, keys, autojunk=False).get_opcodes()
@@ -347,6 +414,8 @@ def classify(units: list[Unit], runs: list[list[str]]) -> list[Line]:
             if claimed[n]:
                 for j in range(j1, j2):
                     kinds[j] = LineKind.TRACER
+            elif tag == "delete" and 0 < n < last and claimed[n - 1] and claimed[n + 1]:
+                follows_deletion[j1] = True
             elif tag == "replace":
                 before_claimed = n > 0 and claimed[n - 1]
                 after_claimed = n < last and claimed[n + 1]
@@ -355,7 +424,62 @@ def classify(units: list[Unit], runs: list[list[str]]) -> list[Line]:
                     similar = difflib.SequenceMatcher(None, run[i], keys[j]).ratio() >= CHANGED_LINE_SIMILARITY
                     if kinds[j] is LineKind.OWN and significant(keys[j]) and similar:
                         kinds[j] = LineKind.CHANGED
-    return [Line(unit.number, unit.text, unit.key, kind) for unit, kind in zip(units, kinds)]
+    return [Line(unit.number, unit.text, unit.key, kind, deleted_above)
+            for unit, kind, deleted_above in zip(units, kinds, follows_deletion)]
+
+
+def rules_and_paragraphs(lines: list[Line]) -> list[list[int]]:
+    """Groups the indexes of the text lines into rules and paragraphs.
+
+    A rule is a line that starts with "- " and the indented lines below it,
+    because a list of rules has no blank lines between its rules. Any other
+    line belongs to the paragraph that blank lines bound. A blank line, an
+    import line or a line of bd's block ends the group above it.
+    """
+    groups = []
+    current = []
+    in_rule = False
+    for index, line in enumerate(lines):
+        if line.kind not in GROUPED_KINDS or line.key == "":
+            if current:
+                groups.append(current)
+            current, in_rule = [], False
+            continue
+        starts_rule = line.text.startswith("- ")
+        indented = line.text[:1] in (" ", "\t")
+        if current and (starts_rule or (in_rule and not indented)):
+            groups.append(current)
+            current = []
+        if not current:
+            in_rule = starts_rule
+        current.append(index)
+    if current:
+        groups.append(current)
+    return groups
+
+
+def changed_whole(lines: list[Line], group: list[int]) -> bool:
+    """True for a rule or paragraph the repo changed.
+
+    It holds a tracer line the repo changed, a line of the repo's own among
+    tracer's, or a gap between two of its lines where the repo deleted
+    tracer's lines.
+    """
+    kinds = {lines[i].kind for i in group}
+    own_among_tracers = LineKind.TRACER in kinds and any(
+        lines[i].kind is LineKind.OWN and significant(lines[i].key) for i in group)
+    deleted_inside = any(lines[i].follows_deletion for i in group[1:])
+    return LineKind.CHANGED in kinds or own_among_tracers or deleted_inside
+
+
+def keep_changed_rules_whole(lines: list[Line]) -> list[Line]:
+    """Marks every line of a changed rule or paragraph as changed, so it is kept whole and never as a fragment."""
+    kinds = [line.kind for line in lines]
+    for group in rules_and_paragraphs(lines):
+        if changed_whole(lines, group):
+            for i in group:
+                kinds[i] = LineKind.CHANGED
+    return [replace(line, kind=kind) for line, kind in zip(lines, kinds)]
 
 
 def join_kept(tokens: list) -> str:
@@ -442,7 +566,7 @@ def analyze_rules_files(repo: Path, runs: list[list[str]], places: dict[str, Pla
     files = {}
     for name, place in places.items():
         text = read_text(repo / name)
-        files[name] = RulesFile(name, place, text, classify(read_units(text), runs))
+        files[name] = RulesFile(name, place, text, keep_changed_rules_whole(classify(read_units(text), runs)))
     return files
 
 
@@ -524,8 +648,15 @@ def rules_changes(files: dict[str, RulesFile], texts: dict[str, str], moved: Mov
     return changes
 
 
+def changed_rule_entry(rules_file: RulesFile, group: list[int]) -> str:
+    """Names a changed rule or paragraph by its line numbers and its first line."""
+    first, last = rules_file.lines[group[0]], rules_file.lines[group[-1]]
+    numbers = str(first.number) if first is last else f"{first.number}-{last.number}"
+    return f"{rules_file.name}:{numbers}: {first.key}"
+
+
 def report_rules(files: dict[str, RulesFile], touched: set[str]) -> RulesReport:
-    """Lists own and changed lines for the files the run changes, and lines that name tracer in every placed file."""
+    """Lists own lines and changed rules for the files the run changes, and lines that name tracer in every placed file."""
     own, changed, names_tracer, unplaced = [], [], [], []
     for rules_file in files.values():
         for line in rules_file.lines:
@@ -536,13 +667,12 @@ def report_rules(files: dict[str, RulesFile], touched: set[str]) -> RulesReport:
                 continue
             if line.kind in OWN_KINDS and "tracer" in line.key.lower():
                 names_tracer.append(entry)
-            if rules_file.name not in touched:
-                continue
-            if line.kind is LineKind.OWN and significant(line.key):
+            if rules_file.name in touched and line.kind is LineKind.OWN and significant(line.key):
                 own.append(entry)
-            if line.kind is LineKind.CHANGED:
-                changed.append(entry)
-    return RulesReport(own, changed, names_tracer, unplaced, [])
+        if rules_file.place is not Place.UNPLACED and rules_file.name in touched:
+            changed += [changed_rule_entry(rules_file, group) for group in rules_and_paragraphs(rules_file.lines)
+                        if all(rules_file.lines[i].kind is LineKind.CHANGED for i in group)]
+    return RulesReport(own, changed, names_tracer, unplaced, [], [])
 
 
 def plan_rules(repo: Path, runs: list[list[str]], places: dict[str, Place]) -> tuple[list[RulesChange], RulesReport]:
@@ -561,12 +691,36 @@ def holds_tracers_mark(text: str) -> bool:
     return any(key == AGENTS_HEADING and following == READER_LINE for key, following in zip(keys, keys[1:]))
 
 
-def plan_rules_or_refuse(repo: Path, machinery_found: bool) -> tuple[list[RulesChange], RulesReport]:
+def known_seed_runs() -> list[list[list[str]]]:
+    """The runs of each seed revision in SEED_HASHES, from the copy kept beside this script."""
+    data = json.loads(read_text(KNOWN_SEED_RUNS))
+    return [data[str(revision)] for revision in sorted(SEED_HASHES)]
+
+
+def seed_text_left(repo: Path, placed: list[str]) -> list[str]:
+    """Lists each line of the placed rules files that matches the text of a seed revision untracer knows."""
+    entries = []
+    every_revision = known_seed_runs()
+    for name in placed:
+        units = read_units(read_text(repo / name))
+        matched = {index for runs in every_revision
+                   for index, line in enumerate(classify(units, runs)) if line.kind in SEED_TEXT_KINDS}
+        entries += [f"{name}:{units[index].number}: {units[index].key}" for index in sorted(matched)]
+    return entries
+
+
+def plan_rules_or_refuse(repo: Path) -> tuple[list[RulesChange], RulesReport]:
+    """Plans the rules files against the seed copy.
+
+    With no seed copy, it refuses them only while one holds tracer's mark.
+    With neither, it changes nothing and lists the lines that still match a
+    seed revision it knows.
+    """
     places = rules_places(repo)
     placed = [name for name, place in places.items() if place is not Place.UNPLACED]
     marked = any(holds_tracers_mark(read_text(repo / name)) for name in placed)
-    if not (repo / SEED_COPY).is_file() and not machinery_found and not marked:
-        return [], RulesReport.empty()
+    if not (repo / SEED_COPY).is_file() and not marked:
+        return [], replace(RulesReport.empty(), without_seed=seed_text_left(repo, placed))
     try:
         runs = load_seed(repo)
     except SeedRefused as refusal:
@@ -584,9 +738,10 @@ def find_plan(repo: Path) -> Plan:
     exclude = repo / EXCLUDE_FILE
     if exclude.is_file():
         text = read_text(exclude)
-        if strip_tracer_exclude_lines(text) != text:
-            edits.append(Edit(EXCLUDE_FILE, "remove tracer's lines"))
-    rules, report = plan_rules_or_refuse(repo, bool(deletions or edits))
+        new = exclude_without_tracer(text)
+        if new != text:
+            edits.append(Edit(EXCLUDE_FILE, exclude_edit_summary(text, new)))
+    rules, report = plan_rules_or_refuse(repo)
     keeps = find_keeps(repo)
     if (repo / SEED_COPY).is_file():
         if report.refused:
@@ -615,10 +770,11 @@ def print_plan(plan: Plan) -> None:
         print(f"  {path}")
     for heading, entries in [
         ("Your own lines:", plan.report.own),
-        ("Tracer lines you changed (kept):", plan.report.changed),
+        ("Tracer rules you changed (kept whole):", plan.report.changed),
         ("Lines that still name tracer (left):", plan.report.names_tracer),
         ("Could not place (left):", plan.report.unplaced),
         ("Refused:", plan.report.refused),
+        ("Tracer text with no seed copy (left):", plan.report.without_seed),
     ]:
         if entries:
             print(heading)
@@ -672,9 +828,9 @@ def drop_status_line(repo: Path) -> None:
     print(f"edited {SETTINGS_LOCAL}")
 
 
-def drop_exclude_lines(repo: Path) -> None:
+def rewrite_exclude(repo: Path) -> None:
     path = repo / EXCLUDE_FILE
-    write_text(path, strip_tracer_exclude_lines(read_text(path)))
+    write_text(path, exclude_without_tracer(read_text(path)))
     print(f"edited {EXCLUDE_FILE}")
 
 
@@ -711,7 +867,7 @@ def apply(plan: Plan) -> None:
         if edit.path == SETTINGS_LOCAL:
             drop_status_line(repo)
         else:
-            drop_exclude_lines(repo)
+            rewrite_exclude(repo)
     if SEED_COPY in plan.deletions:
         remove_path(repo, SEED_COPY)
 
@@ -720,10 +876,13 @@ def untrace(repo: Path, jidoka_home: Path) -> None:
     if not (repo / ".git").is_dir():
         raise UntracerError(f"{repo} is not a git repository")
     plan = find_plan(repo)
-    if not plan.deletions and not plan.edits and not plan.rules and not plan.report.refused:
+    has_work = bool(plan.deletions or plan.edits or plan.rules or plan.report.refused)
+    if not has_work and not plan.report.without_seed:
         print(f"Nothing of tracer's was found in {repo}.")
         return
     print_plan(plan)
+    if not has_work:
+        return
     backup = back_up(plan, jidoka_home)
     print(f"Backup: {backup}")
     apply(plan)
