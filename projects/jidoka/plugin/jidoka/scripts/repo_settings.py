@@ -35,6 +35,11 @@ tracks either path. When the choice goes back to committed, or a private
 path changes, the script takes out the lines it added for the old paths and
 keeps every other byte of the file.
 
+"rule_conflicts" lists the repo's rules that overrule jidoka's session rules.
+Each one quotes the repo's rule as "repo_rule", names the file that says it,
+relative to the repo root, as "written_in", and quotes the jidoka rule it
+overrules as "overrules". Left out, it keeps the stored list, else [].
+
 It refuses while git tracks the main worktree's .beads/, naming the
 beads_stealth.py command that switches the workspace to stealth mode.
 
@@ -61,10 +66,13 @@ GLOSSARY_AND_ADRS = "glossary_and_adrs"
 COMMITTED, PRIVATE = "committed", "private"
 DOC_PATH_KEYS = ["glossary", "adrs"]
 DOCS_DEFAULTS = {"glossary": "GLOSSARY.md", "adrs": "docs/adr", GLOSSARY_AND_ADRS: COMMITTED}
+RULE_CONFLICTS = "rule_conflicts"
+DEFAULTS = {**DOCS_DEFAULTS, RULE_CONFLICTS: []}
 DERIVED_KEYS = ["build", "full_suite", "hand_run", "untested_apps"]
 MOVED_LINES = "moved_lines"
 APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_full", "test_target", "hand_run"]
 HAND_RUN_KEYS = ["name", "exclusion", "command", "reason"]
+RULE_CONFLICT_KEYS = ["repo_rule", "written_in", "overrules"]
 NO_TESTS = "an app with no test command has null for test, test_target and test_full, and [] for hand_run"
 TEST_SCOPES = ["targeted", "full"]
 APP_KINDS = ["program", "library"]
@@ -262,7 +270,7 @@ def is_repo_path(value: object) -> bool:
 
 def problems_in(settings: dict) -> list[str]:
     problems = [f"{key} is missing" for key in GIVEN_KEYS if key not in settings]
-    unknown = sorted(set(settings) - set(GIVEN_KEYS) - set(DOCS_DEFAULTS))
+    unknown = sorted(set(settings) - set(GIVEN_KEYS) - set(DEFAULTS))
     if unknown:
         problems.append(f"the settings have keys jidoka does not know: {', '.join(unknown)}")
     if "lap_test_scope" in settings and settings["lap_test_scope"] not in TEST_SCOPES:
@@ -281,6 +289,26 @@ def problems_in(settings: dict) -> list[str]:
                  for key in DOC_PATH_KEYS if key in settings and not is_repo_path(settings[key])]
     if settings.get(GLOSSARY_AND_ADRS, COMMITTED) not in (COMMITTED, PRIVATE):
         problems.append(f"{GLOSSARY_AND_ADRS} must be one of {COMMITTED}, {PRIVATE}")
+    if RULE_CONFLICTS in settings:
+        problems += rule_conflicts_problems(settings[RULE_CONFLICTS])
+    return problems
+
+
+def rule_conflicts_problems(conflicts: object) -> list[str]:
+    if not isinstance(conflicts, list):
+        return [f"{RULE_CONFLICTS} must be a list of conflicts"]
+    problems = []
+    for index, conflict in enumerate(conflicts):
+        label = f"{RULE_CONFLICTS}[{index}]"
+        if not isinstance(conflict, dict):
+            problems.append(f"{label} is not a JSON object")
+            continue
+        unknown = sorted(set(conflict) - set(RULE_CONFLICT_KEYS))
+        if unknown:
+            problems.append(f"{label} has keys jidoka does not know: {', '.join(unknown)}")
+        problems += [f"{label} has no {key}" for key in RULE_CONFLICT_KEYS if not is_text(conflict.get(key))]
+        if is_text(conflict.get("written_in")) and not is_repo_path(conflict["written_in"]):
+            problems.append(f"{label} has a written_in that is not a path inside the repo, relative to its root")
     return problems
 
 
@@ -357,15 +385,15 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
     local = main_tree / LOCAL_RULES
     moved = given.pop(MOVED_LINES, [])
     previous = load(path)
-    stored = {key: value for key, value in previous.items() if key in GIVEN_KEYS or key in DOCS_DEFAULTS}
-    merged = {**DOCS_DEFAULTS, **stored, **given}
+    stored = {key: value for key, value in previous.items() if key in GIVEN_KEYS or key in DEFAULTS}
+    merged = {**DEFAULTS, **stored, **given}
     problems = problems_in(merged) + moved_lines_problems(moved, local)
     if problems:
         raise SettingsError("nothing was written:\n" + "\n".join(f"  {problem}" for problem in problems))
     refuse_tracked_private_docs(main_tree, merged, GIT_TIMEOUT_SECONDS)
     settings = {
         "main_worktree": str(main_tree),
-        **{key: merged[key] for key in [*GIVEN_KEYS, *DOCS_DEFAULTS]},
+        **{key: merged[key] for key in [*GIVEN_KEYS, *DEFAULTS]},
         "build": [app["build"] for app in merged["apps"] if app["build"] is not None],
         "full_suite": [full_suite_command(app) for app in merged["apps"] if app["test"] is not None],
         "hand_run": hand_run_list(merged["apps"]),

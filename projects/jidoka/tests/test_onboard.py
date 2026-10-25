@@ -89,6 +89,14 @@ def untested_settings() -> dict:
     return {**tracer_settings(), "apps": [editor_app(), tracer_ui, help_pages, tracer_seed, jidoka]}
 
 
+DOC_COMMENT_CONFLICT = {"repo_rule": "Every public member has a /// doc comment.",
+                        "written_in": "CONTRIBUTING.md",
+                        "overrules": "Comments describe the code, never the work."}
+TEST_NAME_CONFLICT = {"repo_rule": "Name each test after the ticket it covers.",
+                      "written_in": "docs/testing.md",
+                      "overrules": "Tests assert runtime behavior."}
+
+
 def init_committed_repo(repo: Path) -> None:
     fixture.init_repo(repo)
     (repo / "README.md").write_text("shop\n", encoding="utf-8")
@@ -706,6 +714,100 @@ class OnboardingTests(unittest.TestCase):
 
         self.assertIn("Planning, Factory, Acceptance and Bench", done.stdout)
         self.assertIn("Code, tests, GLOSSARY.md and ADRs are always committed.", done.stdout)
+
+    def test_settings_hold_no_rule_conflicts_when_none_are_given(self):
+        done = self.write(self.repo, tracer_settings())
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([], json.loads(self.show(self.repo).stdout)["rule_conflicts"])
+
+    def test_a_rerun_that_leaves_out_the_rule_conflicts_keeps_them_and_one_that_gives_them_replaces_them(self):
+        self.write(self.repo, {**tracer_settings(), "rule_conflicts": [DOC_COMMENT_CONFLICT]})
+
+        kept = self.write(self.repo, {"lap_limit": 5})
+        kept_conflicts = json.loads(self.show(self.repo).stdout)["rule_conflicts"]
+        replaced = self.write(self.repo, {"rule_conflicts": [TEST_NAME_CONFLICT]})
+        replaced_conflicts = json.loads(self.show(self.repo).stdout)["rule_conflicts"]
+        emptied = self.write(self.repo, {"rule_conflicts": []})
+
+        for done in (kept, replaced, emptied):
+            self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([DOC_COMMENT_CONFLICT], kept_conflicts)
+        self.assertEqual([TEST_NAME_CONFLICT], replaced_conflicts)
+        self.assertEqual([], json.loads(self.show(self.repo).stdout)["rule_conflicts"])
+
+    def test_refuses_every_rule_conflict_jidoka_cannot_use_at_once_and_writes_nothing(self):
+        conflicts = [
+            {**DOC_COMMENT_CONFLICT, "repo_rule": " "},
+            {"repo_rule": "Name each test after the ticket it covers.", "written_in": "docs/testing.md"},
+            {**TEST_NAME_CONFLICT, "written_in": "../elsewhere/CONTRIBUTING.md"},
+            {**TEST_NAME_CONFLICT, "source_line": 12},
+            "CONTRIBUTING.md wins",
+        ]
+
+        done = self.write(self.repo, {**tracer_settings(), "rule_conflicts": conflicts})
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("nothing was written", done.stderr)
+        self.assertIn("rule_conflicts[0] has no repo_rule", done.stderr)
+        self.assertIn("rule_conflicts[1] has no overrules", done.stderr)
+        self.assertIn("rule_conflicts[2] has a written_in that is not a path inside the repo", done.stderr)
+        self.assertIn("rule_conflicts[3] has keys jidoka does not know: source_line", done.stderr)
+        self.assertIn("rule_conflicts[4] is not a JSON object", done.stderr)
+        self.assertEqual([], self.stored_files())
+
+    def test_a_session_says_after_the_rules_that_each_recorded_rule_conflict_wins_over_jidokas_rule(self):
+        self.write(self.repo, {**tracer_settings(), "rule_conflicts": [DOC_COMMENT_CONFLICT, TEST_NAME_CONFLICT]})
+        block = ("\n\nThis repo's rules win over jidoka's where they conflict:\n"
+                 '- CONTRIBUTING.md: "Every public member has a /// doc comment." It wins over jidoka\'s rule '
+                 '"Comments describe the code, never the work."\n'
+                 '- docs/testing.md: "Name each test after the ticket it covers." It wins over jidoka\'s rule '
+                 '"Tests assert runtime behavior."\n'
+                 "\nRead these before you explore the code or file work.\n")
+
+        for cwd in (self.repo, self.worktree):
+            with self.subTest(cwd=cwd):
+                done = self.session(cwd)
+
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assertIn(block, done.stdout)
+                self.assertLess(done.stdout.index("Planning, Factory, Acceptance and Bench"),
+                                done.stdout.index("This repo's rules win"))
+
+    def test_a_session_with_no_recorded_rule_conflicts_goes_from_the_rules_straight_to_the_docs(self):
+        self.write(self.repo, tracer_settings())
+        with_empty_list = self.session(self.repo).stdout
+        stored = self.stored_files()[0]
+        settings = json.loads(stored.read_text(encoding="utf-8"))
+        del settings["rule_conflicts"]
+        stored.write_text(json.dumps(settings), encoding="utf-8")
+        without_the_key = self.session(self.repo).stdout
+
+        for stdout in (with_empty_list, without_the_key):
+            self.assertIn("Planning, Factory, Acceptance and Bench.\n\nRead these before you explore", stdout)
+            self.assertNotIn("win over jidoka's", stdout)
+
+    def test_a_session_whose_rule_conflicts_cannot_be_read_gets_every_rule_and_no_conflicts(self):
+        self.write(self.repo, tracer_settings())
+        stored = self.stored_files()[0]
+        settings = json.loads(stored.read_text(encoding="utf-8"))
+        for broken in ("CONTRIBUTING.md wins", [None], [{"repo_rule": 3, "written_in": [], "overrules": {}}]):
+            with self.subTest(broken=broken):
+                stored.write_text(json.dumps({**settings, "rule_conflicts": broken}), encoding="utf-8")
+
+                done = self.session(self.repo)
+
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assertIn("Planning, Factory, Acceptance and Bench.\n\nRead these before", done.stdout)
+                self.assertIn("Code, tests, GLOSSARY.md and ADRs are always committed.", done.stdout)
+                self.assertNotIn("win over jidoka's", done.stdout)
+
+    def test_refuses_rule_conflicts_that_are_not_a_list(self):
+        done = self.write(self.repo, {**tracer_settings(), "rule_conflicts": DOC_COMMENT_CONFLICT})
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("rule_conflicts must be a list of conflicts", done.stderr)
+        self.assertEqual([], self.stored_files())
 
     def test_the_session_hook_says_to_onboard_a_beads_repo_without_settings(self):
         for cwd in (self.repo, self.worktree):

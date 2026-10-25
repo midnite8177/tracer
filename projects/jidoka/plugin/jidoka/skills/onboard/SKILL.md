@@ -11,7 +11,10 @@ and the stealth script is
 `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/beads_stealth.py"`,
 where the skill folder is the directory that holds this SKILL.md. Run them
 from inside the repo; any worktree of the repo finds the same settings and
-the same beads.
+the same beads. The session hook is
+`sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../hooks/session_start.py"`;
+run with `{}` on stdin from inside a repo that has beads, it prints jidoka's
+session rules.
 
 1. Put the beads in stealth mode before anything else. Run
    `git ls-files -- .beads` in the main worktree, the first path that
@@ -42,8 +45,10 @@ the same beads.
      show its stderr. The user commits, unstages or stashes them, then you
      run it again.
 2. Run the settings script with `show`. When it prints settings, this is a
-   rerun: show them to the user, with each null value in words, and from
-   here on propose only the changes `$ARGUMENTS` or the user asks for.
+   rerun: show them to the user, with each null value in words and each
+   recorded rule conflict in full, and from here on propose only the
+   changes `$ARGUMENTS` or the user asks for, and the rule conflicts of
+   step 5.
 3. Read the repo's README, its build files (solution and project files,
    `package.json`, `pyproject.toml`, `Makefile`, build scripts), its
    `CLAUDE.local.md`, `CLAUDE.md` and `AGENTS.md`. Find each app the repo
@@ -52,27 +57,43 @@ the same beads.
    hardware. Look for lines that say to skip a test class, run a group
    apart, or keep a folder out of the test run. Find the repo's glossary
    and its ADR folder, and run `git ls-files` on each to learn whether git
-   tracks them.
-4. Propose every setting below, each with the line from the repo it comes
-   from, quoted with its file. Mark a setting you could not find as a
-   question. Propose the glossary and ADR paths you found, or `GLOSSARY.md`
-   and `docs/adr` when the repo has neither, and ask whether the repo
-   commits them or keeps them private. Private suits a shared repo whose
-   team has not agreed to them. The step is done when the user has
-   confirmed or edited every proposed value.
-5. Ask which lines of `CLAUDE.local.md` the settings now hold. Only lines of
+   tracks them. Read the rest of the repo's documented rules too: the files
+   `CLAUDE.md`, `AGENTS.md` and `CLAUDE.local.md` import, and
+   `CONTRIBUTING.md`, `CODING_STANDARDS.md` and the like. Run the session
+   hook for jidoka's session rules, the list under its first line.
+4. Propose every setting below but `rule_conflicts`, which step 5 lists,
+   each with the line from the repo it comes from, quoted with its file.
+   Mark a setting you could not find as a question. Propose the glossary
+   and ADR paths you found, or `GLOSSARY.md` and `docs/adr` when the repo
+   has neither, and ask whether the repo commits them or keeps them
+   private. Private suits a shared repo whose team has not agreed to them.
+   The step is done when the user has confirmed or edited every proposed
+   value.
+5. List each rule conflict once. A rule conflict is a rule of the repo that
+   says the opposite of one of jidoka's session rules, or asks for what
+   that rule forbids, such as a `CONTRIBUTING.md` that wants a `///` doc
+   comment on every public member against jidoka's rule that comments
+   describe the code. Quote the repo's rule with its file, and the jidoka
+   rule word for word. Ask the user to confirm each one. The settings
+   record only the confirmed conflicts, and each recorded repo rule wins
+   over jidoka's in every session. On a rerun, show every recorded conflict
+   and ask only about the conflicts you find that are not recorded, and
+   about each recorded one whose file no longer says that. The step is done
+   when the user has confirmed or dropped each conflict you asked about.
+6. Ask which lines of `CLAUDE.local.md` the settings now hold. Only lines of
    `CLAUDE.local.md` itself move, never lines of a file it imports.
-6. Pipe the confirmed settings to the script with `write`, as one JSON
+7. Pipe the confirmed settings to the script with `write`, as one JSON
    object on stdin. On a rerun, pass only the keys that change; `apps`
-   replaces the whole app list. On a rerun with no changes, still run
-   `write` with `{}`. The script keeps every stored key and derives
-   `build`, `full_suite`, `hand_run` and `untested_apps` again. When the
-   script refuses, show its stderr,
-   fix the values with the user, and run it again. When it refuses because
-   git tracks `.beads`, go back to step 1 and offer the switch. When it
-   refuses private because git tracks the glossary or the ADRs, tell the
-   user those stay committed, and ask again.
-7. Run `show` and show the user what it prints, with each null value in
+   replaces the whole app list, and `rule_conflicts` the whole list of
+   conflicts, so pass every recorded conflict that stays with the new
+   ones. On a rerun with no changes, still run `write` with `{}`. The
+   script keeps every stored key and derives `build`, `full_suite`,
+   `hand_run` and `untested_apps` again. When the script refuses, show its
+   stderr, fix the values with the user, and run it again. When it refuses
+   because git tracks `.beads`, go back to step 1 and offer the switch.
+   When it refuses private because git tracks the glossary or the ADRs,
+   tell the user those stay committed, and ask again.
+8. Run `show` and show the user what it prints, with each null value in
    words. When the glossary and ADRs are private, also show
    `git status --short`, which no longer lists them.
 
@@ -112,6 +133,13 @@ The settings:
   uncommitted. That hides only files git does not track, so the script
   refuses private while git tracks either path. Choosing `"committed"`
   again takes those lines out.
+- `rule_conflicts`: the rule conflicts the user confirmed, a list that is
+  empty when there are none. Each has `repo_rule`, the repo's rule quoted
+  from its file, `written_in`, that file's path relative to the repo root,
+  and `overrules`, the jidoka session rule it overrules, quoted word for
+  word. Left out, it keeps its stored value, else `[]`. Every session in
+  the repo lists them after jidoka's rules, each as the repo's rule
+  winning over the jidoka rule.
 - `moved_lines`: the exact lines to take out of `CLAUDE.local.md`.
 
 A person never reads `null`. When you offer a null value as a choice or show
@@ -155,6 +183,9 @@ sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_sett
 {"lap_test_scope": "targeted", "worker_commands": ["python3 projects/tracer-seed/build.py"],
  "slot_use": null, "lap_limit": 2,
  "glossary": "GLOSSARY.md", "adrs": "docs/adr", "glossary_and_adrs": "committed",
+ "rule_conflicts": [{"repo_rule": "Every public member has a /// doc comment.",
+                     "written_in": "CONTRIBUTING.md",
+                     "overrules": "Comments describe the code, never the work."}],
  "apps": [{"name": "tracer-seed", "kind": "program", "way_in": "its command line",
            "build": "python3 projects/tracer-seed/build.py", "run": "python3 projects/tracer-seed/build.py",
            "test": "python3 -m unittest discover -s projects/tracer-seed/tests", "test_full": null,

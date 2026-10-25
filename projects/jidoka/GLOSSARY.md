@@ -341,12 +341,22 @@ _Avoid_: Adopt, install, setup, enroll
 What onboarding records about one repo on one machine, in jidoka's home and
 keyed by the repo's main worktree: its build, the commands lap workers may
 run, how a lap tests and uses its slot, the lap limit, each app's build,
-run and test commands, and its hand-run tests, and the paths of the repo's
+run and test commands, and its hand-run tests, the paths of the repo's
 glossary and ADRs with whether the repo commits them or keeps them
-private. Private glossaries and ADRs stay at their paths, hidden through
-the repo's git exclude file, for a shared repo whose team has not agreed to
-them.
+private, and its rule conflicts. Private glossaries and ADRs stay at their
+paths, hidden through the repo's git exclude file, for a shared repo whose
+team has not agreed to them.
 _Avoid_: Repo config, profile, manifest
+
+**Rule conflict**:
+A rule the repo documents, in its `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`
+or the like, that overrules one of jidoka's session rules, such as a doc
+comment on every public member against jidoka's rule that comments describe
+the code. Onboarding lists each one it finds, and the repo settings keep
+each one the human confirms, quoting the repo's rule, the file it is written
+in and the jidoka rule it overrules. Every session in the repo opens by
+saying the repo's rule wins.
+_Avoid_: Override, exception, waiver
 
 **App**:
 A program or a library that a repo ships, which app checks, holdouts and

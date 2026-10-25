@@ -7,9 +7,11 @@ paths of the tracker doc and the domain doc that ship in the plugin, and a
 line saying to run onboarding when jidoka's home holds no settings for the
 repo. The commit rule says the glossary and ADRs stay uncommitted when the
 repo settings keep them private, and that they are always committed
-otherwise, also when the settings are missing or cannot be read. Anywhere
-else it prints nothing. A failure also prints nothing, because this hook
-must never keep a session from starting.
+otherwise, also when the settings are missing or cannot be read. After the
+rules it lists each rule conflict the repo settings record, the repo's rule
+winning over the jidoka rule it quotes, and lists none when it cannot read
+them. Anywhere else it prints nothing. A failure also prints nothing,
+because this hook must never keep a session from starting.
 """
 from __future__ import annotations
 
@@ -40,6 +42,9 @@ COMMITTED_RULE = ("- Commit the work. Beads stealth mode covers the tracker only
 PRIVATE_RULE = ("- Commit the work. Beads stealth mode covers the tracker only. Code and tests are "
                 "committed. {glossary} and the ADRs in {adrs} stay uncommitted in this repo, hidden by its git "
                 "exclude file. Never stage them.")
+
+CONFLICTS_HEADING = "This repo's rules win over jidoka's where they conflict:"
+CONFLICT_LINE = '- {written_in}: "{repo_rule}" It wins over jidoka\'s rule "{overrules}"'
 
 ONBOARDING = "jidoka has no settings for this repo on this machine. Run /jidoka:onboard to record them.\n"
 
@@ -113,8 +118,23 @@ def commit_rule(main_tree: Path | None) -> str:
     return COMMITTED_RULE
 
 
+def rule_conflicts(main_tree: Path | None) -> str:
+    """The repo's rules that win over jidoka's, or nothing when the repo settings record none or cannot be read."""
+    if main_tree is None:
+        return ""
+    try:
+        script = repo_settings()
+        conflicts = script.load(settings_file(main_tree)).get(script.RULE_CONFLICTS, [])
+        if not conflicts or script.rule_conflicts_problems(conflicts):
+            return ""
+        lines = [CONFLICT_LINE.format(**conflict) for conflict in conflicts]
+    except Exception:
+        return ""
+    return "\n" + "\n".join([CONFLICTS_HEADING, *lines]) + "\n"
+
+
 def announcement(main_tree: Path | None) -> str:
-    return (f"{RULES.replace('COMMIT_RULE', commit_rule(main_tree))}\n"
+    return (f"{RULES.replace('COMMIT_RULE', commit_rule(main_tree))}{rule_conflicts(main_tree)}\n"
             "Read these before you explore the code or file work.\n"
             f"tracker doc: {DOCS / 'issue-tracker.md'}\n"
             f"domain doc: {DOCS / 'domain.md'}\n")

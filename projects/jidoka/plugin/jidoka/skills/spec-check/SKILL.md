@@ -30,12 +30,16 @@ range. The step is done when the diff is in hand. End with `cannot judge`
 when no fixed point resolves, when the diff is empty, or when the commits
 are plainly not this bead's work.
 
-**2. Read the repo's rules.** Before the bead, read what the repo says
-about how work is done: the house rules in `AGENTS.md` and `CLAUDE.md`
-and the files they import, `CODING_STANDARDS.md` or `CONTRIBUTING.md`
-when present, the `GLOSSARY.md` of the project the diff touches, and the
-ADRs under `docs/adr/` for that area. They decide what the bead's words
-mean in this repo. A rule that every change carries a test makes a
+**2. Read the repo's rules.** Before the bead, and before jidoka's own
+rules, read what the repo says about how work is done: the house rules in
+`AGENTS.md` and `CLAUDE.md` and the files they import,
+`CODING_STANDARDS.md` or `CONTRIBUTING.md` when present, the
+`GLOSSARY.md` of the project the diff touches, and the ADRs under
+`docs/adr/` for that area. They decide what the bead's words mean in this
+repo. The session opened with the rule conflicts onboarding recorded,
+under "This repo's rules win over jidoka's where they conflict"; where
+one is recorded, the repo's rule wins, and work that keeps it is neither
+missing nor extra. A rule that every change carries a test makes a
 missing test missing work, and a glossary term names exactly the thing
 the bead asked for. The style of the code and its comments belong to
 other stages; leave them alone.
