@@ -25,7 +25,9 @@ Exit codes:
   3  the tests failed, and the failure is recorded.
   4  the filter needs fixing, and nothing is recorded. It starts with the
      text the test_target puts before its placeholder, or the run executed
-     no tests. Run it again with a corrected filter.
+     no tests. Run it again with a corrected filter. When the run executed
+     no tests and the app has hand-run tests, the message names each group,
+     because its test_target leaves them out and no filter reaches them.
 """
 from __future__ import annotations
 
@@ -64,11 +66,20 @@ class NoTestsExecuted(Exception):
 
 
 @dataclass(frozen=True)
+class HandRunGroup:
+    """A group of the app's tests that its test_target leaves out, and the command the human runs it with."""
+    name: str
+    reason: str
+    command: str
+
+
+@dataclass(frozen=True)
 class App:
     """The part of an app's repo settings that names its tests."""
     name: str
     test: str
     test_target: str
+    hand_run: list[HandRunGroup]
 
 
 @dataclass(frozen=True)
@@ -120,8 +131,10 @@ def app_settings(home: Path, main_tree: Path, name: str) -> App:
         if isinstance(entry, dict) and entry.get("name") == name:
             problems = repo_settings.app_problems(index, entry)
             if problems:
-                raise TestRunError(f"the repo settings for app {name!r} are incomplete: {'; '.join(problems)}")
-            return App(name, entry["test"], entry["test_target"])
+                raise TestRunError(f"the repo settings for app {name!r} are incomplete: {'; '.join(problems)}. "
+                                   "Run /jidoka:onboard to record them")
+            groups = [HandRunGroup(group["name"], group["reason"], group["command"]) for group in entry["hand_run"]]
+            return App(name, entry["test"], entry["test_target"], groups)
     names = ", ".join(str(entry.get("name")) for entry in apps if isinstance(entry, dict))
     raise TestRunError(f"the repo settings have no app named {name!r}; the apps are {names}")
 
@@ -244,9 +257,19 @@ def targeted_tests(bead: str, worktree: Path, app: str, test_filter: str, home: 
     except NoTestsExecuted as error:
         raise FilterRefused(f"the run on the worktree merged with main at {error.base} executed no tests, so "
                             f"nothing is recorded on the bead. Check the --filter {test_filter!r} against the "
-                            f"test_target of app {app!r}, {settings.test_target!r}, and the output above") from error
+                            f"test_target of app {app!r}, {settings.test_target!r}, and the output above"
+                            f"{left_out(settings)}") from error
     record(bead, outcome, main_tree)
     return outcome.recorded
+
+
+def left_out(app: App) -> str:
+    """Names the hand-run groups the test_target leaves out, because a filter that names one of them runs nothing."""
+    if not app.hand_run:
+        return ""
+    groups = "".join(f"\n  {group.name}: {group.reason}\n    {group.command}" for group in app.hand_run)
+    return (". No filter reaches these hand-run tests, because the test_target leaves them out. "
+            f"The human runs them:{groups}")
 
 
 def main() -> int:

@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,9 @@ NO_TEST_MATCHES = ("[xUnit.net 00:00:00.07] Shop.Tests: Exception filtering test
 THIRTY_THREE_PASSED = ("Passed!  - Failed:     0, Passed:    33, Skipped:     0, Total:    33, Duration: 18 ms "
                        "- Shop.Tests.dll (net10.0)")
 RUN_TIMEOUT_SECONDS = 120
+WINDOW_TESTS = {"name": "window tests", "exclusion": "FullyQualifiedName!~WindowTests",
+                "command": "dotnet test Shop.Tests --filter FullyQualifiedName~WindowTests",
+                "reason": "they take keyboard focus"}
 
 RUNNER = """\
 import json, os, subprocess, sys
@@ -116,13 +120,21 @@ class TargetedTestsCase(unittest.TestCase):
             "lap_limit": 3,
             "apps": [
                 {"name": "shop", "kind": "program", "way_in": "its command line", "build": "true",
-                 "run": None, "test": cls.test_command, "test_target": "-k <name>"},
+                 "run": None, "test": cls.test_command, "test_full": None, "test_target": "-k <name>",
+                 "hand_run": []},
                 {"name": "untargeted", "kind": "library", "way_in": "its public API", "build": None,
-                 "run": None, "test": cls.test_command, "test_target": "--all"},
+                 "run": None, "test": cls.test_command, "test_full": None, "test_target": "--all",
+                 "hand_run": []},
                 {"name": "dotnet-shop", "kind": "program", "way_in": "its web pages", "build": "true",
-                 "run": None, "test": cls.test_command, "test_target": "--filter FullyQualifiedName~<name>"},
+                 "run": None, "test": cls.test_command, "test_full": None,
+                 "test_target": "--filter FullyQualifiedName~<name>", "hand_run": []},
                 {"name": "bare", "kind": "library", "way_in": "its public API", "build": None,
-                 "run": None, "test": cls.test_command, "test_target": "<name>"},
+                 "run": None, "test": cls.test_command, "test_full": None, "test_target": "<name>",
+                 "hand_run": []},
+                {"name": "windowed-shop", "kind": "program", "way_in": "its windows", "build": "true",
+                 "run": None, "test": cls.test_command, "test_full": '--filter "FullyQualifiedName!~WindowTests"',
+                 "test_target": '--filter "FullyQualifiedName~<name>&FullyQualifiedName!~WindowTests"',
+                 "hand_run": [WINDOW_TESTS]},
             ],
         }
         done = subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), "write"], input=json.dumps(settings),
@@ -278,6 +290,25 @@ class RefusedRunTests(TargetedTestsCase):
         self.assertEqual([], self.runs_of(bead))
         self.assertEqual({}, self.metadata(bead))
 
+    def test_an_app_whose_stored_settings_lack_test_full_and_hand_run_is_refused_with_a_pointer_to_onboarding(self):
+        bead = self.new_bead()
+        stale_home = self.root / f"jidoka-home-with-stale-settings-{self.count}"
+        shutil.copytree(self.home, stale_home)
+        [stored] = (stale_home / "repos").iterdir()
+        settings = json.loads(stored.read_text(encoding="utf-8"))
+        for key in ("test_full", "hand_run"):
+            del settings["apps"][0][key]
+        stored.write_text(json.dumps(settings), encoding="utf-8")
+
+        done = self.targeted_tests(bead, "shop", "test_greeting", stale_home)
+
+        self.assertEqual(1, done.returncode, done.stderr)
+        self.assertIn("test_full", done.stderr)
+        self.assertIn("hand_run", done.stderr)
+        self.assertIn("Run /jidoka:onboard", done.stderr)
+        self.assertEqual([], self.runs_of(bead))
+        self.assertEqual({}, self.metadata(bead))
+
     def test_a_repo_with_no_settings_is_refused_with_a_pointer_to_onboarding(self):
         bead = self.new_bead()
 
@@ -320,6 +351,15 @@ class FilterTests(TargetedTestsCase):
         self.assertEqual(["--filter FullyQualifiedName~BindAddressTests"], self.runs_of(bead))
         self.assertEqual("pass", self.metadata(bead)["tests.result"])
 
+    def test_a_filter_runs_inside_a_test_target_that_leaves_out_the_hand_run_tests(self):
+        bead = self.new_bead()
+
+        done = self.targeted_tests(bead, "windowed-shop", "Cart", self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["--filter FullyQualifiedName~Cart&FullyQualifiedName!~WindowTests"], self.runs_of(bead))
+        self.assertEqual("pass", self.metadata(bead)["tests.result"])
+
     def test_any_filter_runs_when_the_test_target_is_only_the_placeholder(self):
         bead = self.new_bead()
 
@@ -342,6 +382,21 @@ class NoTestsExecutedTests(TargetedTestsCase):
         self.assertIn("--filter 'Cart'", done.stderr)
         self.assertIn("--filter FullyQualifiedName~<name>", done.stderr)
         self.assertEqual(["--filter FullyQualifiedName~Cart"], self.runs_of(bead))
+        self.assertNotIn("hand-run", done.stderr)
+        self.assertEqual({}, self.metadata(bead))
+        self.assertEqual([], self.comments(bead))
+
+    def test_a_run_that_executed_no_tests_names_the_hand_run_groups_the_test_target_leaves_out(self):
+        bead = self.new_bead()
+        self.queue_outputs(bead, NO_TEST_MATCHES)
+
+        done = self.targeted_tests(bead, "windowed-shop", "WindowTests", self.home)
+
+        self.assertEqual(FILTER_REFUSED_EXIT_CODE, done.returncode, done.stderr)
+        self.assertIn("executed no tests", done.stderr)
+        self.assertIn("window tests", done.stderr)
+        self.assertIn("they take keyboard focus", done.stderr)
+        self.assertIn("dotnet test Shop.Tests --filter FullyQualifiedName~WindowTests", done.stderr)
         self.assertEqual({}, self.metadata(bead))
         self.assertEqual([], self.comments(bead))
 

@@ -9,11 +9,17 @@ under the old key. The home is --jidoka-home, else $JIDOKA_HOME, else
 
 `write` reads one JSON object on stdin. Its keys replace the stored ones and
 the stored keys it leaves out stay. The script checks the merged settings
-before it writes anything, and it derives "build" and "full_suite": the build
-of every app that has one, and every app's test, in app order. "moved_lines" names exact
-lines of the main worktree's CLAUDE.local.md that the settings now hold; the
-script removes one copy of the line for each time it is named and keeps every
-other byte of the file.
+before it writes anything, and it derives "build", "full_suite" and
+"hand_run", in app order: the build of every app that has one, every app's
+full-suite command, and every app's hand-run tests with the app's name. An
+app's full-suite command is its test, followed by its test_full when that is
+not null, and its targeted command is its test followed by its test_target.
+The script appends nothing to a command, so the person onboarding writes
+each hand-run group's exclusion into both commands, and the script refuses
+a group whose exclusion either command lacks.
+"moved_lines" names exact lines of the main worktree's CLAUDE.local.md that
+the settings now hold; the script removes one copy of the line for each time
+it is named and keeps every other byte of the file.
 
 It refuses while git tracks the main worktree's .beads/, naming the
 beads_stealth.py command that switches the workspace to stealth mode.
@@ -34,9 +40,10 @@ from pathlib import Path
 GIT_TIMEOUT_SECONDS = 30
 LOCAL_RULES = "CLAUDE.local.md"
 GIVEN_KEYS = ["lap_test_scope", "worker_commands", "slot_use", "lap_limit", "apps"]
-DERIVED_KEYS = ["build", "full_suite"]
+DERIVED_KEYS = ["build", "full_suite", "hand_run"]
 MOVED_LINES = "moved_lines"
-APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_target"]
+APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_full", "test_target", "hand_run"]
+HAND_RUN_KEYS = ["name", "exclusion", "command", "reason"]
 TEST_SCOPES = ["targeted", "full"]
 APP_KINDS = ["program", "library"]
 BEADS_WORKSPACE = ".beads"
@@ -123,11 +130,59 @@ def app_problems(index: int, app: object) -> list[str]:
             problems.append(f"{label} has no {key}; use null when it has none")
         elif not text_or_null(app[key]):
             problems.append(f"{label} has a {key} that is neither a command nor null")
+    command_problems = []
     if not is_text(app.get("test")):
-        problems.append(f"{label} has no test command")
+        command_problems.append(f"{label} has no test command")
     if not is_text(app.get("test_target")):
-        problems.append(f"{label} does not say how to target a test")
+        command_problems.append(f"{label} does not say how to target a test")
+    if "test_full" not in app:
+        command_problems.append(f"{label} has no test_full; use null when the full suite is the test command alone")
+    elif not text_or_null(app["test_full"]):
+        command_problems.append(f"{label} has a test_full that is neither arguments nor null")
+    problems += command_problems
+    if "hand_run" not in app:
+        problems.append(f"{label} has no hand_run; use [] when every test runs in the full suite")
+    else:
+        problems += hand_run_problems(label, app, not command_problems)
     return problems
+
+
+def full_suite_command(app: dict) -> str:
+    return app["test"] if app["test_full"] is None else f"{app['test']} {app['test_full']}"
+
+
+def hand_run_problems(label: str, app: dict, commands_valid: bool) -> list[str]:
+    groups = app["hand_run"]
+    if not isinstance(groups, list):
+        return [f"{label} has a hand_run that is not a list of groups"]
+    problems = []
+    for index, group in enumerate(groups):
+        if not isinstance(group, dict):
+            problems.append(f"{label} has a hand_run[{index}] that is not a JSON object")
+            continue
+        name = group.get("name")
+        group_label = f"{label} has a hand_run group " + (repr(name) if is_text(name) else f"hand_run[{index}]")
+        unknown = sorted(set(group) - set(HAND_RUN_KEYS))
+        if unknown:
+            problems.append(f"{group_label} with keys jidoka does not know: {', '.join(unknown)}")
+        problems += [f"{group_label} with no {key}" for key in HAND_RUN_KEYS if not is_text(group.get(key))]
+        exclusion = group.get("exclusion")
+        if commands_valid and is_text(exclusion):
+            problems += [f"{group_label} whose exclusion {exclusion!r} is not in the {kind}, {command!r}, "
+                         "so that command runs the group"
+                         for kind, command in app_commands(app) if exclusion not in command]
+    return problems
+
+
+def app_commands(app: dict) -> list[tuple[str, str]]:
+    """The app's full-suite command and its targeted command, the placeholder left in, each named."""
+    return [("full-suite command", full_suite_command(app)),
+            ("targeted command", f"{app['test']} {app['test_target']}")]
+
+
+def hand_run_list(apps: list[dict]) -> list[dict]:
+    return [{"app": app["name"], "name": group["name"], "reason": group["reason"], "command": group["command"]}
+            for app in apps for group in app["hand_run"]]
 
 
 def problems_in(settings: dict) -> list[str]:
@@ -230,7 +285,8 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
         "main_worktree": str(main_tree),
         **{key: merged[key] for key in GIVEN_KEYS},
         "build": [app["build"] for app in merged["apps"] if app["build"] is not None],
-        "full_suite": [app["test"] for app in merged["apps"]],
+        "full_suite": [full_suite_command(app) for app in merged["apps"]],
+        "hand_run": hand_run_list(merged["apps"]),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")

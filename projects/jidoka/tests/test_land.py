@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -40,7 +41,8 @@ from pathlib import Path
 folder, suite = Path(sys.argv[1]), sys.argv[2]
 tree = Path.cwd()
 with open(folder / f"{tree.name}.log", "a", encoding="utf-8") as log:
-    log.write(json.dumps({"suite": suite, "cwd": str(tree), "files": sorted(os.listdir(tree))}) + "\\n")
+    log.write(json.dumps({"suite": suite, "args": sys.argv[3:], "cwd": str(tree),
+                          "files": sorted(os.listdir(tree))}) + "\\n")
 code_file = folder / f"exit-{suite}-{tree.name}"
 code = int(code_file.read_text(encoding="utf-8")) if code_file.exists() else 0
 print(f"{suite} suite output {code}")
@@ -125,19 +127,24 @@ class LandingCase(unittest.TestCase):
         return f'"{sys.executable}" "{cls.suite_runner}" "{cls.suite_runs}" {suite}'
 
     @classmethod
+    def apps(cls) -> list[dict]:
+        return [
+            {"name": "shop", "kind": "program", "way_in": "its command line", "build": None,
+             "run": None, "test": cls.suite_command("shop"), "test_full": None, "test_target": "-k <name>",
+             "hand_run": []},
+            {"name": "kiosk", "kind": "library", "way_in": "its public API", "build": "true",
+             "run": None, "test": cls.suite_command("kiosk"), "test_full": None, "test_target": "-k <name>",
+             "hand_run": []},
+        ]
+
+    @classmethod
     def write_settings(cls) -> None:
-        """Repo settings with two apps, shop then kiosk, whose test commands are the suite runner."""
         settings = {
             "lap_test_scope": "targeted",
             "worker_commands": [],
             "slot_use": None,
             "lap_limit": 3,
-            "apps": [
-                {"name": "shop", "kind": "program", "way_in": "its command line", "build": None,
-                 "run": None, "test": cls.suite_command("shop"), "test_target": "-k <name>"},
-                {"name": "kiosk", "kind": "library", "way_in": "its public API", "build": "true",
-                 "run": None, "test": cls.suite_command("kiosk"), "test_target": "-k <name>"},
-            ],
+            "apps": cls.apps(),
         }
         done = subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), "write"], input=json.dumps(settings),
                               capture_output=True, text=True, encoding="utf-8",
@@ -260,6 +267,15 @@ class LandingTests(LandingCase):
         self.assertFalse(bead.worktree.exists())
         self.assertNotIn(bead.branch, git(self.repo, "branch", "--list"))
         self.assertNotIn(str(bead.worktree), git(self.repo, "worktree", "list"))
+
+    def test_landing_prints_only_the_sha_when_no_app_has_hand_run_tests(self):
+        bead = self.new_bead("pass")
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(git(self.repo, "rev-parse", "main"), done.stdout.splitlines()[-1])
+        self.assertNotIn("Hand-run", done.stdout + done.stderr)
 
     def test_a_branch_with_no_work_of_its_own_on_main_is_not_taken_for_a_landed_one(self):
         bead = self.new_bead("pass")
@@ -388,6 +404,25 @@ class RecordedTestsAndSettingsTests(LandingCase):
         self.assert_nothing_landed(bead, head)
         self.assertEqual(tip, self.tip(bead))
 
+    def test_settings_that_hold_no_hand_run_list_are_refused_with_a_pointer_to_onboarding(self):
+        bead = self.new_bead("pass")
+        head = git(self.repo, "rev-parse", "main")
+        older_home = self.root / f"jidoka-home-without-hand-run-{self.count}"
+        shutil.copytree(self.home, older_home)
+        [stored] = (older_home / "repos").iterdir()
+        settings = json.loads(stored.read_text(encoding="utf-8"))
+        del settings["hand_run"]
+        stored.write_text(json.dumps(settings), encoding="utf-8")
+        self.jidoka_home = older_home
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(1, done.returncode, done.stderr)
+        self.assertIn("hand_run", done.stderr)
+        self.assertIn("/jidoka:onboard", done.stderr)
+        self.assertEqual([], self.suite_runs_of(bead))
+        self.assert_nothing_landed(bead, head)
+
 
 class FullSuiteTests(LandingCase):
     def test_landing_runs_every_apps_full_suite_once_in_app_order_on_the_branch_rebased_on_main(self):
@@ -454,6 +489,99 @@ class FullSuiteTests(LandingCase):
             self.assertIn(command, done.stderr)
             self.assertIn(output, done.stderr)
         self.assert_nothing_landed(bead, head)
+
+
+class HandRunTests(LandingCase):
+    @classmethod
+    def apps(cls) -> list[dict]:
+        shop, kiosk = super().apps()
+        shop["test_full"] = "--exclude windows"
+        shop["test_target"] = "-k <name> --exclude windows"
+        shop["hand_run"] = [{"name": "window tests", "exclusion": "--exclude windows",
+                             "command": cls.marker_command("windows"), "reason": "they take keyboard focus"}]
+        kiosk["test"] = f"{cls.suite_command('kiosk')} tests/"
+        kiosk["hand_run"] = [{"name": "hardware scripts", "exclusion": "tests/",
+                              "command": cls.marker_command("hardware"),
+                              "reason": "they need the modem plugged in"}]
+        return [shop, kiosk]
+
+    @classmethod
+    def marker_command(cls, group: str) -> str:
+        return f'"{sys.executable}" "{cls.runner}" "{cls.root / f"hand-run-{group}"}" 0'
+
+    def hand_run_listing(self) -> list[str]:
+        return ["Hand-run tests, which landing never runs. Run each one yourself:",
+                "  shop, window tests: they take keyboard focus",
+                f"    {self.marker_command('windows')}",
+                "  kiosk, hardware scripts: they need the modem plugged in",
+                f"    {self.marker_command('hardware')}"]
+
+    def assert_no_hand_run_group_ran(self) -> None:
+        for group in ("windows", "hardware"):
+            self.assertFalse((self.root / f"hand-run-{group}").exists(), group)
+
+    def test_the_full_suite_runs_each_app_with_its_test_full_and_never_runs_a_hand_run_group(self):
+        bead = self.new_bead("pass")
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([("shop", ["--exclude", "windows"]), ("kiosk", ["tests/"])],
+                         [(run["suite"], run["args"]) for run in self.suite_runs_of(bead)])
+        self.assert_no_hand_run_group_ran()
+
+    def test_landing_lists_each_hand_run_group_with_its_app_reason_and_command_after_the_sha(self):
+        bead = self.new_bead("pass")
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        expected = [git(self.repo, "rev-parse", "main"), *self.hand_run_listing()]
+        self.assertEqual(expected, done.stdout.splitlines()[-len(expected):])
+
+    def test_a_failed_full_suite_lists_the_hand_run_groups_after_the_failing_output(self):
+        bead = self.new_bead("pass")
+        self.fail_suite(bead, "kiosk", 1)
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(FULL_SUITE_FAILED_EXIT_CODE, done.returncode, done.stderr)
+        lines = done.stderr.splitlines()
+        self.assertEqual(self.hand_run_listing(), lines[-len(self.hand_run_listing()):])
+        self.assertIn("kiosk suite output 1", lines[:-len(self.hand_run_listing())])
+        self.assert_no_hand_run_group_ran()
+
+    def test_a_partly_landed_bead_and_the_rerun_that_finds_it_on_main_both_list_the_hand_run_groups(self):
+        bead = self.new_bead("pass")
+        self.put_bd_in_front("close", garbage=False)
+
+        first = self.land(bead, MESSAGE)
+
+        self.assertEqual(PARTLY_LANDED_EXIT_CODE, first.returncode, first.stderr)
+        first_lines = first.stderr.splitlines()
+        self.assertEqual(self.hand_run_listing(), first_lines[-len(self.hand_run_listing()):])
+        self.assertIn("bd close", "\n".join(first_lines[:-len(self.hand_run_listing())]))
+
+        self.bd_in_front = None
+        second = self.land(bead, MESSAGE)
+
+        self.assertEqual(0, second.returncode, second.stderr)
+        self.assertEqual(2, len(self.suite_runs_of(bead)))
+        self.assertEqual([git(self.repo, "rev-parse", "main"), *self.hand_run_listing()], second.stdout.splitlines())
+
+    def test_a_refused_landing_and_one_waiting_on_edits_list_no_hand_run_groups(self):
+        refused = self.new_bead(None)
+        waiting = self.new_bead("pass")
+        (self.repo / f"greeting-{self.count}-1.txt").write_text("my own notes\n", encoding="utf-8")
+        self.addCleanup(self.clean_main_checkout)
+
+        for bead, exit_code in ((refused, 1), (waiting, DIRTY_EXIT_CODE)):
+            with self.subTest(exit_code=exit_code):
+                done = self.land(bead, MESSAGE)
+
+                self.assertEqual(exit_code, done.returncode, done.stderr)
+                self.assertNotIn("Hand-run", done.stdout + done.stderr)
+                self.assertNotIn("window tests", done.stdout + done.stderr)
 
 
 class MainCheckoutTests(LandingCase):

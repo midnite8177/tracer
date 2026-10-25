@@ -341,7 +341,7 @@ _Avoid_: Adopt, install, setup, enroll
 What onboarding records about one repo on one machine, in jidoka's home and
 keyed by the repo's main worktree: its build, the commands lap workers may
 run, how a lap tests and uses its slot, the lap limit, and each app's build,
-run and test commands.
+run and test commands, and its hand-run tests.
 _Avoid_: Repo config, profile, manifest
 
 **App**:
@@ -350,6 +350,15 @@ acceptance specs reach from outside. People reach a program through its
 command line, API or UI; programmers reach a library through its public
 API. A repo holds one or more.
 _Avoid_: Project, product, target, binary
+
+**Hand-run tests**:
+A group of an app's tests that the factory never runs and only the human
+does, such as window tests that take keyboard focus or scripts that drive
+hardware. The repo settings list each group under `hand_run`, with the text
+that leaves it out of the app's test commands, the command that runs it,
+and why. Landing ends by listing every group, for the human to run before
+trusting the commit.
+_Avoid_: Manual tests, skipped tests, excluded tests, slow tests
 
 **Untracer**:
 The script, run by the human in a terminal, that takes tracer's files out of

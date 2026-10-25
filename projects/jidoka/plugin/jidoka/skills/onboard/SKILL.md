@@ -45,8 +45,12 @@ the same beads.
    rerun: show them to the user, with each null value in words, and from
    here on propose only the changes `$ARGUMENTS` or the user asks for.
 3. Read the repo's README, its build files (solution and project files,
-   `package.json`, `pyproject.toml`, `Makefile`, build scripts) and its
-   `CLAUDE.local.md`. Find each app the repo ships.
+   `package.json`, `pyproject.toml`, `Makefile`, build scripts), its
+   `CLAUDE.local.md`, `CLAUDE.md` and `AGENTS.md`. Find each app the repo
+   ships, and each app's hand-run tests: tests the factory must never run,
+   such as window tests that take keyboard focus or scripts that drive
+   hardware. Look for lines that say to skip a test class, run a group
+   apart, or keep a folder out of the test run.
 4. Propose every setting below, each with the line from the repo it comes
    from, quoted with its file. Mark a setting you could not find as a
    question. The step is done when the user has confirmed or edited every
@@ -73,18 +77,47 @@ The settings:
   hold it, so ask the user.
 - `apps`: one object per app with `name`, `kind` (`"program"` or
   `"library"`), `way_in` (how a person or a program reaches it, or `null`),
-  `build`, `run` (commands, or `null`), `test` (the app's own test command)
-  and `test_target` (how to run one test).
+  `build`, `run` (commands, or `null`), `test` (the app's own test command),
+  `test_full` (the arguments the full suite adds to `test`, or `null`),
+  `test_target` (how to run one test) and `hand_run` (the app's hand-run
+  tests, a list that is empty when it has none).
+- Each `hand_run` group has a `name`, its `exclusion` (the exact text that
+  leaves it out, which both the full-suite command and the targeted
+  command, `test` followed by `test_target`, must hold), the `command` that
+  runs it, and the `reason` only the human runs it.
 - `moved_lines`: the exact lines to take out of `CLAUDE.local.md`.
 
 A person never reads `null`. When you offer a null value as a choice or show
 one, label it by what it means: `slot_use` "No slot use: app checks take
 turns", `way_in` "No way in recorded", `build` "No build step", `run` "No run
+command", `test_full` "No extra arguments: the full suite is the test
 command". The word `null` appears only in the JSON you pass to `write`.
 
-The script derives the repo's build from every app's `build` and the full
-suite from every app's `test`, so it refuses settings in which no app has a
-build or an app has no test. An example for one app:
+The script derives the repo's build from every app's `build`, and the full
+suite from every app's `test` followed by its `test_full`. It refuses
+settings in which no app has a build or an app has no test. It also refuses
+a `hand_run` group without a name, exclusion, command or reason, or whose
+exclusion is missing from the full-suite command or the targeted command.
+The script appends nothing to a command, so write each group's exclusion
+into the commands yourself, in the form the test runner takes. dotnet test
+refuses a second `--filter`, so a dotnet app puts the exclusion inside its
+one filter, in `test_full` and again in `test_target`:
+
+```json
+{"name": "recovered-box", "test": "dotnet test RecoveredBox.Tests",
+ "test_full": "--filter \"FullyQualifiedName!~CampfireWindowTests\"",
+ "test_target": "--filter \"FullyQualifiedName~<name>&FullyQualifiedName!~CampfireWindowTests\"",
+ "hand_run": [{"name": "window tests", "exclusion": "FullyQualifiedName!~CampfireWindowTests",
+               "command": "dotnet test RecoveredBox.Tests --filter \"FullyQualifiedName~CampfireWindowTests\"",
+               "reason": "they open windows that take keyboard focus"}]}
+```
+
+A test command that collects only one folder, such as
+`.venv/bin/python -m pytest tests/ -q`, already leaves out scripts kept
+elsewhere, and the group's exclusion is `tests/`. Landing lists every
+group with its reason and command, so the human can run them.
+
+An example for one app:
 
 ```sh
 sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py" write <<'EOF'
@@ -92,7 +125,8 @@ sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_sett
  "slot_use": null, "lap_limit": 2,
  "apps": [{"name": "tracer-seed", "kind": "program", "way_in": "its command line",
            "build": "python3 projects/tracer-seed/build.py", "run": "python3 projects/tracer-seed/build.py",
-           "test": "python3 -m unittest discover -s projects/tracer-seed/tests", "test_target": "-k <name>"}],
+           "test": "python3 -m unittest discover -s projects/tracer-seed/tests", "test_full": null,
+           "test_target": "-k <name>", "hand_run": []}],
  "moved_lines": ["Build with python3 projects/tracer-seed/build.py"]}
 EOF
 ```

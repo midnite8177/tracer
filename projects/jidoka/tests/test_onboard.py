@@ -25,13 +25,15 @@ def tracer_apps() -> list:
          "build": "dotnet build projects/tracer-ui/TracerUi.slnx",
          "run": "dotnet run --project projects/tracer-ui/src/TracerUi.Web",
          "test": "dotnet test projects/tracer-ui/TracerUi.slnx",
-         "test_target": '--filter "FullyQualifiedName~<Class>"'},
+         "test_target": '--filter "FullyQualifiedName~<Class>"', "test_full": None, "hand_run": []},
         {"name": "tracer-seed", "kind": "program", "way_in": "its command line",
          "build": "python3 projects/tracer-seed/build.py", "run": "python3 projects/tracer-seed/build.py",
-         "test": "python3 -m unittest discover -s projects/tracer-seed/tests", "test_target": "-k <name>"},
+         "test": "python3 -m unittest discover -s projects/tracer-seed/tests", "test_target": "-k <name>",
+         "test_full": None, "hand_run": []},
         {"name": "jidoka", "kind": "program", "way_in": "its command line", "build": None,
          "run": "python3 projects/jidoka/install.py --config-dir <path>",
-         "test": "python3 -m unittest discover -s projects/jidoka/tests", "test_target": "-k <name>"},
+         "test": "python3 -m unittest discover -s projects/jidoka/tests", "test_target": "-k <name>",
+         "test_full": None, "hand_run": []},
     ]
 
 
@@ -43,6 +45,37 @@ def tracer_settings() -> dict:
         "lap_limit": 3,
         "apps": tracer_apps(),
     }
+
+
+WINDOW_TESTS = {"name": "window tests", "exclusion": "FullyQualifiedName!~CampfireWindowTests",
+                "command": 'dotnet test RecoveredBox.Tests --filter "FullyQualifiedName~CampfireWindowTests"',
+                "reason": "they open windows that take keyboard focus"}
+LIVE_MCP_TESTS = {"name": "live MCP tests", "exclusion": "FullyQualifiedName!~LiveMcpStdioTests",
+                  "command": 'dotnet test RecoveredBox.Tests --filter "FullyQualifiedName~LiveMcpStdioTests"',
+                  "reason": "they start the real MCP server over stdio"}
+MODEM_SCRIPTS = {"name": "modem scripts", "exclusion": "tests/",
+                 "command": ".venv/bin/python tools/modem-duplex/run.py",
+                 "reason": "they need the modem plugged in"}
+
+
+def recovered_box_app() -> dict:
+    return {"name": "recovered-box", "kind": "program", "way_in": "its windows",
+            "build": "dotnet build RecoveredBox.slnx", "run": None,
+            "test": "dotnet test RecoveredBox.Tests",
+            "test_full": '--filter "FullyQualifiedName!~CampfireWindowTests&FullyQualifiedName!~LiveMcpStdioTests"',
+            "test_target": '--filter "FullyQualifiedName~<name>&FullyQualifiedName!~CampfireWindowTests'
+                           '&FullyQualifiedName!~LiveMcpStdioTests"',
+            "hand_run": [dict(WINDOW_TESTS), dict(LIVE_MCP_TESTS)]}
+
+
+def spam_app() -> dict:
+    return {"name": "spam", "kind": "program", "way_in": "its command line", "build": None, "run": None,
+            "test": ".venv/bin/python -m pytest tests/ -q", "test_full": None, "test_target": "-k <name>",
+            "hand_run": [dict(MODEM_SCRIPTS)]}
+
+
+def hand_run_settings() -> dict:
+    return {**tracer_settings(), "apps": [recovered_box_app(), spam_app()]}
 
 
 def init_committed_repo(repo: Path) -> None:
@@ -142,6 +175,113 @@ class OnboardingTests(unittest.TestCase):
                           "python3 -m unittest discover -s projects/tracer-seed/tests",
                           "python3 -m unittest discover -s projects/jidoka/tests"], shown["full_suite"])
         self.assertEqual('--filter "FullyQualifiedName~<Class>"', shown["apps"][0]["test_target"])
+
+    def test_the_full_suite_adds_an_apps_test_full_to_its_test_command(self):
+        self.write(self.repo, hand_run_settings())
+
+        shown = json.loads(self.show(self.repo).stdout)
+
+        self.assertEqual(['dotnet test RecoveredBox.Tests --filter '
+                          '"FullyQualifiedName!~CampfireWindowTests&FullyQualifiedName!~LiveMcpStdioTests"',
+                          ".venv/bin/python -m pytest tests/ -q"], shown["full_suite"])
+
+    def test_each_apps_hand_run_groups_are_stored_and_listed_with_their_app_in_app_order(self):
+        done = self.write(self.repo, hand_run_settings())
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        shown = json.loads(self.show(self.repo).stdout)
+        self.assertEqual([WINDOW_TESTS, LIVE_MCP_TESTS], shown["apps"][0]["hand_run"])
+        self.assertEqual([MODEM_SCRIPTS], shown["apps"][1]["hand_run"])
+        self.assertEqual([
+            {"app": "recovered-box", "name": "window tests", "reason": "they open windows that take keyboard focus",
+             "command": 'dotnet test RecoveredBox.Tests --filter "FullyQualifiedName~CampfireWindowTests"'},
+            {"app": "recovered-box", "name": "live MCP tests", "reason": "they start the real MCP server over stdio",
+             "command": 'dotnet test RecoveredBox.Tests --filter "FullyQualifiedName~LiveMcpStdioTests"'},
+            {"app": "spam", "name": "modem scripts", "reason": "they need the modem plugged in",
+             "command": ".venv/bin/python tools/modem-duplex/run.py"},
+        ], shown["hand_run"])
+
+    def test_settings_with_no_hand_run_groups_store_an_empty_list(self):
+        self.write(self.repo, tracer_settings())
+
+        shown = json.loads(self.show(self.repo).stdout)
+
+        self.assertEqual([], shown["hand_run"])
+
+    def test_refuses_an_app_that_leaves_out_test_full_or_hand_run(self):
+        for key in ("test_full", "hand_run"):
+            with self.subTest(key=key):
+                settings = tracer_settings()
+                del settings["apps"][2][key]
+
+                done = self.write(self.repo, settings)
+
+                self.assertNotEqual(0, done.returncode)
+                self.assertIn("'jidoka' has no " + key, done.stderr)
+                self.assertEqual([], self.stored_files())
+
+    def test_refuses_every_hand_run_group_without_a_name_exclusion_command_or_reason_at_once(self):
+        settings = hand_run_settings()
+        settings["apps"][0]["hand_run"] = [
+            {"name": "window tests", "exclusion": "FullyQualifiedName!~CampfireWindowTests", "command": "  ",
+             "reason": "they take keyboard focus"},
+            {"exclusion": "FullyQualifiedName!~LiveMcpStdioTests", "command": "dotnet test", "reason": "stdio"},
+        ]
+        settings["apps"][1]["hand_run"] = [{"name": "modem scripts", "exclusion": "tests/", "command": "make modem"}]
+
+        done = self.write(self.repo, settings)
+
+        self.assertNotEqual(0, done.returncode)
+        self.assertIn("'recovered-box' has a hand_run group 'window tests' with no command", done.stderr)
+        self.assertIn("'recovered-box' has a hand_run group hand_run[1] with no name", done.stderr)
+        self.assertIn("'spam' has a hand_run group 'modem scripts' with no reason", done.stderr)
+        self.assertEqual([], self.stored_files())
+
+    def test_refuses_a_hand_run_that_is_not_a_list_of_groups(self):
+        settings = hand_run_settings()
+        settings["apps"][1]["hand_run"] = "tools/modem-duplex"
+
+        done = self.write(self.repo, settings)
+
+        self.assertNotEqual(0, done.returncode)
+        self.assertIn("'spam' has a hand_run that is not a list", done.stderr)
+        self.assertEqual([], self.stored_files())
+
+    def test_refuses_a_group_whose_exclusion_neither_the_full_suite_nor_the_targeted_command_holds(self):
+        settings = hand_run_settings()
+        settings["apps"][0]["hand_run"][0]["exclusion"] = "FullyQualifiedName!~WindowTests&Category!=Ui"
+
+        done = self.write(self.repo, settings)
+
+        self.assertNotEqual(0, done.returncode)
+        for command in ("full-suite command", "targeted command"):
+            self.assertIn("'window tests' whose exclusion 'FullyQualifiedName!~WindowTests&Category!=Ui' "
+                          f"is not in the {command}", done.stderr)
+        self.assertEqual([], self.stored_files())
+
+    def test_refuses_a_group_whose_exclusion_is_only_in_test_full_because_the_targeted_command_would_run_it(self):
+        settings = hand_run_settings()
+        app = settings["apps"][0]
+        app["test_target"] = '--filter "FullyQualifiedName~<name>&FullyQualifiedName!~LiveMcpStdioTests"'
+
+        done = self.write(self.repo, settings)
+
+        self.assertNotEqual(0, done.returncode)
+        self.assertIn("'window tests' whose exclusion 'FullyQualifiedName!~CampfireWindowTests' is not in the "
+                      "targeted command, 'dotnet test RecoveredBox.Tests --filter "
+                      "\"FullyQualifiedName~<name>&FullyQualifiedName!~LiveMcpStdioTests\"'", done.stderr)
+        self.assertNotIn("full-suite command", done.stderr)
+        self.assertNotIn("'live MCP tests'", done.stderr)
+        self.assertEqual([], self.stored_files())
+
+    def test_accepts_a_group_whose_exclusion_is_only_in_the_test_command_both_commands_start_with(self):
+        settings = {**tracer_settings(), "apps": [{**tracer_apps()[0], "hand_run": []}, spam_app()]}
+
+        done = self.write(self.repo, settings)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        shown = json.loads(self.show(self.repo).stdout)
+        self.assertEqual([MODEM_SCRIPTS], shown["apps"][1]["hand_run"])
 
     def test_refuses_settings_in_which_no_app_has_a_build_and_writes_nothing(self):
         settings = tracer_settings()

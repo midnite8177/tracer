@@ -138,6 +138,9 @@ message, which says to run the installer, and go to step 11 with
     fix, run steps 5 and 6 again, then run the same command again. Exit 1
     means it refused; show the message and go to step 11 with
     `stopped: <reason>`.
+    After exit 0, 4 or 5 the output ends with the hand-run tests, the
+    groups the full suite leaves out. Show the human that list verbatim,
+    each group with its reason and command, because only they run them.
 11. **End.** Run `bench end <bead-id> "<outcome>"`, such as `landed as
     <sha>`, or `stopped: <reason>` when the work stopped.
 

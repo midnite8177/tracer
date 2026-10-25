@@ -4,18 +4,25 @@
 Behind the merge lock, the script rebuilds the branch on main's head, runs
 the full suite on it, and squashes it to one commit with the message it was
 given. The full suite is the full_suite list in the repo settings, every
-app's test command in app order, and every command runs even after one
+app's full-suite command in app order, and every command runs even after one
 fails. The bead's recorded targeted tests must have passed, but they do not
 run again, because the full suite holds them. The script fast-forwards main
 in the checkout that has main checked out, closes the bead with the
 commit's sha in the reason, and removes the bead's worktree and branch. It
 never pushes and never opens a pull request.
 
+The full suite leaves out the hand-run tests, the groups the repo settings
+list under hand_run. After exit 0, 4 or 5, a rerun that finds the branch
+already on main included, the script lists each group with its app, its
+reason and the command that runs it, after the rest of its output on the
+same stream, so the human can run them. It lists nothing when no app has a
+group.
+
 Exit codes:
   0  landed and closed.
   1  refused or failed before the fast-forward, with main unchanged. The script
-     refuses a repo with no repo settings, or settings with no full suite,
-     before it takes the merge lock.
+     refuses a repo with no repo settings, or settings with no full suite or
+     no hand_run list, before it takes the merge lock.
   3  waiting, because uncommitted edits in main's checkout touch files the
      bead changed. The caller runs the script again later; the script does
      not sleep on it.
@@ -36,6 +43,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO
 
 import repo_settings
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, head_of, run, run_test_command,
@@ -45,6 +53,7 @@ LOCK_POLL_SECONDS = 0.1
 WAITING_ON_EDITS_EXIT_CODE = 3
 PARTLY_LANDED_EXIT_CODE = 4
 FULL_SUITE_FAILED_EXIT_CODE = 5
+HAND_RUN_FIELDS = ("app", "name", "reason", "command")
 
 
 class LandingError(Exception):
@@ -69,6 +78,21 @@ class FullSuiteFailed(Exception):
     def __init__(self, failures: list[SuiteFailure]) -> None:
         super().__init__("the full suite failed on the branch rebased on main, so nothing landed and main is unchanged")
         self.failures = failures
+
+
+@dataclass(frozen=True)
+class HandRunGroup:
+    """A group of an app's tests that the full suite leaves out, and the command the human runs it with."""
+    app: str
+    name: str
+    reason: str
+    command: str
+
+
+@dataclass(frozen=True)
+class LandingSettings:
+    full_suite: list[str]
+    hand_run: list[HandRunGroup]
 
 
 @dataclass(frozen=True)
@@ -120,8 +144,8 @@ def main_checkout(repo: Path) -> Path:
     raise LandingError("no checkout has main checked out")
 
 
-def full_suite(checkout: Path, home: Path) -> list[str]:
-    """The full_suite commands from the repo settings of the repo whose main checkout this is."""
+def landing_settings(checkout: Path, home: Path) -> LandingSettings:
+    """The full suite and the hand-run tests from the repo settings of the repo whose main checkout this is."""
     try:
         main_tree = repo_settings.main_worktree(checkout, COMMAND_TIMEOUT_SECONDS)
         path = repo_settings.settings_path(home, main_tree)
@@ -133,7 +157,27 @@ def full_suite(checkout: Path, home: Path) -> list[str]:
     commands = settings.get("full_suite")
     if not isinstance(commands, list) or not commands or not all(repo_settings.is_text(c) for c in commands):
         raise LandingError(f"{path} holds no full_suite list of test commands. Run /jidoka:onboard to record it")
-    return commands
+    return LandingSettings(commands, hand_run_groups(settings.get("hand_run"), path))
+
+
+def is_hand_run_group(group: object) -> bool:
+    return isinstance(group, dict) and all(repo_settings.is_text(group.get(key)) for key in HAND_RUN_FIELDS)
+
+
+def hand_run_groups(listed: object, path: Path) -> list[HandRunGroup]:
+    if not (isinstance(listed, list) and all(map(is_hand_run_group, listed))):
+        raise LandingError(f"{path} holds no hand_run list of the tests landing leaves out. "
+                           "Run /jidoka:onboard to record it")
+    return [HandRunGroup(group["app"], group["name"], group["reason"], group["command"]) for group in listed]
+
+
+def print_hand_run(groups: list[HandRunGroup], stream: TextIO) -> None:
+    if not groups:
+        return
+    print("Hand-run tests, which landing never runs. Run each one yourself:", file=stream)
+    for group in groups:
+        print(f"  {group.app}, {group.name}: {group.reason}", file=stream)
+        print(f"    {group.command}", file=stream)
 
 
 def tracker_ids(checkout: Path) -> set[str]:
@@ -309,7 +353,7 @@ def main() -> int:
     try:
         checkout = main_checkout(args.repo)
         refuse_bad_message(args.message, args.bead, checkout)
-        suite = full_suite(checkout, args.jidoka_home)
+        settings = landing_settings(checkout, args.jidoka_home)
     except (LandingError, CommandError) as error:
         print(f"land: {error}", file=sys.stderr)
         return 1
@@ -317,7 +361,7 @@ def main() -> int:
     lock = args.jidoka_home / "locks" / "merge.lock"
     acquire_lock(lock)
     try:
-        landed = land(args.bead, args.branch, args.worktree, args.message, checkout, suite)
+        landed = land(args.bead, args.branch, args.worktree, args.message, checkout, settings.full_suite)
     except WaitingOnEdits as waiting:
         print(f"land: {waiting}. Main is unchanged. Commit or set aside:")
         for name in waiting.files:
@@ -327,6 +371,7 @@ def main() -> int:
         print(f"land: {failed}. The failing commands:", file=sys.stderr)
         for failure in failed.failures:
             print(f"\n{failure.command}\nexited {failure.exit_code}:\n{failure.output.rstrip()}", file=sys.stderr)
+        print_hand_run(settings.hand_run, sys.stderr)
         return FULL_SUITE_FAILED_EXIT_CODE
     except (LandingError, CommandError) as error:
         print(f"land: {error}", file=sys.stderr)
@@ -339,7 +384,9 @@ def main() -> int:
               file=sys.stderr)
         for step in landed.failed_steps:
             print(f"  {step}", file=sys.stderr)
+        print_hand_run(settings.hand_run, sys.stderr)
         return PARTLY_LANDED_EXIT_CODE
+    print_hand_run(settings.hand_run, sys.stdout)
     return 0
 
 
