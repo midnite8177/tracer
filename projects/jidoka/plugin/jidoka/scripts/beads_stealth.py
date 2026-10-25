@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import bd_files
+import git_exclude
 import repo_settings
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, run
 
@@ -87,9 +88,14 @@ def disk_text(main_tree: Path, path: str) -> str | None:
         return handle.read()
 
 
-def exclude_line(path: str) -> str:
-    """The info/exclude line that hides an untracked path, anchored at the repo root except for the workspace."""
-    return f"{WORKSPACE}/" if path == WORKSPACE else f"/{path}/" if path == bd_files.SKILL_FOLDER else f"/{path}"
+def stealth_line(path: str) -> str:
+    """The exclude line for a path the switch untracks.
+
+    The workspace keeps the unanchored line that bd init writes, so a workspace bd made is already excluded.
+    """
+    if path == WORKSPACE:
+        return f"{WORKSPACE}/"
+    return git_exclude.exclude_line(path, folder=path == bd_files.SKILL_FOLDER)
 
 
 def plan_switch(main_tree: Path) -> Switch:
@@ -132,31 +138,17 @@ def refuse_other_staged_changes(main_tree: Path, touched: list[str]) -> None:
                            + "\n".join(f"  {path}" for path in others))
 
 
-def exclude_file(main_tree: Path) -> Path:
-    """The repo's info/exclude, which a linked worktree shares with the main one."""
-    named = run(["git", "rev-parse", "--git-path", "info/exclude"], main_tree, None).strip()
-    return (main_tree / named).resolve()
-
-
 def exclude(main_tree: Path, paths: list[str]) -> list[str]:
-    file = exclude_file(main_tree)
-    text = file.read_text(encoding="utf-8") if file.is_file() else ""
-    held = {line.strip() for line in text.splitlines()}
-    missing = [line for line in dict.fromkeys(map(exclude_line, paths)) if line not in held]
-    if not missing:
-        return []
-    file.parent.mkdir(parents=True, exist_ok=True)
-    separator = "" if text == "" or text.endswith("\n") else "\n"
-    with open(file, "a", encoding="utf-8", newline="") as handle:
-        handle.write(separator + "".join(f"{line}\n" for line in missing))
-    return [f"added {', '.join(missing)} to {file}"]
+    file = git_exclude.exclude_file(main_tree)
+    added = git_exclude.add(file, [stealth_line(path) for path in paths])
+    return [f"added {', '.join(added)} to {file}"] if added else []
 
 
 def switch(main_tree: Path) -> list[str]:
     plan = plan_switch(main_tree)
     refuse_other_staged_changes(main_tree, plan.untracked + list(plan.rewritten_rules))
     run(["git", "rm", "-r", "-q", "--cached", "--", *plan.untracked], main_tree, None)
-    done = [f"untracked {', '.join(exclude_line(path).lstrip('/') for path in plan.untracked)} and staged the "
+    done = [f"untracked {', '.join(stealth_line(path).lstrip('/') for path in plan.untracked)} and staged the "
             "removal; the files stay on disk, and the commit is yours"]
     for path, text in plan.rewritten_rules.items():
         with open(main_tree / path, "w", encoding="utf-8", newline="") as handle:

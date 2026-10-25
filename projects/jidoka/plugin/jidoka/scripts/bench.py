@@ -43,11 +43,13 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import git_exclude
 import repo_settings
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, head_of, run, worktree_list
 
 MAIN_REF = "refs/heads/main"
 WORKTREE_FOLDER = ".worktrees"
+WORKTREE_EXCLUDE_LINE = f"{WORKTREE_FOLDER}/"
 BRANCH_PREFIX = "bench/"
 SLUG_LIMIT = 50
 CONTAINER_TYPES = {"epic"}
@@ -132,16 +134,7 @@ def main_head(main_tree: Path) -> str:
 
 
 def hide_worktrees(main_tree: Path) -> None:
-    common = run(["git", "rev-parse", "--git-common-dir"], main_tree, None).strip()
-    exclude = (main_tree / common).resolve() / "info" / "exclude"
-    line = f"{WORKTREE_FOLDER}/"
-    text = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
-    if line in (held.strip() for held in text.splitlines()):
-        return
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    separator = "" if text == "" or text.endswith("\n") else "\n"
-    with open(exclude, "a", encoding="utf-8", newline="") as handle:
-        handle.write(f"{separator}{line}\n")
+    git_exclude.add(git_exclude.exclude_file(main_tree), [WORKTREE_EXCLUDE_LINE])
 
 
 def worktree_branches(main_tree: Path) -> dict[Path, str]:

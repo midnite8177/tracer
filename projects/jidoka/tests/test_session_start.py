@@ -94,6 +94,12 @@ class SessionStartTests(unittest.TestCase):
         for rule in RULES:
             self.assertIn(rule, done.stdout)
 
+    def test_a_session_in_a_repo_without_repo_settings_says_the_glossary_and_adrs_are_always_committed(self):
+        done = self.session(self.beads_repo)
+
+        self.assertIn("Code, tests, GLOSSARY.md and ADRs are always committed.", done.stdout)
+        self.assertNotIn("uncommitted", done.stdout)
+
     def test_the_rules_come_with_the_paths_of_the_tracker_doc_and_the_domain_doc(self):
         done = self.session(self.beads_repo)
 

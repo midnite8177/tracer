@@ -5,8 +5,11 @@ Claude Code runs this at every session start and sends the session as JSON on
 stdin. In a repo that uses beads, the script prints the rules block and the
 paths of the tracker doc and the domain doc that ship in the plugin, and a
 line saying to run onboarding when jidoka's home holds no settings for the
-repo. Anywhere else it prints nothing. A failure also prints nothing,
-because this hook must never keep a session from starting.
+repo. The commit rule says the glossary and ADRs stay uncommitted when the
+repo settings keep them private, and that they are always committed
+otherwise, also when the settings are missing or cannot be read. Anywhere
+else it prints nothing. A failure also prints nothing, because this hook
+must never keep a session from starting.
 """
 from __future__ import annotations
 
@@ -24,13 +27,19 @@ jidoka rules for this repo, which uses beads.
 - A jidoka skill's own subagents are authorized. When a jidoka skill's text says to run a subagent, that is the human's standing request. Do not pause to ask.
 - Name beads by title, with the id in parentheses, never a bare id, in anything the human reads.
 - Before you write prose a human reads (a summary, a spec, an ADR, a commit message, a doc), call the Skill tool with "unslop".
-- Commit the work. Beads stealth mode covers the tracker only. Code, tests, GLOSSARY.md and ADRs are always committed.
+COMMIT_RULE
 - Bead ids and requirement ids never leave the tracker or the spec. Keep them out of code, comments, commit messages, docs, tests, logs and user-facing strings.
 - Comments describe the code, never the work. No dates, history, or "fixed as part of". A comment says what the code does or why it has its shape.
 - Tests assert runtime behavior. A test never inspects source text, project files or package manifests.
 - Comment cleanup is requested work. Deleting and rewriting comments, doc comments and commented-out code in the files a task touched is intended. It never removes tests or assertions.
 - jidoka works in four modes: Planning, Factory, Acceptance and Bench.
 """
+
+COMMITTED_RULE = ("- Commit the work. Beads stealth mode covers the tracker only. "
+                  "Code, tests, GLOSSARY.md and ADRs are always committed.")
+PRIVATE_RULE = ("- Commit the work. Beads stealth mode covers the tracker only. Code and tests are "
+                "committed. {glossary} and the ADRs in {adrs} stay uncommitted in this repo, hidden by its git "
+                "exclude file. Never stage them.")
 
 ONBOARDING = "jidoka has no settings for this repo on this machine. Run /jidoka:onboard to record them.\n"
 
@@ -83,13 +92,29 @@ def is_beads_repo(folder: Path, main_tree: Path | None) -> bool:
     return beads_folder_above(folder) or (main_tree is not None and (main_tree / ".beads").is_dir())
 
 
-def has_settings(main_tree: Path) -> bool:
+def settings_file(main_tree: Path) -> Path:
     script = repo_settings()
-    return script.settings_path(script.jidoka_home(None), main_tree).is_file()
+    return script.settings_path(script.jidoka_home(None), main_tree)
 
 
-def announcement() -> str:
-    return (f"{RULES}\n"
+def commit_rule(main_tree: Path | None) -> str:
+    """The committed wording unless readable repo settings keep the glossary and ADRs private."""
+    if main_tree is None:
+        return COMMITTED_RULE
+    try:
+        script = repo_settings()
+        settings = script.load(settings_file(main_tree))
+        glossary, adrs = settings.get("glossary"), settings.get("adrs")
+        private = settings.get(script.GLOSSARY_AND_ADRS) == script.PRIVATE
+        if private and isinstance(glossary, str) and isinstance(adrs, str):
+            return PRIVATE_RULE.format(glossary=glossary, adrs=adrs)
+    except Exception:
+        pass
+    return COMMITTED_RULE
+
+
+def announcement(main_tree: Path | None) -> str:
+    return (f"{RULES.replace('COMMIT_RULE', commit_rule(main_tree))}\n"
             "Read these before you explore the code or file work.\n"
             f"tracker doc: {DOCS / 'issue-tracker.md'}\n"
             f"domain doc: {DOCS / 'domain.md'}\n")
@@ -101,9 +126,9 @@ def start(raw: str) -> str:
         main_tree = main_tree_of(folder)
         if not is_beads_repo(folder, main_tree):
             return ""
-        if main_tree is not None and not has_settings(main_tree):
-            return announcement() + ONBOARDING
-        return announcement()
+        if main_tree is not None and not settings_file(main_tree).is_file():
+            return announcement(main_tree) + ONBOARDING
+        return announcement(main_tree)
     except Exception:
         return ""
 

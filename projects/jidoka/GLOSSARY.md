@@ -340,8 +340,12 @@ _Avoid_: Adopt, install, setup, enroll
 **Repo settings**:
 What onboarding records about one repo on one machine, in jidoka's home and
 keyed by the repo's main worktree: its build, the commands lap workers may
-run, how a lap tests and uses its slot, the lap limit, and each app's build,
-run and test commands, and its hand-run tests.
+run, how a lap tests and uses its slot, the lap limit, each app's build,
+run and test commands, and its hand-run tests, and the paths of the repo's
+glossary and ADRs with whether the repo commits them or keeps them
+private. Private glossaries and ADRs stay at their paths, hidden through
+the repo's git exclude file, for a shared repo whose team has not agreed to
+them.
 _Avoid_: Repo config, profile, manifest
 
 **App**:

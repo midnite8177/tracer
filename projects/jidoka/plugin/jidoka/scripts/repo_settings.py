@@ -25,6 +25,16 @@ a group whose exclusion either command lacks.
 the settings now hold; the script removes one copy of the line for each time
 it is named and keeps every other byte of the file.
 
+"glossary" and "adrs" are the paths of the repo's glossary and ADR folder,
+relative to its root, and "glossary_and_adrs" says whether the repo commits
+them or keeps them private. A key left out keeps its stored value, else
+GLOSSARY.md, docs/adr and committed. Private leaves both at their paths and
+adds one anchored line for each to the repo's git exclude file, which hides
+only files git does not track, so the script refuses private while git
+tracks either path. When the choice goes back to committed, or a private
+path changes, the script takes out the lines it added for the old paths and
+keeps every other byte of the file.
+
 It refuses while git tracks the main worktree's .beads/, naming the
 beads_stealth.py command that switches the workspace to stealth mode.
 
@@ -39,11 +49,18 @@ import os
 import subprocess
 import sys
 from collections import Counter
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
+import git_exclude
+from commands import CommandError
 
 GIT_TIMEOUT_SECONDS = 30
 LOCAL_RULES = "CLAUDE.local.md"
 GIVEN_KEYS = ["lap_test_scope", "worker_commands", "slot_use", "lap_limit", "apps"]
+GLOSSARY_AND_ADRS = "glossary_and_adrs"
+COMMITTED, PRIVATE = "committed", "private"
+DOC_PATH_KEYS = ["glossary", "adrs"]
+DOCS_DEFAULTS = {"glossary": "GLOSSARY.md", "adrs": "docs/adr", GLOSSARY_AND_ADRS: COMMITTED}
 DERIVED_KEYS = ["build", "full_suite", "hand_run", "untested_apps"]
 MOVED_LINES = "moved_lines"
 APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_full", "test_target", "hand_run"]
@@ -78,18 +95,49 @@ def main_worktree(folder: Path, timeout_seconds: float) -> Path:
     return (folder / common).resolve().parent
 
 
-def refuse_tracked_beads(main_tree: Path, timeout_seconds: float) -> None:
+def tracks(main_tree: Path, path: str, timeout_seconds: float) -> bool:
     try:
-        done = subprocess.run(["git", "ls-files", "--", BEADS_WORKSPACE], cwd=main_tree, capture_output=True,
-                              text=True, encoding="utf-8", timeout=timeout_seconds)
+        done = subprocess.run(["git", "--literal-pathspecs", "ls-files", "--", path], cwd=main_tree,
+                              capture_output=True, text=True, encoding="utf-8", timeout=timeout_seconds)
     except (OSError, subprocess.SubprocessError) as error:
         raise SettingsError(f"git could not run in {main_tree}: {error}") from error
     if done.returncode != 0:
         raise SettingsError(f"git ls-files failed in {main_tree}: {done.stderr.strip()}")
-    if done.stdout.strip():
+    return done.stdout.strip() != ""
+
+
+def refuse_tracked_beads(main_tree: Path, timeout_seconds: float) -> None:
+    if tracks(main_tree, BEADS_WORKSPACE, timeout_seconds):
         raise SettingsError(f"nothing was written: git tracks {main_tree / BEADS_WORKSPACE}, and jidoka keeps "
                             f"a repo's beads out of git. Switch them to stealth mode with {SWITCH_COMMAND}, "
                             "which untracks them and stages the removal for you to commit")
+
+
+def refuse_tracked_private_docs(main_tree: Path, settings: dict, timeout_seconds: float) -> None:
+    if settings[GLOSSARY_AND_ADRS] != PRIVATE:
+        return
+    tracked = [settings[key] for key in DOC_PATH_KEYS if tracks(main_tree, settings[key], timeout_seconds)]
+    if tracked:
+        raise SettingsError(f"nothing was written: git tracks {' and '.join(tracked)}, and the git exclude file "
+                            "hides only files git does not track. Keep glossary_and_adrs committed in this repo")
+
+
+def private_lines(settings: dict) -> list[str]:
+    if settings.get(GLOSSARY_AND_ADRS) != PRIVATE:
+        return []
+    return [git_exclude.exclude_line(settings[key], folder=key == "adrs")
+            for key in DOC_PATH_KEYS if is_text(settings.get(key))]
+
+
+def hide_private_docs(main_tree: Path, previous: dict, settings: dict) -> None:
+    """Adds the exclude lines the settings call for and takes out those the previous settings added."""
+    wanted = private_lines(settings)
+    stale = [line for line in private_lines({**DOCS_DEFAULTS, **previous}) if line not in wanted]
+    if not (wanted or stale):
+        return
+    file = git_exclude.exclude_file(main_tree)
+    git_exclude.remove(file, stale)
+    git_exclude.add(file, wanted)
 
 
 def settings_path(home: Path, main_tree: Path) -> Path:
@@ -205,9 +253,16 @@ def hand_run_list(apps: list[dict]) -> list[dict]:
             for app in apps for group in app["hand_run"]]
 
 
+def is_repo_path(value: object) -> bool:
+    if not is_text(value):
+        return False
+    path = PurePosixPath(value)
+    return not path.is_absolute() and ".." not in path.parts and str(path) != "."
+
+
 def problems_in(settings: dict) -> list[str]:
     problems = [f"{key} is missing" for key in GIVEN_KEYS if key not in settings]
-    unknown = sorted(set(settings) - set(GIVEN_KEYS))
+    unknown = sorted(set(settings) - set(GIVEN_KEYS) - set(DOCS_DEFAULTS))
     if unknown:
         problems.append(f"the settings have keys jidoka does not know: {', '.join(unknown)}")
     if "lap_test_scope" in settings and settings["lap_test_scope"] not in TEST_SCOPES:
@@ -222,6 +277,10 @@ def problems_in(settings: dict) -> list[str]:
         problems.append("lap_limit must be a whole number above zero")
     if "apps" in settings:
         problems += apps_problems(settings["apps"])
+    problems += [f"{key} must be a path inside the repo, relative to its root"
+                 for key in DOC_PATH_KEYS if key in settings and not is_repo_path(settings[key])]
+    if settings.get(GLOSSARY_AND_ADRS, COMMITTED) not in (COMMITTED, PRIVATE):
+        problems.append(f"{GLOSSARY_AND_ADRS} must be one of {COMMITTED}, {PRIVATE}")
     return problems
 
 
@@ -298,14 +357,15 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
     local = main_tree / LOCAL_RULES
     moved = given.pop(MOVED_LINES, [])
     previous = load(path)
-    stored = {key: value for key, value in previous.items() if key in GIVEN_KEYS}
-    merged = {**stored, **given}
+    stored = {key: value for key, value in previous.items() if key in GIVEN_KEYS or key in DOCS_DEFAULTS}
+    merged = {**DOCS_DEFAULTS, **stored, **given}
     problems = problems_in(merged) + moved_lines_problems(moved, local)
     if problems:
         raise SettingsError("nothing was written:\n" + "\n".join(f"  {problem}" for problem in problems))
+    refuse_tracked_private_docs(main_tree, merged, GIT_TIMEOUT_SECONDS)
     settings = {
         "main_worktree": str(main_tree),
-        **{key: merged[key] for key in GIVEN_KEYS},
+        **{key: merged[key] for key in [*GIVEN_KEYS, *DOCS_DEFAULTS]},
         "build": [app["build"] for app in merged["apps"] if app["build"] is not None],
         "full_suite": [full_suite_command(app) for app in merged["apps"] if app["test"] is not None],
         "hand_run": hand_run_list(merged["apps"]),
@@ -313,6 +373,7 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    hide_private_docs(main_tree, previous, settings)
     if moved:
         write_text(local, without_moved_lines(read_text(local), moved))
     return path
@@ -346,7 +407,7 @@ def main(argv: list[str]) -> int:
     except UnicodeDecodeError as error:
         print(f"repo_settings: the input is not UTF-8: {error}", file=sys.stderr)
         return 1
-    except (SettingsError, OSError) as error:
+    except (SettingsError, CommandError, OSError) as error:
         print(f"repo_settings: {error}", file=sys.stderr)
         return 1
     sys.stdout.buffer.write(out.encode("utf-8"))

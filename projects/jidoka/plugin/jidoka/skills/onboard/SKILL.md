@@ -50,11 +50,16 @@ the same beads.
    ships, and each app's hand-run tests: tests the factory must never run,
    such as window tests that take keyboard focus or scripts that drive
    hardware. Look for lines that say to skip a test class, run a group
-   apart, or keep a folder out of the test run.
+   apart, or keep a folder out of the test run. Find the repo's glossary
+   and its ADR folder, and run `git ls-files` on each to learn whether git
+   tracks them.
 4. Propose every setting below, each with the line from the repo it comes
    from, quoted with its file. Mark a setting you could not find as a
-   question. The step is done when the user has confirmed or edited every
-   proposed value.
+   question. Propose the glossary and ADR paths you found, or `GLOSSARY.md`
+   and `docs/adr` when the repo has neither, and ask whether the repo
+   commits them or keeps them private. Private suits a shared repo whose
+   team has not agreed to them. The step is done when the user has
+   confirmed or edited every proposed value.
 5. Ask which lines of `CLAUDE.local.md` the settings now hold. Only lines of
    `CLAUDE.local.md` itself move, never lines of a file it imports.
 6. Pipe the confirmed settings to the script with `write`, as one JSON
@@ -64,9 +69,12 @@ the same beads.
    `build`, `full_suite`, `hand_run` and `untested_apps` again. When the
    script refuses, show its stderr,
    fix the values with the user, and run it again. When it refuses because
-   git tracks `.beads`, go back to step 1 and offer the switch.
+   git tracks `.beads`, go back to step 1 and offer the switch. When it
+   refuses private because git tracks the glossary or the ADRs, tell the
+   user those stay committed, and ask again.
 7. Run `show` and show the user what it prints, with each null value in
-   words.
+   words. When the glossary and ADRs are private, also show
+   `git status --short`, which no longer lists them.
 
 The settings:
 
@@ -93,6 +101,17 @@ The settings:
   leaves it out, which both the full-suite command and the targeted
   command, `test` followed by `test_target`, must hold), the `command` that
   runs it, and the `reason` only the human runs it.
+- `glossary` and `adrs`: the path of the repo's glossary and of its ADR
+  folder, relative to the repo root. One path each. Left out, they keep
+  their stored value, else `"GLOSSARY.md"` and `"docs/adr"`.
+- `glossary_and_adrs`: `"committed"` when the repo commits its glossary and
+  ADRs, `"private"` when they stay on this machine. Left out, it keeps its
+  stored value, else `"committed"`. Private leaves the files at their paths
+  and adds a line for each path to the repo's git exclude file, so
+  `git status` stops listing them, and sessions in the repo say they stay
+  uncommitted. That hides only files git does not track, so the script
+  refuses private while git tracks either path. Choosing `"committed"`
+  again takes those lines out.
 - `moved_lines`: the exact lines to take out of `CLAUDE.local.md`.
 
 A person never reads `null`. When you offer a null value as a choice or show
@@ -135,6 +154,7 @@ An example for one app:
 sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py" write <<'EOF'
 {"lap_test_scope": "targeted", "worker_commands": ["python3 projects/tracer-seed/build.py"],
  "slot_use": null, "lap_limit": 2,
+ "glossary": "GLOSSARY.md", "adrs": "docs/adr", "glossary_and_adrs": "committed",
  "apps": [{"name": "tracer-seed", "kind": "program", "way_in": "its command line",
            "build": "python3 projects/tracer-seed/build.py", "run": "python3 projects/tracer-seed/build.py",
            "test": "python3 -m unittest discover -s projects/tracer-seed/tests", "test_full": null,

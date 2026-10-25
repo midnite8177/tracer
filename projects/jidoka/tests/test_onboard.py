@@ -515,6 +515,198 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(1, len(self.stored_files()))
 
+    def repo_with_untracked_glossary_and_adrs(self) -> Path:
+        repo = self.root / f"atlas-{self.count}"
+        init_committed_repo(repo)
+        fixture.add_stealth_beads(repo)
+        (repo / "GLOSSARY.md").write_text("# atlas\n", encoding="utf-8")
+        (repo / "docs" / "adr").mkdir(parents=True)
+        (repo / "docs" / "adr" / "0001-start.md").write_text("# 0001\n", encoding="utf-8")
+        return repo
+
+    def status(self, repo: Path) -> str:
+        return fixture.run(["git", "status", "--porcelain", "--untracked-files=normal"], repo)
+
+    def exclude_file(self, repo: Path) -> Path:
+        return repo / ".git" / "info" / "exclude"
+
+    def test_settings_keep_the_glossary_and_adrs_committed_at_their_usual_paths_when_not_given(self):
+        done = self.write(self.repo, tracer_settings())
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        shown = json.loads(self.show(self.repo).stdout)
+        self.assertEqual("GLOSSARY.md", shown["glossary"])
+        self.assertEqual("docs/adr", shown["adrs"])
+        self.assertEqual("committed", shown["glossary_and_adrs"])
+
+    def test_choosing_private_hides_the_glossary_and_adrs_from_git_status(self):
+        repo = self.repo_with_untracked_glossary_and_adrs()
+        self.assertIn("GLOSSARY.md", self.status(repo))
+        self.assertIn("docs/", self.status(repo))
+
+        done = self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private"})
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("", self.status(repo))
+        self.assertTrue((repo / "GLOSSARY.md").is_file())
+        self.assertTrue((repo / "docs" / "adr" / "0001-start.md").is_file())
+        self.assertEqual("private", json.loads(self.show(repo).stdout)["glossary_and_adrs"])
+
+    def test_private_hides_an_adr_folder_and_a_glossary_written_after_the_choice(self):
+        repo = self.root / f"atlas-{self.count}"
+        init_committed_repo(repo)
+        fixture.add_stealth_beads(repo)
+
+        done = self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private"})
+        (repo / "GLOSSARY.md").write_text("# atlas\n", encoding="utf-8")
+        (repo / "docs" / "adr").mkdir(parents=True)
+        (repo / "docs" / "adr" / "0001-start.md").write_text("# 0001\n", encoding="utf-8")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("", self.status(repo))
+
+    def test_choosing_private_again_adds_each_exclude_line_once(self):
+        repo = self.repo_with_untracked_glossary_and_adrs()
+
+        for _ in range(2):
+            done = self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private"})
+            self.assertEqual(0, done.returncode, done.stderr)
+
+        lines = self.exclude_file(repo).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(1, lines.count("/GLOSSARY.md"), lines)
+        self.assertEqual(1, lines.count("/docs/adr/"), lines)
+
+    def test_private_hides_the_configured_paths(self):
+        repo = self.repo_with_untracked_glossary_and_adrs()
+        (repo / "docs" / "adr" / "0001-start.md").rename(repo / "docs" / "0001-start.md")
+        (repo / "docs" / "adr").rmdir()
+        (repo / "docs" / "decisions").mkdir()
+        (repo / "docs" / "0001-start.md").rename(repo / "docs" / "decisions" / "0001-start.md")
+        (repo / "GLOSSARY.md").rename(repo / "docs" / "WORDS.md")
+
+        done = self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private",
+                                 "glossary": "docs/WORDS.md", "adrs": "docs/decisions"})
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("", self.status(repo))
+        shown = json.loads(self.show(repo).stdout)
+        self.assertEqual(("docs/WORDS.md", "docs/decisions"), (shown["glossary"], shown["adrs"]))
+
+    def test_choosing_private_from_a_linked_worktree_hides_them_in_the_main_worktree(self):
+        repo = self.repo_with_untracked_glossary_and_adrs()
+        worktree = self.root / f"atlas-{self.count}-feature"
+        fixture.run(["git", "worktree", "add", "-q", "-b", "feature", str(worktree)], repo)
+
+        done = self.write(worktree, {**tracer_settings(), "glossary_and_adrs": "private"})
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("", self.status(repo))
+
+    def test_choosing_committed_again_removes_the_exclude_lines_and_keeps_every_other_byte(self):
+        repo = self.repo_with_untracked_glossary_and_adrs()
+        with open(self.exclude_file(repo), "a", encoding="utf-8", newline="") as fh:
+            fh.write("/build/\r\n/GLOSSARY.md.bak\n# GLOSSARY.md\n")
+        before = self.exclude_file(repo).read_bytes()
+        self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private"})
+
+        done = self.write(repo, {"glossary_and_adrs": "committed"})
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(before, self.exclude_file(repo).read_bytes())
+        self.assertIn("GLOSSARY.md", self.status(repo))
+        self.assertIn("docs/", self.status(repo))
+        self.assertEqual("committed", json.loads(self.show(repo).stdout)["glossary_and_adrs"])
+
+    def test_moving_a_private_glossary_swaps_its_exclude_line(self):
+        repo = self.repo_with_untracked_glossary_and_adrs()
+        self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private"})
+
+        done = self.write(repo, {"glossary": "docs/WORDS.md"})
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        lines = self.exclude_file(repo).read_text(encoding="utf-8").splitlines()
+        self.assertNotIn("/GLOSSARY.md", lines)
+        self.assertEqual(1, lines.count("/docs/WORDS.md"), lines)
+        self.assertEqual(1, lines.count("/docs/adr/"), lines)
+
+    def test_a_rerun_that_leaves_out_the_choice_keeps_it_with_its_paths_and_exclude_lines(self):
+        repo = self.repo_with_untracked_glossary_and_adrs()
+        self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private",
+                          "glossary": "GLOSSARY.md", "adrs": "docs/adr"})
+
+        done = self.write(repo, {"lap_limit": 5})
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        shown = json.loads(self.show(repo).stdout)
+        self.assertEqual(("private", "GLOSSARY.md", "docs/adr", 5),
+                         (shown["glossary_and_adrs"], shown["glossary"], shown["adrs"], shown["lap_limit"]))
+        self.assertEqual("", self.status(repo))
+
+    def test_refuses_private_while_git_tracks_the_glossary_or_the_adrs(self):
+        for tracked in ("GLOSSARY.md", "docs/adr"):
+            with self.subTest(tracked=tracked):
+                repo = self.repo_with_untracked_glossary_and_adrs()
+                type(self).count += 1
+                fixture.run(["git", "add", "--", tracked], repo)
+                fixture.run(["git", "commit", "-q", "-m", "Add docs"], repo)
+                before = self.exclude_file(repo).read_bytes()
+
+                done = self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private"})
+
+                self.assertEqual(1, done.returncode)
+                self.assertIn("nothing was written", done.stderr)
+                self.assertIn(f"git tracks {tracked}", done.stderr)
+                self.assertEqual([], self.stored_files())
+                self.assertEqual(before, self.exclude_file(repo).read_bytes())
+
+    def test_refuses_a_choice_or_a_path_jidoka_cannot_use(self):
+        cases = {
+            "glossary_and_adrs": ({"glossary_and_adrs": "hidden"},
+                                  "glossary_and_adrs must be one of committed, private"),
+            "glossary": ({"glossary": "/etc/GLOSSARY.md"}, "glossary must be a path inside the repo"),
+            "adrs": ({"adrs": "../docs/adr"}, "adrs must be a path inside the repo"),
+            "blank": ({"adrs": " "}, "adrs must be a path inside the repo"),
+        }
+        for name, (change, problem) in cases.items():
+            with self.subTest(name=name):
+                done = self.write(self.repo, {**tracer_settings(), **change})
+
+                self.assertEqual(1, done.returncode)
+                self.assertIn(problem, done.stderr)
+                self.assertEqual([], self.stored_files())
+
+    def test_a_session_in_a_private_repo_says_the_glossary_and_adrs_stay_uncommitted(self):
+        repo = self.repo_with_untracked_glossary_and_adrs()
+        worktree = self.root / f"atlas-{self.count}-feature"
+        fixture.run(["git", "worktree", "add", "-q", "-b", "feature", str(worktree)], repo)
+        self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private", "adrs": "docs/adr"})
+
+        for cwd in (repo, worktree):
+            with self.subTest(cwd=cwd):
+                done = self.session(cwd)
+
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assertIn("Planning, Factory, Acceptance and Bench", done.stdout)
+                self.assertIn("GLOSSARY.md and the ADRs in docs/adr stay uncommitted in this repo", done.stdout)
+                self.assertNotIn("always committed", done.stdout)
+
+    def test_a_session_in_a_committed_repo_says_the_glossary_and_adrs_are_always_committed(self):
+        self.write(self.repo, {**tracer_settings(), "glossary_and_adrs": "committed"})
+
+        done = self.session(self.repo)
+
+        self.assertIn("Code, tests, GLOSSARY.md and ADRs are always committed.", done.stdout)
+        self.assertNotIn("uncommitted", done.stdout)
+
+    def test_a_session_whose_settings_cannot_be_read_gets_every_rule_with_the_committed_wording(self):
+        self.write(self.repo, {**tracer_settings(), "glossary_and_adrs": "committed"})
+        self.stored_files()[0].write_text("{not json", encoding="utf-8")
+
+        done = self.session(self.repo)
+
+        self.assertIn("Planning, Factory, Acceptance and Bench", done.stdout)
+        self.assertIn("Code, tests, GLOSSARY.md and ADRs are always committed.", done.stdout)
+
     def test_the_session_hook_says_to_onboard_a_beads_repo_without_settings(self):
         for cwd in (self.repo, self.worktree):
             with self.subTest(cwd=cwd):
