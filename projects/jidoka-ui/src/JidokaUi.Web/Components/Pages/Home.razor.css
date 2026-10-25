@@ -1,0 +1,47 @@
+.project-active {
+    color: var(--jidoka-fg-muted);
+}
+
+.project-active strong {
+    color: var(--jidoka-fg);
+}
+
+.project-active-path {
+    font-size: var(--jidoka-text-quiet);
+    margin-left: var(--jidoka-space-2);
+}
+
+.project-list {
+    border: 1px solid var(--jidoka-border);
+    border-radius: var(--jidoka-radius);
+    margin-bottom: var(--jidoka-space-4);
+    overflow: hidden;
+}
+
+.project-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--jidoka-space-3);
+    border-bottom: 1px solid var(--jidoka-border-muted);
+    border-left: var(--jidoka-space-1) solid transparent;
+    padding: var(--jidoka-space-2) var(--jidoka-space-3);
+    transition: background-color 120ms ease;
+}
+
+.project-row:last-child {
+    border-bottom: 0;
+}
+
+.project-row:hover {
+    background-color: var(--jidoka-canvas-hover);
+}
+
+.project-row-active {
+    background-color: var(--jidoka-canvas-subtle);
+    border-left-color: var(--jidoka-accent-emphasis);
+}
+
+.project-path {
+    font-size: var(--jidoka-text-quiet);
+}

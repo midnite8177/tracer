@@ -1,0 +1,94 @@
+using System.Collections.Concurrent;
+using JidokaUi.Core.Beads;
+using JidokaUi.Core.Projects;
+
+namespace JidokaUi.Core.Boards;
+
+/// <summary>
+/// The one copy of each project's backlog that the app holds in memory. A read gives the held copy,
+/// so a board that a person rebuilds costs no run of bd. An invalidation drops the copy of one
+/// project, and the next read of that project asks bd again. A write of this app invalidates the
+/// project that it wrote to, so a person sees the result of an action of their own.
+/// </summary>
+public sealed class BacklogCache
+{
+    private readonly BacklogReader reader;
+
+    private readonly ConcurrentDictionary<ProjectPath, Lazy<Task<BacklogOutcome>>> held = new();
+
+    public BacklogCache(BacklogReader reader, BdAdapter adapter)
+    {
+        this.reader = reader;
+        adapter.Wrote += Invalidate;
+    }
+
+    /// <summary>
+    /// Names the project whose held backlog the cache dropped, and whether a write of this app
+    /// caused it or the project watcher did. A page that shows that project reads it again, so a
+    /// person never looks at a board that a write already made stale, and tells the two causes
+    /// apart to say whether that read is a re-read.
+    /// </summary>
+    public event Action<BacklogChange>? Changed;
+
+    /// <summary>
+    /// The backlog of this project, from the held copy or from a read of bd. The cache holds an
+    /// answer alone and drops a failure at once, so the next read asks bd again. A held failure
+    /// would keep an error message on the board until something invalidated the project. A read
+    /// whose pipe to bd breaks, or whose run of bd cannot start, gives a failure too, and throws
+    /// nothing. A read that throws any other exception throws it to the readers that shared it, and
+    /// the cache drops it as it drops a failure.
+    /// </summary>
+    public async Task<BacklogOutcome> ReadAsync(ProjectPath project)
+    {
+        var entry = held.GetOrAdd(
+            project,
+            path => new Lazy<Task<BacklogOutcome>>(() => TheOutcomeOfARead(path)));
+        // A removal by key alone would drop the newer read that an invalidation let in after this
+        // one began.
+        var mine = new KeyValuePair<ProjectPath, Lazy<Task<BacklogOutcome>>>(project, entry);
+        BacklogOutcome outcome;
+        try
+        {
+            outcome = await entry.Value;
+        }
+        catch
+        {
+            held.TryRemove(mine);
+            throw;
+        }
+
+        if (!outcome.Answered)
+        {
+            held.TryRemove(mine);
+        }
+
+        return outcome;
+    }
+
+    private async Task<BacklogOutcome> TheOutcomeOfARead(ProjectPath project)
+    {
+        try
+        {
+            return await reader.ReadAsync(project);
+        }
+        catch (Exception unread) when (unread is IOException or InvalidOperationException)
+        {
+            return BacklogOutcome.Failure($"The app could not read the beads of this project. {unread.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Drops the held backlog of one project because a write of this app changed it. Every other
+    /// project keeps its own.
+    /// </summary>
+    public void Invalidate(ProjectPath project) => Invalidate(project, BacklogChangeKind.Write);
+
+    /// <summary>Drops the held backlog of one project because its .beads directory changed on its own.</summary>
+    public void InvalidateFromWatch(ProjectPath project) => Invalidate(project, BacklogChangeKind.Watch);
+
+    private void Invalidate(ProjectPath project, BacklogChangeKind kind)
+    {
+        held.TryRemove(project, out _);
+        Changed?.Invoke(new BacklogChange(project, kind));
+    }
+}

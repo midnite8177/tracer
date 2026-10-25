@@ -1,0 +1,91 @@
+@using JidokaUi.Core.Projects
+@using JidokaUi.Web.Components.Pages
+@implements IDisposable
+@inject ProjectCatalog Catalog
+@inject ActiveProjectSelection Selection
+@inject NavigationManager Navigation
+@inject SwitchAddress Switches
+
+@*
+    The project picker, which the top bar carries on every page.
+
+    It names the active project, and it drops a menu of every project of the
+    registry.
+
+    The catalog says which entry shares its directory name with another. The
+    picker shows the project path of such an entry, because a name that two
+    projects carry names neither of them.
+
+    It reads the entries again at each page, because a person can add a project
+    on the Projects page and then come back here.
+*@
+
+<select class="project-picker" aria-label="Active project" @bind="chosenPath" @bind:after="Pick">
+    @if (Selection.Current is null)
+    {
+        <option value="">Select a project</option>
+    }
+    @foreach (var entry in entries)
+    {
+        <option value="@entry.Path.Value">@entry.Name</option>
+    }
+</select>
+
+@code {
+    private IReadOnlyList<ProjectEntry> entries = [];
+    private string chosenPath = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        Selection.Changed += OnActiveProjectChanged;
+        Navigation.LocationChanged += OnLocationChanged;
+        Read();
+    }
+
+    private void Read()
+    {
+        entries = Catalog.Entries();
+        chosenPath = Selection.Current?.Value ?? string.Empty;
+    }
+
+    private void Pick()
+    {
+        var picked = entries.FirstOrDefault(entry => entry.Path.Value == chosenPath);
+        if (picked is null)
+        {
+            return;
+        }
+
+        // The address of a page that shows one project beats the tab's memory, so a pick there walks
+        // to a new address and lets that address make the project active.
+        if (Switches.For(picked.Path) is { } address)
+        {
+            Navigation.NavigateTo(address);
+        }
+        else
+        {
+            Selection.Select(picked.Path);
+        }
+    }
+
+    private void OnActiveProjectChanged(ProjectPath project)
+    {
+        _ = InvokeAsync(() =>
+        {
+            chosenPath = project.Value;
+            StateHasChanged();
+        });
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs arguments)
+    {
+        Read();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Selection.Changed -= OnActiveProjectChanged;
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+}

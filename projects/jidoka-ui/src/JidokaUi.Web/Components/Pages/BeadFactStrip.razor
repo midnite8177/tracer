@@ -1,0 +1,244 @@
+@*
+    The fact strip: the short facts of one bead, each in a bordered fact box.
+    Every fact reads here and nowhere else on the page, so a person who wants one
+    of them reads no line of prose to find it.
+*@
+
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Boards
+@using JidokaUi.Core.Projects
+@using AReadOfTheBacklog = JidokaUi.Core.Boards.Read<JidokaUi.Core.Boards.BacklogFacts>
+@inject BdAdapter Bd
+
+@{
+    var facts = Detail.BacklogFacts;
+}
+
+<aside class="bead-fact-strip">
+    <div class="bead-fact">
+        <BeadFactEdit Project="Address.Project" Fact="TheStatus" OnWritten="OnWritten" OpenRow="@openRow" OnOpen="Opened" />
+    </div>
+
+    <div class="bead-fact">
+        <BeadFactEdit Project="Address.Project" Fact="ThePriority" OnWritten="OnWritten" OpenRow="@openRow" OnOpen="Opened" />
+    </div>
+
+    <div class="bead-fact">
+        <BeadFactEdit Project="Address.Project" Fact="TheType" OnWritten="OnWritten" OpenRow="@openRow" OnOpen="Opened" />
+    </div>
+
+    <div class="bead-fact">
+        <BeadFactEdit Project="Address.Project" Fact="TheLabels" OnWritten="OnWritten" OpenRow="@openRow" OnOpen="Opened" />
+    </div>
+
+    @if (facts is AReadOfTheBacklog.Given { Value: var answered })
+    {
+        <div class="bead-fact">
+            <BeadFactEdit Project="Address.Project" Fact="TheEpicOf(answered)" OnWritten="OnWritten" OpenRow="@openRow" OnOpen="Opened" />
+        </div>
+    }
+</aside>
+
+@code {
+    /// <summary>The bead as the page read it. Every box of the strip states one fact of it.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadDetail Detail { get; set; }
+
+    /// <summary>The bead that a press of this strip writes to.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>Runs after a write of this strip, so that the page reads the bead again.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    /// <summary>The epics of this backlog, so that the epic picker offers them by title.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<Bead> Epics { get; set; }
+
+    /// <summary>
+    /// The labels that this project uses, so that the labels picker offers the vocabulary of the
+    /// project instead of a box that invites a second spelling of a label which exists.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<string> Labels { get; set; }
+
+    private string openRow = string.Empty;
+
+    private void Opened(string row) => openRow = row;
+
+    private const string NoLabel = "no label";
+
+    private const string NoEpic = "no epic";
+
+    // The status row. It states the resolved status, which is what the bead waits for, and its
+    // picker offers the four stored statuses, because a person asks one question about the state of
+    // a bead where bd gives three verbs. The picker marks the stored status that the bead is in,
+    // because the resolved status that the row prints is not always one of the four.
+    private PressableFact TheStatus => new(
+        "Status",
+        "bead-fact-status",
+        Detail.Status.Text,
+        $"bead-status-{Detail.Status.Appearance}",
+        string.Empty,
+        [UiVerbs.SetTheStatus, UiVerbs.DeferABead, UiVerbs.CloseWithAReason],
+        new FactPicker.OfOneOf([.. BeadWriteChoices.Statuses.Select(TheStatusChoice)]));
+
+    // One entry of the status picker. Two of the four run a write of their own, because bd closes
+    // and defers with commands that are not an update of the status. The close asks for its reason
+    // first: the reason is the history that a later reader has, so nothing writes without it.
+    private FactChoice TheStatusChoice(string status) => status switch
+    {
+        StoredStatus.Deferred => FactChoice.ThatWrites(
+            StoredStatus.InWords(status),
+            marked: TheBeadIsIn(status),
+            () => Bd.DeferAsync(Address)),
+        StoredStatus.Closed => new FactChoice(
+            StoredStatus.InWords(status),
+            TheBeadIsIn(status),
+            new FactQuestion("Why the work ended", "Close"),
+            reason => Bd.CloseAsync(Address, reason)),
+        _ => FactChoice.ThatWrites(
+            StoredStatus.InWords(status),
+            marked: TheBeadIsIn(status),
+            () => WriteTheStatus(status)),
+    };
+
+    private Task<BdWriteOutcome> WriteTheStatus(string status) =>
+        CheckedWrite.Async<StoredStatusWord>(
+            status, StoredStatus.TryParse, word => Bd.SetStatusAsync(Address, word), $"{status} is not a stored status.");
+
+    private bool TheBeadIsIn(string status) =>
+        string.Equals(status, Detail.Bead.Status, StringComparison.Ordinal);
+
+    private PressableFact ThePriority => new(
+        "Priority",
+        "bead-fact-priority",
+        ThePriorityText,
+        Detail.Bead.HasPriority ? string.Empty : "text-muted",
+        string.Empty,
+        [UiVerbs.SetThePriority],
+        new FactPicker.OfOneOf(
+        [
+            .. BeadWriteChoices.Priorities.Select(priority =>
+                FactChoice.ThatWrites(
+                    $"p{priority}",
+                    marked: Detail.Bead.HasPriority && Detail.Bead.Priority == priority,
+                    () => Bd.SetPriorityAsync(Address, priority))),
+        ]));
+
+    private string ThePriorityText =>
+        Detail.Bead.HasPriority ? $"p{Detail.Bead.PriorityText}" : "no priority";
+
+    private PressableFact TheType => new(
+        "Type",
+        "bead-fact-type",
+        Detail.Bead.Type,
+        string.Empty,
+        string.Empty,
+        [UiVerbs.SetTheType],
+        new FactPicker.OfOneOf(
+        [
+            .. BeadWriteChoices.Types.Select(type =>
+                FactChoice.ThatWrites(
+                    type,
+                    marked: string.Equals(type, Detail.Bead.Type, StringComparison.Ordinal),
+                    () => WriteTheType(type))),
+        ]));
+
+    private Task<BdWriteOutcome> WriteTheType(string type) =>
+        CheckedWrite.Async<BeadTypeWord>(
+            type, BeadType.TryParse, word => Bd.SetTypeAsync(Address, word), $"{type} is not a bead type.");
+
+    private PressableFact TheLabels => new(
+        "Labels",
+        "bead-fact-labels",
+        TheLabelText,
+        Detail.Bead.Labels.Count > 0 ? string.Empty : "text-muted",
+        string.Empty,
+        [UiVerbs.ChangeTheLabels],
+        new FactPicker.OfSeveral(
+            [.. TheLabelEntries()],
+            new FactAddition(new FactQuestion("A new label", "Add"), CheckTheNewLabel),
+            change => Bd.ChangeLabelsAsync(Address, change.Adds, change.Removes)));
+
+    private string TheLabelText =>
+        Detail.Bead.Labels.Count > 0 ? string.Join(", ", Detail.Bead.Labels) : NoLabel;
+
+    // A blank word names no label that a write could send, so the picker leaves it out.
+    private IEnumerable<FactTick> TheLabelEntries()
+    {
+        foreach (var word in Labels)
+        {
+            if (BeadLabel.TryFrom(word, out var label))
+            {
+                yield return new FactTick(label, TheLabelOnTheBead(label));
+            }
+        }
+    }
+
+    private BeadLabel? TheLabelOnTheBead(BeadLabel label) =>
+        TheSpellingOnTheBead(label) is { } spelling && BeadLabel.TryFrom(spelling, out var carried)
+            ? carried
+            : null;
+
+    private TypedLabel CheckTheNewLabel(string typed)
+    {
+        if (!BeadLabel.TryFromTyped(typed, out var label, out var whyNot))
+        {
+            return new TypedLabel.Refused(whyNot);
+        }
+
+        if (TheSpellingOnTheBead(label) is { } carried)
+        {
+            return new TypedLabel.Refused($"This bead already carries {carried}.");
+        }
+
+        return new TypedLabel.ToTick(TheProjectSpellingOf(label) ?? label);
+    }
+
+    private BeadLabel? TheProjectSpellingOf(BeadLabel label) =>
+        Labels.FirstOrDefault(label.ReadsTheSameAs) is { } known
+        && BeadLabel.TryFrom(known, out var spelled)
+            ? spelled
+            : null;
+
+    // How this bead spells the label, or null when it carries none that reads the same. A remove
+    // names the spelling of the bead, because bd holds the label as the bead spells it.
+    private string? TheSpellingOnTheBead(BeadLabel label) =>
+        Detail.Bead.Labels.FirstOrDefault(label.ReadsTheSameAs);
+
+    // bd clears the parent with the flag that sets it, so the entry of no epic asks for no action
+    // beyond the one the rest of the picker needs.
+    private PressableFact TheEpicOf(BacklogFacts facts) => new(
+        "Epic",
+        "bead-fact-epic",
+        facts.Epic is { } epic ? epic.Title : NoEpic,
+        facts.Epic is null ? "text-muted" : string.Empty,
+        facts.Epic is { } held ? BeadPageAddress.Of(new BeadAddress(Address.Project, held.Id)) : string.Empty,
+        [UiVerbs.MoveIntoAnEpic],
+        new FactPicker.OfOneOf([.. TheEpicChoices(facts)]));
+
+    // The entries of the epic picker: no epic first, because it is the one entry that every bead can
+    // stand in, then the epics by title. A bead is never offered itself. A closed epic is left out,
+    // except the one that holds this bead, so that the picker still marks where the bead stands.
+    private IEnumerable<FactChoice> TheEpicChoices(BacklogFacts facts)
+    {
+        yield return FactChoice.ThatWrites(
+            NoEpic,
+            marked: facts.Epic is null,
+            () => Bd.SetParentAsync(Address, string.Empty));
+
+        foreach (var epic in Bead.EpicsToOffer(Epics, Detail.Bead.Id, facts.Epic?.Id ?? string.Empty))
+        {
+            yield return FactChoice.ThatWrites(
+                epic.Title,
+                marked: string.Equals(epic.Id, facts.Epic?.Id, StringComparison.Ordinal),
+                () => Bd.SetParentAsync(Address, epic.Id));
+        }
+    }
+}

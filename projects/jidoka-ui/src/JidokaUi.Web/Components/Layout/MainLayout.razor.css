@@ -1,0 +1,31 @@
+/*
+    The top bar and the page, one under the other. No sidebar stands beside the
+    page, so the board gets the full width of the window.
+*/
+
+.content {
+    display: block;
+    padding: var(--jidoka-space-4) var(--jidoka-space-5) var(--jidoka-space-6);
+}
+
+#blazor-error-ui {
+    background-color: var(--jidoka-attention-subtle);
+    color: var(--jidoka-attention-fg);
+    border-top: 1px solid var(--jidoka-attention-border);
+    bottom: 0;
+    box-shadow: 0 -1px 2px var(--jidoka-shadow);
+    box-sizing: border-box;
+    display: none;
+    left: 0;
+    padding: var(--jidoka-space-2) var(--jidoka-space-4) var(--jidoka-space-3) var(--jidoka-space-4);
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
+}
+
+    #blazor-error-ui .dismiss {
+        cursor: pointer;
+        position: absolute;
+        right: var(--jidoka-space-3);
+        top: var(--jidoka-space-2);
+    }

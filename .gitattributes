@@ -3,6 +3,6 @@
 * text=auto eol=lf
 
 # Vendored third-party code keeps the bytes that its publisher shipped.
-projects/tracer-ui/src/TracerUi.Web/wwwroot/lib/** -text
+projects/jidoka-ui/src/JidokaUi.Web/wwwroot/lib/** -text
 
 .gitignore -text

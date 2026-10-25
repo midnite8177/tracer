@@ -456,11 +456,11 @@ is unconfirmed.
 
 ## Sources
 
-[^tui-readme]: tracer-ui README, "Triage on one bead". [projects/tracer-ui/README.md](../../projects/tracer-ui/README.md)
-[^tui-adr11]: [ADR 0011, the address of a bead carries its project](../../projects/tracer-ui/docs/adr/0011-the-address-of-a-bead-carries-its-project.md)
-[^tui-adr16]: [ADR 0016, the address carries the active project](../../projects/tracer-ui/docs/adr/0016-the-address-carries-the-active-project.md)
-[^tui-glossary]: tracer-ui glossary, "Needs-you view". [projects/tracer-ui/GLOSSARY.md](../../projects/tracer-ui/GLOSSARY.md)
-[^tui-adr3]: [ADR 0003, the app binds localhost](../../projects/tracer-ui/docs/adr/0003-localhost-by-default.md)
+[^tui-readme]: tracer-ui README, "Triage on one bead". [projects/jidoka-ui/README.md](../../projects/jidoka-ui/README.md)
+[^tui-adr11]: [ADR 0011, the address of a bead carries its project](../../projects/jidoka-ui/docs/adr/0011-the-address-of-a-bead-carries-its-project.md)
+[^tui-adr16]: [ADR 0016, the address carries the active project](../../projects/jidoka-ui/docs/adr/0016-the-address-carries-the-active-project.md)
+[^tui-glossary]: tracer-ui glossary, "Needs-you view". [projects/jidoka-ui/GLOSSARY.md](../../projects/jidoka-ui/GLOSSARY.md)
+[^tui-adr3]: [ADR 0003, the app binds localhost](../../projects/jidoka-ui/docs/adr/0003-localhost-by-default.md)
 [^webkit-ios]: WebKit, "Web Push for Web Apps on iOS and iPadOS". https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/
 [^apple-webpush]: Apple, "Sending web push notifications in web apps and browsers". https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers
 [^mdn-sw]: MDN, "Service Worker API". https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API

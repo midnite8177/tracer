@@ -1,0 +1,30 @@
+::deep .needs-you-row {
+    cursor: pointer;
+}
+
+.needs-you-path {
+    font-size: var(--jidoka-text-small);
+    font-weight: normal;
+    margin-left: var(--jidoka-space-2);
+}
+
+/* A project that did not answer stands out, as one more failure message. */
+.failure-message {
+    margin-bottom: var(--jidoka-space-3);
+}
+
+/*
+    The project of one row, as a chip. The rows of many repositories run
+    together in one table, so the project must read at a glance and not as one
+    more word in a line of prose.
+*/
+.needs-you-project-chip {
+    display: inline-block;
+    background-color: var(--jidoka-canvas-inset);
+    border: 1px solid var(--jidoka-border);
+    border-radius: var(--jidoka-radius-pill);
+    color: var(--jidoka-fg-muted);
+    font-size: var(--jidoka-text-small);
+    padding: 0 var(--jidoka-space-2);
+    white-space: nowrap;
+}

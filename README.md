@@ -21,7 +21,7 @@ submodule pinned to a commit. Clone with `--recurse-submodules`, or run
 
 ## Projects
 
-- **[tracer-ui](projects/tracer-ui/README.md)** — a local web UI for the
+- **[jidoka-ui](projects/jidoka-ui/README.md)** — a local web UI for the
   browse and triage of [beads](https://github.com/gastownhall/beads)
   issues. Blazor Server on .NET 10.
 

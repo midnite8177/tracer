@@ -1,0 +1,112 @@
+using System.Globalization;
+using JidokaUi.Core.Beads;
+
+namespace JidokaUi.Core.Boards;
+
+/// <summary>One bead of a project, with the field names of the installed bd already resolved.</summary>
+/// <param name="Priority">The priority number, or null when the bead states none.</param>
+/// <param name="ParentId">The id of the epic that holds this bead, or an empty string.</param>
+/// <param name="Blockers">The ids of the beads that must close before this one, as its own edges name them.</param>
+public sealed record Bead(
+    string Id,
+    string Title,
+    string Type,
+    long? Priority,
+    string Assignee,
+    IReadOnlyList<string> Labels,
+    string ParentId,
+    BeadProse Prose,
+    IReadOnlyList<string> Blockers,
+    string Status,
+    string CloseReason)
+{
+    /// <summary>The label that marks a bead as one that waits on a person.</summary>
+    public const string HumanLabel = "human";
+
+    /// <summary>True when this bead states a priority of its own.</summary>
+    public bool HasPriority => Priority is not null;
+
+    /// <summary>
+    /// A priority as text: the number alone, which the board draws and a part of the board filter
+    /// names. The board and the filter bar read the same rule, so one press and one control name a
+    /// priority the same way.
+    /// </summary>
+    public static string PriorityAsText(long priority) => priority.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>The priority of this bead as text, or an empty string when it states none.</summary>
+    public string PriorityText => Priority is { } priority ? PriorityAsText(priority) : string.Empty;
+
+    public bool IsEpic => Type == "epic";
+
+    public bool IsClosed => Status == StoredStatus.Closed;
+
+    /// <summary>
+    /// True for every bead but a closed epic, which is finished. A deferred epic is only parked, so it
+    /// still takes a new bead.
+    /// </summary>
+    public bool TakesANewBead => !(IsEpic && IsClosed);
+
+    /// <summary>
+    /// The epics that a picker offers as a place for one bead, by title: each epic that takes a new
+    /// bead, and the epic with the id <paramref name="keep"/> even when it is closed, so that a picker
+    /// still marks the epic the bead sits in. The epic with the id <paramref name="except"/> is left
+    /// out, so that a bead is never offered itself. An empty id names no epic.
+    /// </summary>
+    public static IReadOnlyList<Bead> EpicsToOffer(IEnumerable<Bead> epics, string except, string keep) =>
+        [.. epics
+            .Where(epic => !string.Equals(epic.Id, except, StringComparison.Ordinal))
+            .Where(epic => epic.TakesANewBead || string.Equals(epic.Id, keep, StringComparison.Ordinal))
+            .OrderBy(epic => epic.Title, StringComparer.Ordinal)];
+
+    /// <summary>
+    /// True when one of these epics has the id <paramref name="epicId"/> and takes a new bead.
+    /// </summary>
+    public static bool TakesANewBeadAmong(IEnumerable<Bead> epics, string epicId) =>
+        epics.Any(epic => string.Equals(epic.Id, epicId, StringComparison.Ordinal) && epic.TakesANewBead);
+
+    public bool NeedsYou => Labels.Contains(HumanLabel, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A close reason belongs to a closed bead, so an open bead never shows one.</summary>
+    public bool HasCloseReason => IsClosed && CloseReason.Length > 0;
+
+    // The edge types with which a version of bd states that an epic holds a bead.
+    private static readonly string[] ParentEdgeTypes = ["parent-child", "parent"];
+
+    // The edge type with which bd states that one bead must close before another.
+    private const string BlocksEdgeType = "blocks";
+
+    public static Bead From(BeadRecord record)
+    {
+        var edges = record.Edges(BeadFields.Candidates("dependencies"));
+        return new Bead(
+            record.Text(BeadFields.IdNames),
+            record.Text(BeadFields.Candidates("title")),
+            record.Text(BeadFields.Candidates("type")),
+            record.NullableNumber(BeadFields.Candidates("priority")),
+            record.Text(BeadFields.Candidates("assignee")),
+            record.Strings(BeadFields.Candidates("labels")),
+            EpicOf(record, edges),
+            new BeadProse(
+                record.Text(BeadFields.Candidates("description")),
+                record.Text(BeadFields.Candidates("acceptance")),
+                record.Text(BeadFields.Candidates("notes"))),
+            TargetsOf(edges, BlocksEdgeType),
+            record.Text(BeadFields.Candidates("status")),
+            record.Text(BeadFields.Candidates("close-reason")));
+    }
+
+    // The epic that holds this bead. Some versions of bd name it in a field of its own, and others
+    // state it only as a dependency edge.
+    private static string EpicOf(BeadRecord record, IReadOnlyList<BeadEdge> edges)
+    {
+        var named = record.Text(BeadFields.Candidates("parent"));
+        return named.Length > 0
+            ? named
+            : ParentEdgeTypes.SelectMany(type => TargetsOf(edges, type)).FirstOrDefault(string.Empty);
+    }
+
+    private static IReadOnlyList<string> TargetsOf(IReadOnlyList<BeadEdge> edges, string type) =>
+        [.. edges
+            .Where(edge => edge.Type == type && edge.TargetId.Length > 0)
+            .Select(edge => edge.TargetId)];
+}

@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/JidokaUi.Core/JidokaUi.Core.csproj" />
+    <Project Path="src/JidokaUi.Web/JidokaUi.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/JidokaUi.Tests/JidokaUi.Tests.csproj" />
+  </Folder>
+</Solution>

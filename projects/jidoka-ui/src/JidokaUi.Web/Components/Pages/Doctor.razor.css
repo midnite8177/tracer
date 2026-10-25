@@ -1,0 +1,21 @@
+/*
+    The report of the installed bd.
+
+    Everything that bd itself gives — its version, its command names, the field
+    names that it emits — reads as machine text, so that a person tells a
+    command name from the prose around it. A long path gives up the line rather
+    than push the page wider.
+*/
+
+.doctor-path {
+    font-size: var(--jidoka-text-quiet);
+}
+
+/* The whole command set of this bd, as one block of machine text. */
+.doctor-verbs {
+    background-color: var(--jidoka-canvas-inset);
+    border: 1px solid var(--jidoka-border-muted);
+    border-radius: var(--jidoka-radius);
+    font-size: var(--jidoka-text-quiet);
+    padding: var(--jidoka-space-2) var(--jidoka-space-3);
+}

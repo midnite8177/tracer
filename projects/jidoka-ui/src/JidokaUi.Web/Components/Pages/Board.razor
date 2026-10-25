@@ -1,0 +1,500 @@
+@page "/board"
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Boards
+@using JidokaUi.Core.Look
+@using JidokaUi.Core.Projects
+@using TheBoard = JidokaUi.Core.Boards.Board
+@inject NavigationManager Navigation
+@inject BacklogCache Backlogs
+@inject ProjectWatchers Watchers
+@inject ActiveProjectSelection Selection
+@inject SwitchAddress Switches
+@inject SavedFilterCatalog SavedFilters
+@inject BeadOpener Opener
+@inherits ProjectPage
+@implements IDisposable
+
+<PageTitle>Board</PageTitle>
+
+<h1>Board</h1>
+
+@if (TheProject.Addressed is AddressedProject.Lost lostProject)
+{
+    <p class="text-danger board-message">@lostProject.Reason</p>
+}
+else if (TheProject.Addressed is not AddressedProject.Found { Project: var project })
+{
+    <p>@NoActiveProject.Ask The board shows the beads of the active project.</p>
+    <a class="btn btn-primary" href="">Go to the projects</a>
+}
+else if (outcome is null)
+{
+    <p>The app is reading the beads of this project…</p>
+}
+else if (!outcome.Answered)
+{
+    <p class="text-muted">@project.Value</p>
+    <p class="text-danger board-message">@outcome.Message</p>
+}
+else
+{
+    <p class="text-muted">@project.Value</p>
+
+    @if (whyTheBeadsAreFromBefore.Length > 0)
+    {
+        <p class="text-danger board-message board-stale-read">
+            @whyTheBeadsAreFromBefore<br />
+            The beads on the screen are the ones from before.
+        </p>
+    }
+
+    <NewTabRefusal Feedback="newTab" />
+
+    <FilterBar Filter="filter"
+               FilterChanged="OnFilterChanged"
+               Types="types"
+               Priorities="priorities"
+               Labels="labels"
+               Epics="epics"
+               Saved="savedFilters"
+               OnSave="SaveTheFilter"
+               OnForget="Forget" />
+
+    @if (registryBusy)
+    {
+        <p class="text-danger board-message">@RegistryBusy.Message</p>
+    }
+
+    <QuickCreate Project="project"
+                 Epics="epics" />
+
+    <BulkBar Project="project"
+             Selected="SelectedBeads"
+             Labels="labels"
+             Epics="epics"
+             OnCleared="ClearTheSelection"
+             OnRetry="KeepOnlyTheseBeads" />
+
+    <ReReadMark Rereading="rereading">
+        @if (board.IsEmpty)
+        {
+            <p>No bead of this project matches the filter and the toggles.</p>
+        }
+        else
+        {
+            <table class="table board-table">
+                <thead>
+                    <tr>
+                        <th class="board-cell-tick"></th>
+                        @TitleHead()
+                        @foreach (var column in ColumnsAfterTitle)
+                        {
+                            <th>@column</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in collapsed.Draws(board.Rows))
+                    {
+                        @Row(project, row)
+                    }
+
+                    @if (board.Unparented.Count > 0)
+                    {
+                        <tr class="board-row board-unparented">
+                            <td class="board-cell-tick" style="--row-depth: @TheBoard.UnparentedDepth">
+                                <div class="board-ticks">
+                                    @BranchTick(UnparentedIds, "Select every bead under this row")
+                                </div>
+                            </td>
+                            <td class="board-cell-title" colspan="@(ColumnsAfterTitle.Length + 1)">
+                                <div class="board-title-line">
+                                    @CollapseControl(collapsed.HoldsUnparented, collapsed.ToggleUnparented)
+                                    <span>@TheBoard.UnparentedTitle</span>
+                                    @Count(board.UnparentedHeld)
+                                </div>
+                            </td>
+                        </tr>
+                        @foreach (var row in collapsed.DrawsUnparented(board.Unparented))
+                        {
+                            @Row(project, row)
+                        }
+                    }
+                </tbody>
+            </table>
+        }
+    </ReReadMark>
+}
+
+@code {
+    // The columns that follow the title, in the order that the table draws them. The Unparented row
+    // spans the title and all of them, so one list gives the header its cells and that row its width.
+    private static readonly string[] ColumnsAfterTitle = ["Id", "Type", "Priority", "Labels", "Status", "Demo"];
+
+    // The header of the title column. It carries Collapse all and Expand all above the chevrons that
+    // collapse one row each.
+    private RenderFragment TitleHead() =>
+        @<th>
+            <div class="board-title-head">
+                <span>Title</span>
+                <button type="button" class="btn btn-sm btn-outline-secondary board-collapse-all"
+                        disabled="@collapsed.LeavesNothingToCollapse(board)"
+                        @onclick="() => collapsed.CollapseAll(board)">Collapse all</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary board-expand-all"
+                        disabled="@(!collapsed.HoldsAny)"
+                        @onclick="collapsed.OpenAll">Expand all</button>
+            </div>
+        </th>;
+
+    // One row of the board. The tree and the beads under the Unparented row take the same drawing,
+    // so a bead of either place reads the same, and the depth alone says where it sits. The project
+    // comes in from the markup, where the board already holds the project it reads.
+    private RenderFragment Row(ProjectPath project, BoardRow row) =>
+        @<PressableRow Class="board-row" Style="@($"--row-depth: {row.Depth}")"
+                       OnOpen="up => Open(new BeadAddress(project, row.Bead.Id), up)">
+            <td class="board-cell-tick" @onclick:stopPropagation="true">
+                <div class="board-ticks">
+                    <input class="form-check-input" type="checkbox"
+                           title="Select this bead"
+                           checked="@selection.Holds(row.Bead.Id)"
+                           @onchange="() => ToggleTheBead(row.Bead.Id)" />
+                    @if (row.Branch.Count > 1)
+                    {
+                        @BranchTick(row.Branch, "Select this bead and every bead below it")
+                    }
+                </div>
+            </td>
+            <td class="board-cell-title">
+                <div class="board-title-line">
+                    @if (row.HoldsBeads)
+                    {
+                        @CollapseControl(collapsed.Holds(row.Bead.Id), () => collapsed.Toggle(row.Bead.Id))
+                    }
+                    <RowTitle Class="board-title"
+                              Address="@BeadPageAddress.Of(new BeadAddress(project, row.Bead.Id))"
+                              Tooltip="@row.Bead.Title"
+                              Text="@row.Bead.Title" />
+                    @if (row.HoldsBeads)
+                    {
+                        @Count(row.Held)
+                    }
+                </div>
+                @if (row.Bead.IsClosed && row.Bead.CloseReason.Length > 0)
+                {
+                    <div class="text-muted board-close-reason">@row.Bead.CloseReason</div>
+                }
+            </td>
+            <td class="board-cell-quiet"><BeadId Id="@row.Bead.Id" Quiet="false" /></td>
+            <td class="board-cell-quiet">
+                @if (row.Bead.Type.Length > 0)
+                {
+                    @FilterPress(row.Bead.Type, "type", string.Empty,
+                                 BoardFilterAddress.Of(project, filter.AfterAPressOnType(row.Bead.Type)),
+                                 "Filter the board by this type")
+                }
+            </td>
+            <td class="board-cell-quiet">
+                @if (row.Bead.HasPriority)
+                {
+                    @FilterPress($"p{row.Bead.PriorityText}", "priority", string.Empty,
+                                 BoardFilterAddress.Of(project, filter.AfterAPressOnPriority(row.Bead.PriorityText)),
+                                 "Filter the board by this priority")
+                }
+                else
+                {
+                    <text>—</text>
+                }
+            </td>
+            <td>
+                <div class="board-labels">
+                    @foreach (var label in row.Bead.Labels)
+                    {
+                        @FilterPress(label, "label", "board-chip board-label",
+                                     BoardFilterAddress.Of(project, filter.AfterAPressOnLabel(label)),
+                                     "Filter the board by this label")
+                    }
+                </div>
+            </td>
+            <td>
+                <span class="board-chip board-status board-status-@row.Status.Appearance"
+                      title="@row.Status.Text">@row.Status.Text</span>
+            </td>
+            <td>
+                @if (row.Bead.Prose.HasDemoLine)
+                {
+                    <span class="board-chip board-demo board-demo-yes" title="@row.Bead.Prose.DemoLine">demo</span>
+                }
+                else
+                {
+                    @FilterPress("no demo", "demo", "board-chip board-demo board-demo-no",
+                                 BoardFilterAddress.Of(project, filter.AfterAPressOnTheNoDemoLineMarker()),
+                                 "This bead is not ready to implement. Filter the board by this marker.")
+                }
+            </td>
+        </PressableRow>;
+
+    // The control that collapses one row and opens it again. Only a row that holds a bead carries
+    // it. Which way the chevron points is a question for the stylesheet, because the class that the
+    // button carries already says whether the row is collapsed. The button states the same fact for
+    // a screen reader, which reads no chevron.
+    private RenderFragment CollapseControl(bool isCollapsed, Action toggle) =>
+        @<button type="button" class="board-collapse @(isCollapsed ? "board-collapse-collapsed" : "")"
+                 aria-expanded="@(!isCollapsed)"
+                 aria-label="Collapse and expand the beads under this row"
+                 title="Collapse and expand the beads under this row"
+                 @onclick="toggle" @onclick:stopPropagation="true">
+            <Icon Name="IconName.Chevron" />
+        </button>;
+
+    // The count of the beads under a row. An epic row carries the count of the beads below it, and
+    // the Unparented row carries the count of the loose beads, so one drawing serves both.
+    private RenderFragment Count(int held) =>
+        @<span class="board-chip board-count" title="@HeldTitle(held)">@held</span>;
+
+    private static string HeldTitle(int held) =>
+        held == 1 ? "1 bead under this row" : $"{held} beads under this row";
+
+    private RenderFragment BranchTick(IReadOnlyList<string> branch, string title) =>
+        @<input class="form-check-input" type="checkbox"
+                title="@title"
+                checked="@selection.HoldsAll(branch)"
+                @onchange="() => selection.ToggleAll(branch)" />;
+
+    // One filter press: the type of a row, one of its labels, or the marker that says it states no
+    // Demo line. It is a link, and its address carries the project and the whole filter with the one
+    // part that the press sets, so a second tab shows the same beads and the Back button undoes the
+    // press. The press stops the row press, because it narrows the board and opens no bead.
+    private RenderFragment FilterPress(string text, string kind, string shape, string address, string title) =>
+        @<a class="@($"board-filter-press board-filter-press-{kind} {shape}".TrimEnd())"
+            href="@address"
+            title="@title"
+            @onclick:stopPropagation="true">@text</a>;
+
+    private PageProject? theProject;
+    private BacklogOutcome? outcome;
+    private BoardFilter filter = BoardFilter.Everything;
+    private TheBoard board = new([], []);
+    private IReadOnlyList<string> types = [];
+    private IReadOnlyList<long> priorities = [];
+    private IReadOnlyList<string> labels = [];
+    private IReadOnlyList<Bead> epics = [];
+    private IReadOnlyList<SavedFilter> savedFilters = [];
+    private bool registryBusy;
+    private readonly IdSet selection = new();
+    private readonly CollapsedRows collapsed = new();
+    private readonly NewTabFeedback newTab = new();
+    private bool reading;
+    private bool readAgain;
+    private bool nextReadIsAReread;
+    private bool rereading;
+    private string whyTheBeadsAreFromBefore = string.Empty;
+    private IDisposable? switchWalk;
+
+    protected override void OnInitialized()
+    {
+        FollowTheBacklog(Backlogs, TheProject, TakeTheChange);
+        switchWalk = Switches.WalkTo(BoardFilterAddress.OfEverythingIn);
+    }
+
+    // Built once, at first use, because Blazor injects the services it takes after the constructor runs.
+    private PageProject TheProject =>
+        theProject ??= new PageProject(
+            Navigation, Selection, BoardFilterAddress.Page, "whose board it can show", TheBoardAddressIn);
+
+    private string TheBoardAddressIn(ProjectPath project) =>
+        BoardFilterAddress.Of(project, BoardFilterAddress.FilterIn(Navigation.Uri));
+
+    protected override async Task ShowTheAddressAsync()
+    {
+        var change = TheProject.TakeTheAddress();
+        if (change is AddressChange.Elsewhere)
+        {
+            return;
+        }
+
+        filter = BoardFilterAddress.FilterIn(Navigation.Uri);
+        switch (change)
+        {
+            case AddressChange.FirstProject { Project: var project }:
+                StartOn(project);
+                await Reread();
+                break;
+            case AddressChange.AnotherProject { Project: var project }:
+                await ShowAnotherProject(project);
+                break;
+            default:
+                Rebuild();
+                break;
+        }
+    }
+
+    // The bead selection and the collapsed rows outlive every change of the filter, and a change of
+    // the project drops them, because an epic id and a label of one project name nothing in another.
+    private async Task ShowAnotherProject(ProjectPath project)
+    {
+        selection.Clear();
+        collapsed.OpenAll();
+        outcome = null;
+        whyTheBeadsAreFromBefore = string.Empty;
+        StartOn(project);
+        StateHasChanged();
+        await Reread();
+    }
+
+    private void StartOn(ProjectPath project)
+    {
+        savedFilters = SavedFilters.Filters(project);
+        registryBusy = false;
+        Watchers.Watch(project);
+    }
+
+    private Task TakeTheChange(BacklogChange change)
+    {
+        if (change.IsReRead)
+        {
+            nextReadIsAReread = true;
+        }
+
+        return Reread();
+    }
+
+    // Reads the backlog again and draws the board. A read that arrives while another one runs waits
+    // for it and then reads once, so a bulk action costs the board two reads and not one for each
+    // bead of the selection.
+    private async Task Reread()
+    {
+        if (reading)
+        {
+            readAgain = true;
+            return;
+        }
+
+        reading = true;
+        try
+        {
+            do
+            {
+                readAgain = false;
+                rereading = nextReadIsAReread;
+                nextReadIsAReread = false;
+                StateHasChanged();
+                await Load();
+                StateHasChanged();
+            }
+            while (readAgain);
+        }
+        finally
+        {
+            reading = false;
+            rereading = false;
+        }
+
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        StopFollowingTheBacklog();
+        switchWalk?.Dispose();
+    }
+
+    private async Task Load()
+    {
+        if (TheProject.OnTheScreen is not { } project)
+        {
+            return;
+        }
+
+        var fresh = await Backlogs.ReadAsync(project);
+
+        if (!TheProject.Shows(project))
+        {
+            return;
+        }
+
+        Show(fresh);
+    }
+
+    private void Show(BacklogOutcome fresh)
+    {
+        // The rows on the screen are one write old and not wrong, so a read with nothing new keeps them.
+        if (!fresh.Answered && outcome is { Answered: true })
+        {
+            whyTheBeadsAreFromBefore = fresh.GaveUp ? NoAnswerAgain : fresh.Message;
+            return;
+        }
+
+        whyTheBeadsAreFromBefore = string.Empty;
+        outcome = fresh;
+        types = outcome.Backlog.Types;
+        priorities = outcome.Backlog.Priorities;
+        labels = outcome.Backlog.Labels;
+        epics = outcome.Backlog.Epics;
+        Rebuild();
+    }
+
+    // Takes the board to the address of the filter that the bar now states, in the same project,
+    // because the address is where the filter lives. A change of the search text replaces the address
+    // instead of adding to the history, so the Back button leaves the search and never walks back one
+    // letter at a time.
+    private void OnFilterChanged(BoardFilter changed)
+    {
+        if (TheProject.OnTheScreen is not { } project)
+        {
+            return;
+        }
+
+        var onlyTheTextChanged = (changed with { Text = filter.Text }) == filter;
+        Navigation.NavigateTo(BoardFilterAddress.Of(project, changed), forceLoad: false, replace: onlyTheTextChanged);
+    }
+
+    private void SaveTheFilter(string name)
+    {
+        if (TheProject.OnTheScreen is not { } project)
+        {
+            return;
+        }
+
+        registryBusy = SavedFilters.Save(project, name, filter) is RegistryUpdate.Busy;
+        savedFilters = SavedFilters.Filters(project);
+    }
+
+    private void Forget(SavedFilter saved)
+    {
+        if (TheProject.OnTheScreen is not { } project)
+        {
+            return;
+        }
+
+        registryBusy = SavedFilters.Remove(project, saved.Name) is RegistryUpdate.Busy;
+        savedFilters = SavedFilters.Filters(project);
+    }
+
+    private void Rebuild()
+    {
+        if (outcome is not null)
+        {
+            board = outcome.Backlog.ToBoard(filter);
+            collapsed.KeepOnly(outcome.Backlog.Beads.Select(bead => bead.Id));
+        }
+
+        selection.KeepOnly(OnTheBoard.Select(bead => bead.Id));
+    }
+
+    private IReadOnlyList<string> UnparentedIds => [.. board.Unparented.Select(row => row.Bead.Id)];
+
+    private IEnumerable<Bead> OnTheBoard => board.EveryRow.Select(row => row.Bead);
+
+    private IReadOnlyList<Bead> SelectedBeads => [.. OnTheBoard.Where(bead => selection.Holds(bead.Id))];
+
+    private void ToggleTheBead(string id) => selection.Toggle(id);
+
+    private void ClearTheSelection() => selection.Clear();
+
+    private void KeepOnlyTheseBeads(IReadOnlyList<string> ids) => selection.KeepOnly(ids);
+
+    // Opens the bead that a press on a row asks for, where the release asks for it. The board
+    // stays as it is when the bead opens beside it, and it says so when the browser refuses.
+    private async Task Open(BeadAddress bead, MouseEventArgs release) =>
+        newTab.Take(await Opener.OpenAsync(BeadPageAddress.Of(bead), release));
+}

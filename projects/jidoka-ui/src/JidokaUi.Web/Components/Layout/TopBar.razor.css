@@ -1,0 +1,99 @@
+/*
+    One line at 1280 wide and wider: the app name, the nav links, then the LAN
+    mode marker and the theme toggle at the right. A narrow window wraps the
+    line rather than hides a link, because every link must stay reachable.
+*/
+
+.top-bar {
+    position: sticky;
+    top: 0;
+    z-index: var(--jidoka-layer-top-bar);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--jidoka-space-4);
+    min-height: var(--jidoka-top-bar-height);
+    padding: 0 var(--jidoka-space-5);
+    background-color: var(--jidoka-topbar-canvas);
+    border-bottom: 1px solid var(--jidoka-topbar-border);
+}
+
+.app-name {
+    color: var(--jidoka-topbar-fg);
+    font-size: var(--jidoka-text-title);
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.app-name:hover {
+    color: var(--jidoka-topbar-fg);
+    text-decoration: underline;
+}
+
+.app-name:focus-visible {
+    outline: none;
+    border-radius: var(--jidoka-radius-small);
+    box-shadow: 0 0 0 var(--jidoka-focus-ring-width) var(--jidoka-topbar-focus-ring);
+}
+
+.top-bar-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--jidoka-space-1);
+}
+
+.top-bar-end {
+    display: flex;
+    align-items: center;
+    gap: var(--jidoka-space-3);
+    margin-left: auto;
+}
+
+::deep .top-bar-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--jidoka-space-2);
+    padding: var(--jidoka-space-1) var(--jidoka-space-3);
+    border-radius: var(--jidoka-radius);
+    color: var(--jidoka-topbar-fg-muted);
+    font-size: var(--jidoka-text-quiet);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background-color 120ms ease, color 120ms ease;
+}
+
+::deep .top-bar-link:hover {
+    background-color: var(--jidoka-topbar-hover);
+    color: var(--jidoka-topbar-fg);
+}
+
+::deep .top-bar-link.active {
+    background-color: var(--jidoka-topbar-selected);
+    color: var(--jidoka-topbar-fg);
+}
+
+::deep .top-bar-link:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 var(--jidoka-focus-ring-width) var(--jidoka-topbar-focus-ring);
+}
+
+.lan-mode {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--jidoka-space-2);
+    padding: var(--jidoka-space-1) var(--jidoka-space-3);
+    border: 1px solid var(--jidoka-attention-border);
+    border-radius: var(--jidoka-radius-small);
+    background-color: var(--jidoka-attention-subtle);
+    color: var(--jidoka-attention-fg);
+    font-size: var(--jidoka-text-small);
+    white-space: nowrap;
+}
+
+.lan-mode-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background-color: var(--jidoka-attention-fg);
+}

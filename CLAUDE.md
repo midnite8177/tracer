@@ -17,7 +17,7 @@ say so; do not work around it.
 
 Each project README holds its own commands.
 
-- tracer-ui: [projects/tracer-ui/README.md](projects/tracer-ui/README.md)
+- jidoka-ui: [projects/jidoka-ui/README.md](projects/jidoka-ui/README.md)
 - tracer-seed: [projects/tracer-seed/README.md](projects/tracer-seed/README.md)
 - jidoka: [projects/jidoka/README.md](projects/jidoka/README.md)
 
@@ -30,7 +30,7 @@ The code keeps these rules. Keep them in new code.
 - **Nullable reference types are on.** Do not use the null-forgiving
   operator. Model the absent value instead.
 - **Write fakes by hand.** There is no mock library, and the tests do not
-  need one. See `FakeBd` in the tracer-ui tests.
+  need one. See `FakeBd` in the jidoka-ui tests.
 - **A test name is a sentence about behavior**, such as
   `ReadsTheBeadsThatBdReadyPrintsAsAJsonArray`. It says what the test
   proves, never which task asked for it.

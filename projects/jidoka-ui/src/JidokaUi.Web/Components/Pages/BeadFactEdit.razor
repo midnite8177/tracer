@@ -1,0 +1,327 @@
+@*
+    One row of the fact strip that a person presses to change it. The value is the
+    control, so it is a button whose accessible name states the field and the value.
+    A press replaces the row with its picker. The Fact picker and Unsaved tick
+    entries of projects/jidoka-ui/GLOSSARY.md say how the picker behaves. The box at
+    the foot of a picker of several says why it refuses a word, and a word that the
+    project does not use gets an entry at the foot until the picker closes. A re-read
+    drops a tick whose entry it took away. A close puts the keyboard back on the
+    value. A press on another row only closes this picker, and a second press opens
+    that one. A row that the keyboard opens closes this one, so the strip holds one
+    open picker at a time.
+*@
+
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Projects
+@inherits CapabilityAware
+
+<h2 class="bead-fact-name" id="@Fact.HeadingId">@Fact.Name</h2>
+
+@if (open)
+{
+    <div class="bead-fact-picker-backdrop" aria-hidden="true" @onclick="Close"></div>
+    <div class="bead-fact-picker" tabindex="-1" @ref="picker" @onkeydown="CloseOnEscape">
+        @if (Refusal is { } refusal)
+        {
+            <p class="bead-fact-refusal">@refusal</p>
+        }
+        else
+        {
+            <BeadWriteFeedback Message="@WhatWentWrong" Wrote="false" Writing="Writing" />
+            @if (asked is { Question: { } question })
+            {
+                <div class="bead-fact-question">
+                    <input class="form-control form-control-sm bead-fact-answer"
+                           @ref="field"
+                           aria-label="@question.Prompt"
+                           placeholder="@question.Prompt"
+                           disabled="@Writing"
+                           @bind="answer"
+                           @bind:event="oninput" />
+                    <button type="button" class="btn btn-sm btn-outline-danger bead-fact-commit"
+                            disabled="@(answer.Trim().Length == 0 || Writing)"
+                            aria-busy="@AriaBusy"
+                            @onclick="Commit">@question.Press</button>
+                </div>
+            }
+            else
+            {
+                @switch (Fact.Picker)
+                {
+                    case FactPicker.OfOneOf one:
+                        <div class="bead-fact-choices" role="group" aria-labelledby="@Fact.HeadingId" aria-busy="@AriaBusy">
+                            @foreach (var choice in one.Choices)
+                            {
+                                <button type="button"
+                                        class="bead-fact-choice @(choice.Marked ? "bead-fact-choice-current" : string.Empty)"
+                                        aria-current="@(choice.Marked ? "true" : null)"
+                                        disabled="@Writing"
+                                        @onclick="() => Pick(choice)"><span class="bead-fact-words">@choice.Text</span></button>
+                            }
+                        </div>
+                        break;
+                    case FactPicker.OfSeveral several:
+                        <div class="bead-fact-choices" role="group" aria-labelledby="@Fact.HeadingId" aria-busy="@AriaBusy">
+                            @foreach (var entry in ticks.TheEntriesOf(several))
+                            {
+                                var state = ticks.TheStateOf(entry);
+                                <button type="button"
+                                        class="bead-fact-choice @(entry.Marked ? "bead-fact-choice-current" : string.Empty)"
+                                        aria-pressed="@(state is EntryState.Carried or EntryState.ToAdd ? "true" : "false")"
+                                        disabled="@Writing"
+                                        @onclick="() => Tick(entry)">@switch (state)
+                                                                     {
+                                                                         case EntryState.Carried:
+                                                                             <span class="bead-fact-tick" aria-hidden="true">&#10003;</span>
+                                                                             break;
+                                                                         case EntryState.ToAdd:
+                                                                             <span class="bead-fact-plus" aria-hidden="true">+</span>
+                                                                             break;
+                                                                         case EntryState.ToRemove:
+                                                                             <span class="bead-fact-minus" aria-hidden="true">&#8722;</span>
+                                                                             break;
+                                                                     }<span class="bead-fact-words">@entry.Text</span>@if (WhatSaveDoesTo(state) is { } will)
+                                                                     {
+                                                                         <span class="visually-hidden">@will</span>
+                                                                     }</button>
+                            }
+                        </div>
+                        <div class="bead-fact-addition">
+                            <input class="form-control form-control-sm bead-fact-new"
+                                   aria-label="@several.Addition.Question.Prompt"
+                                   placeholder="@several.Addition.Question.Prompt"
+                                   disabled="@Writing"
+                                   @bind="added"
+                                   @bind:event="oninput"
+                                   @onkeydown="key => AddOnEnter(key, several)" />
+                            <button type="button" class="btn btn-sm btn-outline-secondary bead-fact-add"
+                                    disabled="@(added.Trim().Length == 0 || Writing)"
+                                    aria-busy="@AriaBusy"
+                                    @onclick="() => Add(several)">@several.Addition.Question.Press</button>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-primary bead-fact-save"
+                                disabled="@(ticks.UnsavedIn(several).Count == 0 || Writing)"
+                                aria-busy="@AriaBusy"
+                                @onclick="() => Save(several)">@SaveWords(ticks.UnsavedIn(several).Count)</button>
+                        break;
+                }
+            }
+        }
+    </div>
+}
+else
+{
+    <p class="bead-fact-value @Fact.ValueClass">
+        <button type="button" class="bead-fact-press"
+                @ref="press"
+                aria-label="@($"{Fact.Name}, {Fact.Value}")"
+                @onclick="Open">@Fact.Value</button>
+        @if (Fact.Page.Length > 0)
+        {
+            <a class="bead-fact-page" href="@Fact.Page" aria-label="@($"Open {Fact.Value}")">open</a>
+        }
+    </p>
+}
+
+@code {
+    /// <summary>The project whose bd this row asks and writes to.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required ProjectPath Project { get; set; }
+
+    /// <summary>The fact that this row states, and what a press of it offers.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required PressableFact Fact { get; set; }
+
+    /// <summary>Runs after a write that landed, so that the page reads the bead again.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    /// <summary>
+    /// The name of the row of the strip whose picker is open. This row closes its own picker when
+    /// the name is another row's.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required string OpenRow { get; set; }
+
+    /// <summary>Runs with the name of this row when its picker opens.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required EventCallback<string> OnOpen { get; set; }
+
+    private ElementReference press;
+    private ElementReference picker;
+    private ElementReference field;
+    private bool open;
+    private FactChoice? asked;
+    private string answer = string.Empty;
+    private string added = string.Empty;
+    private readonly UnsavedTicks ticks = new();
+    private WhatToFocus focus = WhatToFocus.Nothing;
+
+    // Where the keyboard stands after the next render, which a press or a close moves.
+    private enum WhatToFocus
+    {
+        Nothing,
+        ThePicker,
+        TheField,
+        ThePress,
+    }
+
+    protected override ProjectPath OfProject => Project;
+
+    // The first action that this bd lacks speaks for the whole field, because one entry that cannot
+    // land makes the field a question that the person cannot answer. A value that ignores a press
+    // reads as broken, so every press opens and answers.
+    private string? Refusal =>
+        Probed
+            ? Fact.Verbs.Select(Why).FirstOrDefault(missing => missing.Length > 0)
+            : "The app is still asking bd what it can do.";
+
+    // Null when the last write landed, because the value that the page read back already says it.
+    private string? WhyTheLastWriteFailed => Wrote ? null : WriteMessage;
+
+    // A press of an entry or of the box forgets the last write, so the later of the two speaks.
+    private string? WhatWentWrong => WhyTheLastWriteFailed ?? ticks.WhyTheBoxRefused;
+
+    private static string? WhatSaveDoesTo(EntryState state) => state switch
+    {
+        EntryState.ToAdd => ", will be added",
+        EntryState.ToRemove => ", will come off",
+        _ => null,
+    };
+
+    private static string SaveWords(int count) => count == 1 ? "Save 1 change" : $"Save {count} changes";
+
+    protected override void OnParametersSet()
+    {
+        if (open && !string.Equals(OpenRow, Fact.Name, StringComparison.Ordinal))
+        {
+            open = false;
+            ForgetTheAnswers();
+        }
+
+        ticks.SettleAfterAReRead(Fact.Picker);
+    }
+
+    private async Task Open()
+    {
+        ForgetTheLastWrite();
+        open = true;
+        ForgetTheAnswers();
+        focus = WhatToFocus.ThePicker;
+        await OnOpen.InvokeAsync(Fact.Name);
+    }
+
+    private void Close()
+    {
+        open = false;
+        ForgetTheAnswers();
+        focus = WhatToFocus.ThePress;
+    }
+
+    private void ForgetTheAnswers()
+    {
+        asked = null;
+        answer = string.Empty;
+        added = string.Empty;
+        ticks.Forget();
+    }
+
+    private void CloseOnEscape(KeyboardEventArgs key)
+    {
+        if (string.Equals(key.Key, "Escape", StringComparison.Ordinal))
+        {
+            Close();
+        }
+    }
+
+    private async Task Pick(FactChoice choice)
+    {
+        if (choice.Question is not null)
+        {
+            ForgetTheLastWrite();
+            asked = choice;
+            focus = WhatToFocus.TheField;
+            return;
+        }
+
+        await WriteThenClose(() => choice.Write(string.Empty));
+    }
+
+    // A refused word stays in the box, so the person can correct it.
+    private void Add(FactPicker.OfSeveral several)
+    {
+        ForgetTheLastWrite();
+        if (ticks.Add(several, added))
+        {
+            added = string.Empty;
+        }
+    }
+
+    private void AddOnEnter(KeyboardEventArgs key, FactPicker.OfSeveral several)
+    {
+        if (string.Equals(key.Key, "Enter", StringComparison.Ordinal))
+        {
+            Add(several);
+        }
+    }
+
+    private async Task WriteThenClose(Func<Task<BdWriteOutcome>> write)
+    {
+        if (await WriteAsync(write, OnWritten))
+        {
+            Close();
+        }
+    }
+
+    private void Tick(FactTick entry)
+    {
+        ForgetTheLastWrite();
+        ticks.Tick(entry);
+    }
+
+    private async Task Save(FactPicker.OfSeveral several)
+    {
+        var unsaved = ticks.UnsavedIn(several);
+        var change = new FactChange(
+            [.. unsaved.Where(entry => !entry.Marked).Select(entry => entry.Label)],
+            [.. unsaved.Select(entry => entry.Carried).OfType<BeadLabel>()]);
+        await WriteThenClose(() => several.Save(change));
+    }
+
+    // Runs the write of the entry that asked, with the answer that the person typed.
+    private async Task Commit()
+    {
+        if (asked is not { } choice)
+        {
+            return;
+        }
+
+        await WriteThenClose(() => choice.Write(answer));
+    }
+
+    // Moves the keyboard to the picker that a press opened, on to the field of an entry that asks,
+    // and back to the value when the picker closes, so that a person who never touches a pointer
+    // keeps their place on the page.
+    // firstRender goes unread: the press opens the picker on a later render, not the first.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        var what = focus;
+        focus = WhatToFocus.Nothing;
+        switch (what)
+        {
+            case WhatToFocus.ThePicker:
+                await picker.FocusAsync();
+                break;
+            case WhatToFocus.TheField:
+                await field.FocusAsync();
+                break;
+            case WhatToFocus.ThePress:
+                await press.FocusAsync();
+                break;
+        }
+    }
+}

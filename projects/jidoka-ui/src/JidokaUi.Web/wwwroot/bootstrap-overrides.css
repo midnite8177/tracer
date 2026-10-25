@@ -1,0 +1,274 @@
+/*
+    Bootstrap's own controls, mapped onto the design tokens.
+
+    A rule here names no shade: it hands a Bootstrap variable the value of a
+    token that tokens.css defines. The one keyword it states is transparent,
+    which is the absence of a fill and not a shade. A control the app uses and
+    this file does not map keeps the shade that Bootstrap ships.
+
+    App.razor loads this file after bootstrap.min.css. Load it first and the
+    dark block below ties with Bootstrap's own, which then wins on order and
+    paints the dark theme in Bootstrap's greys.
+*/
+
+/*
+    The selector names the dark theme as well as the root, so that it outranks
+    the dark block that Bootstrap itself ships.
+*/
+:root,
+:root[data-bs-theme="light"],
+:root[data-bs-theme="dark"] {
+    --bs-body-bg: var(--jidoka-canvas);
+    --bs-body-color: var(--jidoka-fg);
+    --bs-emphasis-color: var(--jidoka-fg);
+    --bs-heading-color: var(--jidoka-fg);
+    --bs-secondary-color: var(--jidoka-fg-muted);
+    --bs-secondary-bg: var(--jidoka-canvas-subtle);
+    --bs-tertiary-color: var(--jidoka-fg-muted);
+    --bs-tertiary-bg: var(--jidoka-canvas-subtle);
+    --bs-border-color: var(--jidoka-border);
+    --bs-border-color-translucent: var(--jidoka-border);
+    --bs-border-radius: var(--jidoka-radius);
+    --bs-border-radius-sm: var(--jidoka-radius-small);
+    --bs-link-color: var(--jidoka-accent-fg);
+    --bs-link-hover-color: var(--jidoka-accent-fg);
+    --bs-code-color: var(--jidoka-danger-fg);
+    --bs-highlight-bg: var(--jidoka-attention-subtle);
+    --bs-body-font-family: var(--jidoka-font-body);
+    --bs-font-monospace: var(--jidoka-font-mono);
+    --bs-form-valid-color: var(--jidoka-success-fg);
+    --bs-form-valid-border-color: var(--jidoka-success-emphasis);
+    --bs-form-invalid-color: var(--jidoka-danger-fg);
+    --bs-form-invalid-border-color: var(--jidoka-danger-emphasis);
+    --bs-focus-ring-color: var(--jidoka-focus-ring);
+}
+
+/*
+    These utilities read the tokens through the color itself, because Bootstrap
+    builds them from an rgb triple that a token cannot give.
+*/
+.text-danger {
+    color: var(--jidoka-danger-fg) !important;
+}
+
+.text-success {
+    color: var(--jidoka-success-fg) !important;
+}
+
+.bg-success {
+    background-color: var(--jidoka-success-emphasis) !important;
+    color: var(--jidoka-fg-on-emphasis) !important;
+}
+
+.text-bg-light {
+    background-color: var(--jidoka-canvas-subtle) !important;
+    color: var(--jidoka-fg) !important;
+}
+
+/* Bootstrap writes each button variant with its own values, so each one reads tokens here. */
+.btn-primary {
+    --bs-btn-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-bg: var(--jidoka-accent-emphasis);
+    --bs-btn-border-color: var(--jidoka-accent-emphasis);
+    --bs-btn-hover-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--jidoka-accent-fg);
+    --bs-btn-hover-border-color: var(--jidoka-accent-fg);
+    --bs-btn-active-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-active-bg: var(--jidoka-accent-fg);
+    --bs-btn-active-border-color: var(--jidoka-accent-fg);
+    --bs-btn-disabled-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-disabled-bg: var(--jidoka-accent-emphasis);
+    --bs-btn-disabled-border-color: var(--jidoka-accent-emphasis);
+}
+
+.btn-secondary {
+    --bs-btn-color: var(--jidoka-fg);
+    --bs-btn-bg: var(--jidoka-canvas-subtle);
+    --bs-btn-border-color: var(--jidoka-border);
+    --bs-btn-hover-color: var(--jidoka-fg);
+    --bs-btn-hover-bg: var(--jidoka-canvas-hover);
+    --bs-btn-hover-border-color: var(--jidoka-border);
+    --bs-btn-active-color: var(--jidoka-fg);
+    --bs-btn-active-bg: var(--jidoka-canvas-hover);
+    --bs-btn-active-border-color: var(--jidoka-border);
+    --bs-btn-disabled-color: var(--jidoka-fg-muted);
+    --bs-btn-disabled-bg: var(--jidoka-canvas-subtle);
+    --bs-btn-disabled-border-color: var(--jidoka-border);
+}
+
+.btn-success {
+    --bs-btn-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-bg: var(--jidoka-success-emphasis);
+    --bs-btn-border-color: var(--jidoka-success-emphasis);
+    --bs-btn-hover-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--jidoka-success-fg);
+    --bs-btn-hover-border-color: var(--jidoka-success-fg);
+    --bs-btn-active-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-active-bg: var(--jidoka-success-fg);
+    --bs-btn-active-border-color: var(--jidoka-success-fg);
+    --bs-btn-disabled-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-disabled-bg: var(--jidoka-success-emphasis);
+    --bs-btn-disabled-border-color: var(--jidoka-success-emphasis);
+}
+
+.btn-danger {
+    --bs-btn-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-bg: var(--jidoka-danger-emphasis);
+    --bs-btn-border-color: var(--jidoka-danger-emphasis);
+    --bs-btn-hover-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--jidoka-danger-fg);
+    --bs-btn-hover-border-color: var(--jidoka-danger-fg);
+    --bs-btn-active-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-active-bg: var(--jidoka-danger-fg);
+    --bs-btn-active-border-color: var(--jidoka-danger-fg);
+    --bs-btn-disabled-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-disabled-bg: var(--jidoka-danger-emphasis);
+    --bs-btn-disabled-border-color: var(--jidoka-danger-emphasis);
+}
+
+.btn-link {
+    --bs-btn-color: var(--jidoka-accent-fg);
+    --bs-btn-hover-color: var(--jidoka-accent-fg);
+    --bs-btn-active-color: var(--jidoka-accent-fg);
+    --bs-btn-disabled-color: var(--jidoka-fg-muted);
+}
+
+.btn-outline-primary {
+    --bs-btn-color: var(--jidoka-accent-fg);
+    --bs-btn-border-color: var(--jidoka-accent-emphasis);
+    --bs-btn-hover-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--jidoka-accent-emphasis);
+    --bs-btn-hover-border-color: var(--jidoka-accent-emphasis);
+    --bs-btn-active-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-active-bg: var(--jidoka-accent-emphasis);
+    --bs-btn-active-border-color: var(--jidoka-accent-emphasis);
+    --bs-btn-disabled-color: var(--jidoka-fg-muted);
+    --bs-btn-disabled-border-color: var(--jidoka-border);
+}
+
+.btn-outline-secondary {
+    --bs-btn-color: var(--jidoka-fg);
+    --bs-btn-border-color: var(--jidoka-border);
+    --bs-btn-hover-color: var(--jidoka-fg);
+    --bs-btn-hover-bg: var(--jidoka-canvas-hover);
+    --bs-btn-hover-border-color: var(--jidoka-border);
+    --bs-btn-active-color: var(--jidoka-fg);
+    --bs-btn-active-bg: var(--jidoka-canvas-hover);
+    --bs-btn-active-border-color: var(--jidoka-border);
+    --bs-btn-disabled-color: var(--jidoka-fg-muted);
+    --bs-btn-disabled-border-color: var(--jidoka-border);
+}
+
+/*
+    The warning variants hold one background through hover and press, where
+    every other variant moves its background to its own text token. They cannot
+    follow that rule: the attention text token is a light amber in the dark
+    theme, and
+    white text on it reads at 2.52:1. The emphasis color is the only
+    attention value that carries white text in both themes.
+*/
+.btn-warning {
+    --bs-btn-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-bg: var(--jidoka-attention-emphasis);
+    --bs-btn-border-color: var(--jidoka-attention-emphasis);
+    --bs-btn-hover-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--jidoka-attention-emphasis);
+    --bs-btn-hover-border-color: var(--jidoka-attention-border);
+    --bs-btn-active-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-active-bg: var(--jidoka-attention-emphasis);
+    --bs-btn-active-border-color: var(--jidoka-attention-border);
+    --bs-btn-disabled-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-disabled-bg: var(--jidoka-attention-emphasis);
+    --bs-btn-disabled-border-color: var(--jidoka-attention-emphasis);
+}
+
+.btn-outline-warning {
+    --bs-btn-color: var(--jidoka-attention-fg);
+    --bs-btn-border-color: var(--jidoka-attention-emphasis);
+    --bs-btn-hover-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--jidoka-attention-emphasis);
+    --bs-btn-hover-border-color: var(--jidoka-attention-emphasis);
+    --bs-btn-active-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-active-bg: var(--jidoka-attention-emphasis);
+    --bs-btn-active-border-color: var(--jidoka-attention-emphasis);
+    --bs-btn-disabled-color: var(--jidoka-fg-muted);
+    --bs-btn-disabled-border-color: var(--jidoka-border);
+}
+
+.btn-outline-danger {
+    --bs-btn-color: var(--jidoka-danger-fg);
+    --bs-btn-border-color: var(--jidoka-danger-emphasis);
+    --bs-btn-hover-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-hover-bg: var(--jidoka-danger-emphasis);
+    --bs-btn-hover-border-color: var(--jidoka-danger-emphasis);
+    --bs-btn-active-color: var(--jidoka-fg-on-emphasis);
+    --bs-btn-active-bg: var(--jidoka-danger-emphasis);
+    --bs-btn-active-border-color: var(--jidoka-danger-emphasis);
+    --bs-btn-disabled-color: var(--jidoka-fg-muted);
+    --bs-btn-disabled-border-color: var(--jidoka-border);
+}
+
+.table {
+    --bs-table-color: var(--jidoka-fg);
+    --bs-table-bg: transparent;
+    --bs-table-border-color: var(--jidoka-border-muted);
+    --bs-table-striped-color: var(--jidoka-fg);
+    --bs-table-striped-bg: var(--jidoka-canvas-subtle);
+    --bs-table-hover-color: var(--jidoka-fg);
+    --bs-table-hover-bg: var(--jidoka-canvas-hover);
+}
+
+.badge {
+    --bs-badge-color: var(--jidoka-fg-on-emphasis);
+}
+
+.alert-warning {
+    --bs-alert-color: var(--jidoka-attention-fg);
+    --bs-alert-bg: var(--jidoka-attention-subtle);
+    --bs-alert-border-color: var(--jidoka-attention-border);
+    --bs-alert-link-color: var(--jidoka-attention-fg);
+}
+
+.form-control,
+.form-select {
+    background-color: var(--jidoka-canvas);
+    border-color: var(--jidoka-border);
+    color: var(--jidoka-fg);
+}
+
+.form-control::placeholder {
+    color: var(--jidoka-fg-muted);
+}
+
+.form-control:focus,
+.form-select:focus {
+    background-color: var(--jidoka-canvas);
+    border-color: var(--jidoka-accent-emphasis);
+    color: var(--jidoka-fg);
+}
+
+.form-check-input {
+    background-color: var(--jidoka-canvas);
+    border-color: var(--jidoka-border);
+}
+
+.form-check-input:checked {
+    background-color: var(--jidoka-accent-emphasis);
+    border-color: var(--jidoka-accent-emphasis);
+}
+
+.form-text {
+    color: var(--jidoka-fg-muted);
+}
+
+.working-mark {
+    color: var(--jidoka-accent-fg);
+}
+
+.re-read-dim {
+    opacity: 0.6;
+}
+
+.re-read-mark {
+    color: var(--jidoka-accent-fg);
+}
