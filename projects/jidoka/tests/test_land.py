@@ -277,6 +277,14 @@ class LandingTests(LandingCase):
         self.assertEqual(git(self.repo, "rev-parse", "main"), done.stdout.splitlines()[-1])
         self.assertNotIn("Hand-run", done.stdout + done.stderr)
 
+    def test_landing_names_no_skipped_app_when_every_app_has_a_test_command(self):
+        bead = self.new_bead("pass")
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("No tests for", done.stdout + done.stderr)
+
     def test_a_branch_with_no_work_of_its_own_on_main_is_not_taken_for_a_landed_one(self):
         bead = self.new_bead("pass")
         git(bead.worktree, "reset", "--hard", "-q", "main")
@@ -404,21 +412,37 @@ class RecordedTestsAndSettingsTests(LandingCase):
         self.assert_nothing_landed(bead, head)
         self.assertEqual(tip, self.tip(bead))
 
-    def test_settings_that_hold_no_hand_run_list_are_refused_with_a_pointer_to_onboarding(self):
-        bead = self.new_bead("pass")
-        head = git(self.repo, "rev-parse", "main")
-        older_home = self.root / f"jidoka-home-without-hand-run-{self.count}"
+    def use_a_home_whose_stored_settings_lack(self, key: str) -> None:
+        older_home = self.root / f"jidoka-home-without-{key}-{self.count}"
         shutil.copytree(self.home, older_home)
         [stored] = (older_home / "repos").iterdir()
         settings = json.loads(stored.read_text(encoding="utf-8"))
-        del settings["hand_run"]
+        del settings[key]
         stored.write_text(json.dumps(settings), encoding="utf-8")
         self.jidoka_home = older_home
+
+    def test_settings_that_hold_no_hand_run_list_are_refused_with_a_pointer_to_onboarding(self):
+        bead = self.new_bead("pass")
+        head = git(self.repo, "rev-parse", "main")
+        self.use_a_home_whose_stored_settings_lack("hand_run")
 
         done = self.land(bead, MESSAGE)
 
         self.assertEqual(1, done.returncode, done.stderr)
         self.assertIn("hand_run", done.stderr)
+        self.assertIn("/jidoka:onboard", done.stderr)
+        self.assertEqual([], self.suite_runs_of(bead))
+        self.assert_nothing_landed(bead, head)
+
+    def test_settings_that_hold_no_untested_apps_list_are_refused_with_a_pointer_to_onboarding(self):
+        bead = self.new_bead("pass")
+        head = git(self.repo, "rev-parse", "main")
+        self.use_a_home_whose_stored_settings_lack("untested_apps")
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(1, done.returncode, done.stderr)
+        self.assertIn("untested_apps", done.stderr)
         self.assertIn("/jidoka:onboard", done.stderr)
         self.assertEqual([], self.suite_runs_of(bead))
         self.assert_nothing_landed(bead, head)
@@ -582,6 +606,28 @@ class HandRunTests(LandingCase):
                 self.assertEqual(exit_code, done.returncode, done.stderr)
                 self.assertNotIn("Hand-run", done.stdout + done.stderr)
                 self.assertNotIn("window tests", done.stdout + done.stderr)
+
+
+class UntestedAppTests(LandingCase):
+    @classmethod
+    def apps(cls) -> list[dict]:
+        shop, kiosk = super().apps()
+        editor = {"name": "editor", "kind": "program", "way_in": "its windows", "build": "true", "run": None,
+                  "test": None, "test_full": None, "test_target": None, "hand_run": []}
+        return [editor, shop, {**editor, "name": "help-pages", "kind": "library"}, kiosk]
+
+    def test_landing_names_each_app_with_no_test_command_before_the_full_suite_runs_the_other_apps(self):
+        bead = self.new_bead("pass")
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["shop", "kiosk"], [run["suite"] for run in self.suite_runs_of(bead)])
+        self.assertEqual(["No tests for editor: it has no test command, so the full suite skips it.",
+                          "No tests for help-pages: it has no test command, so the full suite skips it.",
+                          f"running: {self.suite_command('shop')}",
+                          f"running: {self.suite_command('kiosk')}",
+                          git(self.repo, "rev-parse", "main")], done.stdout.splitlines())
 
 
 class MainCheckoutTests(LandingCase):

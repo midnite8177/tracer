@@ -72,9 +72,10 @@ message, which says to run the installer, and go to step 11 with
    nothing in the tracker; start no workers; run only the test files the
    diff reaches, with an app's `test` command followed by its
    `test_target` with a filter in the placeholder, and never an app's
-   `test` command alone, because landing runs the full suite once. It
-   returns the files changed, the tests added, the targeted test files it
-   ran with the app and filter of each run, the commands it ran with their
+   `test` command alone, because landing runs the full suite once. Tell
+   it that an app with no test command has no tests to run. It returns
+   the files changed, the tests added, the targeted test files it ran
+   with the app and filter of each run, the commands it ran with their
    results, discovered work, the choices it made, what it did not do, and
    the app and filter for the targeted tests. Read the diff, not the
    report. Commit what it left in the worktree on the bench branch with a
@@ -86,9 +87,15 @@ message, which says to run the installer, and go to step 11 with
    means the filter needs fixing, because it repeats the text the `test_target`
    puts before its placeholder, or the run executed no tests. Send the
    message back to the builder for a new filter, then run them again with
-   it. Exit 1 means it refused or stopped. Show the message; run
-   `/jidoka:onboard` only when the message is about the repo settings and
-   the human says so. Otherwise go to step 11 with `stopped: <reason>`.
+   it. Exit 1 means it refused or stopped. When it refused because the app
+   has no test command, show the message and ask the human whether to
+   build the test project in this bead, release the bead, or stop. To build
+   it, send the builder back as in step 4, then run `/jidoka:onboard` to
+   record the app's command and run this step again; to release, see
+   Release; to stop, go to step 11 with `stopped: <reason>`. For any other
+   refusal, show the message; run `/jidoka:onboard` only when the message
+   is about the repo settings and the human says so. Otherwise go to step
+   11 with `stopped: <reason>`.
 6. **Spec check, standard tier.** Start one worker in the worktree that
    reads `<skill folder>/../spec-check/SKILL.md` and follows it with the
    arguments `<bead-id> main`. The targeted tests merge main into the

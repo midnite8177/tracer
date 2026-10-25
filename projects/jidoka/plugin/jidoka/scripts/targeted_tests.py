@@ -18,10 +18,13 @@ unittest's "Ran N tests". Output in neither shape is judged by the exit code.
 Exit codes:
   0  the tests passed, and the pass is recorded.
   1  refused or stopped. When it stops before a run is recorded, nothing is
-     set on the bead: no repo settings, an unknown or incomplete app, a
+     set on the bead: no repo settings, settings with no untested_apps list,
+     an unknown or incomplete app, an app with no test command, a
      test_target without one placeholder, a merge conflict with main, or a
-     failed git command. When bd fails while recording, the metadata may be
-     set without the comment.
+     failed git command. The script refuses an app with no test command
+     before it merges main, and says to build a test project for it at the
+     bench and then run /jidoka:onboard to record its command. When bd
+     fails while recording, the metadata may be set without the comment.
   3  the tests failed, and the failure is recorded.
   4  the filter needs fixing, and nothing is recorded. It starts with the
      text the test_target puts before its placeholder, or the run executed
@@ -127,12 +130,18 @@ def app_settings(home: Path, main_tree: Path, name: str) -> App:
     apps = settings.get("apps")
     if not isinstance(apps, list):
         raise TestRunError(f"{path} holds no list of apps")
+    if not isinstance(settings.get("untested_apps"), list):
+        raise TestRunError(f"{path} holds no untested_apps list of the apps with no test command. "
+                           "Run /jidoka:onboard to record it")
     for index, entry in enumerate(apps):
         if isinstance(entry, dict) and entry.get("name") == name:
             problems = repo_settings.app_problems(index, entry)
             if problems:
                 raise TestRunError(f"the repo settings for app {name!r} are incomplete: {'; '.join(problems)}. "
                                    "Run /jidoka:onboard to record them")
+            if entry["test"] is None:
+                raise TestRunError(f"{name} has no test command. Build a test project for it at the bench, "
+                                   "then run /jidoka:onboard to record its command.")
             groups = [HandRunGroup(group["name"], group["reason"], group["command"]) for group in entry["hand_run"]]
             return App(name, entry["test"], entry["test_target"], groups)
     names = ", ".join(str(entry.get("name")) for entry in apps if isinstance(entry, dict))

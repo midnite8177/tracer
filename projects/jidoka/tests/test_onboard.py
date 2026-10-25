@@ -78,6 +78,17 @@ def hand_run_settings() -> dict:
     return {**tracer_settings(), "apps": [recovered_box_app(), spam_app()]}
 
 
+def editor_app() -> dict:
+    return {"name": "editor", "kind": "program", "way_in": "its windows", "build": "dotnet build Editor.slnx",
+            "run": None, "test": None, "test_target": None, "test_full": None, "hand_run": []}
+
+
+def untested_settings() -> dict:
+    tracer_ui, tracer_seed, jidoka = tracer_apps()
+    help_pages = {**editor_app(), "name": "help-pages", "kind": "library", "build": None}
+    return {**tracer_settings(), "apps": [editor_app(), tracer_ui, help_pages, tracer_seed, jidoka]}
+
+
 def init_committed_repo(repo: Path) -> None:
     fixture.init_repo(repo)
     (repo / "README.md").write_text("shop\n", encoding="utf-8")
@@ -175,6 +186,23 @@ class OnboardingTests(unittest.TestCase):
                           "python3 -m unittest discover -s projects/tracer-seed/tests",
                           "python3 -m unittest discover -s projects/jidoka/tests"], shown["full_suite"])
         self.assertEqual('--filter "FullyQualifiedName~<Class>"', shown["apps"][0]["test_target"])
+
+    def test_the_full_suite_leaves_out_each_app_with_no_test_command_and_untested_apps_names_them_in_order(self):
+        self.write(self.repo, untested_settings())
+
+        shown = json.loads(self.show(self.repo).stdout)
+
+        self.assertEqual(["dotnet test projects/tracer-ui/TracerUi.slnx",
+                          "python3 -m unittest discover -s projects/tracer-seed/tests",
+                          "python3 -m unittest discover -s projects/jidoka/tests"], shown["full_suite"])
+        self.assertEqual(["editor", "help-pages"], shown["untested_apps"])
+
+    def test_settings_in_which_every_app_has_a_test_command_store_no_untested_apps(self):
+        self.write(self.repo, tracer_settings())
+
+        shown = json.loads(self.show(self.repo).stdout)
+
+        self.assertEqual([], shown["untested_apps"])
 
     def test_the_full_suite_adds_an_apps_test_full_to_its_test_command(self):
         self.write(self.repo, hand_run_settings())
@@ -294,20 +322,45 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn("build", done.stderr)
         self.assertEqual([], self.stored_files())
 
-    def test_refuses_an_app_without_a_test_command_and_leaves_claude_local_md_untouched(self):
+    def test_refuses_settings_in_which_no_app_has_a_test_command_and_leaves_claude_local_md_untouched(self):
         local = self.repo / "CLAUDE.local.md"
         local.write_bytes(b"# shop\r\nbuild with make\r\n")
-        settings = tracer_settings()
-        settings["apps"][1]["test"] = None
+        settings = {**tracer_settings(), "apps": [editor_app(), {**editor_app(), "name": "help-pages"}]}
         settings["moved_lines"] = ["build with make"]
 
         done = self.write(self.repo, settings)
 
         self.assertNotEqual(0, done.returncode)
-        self.assertIn("tracer-seed", done.stderr)
-        self.assertIn("test command", done.stderr)
+        self.assertIn("no app has a test command", done.stderr)
         self.assertEqual([], self.stored_files())
         self.assertEqual(b"# shop\r\nbuild with make\r\n", local.read_bytes())
+
+    def test_accepts_an_app_whose_test_command_and_test_target_are_null(self):
+        done = self.write(self.repo, untested_settings())
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        shown = json.loads(self.show(self.repo).stdout)
+        self.assertEqual(editor_app(), shown["apps"][0])
+
+    def test_refuses_an_app_with_a_null_test_or_test_target_whose_other_test_settings_are_not_empty(self):
+        cases = {
+            "test_target": ({"test_target": "-k <name>"}, "'editor' has a test_target but no test command"),
+            "test_full": ({"test_full": "--exclude windows"}, "'editor' has a test_full but no test command"),
+            "hand_run": ({"hand_run": [dict(MODEM_SCRIPTS)]}, "'editor' has hand_run groups but no test command"),
+            "test": ({"test": "dotnet test Editor.Tests"},
+                     "'editor' has a test command but does not say how to target a test"),
+        }
+        for key, (change, problem) in cases.items():
+            with self.subTest(key=key):
+                settings = untested_settings()
+                settings["apps"][0].update(change)
+
+                done = self.write(self.repo, settings)
+
+                self.assertNotEqual(0, done.returncode)
+                self.assertIn(problem, done.stderr)
+                self.assertNotIn("'help-pages'", done.stderr)
+                self.assertEqual([], self.stored_files())
 
     def test_refuses_a_value_outside_its_allowed_set(self):
         cases = {"lap_test_scope": "some", "lap_limit": 0, "worker_commands": "make"}

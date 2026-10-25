@@ -59,7 +59,10 @@ the same beads.
    `CLAUDE.local.md` itself move, never lines of a file it imports.
 6. Pipe the confirmed settings to the script with `write`, as one JSON
    object on stdin. On a rerun, pass only the keys that change; `apps`
-   replaces the whole app list. When the script refuses, show its stderr,
+   replaces the whole app list. On a rerun with no changes, still run
+   `write` with `{}`. The script keeps every stored key and derives
+   `build`, `full_suite`, `hand_run` and `untested_apps` again. When the
+   script refuses, show its stderr,
    fix the values with the user, and run it again. When it refuses because
    git tracks `.beads`, go back to step 1 and offer the switch.
 7. Run `show` and show the user what it prints, with each null value in
@@ -81,6 +84,11 @@ The settings:
   `test_full` (the arguments the full suite adds to `test`, or `null`),
   `test_target` (how to run one test) and `hand_run` (the app's hand-run
   tests, a list that is empty when it has none).
+- An app with no tests, such as an editor with no test project, has `null`
+  for `test`, `test_target` and `test_full`, and `[]` for `hand_run`.
+  Landing says it has no tests and runs the other apps' full suites.
+  Targeted tests refuse it until a test project exists; then run
+  `/jidoka:onboard` again to record its command.
 - Each `hand_run` group has a `name`, its `exclusion` (the exact text that
   leaves it out, which both the full-suite command and the targeted
   command, `test` followed by `test_target`, must hold), the `command` that
@@ -90,12 +98,16 @@ The settings:
 A person never reads `null`. When you offer a null value as a choice or show
 one, label it by what it means: `slot_use` "No slot use: app checks take
 turns", `way_in` "No way in recorded", `build` "No build step", `run` "No run
-command", `test_full` "No extra arguments: the full suite is the test
-command". The word `null` appears only in the JSON you pass to `write`.
+command", `test` "No test command", `test_full` "No extra arguments: the
+full suite is the test command". An app with "No test command" shows no
+`test_target` or `test_full` of its own. The word `null` appears only in the
+JSON you pass to `write`.
 
 The script derives the repo's build from every app's `build`, and the full
-suite from every app's `test` followed by its `test_full`. It refuses
-settings in which no app has a build or an app has no test. It also refuses
+suite from every app's `test` followed by its `test_full`, leaving out the
+apps with no test command. It refuses settings in which no app has a build
+or no app has a test command, and an app whose `test` or `test_target` is
+`null` while its other test settings are not empty. It also refuses
 a `hand_run` group without a name, exclusion, command or reason, or whose
 exclusion is missing from the full-suite command or the targeted command.
 The script appends nothing to a command, so write each group's exclusion

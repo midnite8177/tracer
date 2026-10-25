@@ -135,6 +135,8 @@ class TargetedTestsCase(unittest.TestCase):
                  "run": None, "test": cls.test_command, "test_full": '--filter "FullyQualifiedName!~WindowTests"',
                  "test_target": '--filter "FullyQualifiedName~<name>&FullyQualifiedName!~WindowTests"',
                  "hand_run": [WINDOW_TESTS]},
+                {"name": "editor", "kind": "program", "way_in": "its windows", "build": "true",
+                 "run": None, "test": None, "test_full": None, "test_target": None, "hand_run": []},
             ],
         }
         done = subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), "write"], input=json.dumps(settings),
@@ -280,6 +282,22 @@ class RefusedRunTests(TargetedTestsCase):
         self.assertEqual([], self.runs_of(bead))
         self.assertEqual({}, self.metadata(bead))
 
+    def test_an_app_with_no_test_command_is_refused_with_the_bench_and_onboarding_before_main_is_merged(self):
+        bead = self.new_bead()
+        (self.repo / f"other-{self.count}.txt").write_text("other work\n", encoding="utf-8")
+        fixture.git_commit_all(self.repo, "Add other work")
+        branch_head = git(bead.worktree, "rev-parse", "HEAD")
+
+        done = self.targeted_tests(bead, "editor", "test_greeting", self.home)
+
+        self.assertEqual(1, done.returncode, done.stderr)
+        self.assertIn("editor has no test command. Build a test project for it at the bench, then run "
+                      "/jidoka:onboard to record its command.", done.stderr)
+        self.assertNotIn("running:", done.stdout)
+        self.assertEqual(branch_head, git(bead.worktree, "rev-parse", "HEAD"))
+        self.assertEqual({}, self.metadata(bead))
+        self.assertEqual([], self.comments(bead))
+
     def test_a_test_target_without_a_placeholder_is_refused_and_nothing_runs(self):
         bead = self.new_bead()
 
@@ -305,6 +323,23 @@ class RefusedRunTests(TargetedTestsCase):
         self.assertEqual(1, done.returncode, done.stderr)
         self.assertIn("test_full", done.stderr)
         self.assertIn("hand_run", done.stderr)
+        self.assertIn("Run /jidoka:onboard", done.stderr)
+        self.assertEqual([], self.runs_of(bead))
+        self.assertEqual({}, self.metadata(bead))
+
+    def test_stored_settings_that_lack_untested_apps_are_refused_with_a_pointer_to_onboarding(self):
+        bead = self.new_bead()
+        stale_home = self.root / f"jidoka-home-without-untested-apps-{self.count}"
+        shutil.copytree(self.home, stale_home)
+        [stored] = (stale_home / "repos").iterdir()
+        settings = json.loads(stored.read_text(encoding="utf-8"))
+        del settings["untested_apps"]
+        stored.write_text(json.dumps(settings), encoding="utf-8")
+
+        done = self.targeted_tests(bead, "shop", "test_greeting", stale_home)
+
+        self.assertEqual(1, done.returncode, done.stderr)
+        self.assertIn("untested_apps", done.stderr)
         self.assertIn("Run /jidoka:onboard", done.stderr)
         self.assertEqual([], self.runs_of(bead))
         self.assertEqual({}, self.metadata(bead))

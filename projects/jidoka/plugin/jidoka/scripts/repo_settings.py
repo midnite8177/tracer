@@ -9,11 +9,15 @@ under the old key. The home is --jidoka-home, else $JIDOKA_HOME, else
 
 `write` reads one JSON object on stdin. Its keys replace the stored ones and
 the stored keys it leaves out stay. The script checks the merged settings
-before it writes anything, and it derives "build", "full_suite" and
-"hand_run", in app order: the build of every app that has one, every app's
-full-suite command, and every app's hand-run tests with the app's name. An
-app's full-suite command is its test, followed by its test_full when that is
-not null, and its targeted command is its test followed by its test_target.
+before it writes anything, and it derives "build", "full_suite", "hand_run"
+and "untested_apps", in app order: the build of every app that has one, the
+full-suite command of every app that has a test command, every app's
+hand-run tests with the app's name, and the name of every app with no test
+command. An app's full-suite command is its test, followed by its test_full
+when that is not null, and its targeted command is its test followed by its
+test_target. An app with no test command has null for test, test_target and
+test_full, and [] for hand_run; the script refuses any other mix, and
+refuses settings in which no app has a test command or no app has a build.
 The script appends nothing to a command, so the person onboarding writes
 each hand-run group's exclusion into both commands, and the script refuses
 a group whose exclusion either command lacks.
@@ -40,10 +44,11 @@ from pathlib import Path
 GIT_TIMEOUT_SECONDS = 30
 LOCAL_RULES = "CLAUDE.local.md"
 GIVEN_KEYS = ["lap_test_scope", "worker_commands", "slot_use", "lap_limit", "apps"]
-DERIVED_KEYS = ["build", "full_suite", "hand_run"]
+DERIVED_KEYS = ["build", "full_suite", "hand_run", "untested_apps"]
 MOVED_LINES = "moved_lines"
 APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_full", "test_target", "hand_run"]
 HAND_RUN_KEYS = ["name", "exclusion", "command", "reason"]
+NO_TESTS = "an app with no test command has null for test, test_target and test_full, and [] for hand_run"
 TEST_SCOPES = ["targeted", "full"]
 APP_KINDS = ["program", "library"]
 BEADS_WORKSPACE = ".beads"
@@ -130,21 +135,34 @@ def app_problems(index: int, app: object) -> list[str]:
             problems.append(f"{label} has no {key}; use null when it has none")
         elif not text_or_null(app[key]):
             problems.append(f"{label} has a {key} that is neither a command nor null")
-    command_problems = []
-    if not is_text(app.get("test")):
-        command_problems.append(f"{label} has no test command")
-    if not is_text(app.get("test_target")):
-        command_problems.append(f"{label} does not say how to target a test")
-    if "test_full" not in app:
-        command_problems.append(f"{label} has no test_full; use null when the full suite is the test command alone")
-    elif not text_or_null(app["test_full"]):
-        command_problems.append(f"{label} has a test_full that is neither arguments nor null")
+    command_problems = test_command_problems(label, app)
     problems += command_problems
     if "hand_run" not in app:
         problems.append(f"{label} has no hand_run; use [] when every test runs in the full suite")
     else:
         problems += hand_run_problems(label, app, not command_problems)
     return problems
+
+
+def test_command_problems(label: str, app: dict) -> list[str]:
+    problems = []
+    for key in ("test", "test_target"):
+        if key not in app:
+            problems.append(f"{label} has no {key}; use null when the app has no test command")
+        elif not text_or_null(app[key]):
+            problems.append(f"{label} has a {key} that is neither text nor null")
+    if "test_full" not in app:
+        problems.append(f"{label} has no test_full; use null when the full suite is the test command alone")
+    elif not text_or_null(app["test_full"]):
+        problems.append(f"{label} has a test_full that is neither arguments nor null")
+    if problems:
+        return problems
+    if app["test"] is not None:
+        if app["test_target"] is None:
+            problems.append(f"{label} has a test command but does not say how to target a test")
+        return problems
+    return [f"{label} has a {key} but no test command; {NO_TESTS}"
+            for key in ("test_target", "test_full") if app[key] is not None]
 
 
 def full_suite_command(app: dict) -> str:
@@ -155,6 +173,8 @@ def hand_run_problems(label: str, app: dict, commands_valid: bool) -> list[str]:
     groups = app["hand_run"]
     if not isinstance(groups, list):
         return [f"{label} has a hand_run that is not a list of groups"]
+    if commands_valid and groups and app["test"] is None:
+        return [f"{label} has hand_run groups but no test command; {NO_TESTS}"]
     problems = []
     for index, group in enumerate(groups):
         if not isinstance(group, dict):
@@ -217,6 +237,8 @@ def apps_problems(apps: object) -> list[str]:
         problems.append(f"more than one app is named {', '.join(repeated)}")
     if not any(isinstance(app, dict) and is_text(app.get("build")) for app in apps):
         problems.append("no app has a build command, so the repo has no build")
+    if not any(isinstance(app, dict) and is_text(app.get("test")) for app in apps):
+        problems.append("no app has a test command, so the repo has no full suite")
     return problems
 
 
@@ -285,8 +307,9 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
         "main_worktree": str(main_tree),
         **{key: merged[key] for key in GIVEN_KEYS},
         "build": [app["build"] for app in merged["apps"] if app["build"] is not None],
-        "full_suite": [full_suite_command(app) for app in merged["apps"]],
+        "full_suite": [full_suite_command(app) for app in merged["apps"] if app["test"] is not None],
         "hand_run": hand_run_list(merged["apps"]),
+        "untested_apps": [app["name"] for app in merged["apps"] if app["test"] is None],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")

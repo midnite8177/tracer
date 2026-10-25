@@ -5,11 +5,13 @@ Behind the merge lock, the script rebuilds the branch on main's head, runs
 the full suite on it, and squashes it to one commit with the message it was
 given. The full suite is the full_suite list in the repo settings, every
 app's full-suite command in app order, and every command runs even after one
-fails. The bead's recorded targeted tests must have passed, but they do not
-run again, because the full suite holds them. The script fast-forwards main
-in the checkout that has main checked out, closes the bead with the
-commit's sha in the reason, and removes the bead's worktree and branch. It
-never pushes and never opens a pull request.
+fails. An app with no test command has no full-suite command, so before the
+full suite runs the script prints one line on stdout for each app the repo
+settings list under untested_apps. The bead's recorded targeted tests must
+have passed, but they do not run again, because the full suite holds them.
+The script fast-forwards main in the checkout that has main checked out,
+closes the bead with the commit's sha in the reason, and removes the bead's
+worktree and branch. It never pushes and never opens a pull request.
 
 The full suite leaves out the hand-run tests, the groups the repo settings
 list under hand_run. After exit 0, 4 or 5, a rerun that finds the branch
@@ -21,8 +23,9 @@ group.
 Exit codes:
   0  landed and closed.
   1  refused or failed before the fast-forward, with main unchanged. The script
-     refuses a repo with no repo settings, or settings with no full suite or
-     no hand_run list, before it takes the merge lock.
+     refuses a repo with no repo settings, or settings with no full suite,
+     no hand_run list or no untested_apps list, before it takes the merge
+     lock.
   3  waiting, because uncommitted edits in main's checkout touch files the
      bead changed. The caller runs the script again later; the script does
      not sleep on it.
@@ -93,6 +96,7 @@ class HandRunGroup:
 class LandingSettings:
     full_suite: list[str]
     hand_run: list[HandRunGroup]
+    untested_apps: list[str]
 
 
 @dataclass(frozen=True)
@@ -145,7 +149,6 @@ def main_checkout(repo: Path) -> Path:
 
 
 def landing_settings(checkout: Path, home: Path) -> LandingSettings:
-    """The full suite and the hand-run tests from the repo settings of the repo whose main checkout this is."""
     try:
         main_tree = repo_settings.main_worktree(checkout, COMMAND_TIMEOUT_SECONDS)
         path = repo_settings.settings_path(home, main_tree)
@@ -157,7 +160,11 @@ def landing_settings(checkout: Path, home: Path) -> LandingSettings:
     commands = settings.get("full_suite")
     if not isinstance(commands, list) or not commands or not all(repo_settings.is_text(c) for c in commands):
         raise LandingError(f"{path} holds no full_suite list of test commands. Run /jidoka:onboard to record it")
-    return LandingSettings(commands, hand_run_groups(settings.get("hand_run"), path))
+    untested = settings.get("untested_apps")
+    if not (isinstance(untested, list) and all(map(repo_settings.is_text, untested))):
+        raise LandingError(f"{path} holds no untested_apps list of the apps the full suite skips. "
+                           "Run /jidoka:onboard to record it")
+    return LandingSettings(commands, hand_run_groups(settings.get("hand_run"), path), untested)
 
 
 def is_hand_run_group(group: object) -> bool:
@@ -289,12 +296,14 @@ def landed_commit(branch: str, message: str, checkout: Path) -> str | None:
 
 
 def squash_onto_main(bead: str, branch: str, worktree: Path, message: str, checkout: Path,
-                     suite: list[str]) -> str:
+                     settings: LandingSettings) -> str:
     """Rebuilds the branch as one commit on main's head and fast-forwards main to it; returns the new sha."""
     check_recorded(recorded_tests(bead, checkout))
     refuse_overlapping_edits(branch, checkout)
     rebase_on_main(worktree)
-    run_full_suite(suite, worktree)
+    for app in settings.untested_apps:
+        print(f"No tests for {app}: it has no test command, so the full suite skips it.", flush=True)
+    run_full_suite(settings.full_suite, worktree)
     run(["git", "reset", "--soft", "main"], worktree, None)
     run(["git", "commit", "-q", "-m", message], worktree, None)
     run(["git", "merge", "--ff-only", branch], checkout, None)
@@ -325,10 +334,11 @@ def close_out(bead: str, branch: str, worktree: Path, message: str, sha: str, ch
     return Landed(sha, failed)
 
 
-def land(bead: str, branch: str, worktree: Path, message: str, checkout: Path, suite: list[str]) -> Landed:
+def land(bead: str, branch: str, worktree: Path, message: str, checkout: Path,
+         settings: LandingSettings) -> Landed:
     sha = landed_commit(branch, message, checkout)
     if sha is None:
-        sha = squash_onto_main(bead, branch, worktree, message, checkout, suite)
+        sha = squash_onto_main(bead, branch, worktree, message, checkout, settings)
     return close_out(bead, branch, worktree, message, sha, checkout)
 
 
@@ -361,7 +371,7 @@ def main() -> int:
     lock = args.jidoka_home / "locks" / "merge.lock"
     acquire_lock(lock)
     try:
-        landed = land(args.bead, args.branch, args.worktree, args.message, checkout, settings.full_suite)
+        landed = land(args.bead, args.branch, args.worktree, args.message, checkout, settings)
     except WaitingOnEdits as waiting:
         print(f"land: {waiting}. Main is unchanged. Commit or set aside:")
         for name in waiting.files:
