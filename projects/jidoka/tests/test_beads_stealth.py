@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -72,6 +71,66 @@ class BeadsStealthTests(unittest.TestCase):
     def switch(self, cwd: Path) -> subprocess.CompletedProcess:
         return subprocess.run([str(LAUNCHER), str(STEALTH_SCRIPT)], capture_output=True, text=True,
                               encoding="utf-8", env=self.env(), cwd=cwd)
+
+    def add_bare_origin(self) -> Path:
+        origin = self.root / "shop.git"
+        fixture.run(["git", "clone", "-q", "--bare", str(self.repo), str(origin)], self.root)
+        fixture.run(["git", "remote", "add", "origin", str(origin)], self.repo)
+        return origin
+
+    def switch_and_push(self, origin: Path) -> None:
+        done = self.switch(self.repo)
+        self.assertEqual(0, done.returncode, done.stderr)
+        fixture.run(["git", "commit", "-q", "-m", "Keep the beads out of git"], self.repo)
+        fixture.run(["git", "push", "-q", str(origin), "HEAD"], self.repo)
+
+    def push_dolt_data(self, origin: Path) -> None:
+        fixture.run(["bd", "dolt", "remote", "add", "origin", str(origin)], self.repo)
+        fixture.run(["bd", "dolt", "push"], self.repo)
+
+    def fresh_clone(self, origin: Path) -> Path:
+        clone = self.root / "shop-clone"
+        fixture.run(["git", "clone", "-q", str(origin), str(clone)], self.root)
+        return clone
+
+    def test_a_fresh_clone_whose_origin_holds_the_dolt_data_lists_every_bead_after_the_script_runs(self):
+        fixture.add_committed_beads(self.repo)
+        for title in ("Print the receipt", "Weigh the parcel"):
+            fixture.run(["bd", "create", f"--title={title}", "--type=task"], self.repo)
+        origin = self.add_bare_origin()
+        self.switch_and_push(origin)
+        self.push_dolt_data(origin)
+        clone = self.fresh_clone(origin)
+
+        done = self.switch(clone)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("bd bootstrap", done.stdout)
+        self.assertIn("2 beads", done.stdout)
+        self.assertEqual(["Print the receipt", "Weigh the parcel"], titles(clone))
+        self.assertEqual("", status(clone))
+
+    def test_a_fresh_clone_whose_origin_holds_no_dolt_data_gets_no_database_and_is_told_the_commands(self):
+        fixture.add_committed_beads(self.repo)
+        fixture.run(["bd", "create", "--title=Print the receipt", "--type=task"], self.repo)
+        origin = self.add_bare_origin()
+        self.switch_and_push(origin)
+        clone = self.fresh_clone(origin)
+
+        done = self.switch(clone)
+        again = self.switch(clone)
+
+        listing = subprocess.run(["bd", "list", "--json"], capture_output=True, text=True, encoding="utf-8",
+                                 cwd=clone)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(0, again.returncode, again.stderr)
+        for output in (done.stdout, again.stdout):
+            self.assertIn(f"bd dolt remote add origin {origin}", output)
+            self.assertIn("bd dolt push", output)
+        self.assertNotIn("already", again.stdout)
+        self.assertFalse((clone / ".beads" / "embeddeddolt").exists())
+        self.assertNotEqual(0, listing.returncode)
+        self.assertEqual("", status(clone))
 
     def test_a_repo_without_beads_gets_a_stealth_workspace_and_git_status_shows_no_beads_files(self):
         done = self.switch(self.repo)
@@ -299,11 +358,10 @@ class BeadsStealthTests(unittest.TestCase):
         fixture.git_commit_all(self.repo, "Add the shop's rules")
         fixture.run(["bd", "create", "--title=Print the receipt", "--type=task"], self.repo)
         restored = tracked_beads(self.repo) + BD_ALONE_FILES
-        clone = self.root / "shop-clone"
-        fixture.run(["git", "clone", "-q", str(self.repo), str(clone)], self.root)
-        shutil.copytree(self.repo / ".beads" / "embeddeddolt", clone / ".beads" / "embeddeddolt", symlinks=True)
-        self.switch(self.repo)
-        fixture.run(["git", "commit", "-q", "-m", "Keep the beads out of git"], self.repo)
+        origin = self.add_bare_origin()
+        clone = self.fresh_clone(origin)
+        self.switch_and_push(origin)
+        self.push_dolt_data(origin)
         fixture.run(["git", "pull", "-q", "--ff-only"], clone)
         (clone / "AGENTS.md").write_text("The clone's own notes.\n", encoding="utf-8")
         missing_after_pull = [path for path in restored if not (clone / path).exists()]
@@ -316,8 +374,13 @@ class BeadsStealthTests(unittest.TestCase):
         self.assertIn("already", again.stdout)
         self.assertEqual(sorted(restored), sorted(missing_after_pull))
         for path in restored:
-            self.assertEqual(fixture.run(["git", "show", f"HEAD~1:{path}"], clone),
-                             (clone / path).read_text(encoding="utf-8"), path)
+            committed = fixture.run(["git", "show", f"HEAD~1:{path}"], clone)
+            on_disk = (clone / path).read_text(encoding="utf-8")
+            if path == ".beads/config.yaml":
+                self.assertTrue(on_disk.startswith(committed), "bd bootstrap only adds its sync.remote line")
+                self.assertIn(f'sync.remote: "{origin}"', on_disk)
+            else:
+                self.assertEqual(committed, on_disk, path)
         self.assertTrue(os.access(clone / ".beads" / "hooks" / "pre-commit", os.X_OK))
         self.assertEqual("The clone's own notes.\n", (clone / "AGENTS.md").read_text(encoding="utf-8"))
         self.assertEqual(fixture.run(["git", "show", "HEAD:CLAUDE.md"], clone),

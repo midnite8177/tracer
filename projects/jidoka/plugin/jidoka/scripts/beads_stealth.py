@@ -24,11 +24,16 @@ not staged.
 
 In a clone that pulled the commit holding that removal, it writes back the
 files the commit untracked, from the commit before it, and only those
-missing on disk, then excludes them all. With no .beads/ at all it runs
-`bd init --stealth --non-interactive`. A run that finds nothing to do writes
-nothing and says the workspace is already in stealth mode. It never commits,
-never rewrites git history and never reruns bd init on an existing
-workspace. The repo's .gitignore and core.hooksPath stay as they are.
+missing on disk, then excludes them all. When git does not track the
+workspace and it has no beads database, the script runs `bd bootstrap
+--yes` if origin holds Dolt data at refs/dolt/data. Without that data it
+makes no database, since bootstrap would make an empty one, and prints the
+commands that push the beads from the machine that has them. With no .beads/ at all
+it runs `bd init --stealth --non-interactive`. A run that finds nothing to
+do writes nothing and says the workspace is already in stealth mode. It
+never pushes Dolt data, never commits, never rewrites git history and
+never reruns bd init on an existing workspace. The repo's .gitignore and
+core.hooksPath stay as they are.
 
 Exit codes:
   0  the workspace is in stealth mode.
@@ -38,6 +43,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -50,6 +56,7 @@ import repo_settings
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, run
 
 WORKSPACE = ".beads"
+DOLT_DATA = "refs/dolt/data"
 
 
 class StealthError(Exception):
@@ -215,6 +222,27 @@ def restore(main_tree: Path) -> list[str]:
     return done + exclude(main_tree, [untracked_root(path) for path in deleted])
 
 
+def has_database(main_tree: Path) -> bool:
+    """Whether bd finds a beads database in the workspace; `bd where --json` names one only when it exists."""
+    return "database_path" in json.loads(run(["bd", "where", "--json"], main_tree, None))
+
+
+def fetch_database(main_tree: Path) -> list[str]:
+    """Makes the workspace's database from the Dolt data on origin, or says how to put it there.
+
+    Without Dolt data on origin, bd bootstrap would make an empty database, so the script makes none.
+    """
+    if not run(["git", "ls-remote", "origin", DOLT_DATA], main_tree, None).strip():
+        url = run(["git", "remote", "get-url", "origin"], main_tree, None).strip()
+        return [f"there is no beads database in {main_tree / WORKSPACE}, and origin holds no Dolt data to make "
+                f"one from. On the machine that has the beads, run `bd dolt remote add origin {url}` and "
+                "`bd dolt push`, then run this script here again"]
+    run(["bd", "bootstrap", "--yes"], main_tree, None)
+    beads = json.loads(run(["bd", "list", "--all", "--limit", "0", "--json"], main_tree, None) or "[]")
+    return [f"made the beads database from the Dolt data on origin with bd bootstrap; bd now lists "
+            f"{len(beads)} beads"]
+
+
 def make_stealth(main_tree: Path) -> list[str]:
     """Brings the workspace into stealth mode and returns one line for each thing it did."""
     if tracked_files(main_tree, WORKSPACE):
@@ -224,6 +252,8 @@ def make_stealth(main_tree: Path) -> list[str]:
         run(["bd", "init", "--stealth", "--non-interactive"], main_tree, None)
         return [f"made a stealth beads workspace in {main_tree / WORKSPACE}"]
     done += exclude(main_tree, [WORKSPACE])
+    if not has_database(main_tree):
+        return done + fetch_database(main_tree)
     return done or [f"the beads workspace in {main_tree / WORKSPACE} is already in stealth mode"]
 
 

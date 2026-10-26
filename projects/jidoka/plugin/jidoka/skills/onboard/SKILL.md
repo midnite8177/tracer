@@ -22,8 +22,12 @@ session rules.
    - When it prints nothing, run the stealth script. It runs
      `bd init --stealth` when the repo has no beads yet. In a clone that
      pulled a commit that took the beads out of git, it writes back the
-     files that commit removed. Otherwise it says the beads are already in
-     stealth mode.
+     files that commit removed. When the workspace has no beads database,
+     it runs `bd bootstrap` if origin holds the Dolt data, and says how
+     many beads bd lists. Without that data it makes no database and
+     prints the commands to run on the machine that has the beads; show
+     them to the user, who runs them there, and then run the script again.
+     Otherwise it says the beads are already in stealth mode.
    - When it prints files, the repo commits its beads, and jidoka keeps a
      repo's beads out of git. Tell the user what the stealth script does.
      It untracks `.beads/` and the files beside it that plain `bd init`
