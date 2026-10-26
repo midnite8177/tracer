@@ -1,10 +1,10 @@
 """Builds throwaway repos that carry a tracer install, for the untracer tests.
 
-The plugin's native files and the seed copy at docs/tracer.md come from this
-repository's git history, except the revision 41 seed, which no commit holds
-and which lives in tests/fixtures. The rules files hold what adopt writes from
-that seed: the `# AGENTS` heading, the Reader line and Block 1, the import
-line and the comment-cleanup paragraph. The statusline.sh, adopt notes,
+The plugin's native files come from tests/fixtures/installed, and the seed
+copy at docs/tracer.md from tests/fixtures/tracer-seed-<revision>.md. The
+rules files hold what adopt writes from that seed: the `# AGENTS` heading,
+the Reader line and Block 1, the import line and the comment-cleanup
+paragraph. The statusline.sh, adopt notes,
 settings file and upstream skills are written by hand as stand-ins. Nothing
 is cloned or fetched.
 """
@@ -17,10 +17,8 @@ from pathlib import Path
 
 import jidoka_fixture
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
-
-INSTALLED = "projects/tracer-seed/src/installed"
+INSTALLED = FIXTURES / "installed"
 
 EXCLUDE_HEADING = "# tracer machinery (stealth)"
 EXCLUDE_MACHINERY = [
@@ -43,16 +41,14 @@ class FixtureError(Exception):
 @dataclass(frozen=True)
 class Revision:
     number: int
-    seed_commit: str | None
-    seed_path: str
-    native_commit: str
+    seed_file: str
     plugin_version: str
 
 
 REVISIONS = {
-    42: Revision(42, "03be712", "docs/seeds/tracer/tracer.md", "4ed3390", "1.3.1+tracer.42"),
-    41: Revision(41, None, "tracer-seed-41.md", "4ed3390", "1.3.1+tracer.41"),
-    38: Revision(38, "d5674c3", "docs/seeds/tracer/tracer.md", "4ed3390", "1.3.0-pre.d81f3a1+tracer.38"),
+    42: Revision(42, "tracer-seed-42.md", "1.3.1+tracer.42"),
+    41: Revision(41, "tracer-seed-41.md", "1.3.1+tracer.41"),
+    38: Revision(38, "tracer-seed-38.md", "1.3.0-pre.d81f3a1+tracer.38"),
 }
 
 BLOCK_ONE_HEADING = "# Block 1 — AGENTS.md core"
@@ -67,20 +63,8 @@ def run(args: list, cwd: Path) -> str:
     return done.stdout
 
 
-def git_show(commit: str, path: str) -> bytes:
-    done = subprocess.run(["git", "show", f"{commit}:{path}"], cwd=REPO_ROOT, capture_output=True)
-    if done.returncode != 0:
-        raise FixtureError(
-            f"cannot read {path} at {commit} from the git history of {REPO_ROOT}: "
-            f"{done.stderr.decode('utf-8', 'replace').strip()}")
-    return done.stdout
-
-
 def seed_bytes(revision: int) -> bytes:
-    rev = REVISIONS[revision]
-    if rev.seed_commit is None:
-        return (FIXTURES / rev.seed_path).read_bytes()
-    return git_show(rev.seed_commit, rev.seed_path)
+    return (FIXTURES / REVISIONS[revision].seed_file).read_bytes()
 
 
 def block_one(revision: int) -> str:
@@ -104,16 +88,15 @@ def comment_cleanup_paragraph(revision: int) -> str:
     return "".join(line.strip() + "\n" for line in lines[start:end])
 
 
-def native_files(commit: str) -> list:
-    listing = run(["git", "ls-tree", "-r", "--name-only", commit, INSTALLED], REPO_ROOT)
-    paths = [line for line in listing.splitlines() if line]
+def native_files() -> list:
+    """The installed files' paths relative to INSTALLED, in posix form."""
+    paths = sorted(path.relative_to(INSTALLED).as_posix() for path in INSTALLED.rglob("*") if path.is_file())
     if not paths:
-        raise FixtureError(f"no installed files at {commit} in the git history of {REPO_ROOT}")
+        raise FixtureError(f"no installed files under {INSTALLED}")
     return paths
 
 
-def target_of(source_path: str) -> str:
-    relative = source_path[len(INSTALLED) + 1:]
+def target_of(relative: str) -> str:
     if relative.startswith("plugin/"):
         return ".claude/skills/tracer/" + relative[len("plugin/"):]
     if relative == "statusline.py":
@@ -160,8 +143,8 @@ def commit(repo: Path, paths: list, message: str) -> None:
 def install_machinery(repo: Path, revision: int) -> None:
     """Writes the files of tracer's install that are not rules files."""
     rev = REVISIONS[revision]
-    for source in native_files(rev.native_commit):
-        write_bytes(repo, target_of(source), git_show(rev.native_commit, source))
+    for relative in native_files():
+        write_bytes(repo, target_of(relative), (INSTALLED / relative).read_bytes())
     write_bytes(repo, "docs/tracer.md", seed_bytes(revision))
     write_text(repo, ".claude/skills/tracer/.claude-plugin/plugin.json",
                json.dumps({"name": "tracer", "version": rev.plugin_version}, indent=2) + "\n")

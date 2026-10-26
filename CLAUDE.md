@@ -18,7 +18,6 @@ say so; do not work around it.
 Each project README holds its own commands.
 
 - jidoka-ui: [projects/jidoka-ui/README.md](projects/jidoka-ui/README.md)
-- tracer-seed: [projects/tracer-seed/README.md](projects/tracer-seed/README.md)
 - jidoka: [projects/jidoka/README.md](projects/jidoka/README.md)
 
 ## Conventions

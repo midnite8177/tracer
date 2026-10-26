@@ -6,4 +6,4 @@ file, its own source projects and its own test project, instead of one
 solution at the repository root. This keeps the projects independent and
 makes shared code a deliberate act, at the cost of easy reuse between
 them. A project in another language keeps the same shape with that
-language's own build and tests, as tracer-seed does in Python.
+language's own build and tests, as jidoka does in Python.

@@ -188,16 +188,16 @@ An example for one app:
 
 ```sh
 sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py" write <<'EOF'
-{"lap_test_scope": "targeted", "worker_commands": ["python3 projects/tracer-seed/build.py"],
+{"lap_test_scope": "targeted", "worker_commands": ["python3 projects/site-builder/build.py"],
  "slot_use": null, "lap_limit": 2,
  "glossary": "GLOSSARY.md", "adrs": "docs/adr", "glossary_and_adrs": "committed",
  "rule_conflicts": [{"repo_rule": "Every public member has a /// doc comment.",
                      "written_in": "CONTRIBUTING.md",
                      "overrules": "Comments describe the code, never the work."}],
- "apps": [{"name": "tracer-seed", "kind": "program", "way_in": "its command line",
-           "build": "python3 projects/tracer-seed/build.py", "run": "python3 projects/tracer-seed/build.py",
-           "test": "python3 -m unittest discover -s projects/tracer-seed/tests", "test_full": null,
+ "apps": [{"name": "site-builder", "kind": "program", "way_in": "its command line",
+           "build": "python3 projects/site-builder/build.py", "run": "python3 projects/site-builder/build.py",
+           "test": "python3 -m unittest discover -s projects/site-builder/tests", "test_full": null,
            "test_target": "-k <name>", "hand_run": []}],
- "moved_lines": ["Build with python3 projects/tracer-seed/build.py"]}
+ "moved_lines": ["Build with python3 projects/site-builder/build.py"]}
 EOF
 ```

@@ -24,6 +24,9 @@ submodule pinned to a commit. Clone with `--recurse-submodules`, or run
 - **[jidoka-ui](projects/jidoka-ui/README.md)** — a local web UI for the
   browse and triage of [beads](https://github.com/gastownhall/beads)
   issues. Blazor Server on .NET 10.
+- **[jidoka](projects/jidoka/README.md)** — the tool that replaces tracer:
+  planning with the human, the factory, and acceptance. Python, run as a
+  Claude Code plugin.
 
 ## Vocabulary and decisions
 
@@ -35,6 +38,6 @@ project are in that project's own `docs/adr/`.
 
 MIT. See [LICENSE](LICENSE).
 
-`docs/seeds/tracer/tracer.md` carries four files from Lauren Tan's pstack,
-which is also MIT. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) holds
-that notice and names the one other upstream project the seed installs.
+jidoka's test fixtures carry four files from Lauren Tan's pstack, which is
+also MIT. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) holds that notice
+and names the other upstream projects this repository uses.

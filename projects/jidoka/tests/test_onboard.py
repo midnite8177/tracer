@@ -26,9 +26,9 @@ def tracer_apps() -> list:
          "run": "dotnet run --project projects/tracer-ui/src/TracerUi.Web",
          "test": "dotnet test projects/tracer-ui/TracerUi.slnx",
          "test_target": '--filter "FullyQualifiedName~<Class>"', "test_full": None, "hand_run": []},
-        {"name": "tracer-seed", "kind": "program", "way_in": "its command line",
-         "build": "python3 projects/tracer-seed/build.py", "run": "python3 projects/tracer-seed/build.py",
-         "test": "python3 -m unittest discover -s projects/tracer-seed/tests", "test_target": "-k <name>",
+        {"name": "site-builder", "kind": "program", "way_in": "its command line",
+         "build": "python3 projects/site-builder/build.py", "run": "python3 projects/site-builder/build.py",
+         "test": "python3 -m unittest discover -s projects/site-builder/tests", "test_target": "-k <name>",
          "test_full": None, "hand_run": []},
         {"name": "jidoka", "kind": "program", "way_in": "its command line", "build": None,
          "run": "python3 projects/jidoka/install.py --config-dir <path>",
@@ -84,9 +84,9 @@ def editor_app() -> dict:
 
 
 def untested_settings() -> dict:
-    tracer_ui, tracer_seed, jidoka = tracer_apps()
+    tracer_ui, site_builder, jidoka = tracer_apps()
     help_pages = {**editor_app(), "name": "help-pages", "kind": "library", "build": None}
-    return {**tracer_settings(), "apps": [editor_app(), tracer_ui, help_pages, tracer_seed, jidoka]}
+    return {**tracer_settings(), "apps": [editor_app(), tracer_ui, help_pages, site_builder, jidoka]}
 
 
 DOC_COMMENT_CONFLICT = {"repo_rule": "Every public member has a /// doc comment.",
@@ -175,7 +175,7 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(str(self.other_repo), kiosk["main_worktree"])
         stored = json.loads(shop_file.read_text(encoding="utf-8"))
         self.assertEqual(str(self.repo), stored["main_worktree"])
-        self.assertEqual(["tracer-ui", "tracer-seed", "jidoka"], [app["name"] for app in stored["apps"]])
+        self.assertEqual(["tracer-ui", "site-builder", "jidoka"], [app["name"] for app in stored["apps"]])
 
     def test_the_repo_build_runs_every_app_build_in_order_and_skips_an_app_without_one(self):
         self.write(self.repo, tracer_settings())
@@ -183,7 +183,7 @@ class OnboardingTests(unittest.TestCase):
         shown = json.loads(self.show(self.repo).stdout)
 
         self.assertEqual(["dotnet build projects/tracer-ui/TracerUi.slnx",
-                          "python3 projects/tracer-seed/build.py"], shown["build"])
+                          "python3 projects/site-builder/build.py"], shown["build"])
 
     def test_the_full_suite_runs_every_app_test_command_in_order(self):
         self.write(self.repo, tracer_settings())
@@ -191,7 +191,7 @@ class OnboardingTests(unittest.TestCase):
         shown = json.loads(self.show(self.repo).stdout)
 
         self.assertEqual(["dotnet test projects/tracer-ui/TracerUi.slnx",
-                          "python3 -m unittest discover -s projects/tracer-seed/tests",
+                          "python3 -m unittest discover -s projects/site-builder/tests",
                           "python3 -m unittest discover -s projects/jidoka/tests"], shown["full_suite"])
         self.assertEqual('--filter "FullyQualifiedName~<Class>"', shown["apps"][0]["test_target"])
 
@@ -201,7 +201,7 @@ class OnboardingTests(unittest.TestCase):
         shown = json.loads(self.show(self.repo).stdout)
 
         self.assertEqual(["dotnet test projects/tracer-ui/TracerUi.slnx",
-                          "python3 -m unittest discover -s projects/tracer-seed/tests",
+                          "python3 -m unittest discover -s projects/site-builder/tests",
                           "python3 -m unittest discover -s projects/jidoka/tests"], shown["full_suite"])
         self.assertEqual(["editor", "help-pages"], shown["untested_apps"])
 

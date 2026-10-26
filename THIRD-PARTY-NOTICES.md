@@ -5,9 +5,12 @@ projects are named below. Only the first is redistributed here.
 
 ## pstack, by Lauren Tan
 
-`docs/seeds/tracer/tracer.md` carries four files from pstack. Block 4d of
-that document holds them as fenced text, and the block records the source
-path and the commit each one came from:
+jidoka's untracer tests carry four files from pstack, in two forms. The
+tracer seed revisions under `projects/jidoka/tests/fixtures/`, kept byte for
+byte as `tracer-seed-<revision>.md`, hold them as fenced text in Block 4d,
+and the block records the source path and the commit each one came from.
+`projects/jidoka/tests/fixtures/installed/plugin/` holds the copies that
+tracer installed from that block:
 
 - `pstack/skills/unslop/SKILL.md`, whose body is verbatim
 - `pstack/skills/no-comments/SKILL.md`
@@ -44,11 +47,11 @@ SOFTWARE.
 ## skills, by Matt Pocock
 
 No file from `https://github.com/mattpocock/skills` is copied into this
-repository. `docs/seeds/tracer/tracer.md` describes an installation that
-clones that repository at a pinned tag, then edits the result, and Block 3
-of the document quotes short anchor lines to say where each edit lands. The
-notice below is recorded so that anyone who runs the installation knows
-which license the fetched files carry.
+repository. The tracer seed revisions under `projects/jidoka/tests/fixtures/`
+describe an installation that clones that repository at a pinned tag, then
+edits the result, and Block 3 of each quotes short anchor lines to say where
+each edit lands. The notice below is recorded so that anyone who runs the
+installation knows which license the fetched files carry.
 
 ```
 MIT License
