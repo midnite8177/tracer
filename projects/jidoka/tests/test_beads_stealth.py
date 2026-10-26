@@ -110,7 +110,7 @@ class BeadsStealthTests(unittest.TestCase):
         self.assertEqual(["Print the receipt", "Weigh the parcel"], titles(clone))
         self.assertEqual("", status(clone))
 
-    def test_a_fresh_clone_whose_origin_holds_no_dolt_data_gets_no_database_and_is_told_the_commands(self):
+    def test_a_fresh_clone_whose_origin_holds_no_dolt_data_gets_no_database_and_is_told_no_push(self):
         fixture.add_committed_beads(self.repo)
         fixture.run(["bd", "create", "--title=Print the receipt", "--type=task"], self.repo)
         origin = self.add_bare_origin()
@@ -125,8 +125,10 @@ class BeadsStealthTests(unittest.TestCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(0, again.returncode, again.stderr)
         for output in (done.stdout, again.stdout):
-            self.assertIn(f"bd dolt remote add origin {origin}", output)
-            self.assertIn("bd dolt push", output)
+            self.assertIn("no beads database", output)
+            self.assertIn("stay on the machine that has them", output)
+            self.assertNotIn("bd dolt", output)
+            self.assertNotIn("push", output)
         self.assertNotIn("already", again.stdout)
         self.assertFalse((clone / ".beads" / "embeddeddolt").exists())
         self.assertNotEqual(0, listing.returncode)

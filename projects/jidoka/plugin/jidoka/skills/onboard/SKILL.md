@@ -24,9 +24,9 @@ session rules.
      pulled a commit that took the beads out of git, it writes back the
      files that commit removed. When the workspace has no beads database,
      it runs `bd bootstrap` if origin holds the Dolt data, and says how
-     many beads bd lists. Without that data it makes no database and
-     prints the commands to run on the machine that has the beads; show
-     them to the user, who runs them there, and then run the script again.
+     many beads bd lists. Without that data it says the clone has no
+     beads database, that it made none, and that the beads stay on the
+     machine that has them; pass that on to the user.
      Otherwise it says the beads are already in stealth mode.
    - When it prints files, the repo commits its beads, and jidoka keeps a
      repo's beads out of git. Tell the user what the stealth script does.
