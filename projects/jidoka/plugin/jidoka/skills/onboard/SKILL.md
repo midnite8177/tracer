@@ -38,6 +38,10 @@ session rules.
      A hook file the script names as still committed holds
      the repo's own entries beside bd's; it stays as it is unless the user
      edits it.
+     A rules file it names as still committed with bd's blocks holds a
+     block that lost its BEGIN line and its `## Beads Issue Tracker`
+     heading, so the script could not tell where it starts. Show the user
+     that block; it stays until the user takes it out.
      On no, stop here: the settings script refuses while git tracks the
      beads, so the repo stays off jidoka.
    - When the script refuses because the index holds other staged changes,

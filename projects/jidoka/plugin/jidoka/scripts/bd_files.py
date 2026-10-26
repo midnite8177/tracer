@@ -2,11 +2,13 @@
 
 bd marks its text in CLAUDE.md and AGENTS.md with comment lines such as
 `<!-- BEGIN BEADS INTEGRATION ... -->` and `<!-- END BEADS INTEGRATION -->`,
-one pair for each kind of block. When bd creates one of those files it also
-writes stock text outside its blocks; the constants below are that text and
-the hook files as bd 1.2.2 writes them. Text that differs from them in
-anything but blank lines and trailing spaces counts as the repo's own, so a
-newer bd's text reads as the repo's, and the file stays committed.
+one pair for each kind of block. A block that lost its BEGIN line still ends
+in its END line, and runs from the last `## Beads Issue Tracker` heading
+above it, the line bd writes right after BEGIN. When bd creates one of those
+files it also writes stock text outside its blocks; the constants below are
+that text and the hook files as bd 1.2.2 writes them. Text that differs from
+them in anything but blank lines and trailing spaces counts as the repo's
+own, so a newer bd's text reads as the repo's, and the file stays committed.
 """
 from __future__ import annotations
 
@@ -21,7 +23,9 @@ CODEX_CONFIG = ".codex/config.toml"
 HOOK_FILES = [CLAUDE_SETTINGS, CODEX_HOOKS, CODEX_CONFIG]
 
 BLOCK = re.compile(r"^<!-- BEGIN BEADS (?P<kind>[A-Z]+(?: [A-Z]+)*)\b[^\n]*\n.*?"
-                   r"^<!-- END BEADS (?P=kind) -->[ \t]*(?:\n|\Z)(?:[ \t]*\n)*", re.MULTILINE | re.DOTALL)
+                   r"^<!-- END BEADS (?P=kind) -->[ \t]*\r?(?:\n|\Z)(?:[ \t]*\r?\n)*", re.MULTILINE | re.DOTALL)
+END_LINE = re.compile(r"^<!-- END BEADS [A-Z]+(?: [A-Z]+)* -->[ \t]*\r?(?:\n|\Z)(?:[ \t]*\r?\n)*", re.MULTILINE)
+BLOCK_HEADING = re.compile(r"^## Beads Issue Tracker[ \t]*\r?$", re.MULTILINE)
 
 CLAUDE_HEADER = """\
 # Project Instructions for AI Agents
@@ -126,14 +130,48 @@ BD_HOOK_FILES = {
 CODEX_CONFIG_TEXT = "[features]\nhooks = true\n"
 
 
+def headed_blocks(text: str, start: int, end: int) -> list[tuple[int, int]]:
+    """The spans of the blocks between start and end that lost their BEGIN line and keep a heading above the END."""
+    spans = []
+    for marker in END_LINE.finditer(text, start, end):
+        headings = list(BLOCK_HEADING.finditer(text, start, marker.start()))
+        if headings:
+            spans.append((headings[-1].start(), marker.end()))
+        start = marker.end()
+    return spans
+
+
+def block_spans(text: str) -> list[tuple[int, int]]:
+    """Where bd's blocks sit in the text, each with the blank lines after it, in order."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for block in BLOCK.finditer(text):
+        spans += headed_blocks(text, start, block.start())
+        spans.append(block.span())
+        start = block.end()
+    return spans + headed_blocks(text, start, len(text))
+
+
 def has_blocks(text: str) -> bool:
-    return BLOCK.search(text) is not None
+    return bool(block_spans(text))
+
+
+def has_end_line(text: str) -> bool:
+    return END_LINE.search(text) is not None
 
 
 def without_blocks(text: str) -> str:
-    """The text with bd's blocks and the blank lines after each taken out, ending in one newline or empty."""
-    left = BLOCK.sub("", text)
-    return left.rstrip("\n") + "\n" if left.strip() else ""
+    """The text with bd's blocks and the blank lines after each taken out, ending in one newline or empty.
+
+    The newline is the one the text's first line ends in.
+    """
+    pieces, kept_from = [], 0
+    for start, end in block_spans(text):
+        pieces.append(text[kept_from:start])
+        kept_from = end
+    left = "".join(pieces) + text[kept_from:]
+    newline = "\r\n" if text.split("\n", 1)[0].endswith("\r") else "\n"
+    return left.rstrip(newline) + newline if left.strip() else ""
 
 
 def comparable(text: str) -> str:

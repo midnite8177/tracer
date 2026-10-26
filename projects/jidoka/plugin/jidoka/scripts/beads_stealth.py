@@ -13,6 +13,9 @@ owner to commit:
     else stays committed, and the script names it.
   - CLAUDE.md and AGENTS.md lose bd's marked blocks, and the edit is staged.
     One that then holds only bd's stock text, or nothing, is untracked whole.
+    A block whose BEGIN line is gone runs from the last `## Beads Issue
+    Tracker` heading above its END line. One with no such heading stays,
+    and the script names the file.
 Every untracked file stays on disk and gets an info/exclude line, so bd
 keeps every bead. The script refuses, naming the paths, while the index
 holds staged changes to other files, so its changes are the only staged
@@ -58,6 +61,7 @@ class Switch:
     untracked: list[str]
     rewritten_rules: dict[str, str]
     kept_hook_files: list[str]
+    kept_rules: list[str]
 
 
 def tracked_files(main_tree: Path, path: str) -> list[str]:
@@ -102,6 +106,7 @@ def plan_switch(main_tree: Path) -> Switch:
     untracked = [WORKSPACE]
     rewritten_rules: dict[str, str] = {}
     kept_hook_files: list[str] = []
+    kept_rules: list[str] = []
     if tracked_files(main_tree, bd_files.SKILL_FOLDER):
         untracked.append(bd_files.SKILL_FOLDER)
     for path in bd_files.HOOK_FILES:
@@ -116,6 +121,8 @@ def plan_switch(main_tree: Path) -> Switch:
         if not tracked_files(main_tree, path):
             continue
         staged, on_disk = staged_text(main_tree, path), disk_text(main_tree, path)
+        if bd_files.has_end_line(bd_files.without_blocks(staged)):
+            kept_rules.append(path)
         if not bd_files.has_blocks(staged) and not (on_disk and bd_files.has_blocks(on_disk)):
             continue
         if on_disk != staged:
@@ -125,7 +132,7 @@ def plan_switch(main_tree: Path) -> Switch:
             untracked.append(path)
         else:
             rewritten_rules[path] = bd_files.without_blocks(staged)
-    return Switch(untracked, rewritten_rules, kept_hook_files)
+    return Switch(untracked, rewritten_rules, kept_hook_files, kept_rules)
 
 
 def refuse_other_staged_changes(main_tree: Path, touched: list[str]) -> None:
@@ -156,6 +163,7 @@ def switch(main_tree: Path) -> list[str]:
         run(["git", "add", "--", path], main_tree, None)
         done.append(f"took bd's blocks out of {path} and staged the edit")
     done += [f"still committed with bd's entries: {path}" for path in plan.kept_hook_files]
+    done += [f"still committed with bd's blocks: {path}" for path in plan.kept_rules]
     return done + exclude(main_tree, plan.untracked)
 
 

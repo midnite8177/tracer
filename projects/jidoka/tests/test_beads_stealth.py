@@ -43,6 +43,16 @@ def exclude_lines(repo: Path) -> list[str]:
     return (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8").splitlines()
 
 
+def drop_lines(file: Path, *starts: str) -> None:
+    """Rewrites the file without the lines that begin with any of starts."""
+    lines = file.read_text(encoding="utf-8").splitlines(keepends=True)
+    file.write_text("".join(line for line in lines if not line.startswith(starts)), encoding="utf-8", newline="")
+
+
+def prepend(file: Path, text: str) -> None:
+    file.write_text(text + file.read_text(encoding="utf-8"), encoding="utf-8", newline="")
+
+
 class BeadsStealthTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -137,6 +147,97 @@ class BeadsStealthTests(unittest.TestCase):
         self.assertEqual(text, fixture.run(["git", "show", ":CLAUDE.md"], self.repo))
         self.assertNotIn("/CLAUDE.md", exclude_lines(self.repo))
         self.assertNotIn("/.claude/settings.json", exclude_lines(self.repo))
+
+    def test_a_block_whose_begin_line_is_gone_is_taken_out_from_the_beads_heading_above_its_end_line(self):
+        fixture.add_committed_bd_init(self.repo)
+        agents = self.repo / "AGENTS.md"
+        drop_lines(agents, "<!-- BEGIN BEADS INTEGRATION")
+        prepend(agents, "# Shop agents\n\nShip on Fridays.\n\n")
+        fixture.git_commit_all(self.repo, "Add the shop's agent notes")
+
+        done = self.switch(self.repo)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("took bd's blocks out of AGENTS.md and staged the edit", done.stdout)
+        self.assertIn("M  AGENTS.md", status(self.repo).splitlines())
+        text = agents.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("# Shop agents\n\nShip on Fridays.\n\n# Agent Instructions"), text)
+        self.assertTrue(text.endswith("`brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var\n"), text)
+        for gone in ("BEADS", "## Beads Issue Tracker", "## Agent Context Profiles", "## Session Completion"):
+            self.assertNotIn(gone, text)
+        self.assertEqual(text, fixture.run(["git", "show", ":AGENTS.md"], self.repo))
+
+    def test_a_rules_file_whose_block_has_neither_begin_line_nor_heading_stays_as_it_is_and_is_named(self):
+        fixture.add_committed_bd_init(self.repo)
+        claude = self.repo / "CLAUDE.md"
+        drop_lines(claude, "<!-- BEGIN BEADS INTEGRATION", "## Beads Issue Tracker")
+        prepend(claude, "# Shop rules\n\nShip on Fridays.\n\n")
+        fixture.git_commit_all(self.repo, "Add the shop's rules")
+        before = claude.read_bytes()
+
+        done = self.switch(self.repo)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("still committed with bd's blocks: CLAUDE.md", done.stdout)
+        self.assertNotIn("CLAUDE.md and staged", done.stdout)
+        self.assertFalse(any("CLAUDE.md" in line for line in status(self.repo).splitlines()))
+        self.assertEqual(before, claude.read_bytes())
+        self.assertNotIn("/CLAUDE.md", exclude_lines(self.repo))
+
+    def test_rules_files_with_crlf_line_endings_lose_bds_blocks_and_keep_crlf_in_what_remains(self):
+        fixture.add_committed_bd_init(self.repo)
+        drop_lines(self.repo / "AGENTS.md", "<!-- BEGIN BEADS INTEGRATION")
+        for name in ("CLAUDE.md", "AGENTS.md"):
+            file = self.repo / name
+            prepend(file, "# Shop rules\n\nShip on Fridays.\n\n")
+            file.write_bytes(file.read_bytes().replace(b"\n", b"\r\n"))
+        fixture.git_commit_all(self.repo, "Add the shop's rules")
+
+        done = self.switch(self.repo)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        lines = status(self.repo).splitlines()
+        for name in ("CLAUDE.md", "AGENTS.md"):
+            self.assertIn(f"M  {name}", lines)
+            data = (self.repo / name).read_bytes()
+            self.assertTrue(data.startswith(b"# Shop rules\r\n\r\nShip on Fridays.\r\n\r\n# "), data)
+            self.assertTrue(data.endswith(b"\r\n"), data)
+            self.assertEqual(data.count(b"\n"), data.count(b"\r\n"), name)
+            self.assertNotIn(b"BEADS", data)
+            self.assertNotIn(b"## Beads Issue Tracker", data)
+            staged = subprocess.run(["git", "show", f":{name}"], cwd=self.repo, capture_output=True, check=True)
+            self.assertEqual(data, staged.stdout)
+
+    def test_a_rules_file_left_with_only_stock_text_after_a_block_without_begin_line_is_untracked_whole(self):
+        fixture.add_committed_bd_init(self.repo)
+        agents = self.repo / "AGENTS.md"
+        drop_lines(agents, "<!-- BEGIN BEADS INTEGRATION")
+        fixture.git_commit_all(self.repo, "Lose a marker")
+        before = agents.read_bytes()
+
+        done = self.switch(self.repo)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("D  AGENTS.md", status(self.repo).splitlines())
+        self.assertIn("/AGENTS.md", exclude_lines(self.repo))
+        self.assertEqual(before, agents.read_bytes())
+
+    def test_refuses_while_a_rules_file_holding_a_block_without_begin_line_has_changes_that_are_not_staged(self):
+        fixture.add_committed_bd_init(self.repo)
+        agents = self.repo / "AGENTS.md"
+        drop_lines(agents, "<!-- BEGIN BEADS")
+        prepend(agents, "Ship on Fridays.\n\n")
+        fixture.git_commit_all(self.repo, "Add the shop's agent notes")
+        with open(agents, "a", encoding="utf-8") as handle:
+            handle.write("Close at six.\n")
+        tracked = tracked_beads(self.repo)
+
+        done = self.switch(self.repo)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("AGENTS.md", done.stderr)
+        self.assertEqual(tracked, tracked_beads(self.repo))
+        self.assertEqual([" M AGENTS.md"], status(self.repo).splitlines())
 
     def test_refuses_naming_the_paths_when_the_index_holds_staged_changes_outside_the_switchs_files(self):
         fixture.add_committed_bd_init(self.repo)
