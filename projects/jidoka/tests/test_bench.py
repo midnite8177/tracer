@@ -14,6 +14,7 @@ import jidoka_fixture as fixture  # noqa: E402
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 BENCH = PLUGIN / "scripts" / "bench.py"
+SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 
 RUN_TIMEOUT_SECONDS = 120
 JEFF = "Jeff Bench"
@@ -72,6 +73,34 @@ class BenchCase(unittest.TestCase):
 
     def comments(self, bead: str) -> list[dict]:
         return json.loads(fixture.run([self.bd, "comments", bead, "--json"], self.repo) or "[]") or []
+
+    @classmethod
+    def write_settings(cls, glossary_and_adrs: str) -> None:
+        settings = {"lap_test_scope": "targeted", "worker_commands": [], "slot_use": None, "lap_limit": 1,
+                    "apps": [{"name": "shop", "kind": "program", "way_in": "its command line", "build": "make",
+                              "run": None, "test": "make test", "test_target": "-k <name>", "test_full": None,
+                              "hand_run": []}],
+                    "glossary_and_adrs": glossary_and_adrs}
+        done = subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), "write"], input=json.dumps(settings),
+                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
+                              env={**os.environ, "JIDOKA_HOME": str(cls.home)}, cwd=cls.repo)
+        if done.returncode != 0:
+            raise fixture.FixtureError(f"repo_settings.py write failed: {done.stderr}")
+
+    @classmethod
+    def write_untracked_glossary_and_adrs(cls) -> None:
+        (cls.repo / "GLOSSARY.md").write_text("# shop\n", encoding="utf-8")
+        (cls.repo / "docs" / "adr").mkdir(parents=True)
+        (cls.repo / "docs" / "adr" / "0001-start.md").write_text("# 0001\n", encoding="utf-8")
+
+    def exclude_file(self) -> Path:
+        return Path(git(self.repo, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "info" / "exclude"
+
+    def started_worktree(self) -> tuple[str, Path]:
+        bead = self.new_bead("task")
+        done = self.bench(self.caller_env(), "start", bead)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return bead, Path(json.loads(done.stdout)["worktree"])
 
 
 class BenchStartTests(BenchCase):
@@ -240,6 +269,120 @@ class BenchRefusedWorkspaceTests(BenchCase):
         self.assertEqual("open", shown["status"])
         self.assertEqual("", shown.get("assignee", ""))
         self.assertEqual([], self.comments(bead))
+
+
+class BenchPrivateDocsTests(BenchCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.write_untracked_glossary_and_adrs()
+        cls.write_settings("private")
+
+    def test_a_worktree_in_a_private_repo_has_the_glossary_and_adrs_of_the_main_checkout(self):
+        _, worktree = self.started_worktree()
+
+        self.assertEqual((self.repo / "GLOSSARY.md").read_text(encoding="utf-8"),
+                         (worktree / "GLOSSARY.md").read_text(encoding="utf-8"))
+        self.assertEqual("# 0001\n", (worktree / "docs" / "adr" / "0001-start.md").read_text(encoding="utf-8"))
+
+    def test_an_edit_in_the_worktree_changes_the_main_checkouts_glossary_and_adrs(self):
+        _, worktree = self.started_worktree()
+
+        with open(worktree / "GLOSSARY.md", "a", encoding="utf-8") as fh:
+            fh.write(f"Receipt {self.count}: what the till prints.\n")
+        (worktree / "docs" / "adr" / f"0100-receipt-{self.count}.md").write_text("# Receipt\n", encoding="utf-8")
+
+        self.assertIn(f"Receipt {self.count}: what the till prints.",
+                      (self.repo / "GLOSSARY.md").read_text(encoding="utf-8"))
+        self.assertEqual("# Receipt\n", (self.repo / "docs" / "adr" / f"0100-receipt-{self.count}.md")
+                         .read_text(encoding="utf-8"))
+
+    def test_git_status_in_the_worktree_and_the_main_checkout_does_not_list_the_glossary_or_adrs(self):
+        _, worktree = self.started_worktree()
+
+        self.assertEqual("", git(worktree, "status", "--porcelain", "--untracked-files=all"))
+        self.assertEqual("", git(self.repo, "status", "--porcelain", "--untracked-files=all"))
+
+    def test_a_start_after_a_release_reuses_the_worktree_with_its_glossary_and_adrs(self):
+        bead, worktree = self.started_worktree()
+        self.bench(self.caller_env(), "release", bead)
+
+        done = self.bench(self.caller_env(), "start", bead)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(sorted(["GLOSSARY.md", ".git", "README.md", "docs"]),
+                         sorted(path.name for path in worktree.iterdir()))
+        self.assertEqual("# 0001\n", (worktree / "docs" / "adr" / "0001-start.md").read_text(encoding="utf-8"))
+        self.assertEqual("", git(worktree, "status", "--porcelain", "--untracked-files=all"))
+
+    def test_start_replaces_a_slashed_adr_exclude_line_so_the_worktree_status_stays_clean(self):
+        exclude = self.exclude_file()
+        lines = exclude.read_text(encoding="utf-8").splitlines()
+        exclude.write_text("".join(f"{'/docs/adr/' if line == '/docs/adr' else line}\n" for line in lines),
+                           encoding="utf-8")
+
+        _, worktree = self.started_worktree()
+
+        lines = exclude.read_text(encoding="utf-8").splitlines()
+        self.assertEqual((1, 0), (lines.count("/docs/adr"), lines.count("/docs/adr/")), lines)
+        self.assertEqual("", git(worktree, "status", "--porcelain", "--untracked-files=all"))
+
+    def test_start_refuses_a_worktree_that_holds_its_own_glossary_and_leaves_the_bead_unclaimed(self):
+        bead, worktree = self.started_worktree()
+        self.bench(self.caller_env(), "release", bead)
+        (worktree / "GLOSSARY.md").unlink()
+        (worktree / "GLOSSARY.md").write_text("# the worktree's own\n", encoding="utf-8")
+        main_glossary = (self.repo / "GLOSSARY.md").read_text(encoding="utf-8")
+
+        done = self.bench(self.caller_env(), "start", bead)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(str(worktree / "GLOSSARY.md"), done.stderr)
+        shown = self.shown(bead)
+        self.assertEqual("open", shown["status"])
+        self.assertEqual("", shown.get("assignee", ""))
+        self.assertEqual(1, len(self.comments(bead)))
+        self.assertEqual("# the worktree's own\n", (worktree / "GLOSSARY.md").read_text(encoding="utf-8"))
+        self.assertEqual(main_glossary, (self.repo / "GLOSSARY.md").read_text(encoding="utf-8"))
+
+    def test_removing_the_worktree_as_landing_does_keeps_the_main_checkouts_glossary_and_adrs(self):
+        _, worktree = self.started_worktree()
+        main_glossary = (self.repo / "GLOSSARY.md").read_text(encoding="utf-8")
+
+        git(self.repo, "worktree", "remove", "--force", str(worktree))
+
+        self.assertFalse(worktree.exists())
+        self.assertEqual(main_glossary, (self.repo / "GLOSSARY.md").read_text(encoding="utf-8"))
+        self.assertEqual("# 0001\n", (self.repo / "docs" / "adr" / "0001-start.md").read_text(encoding="utf-8"))
+
+
+class BenchPrivateGlossaryWithoutAdrsTests(BenchCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        (cls.repo / "GLOSSARY.md").write_text("# shop\n", encoding="utf-8")
+        cls.write_settings("private")
+
+    def test_a_worktree_gets_the_glossary_and_no_adr_folder_when_the_main_checkout_has_none(self):
+        _, worktree = self.started_worktree()
+
+        self.assertEqual("# shop\n", (worktree / "GLOSSARY.md").read_text(encoding="utf-8"))
+        self.assertFalse(os.path.lexists(worktree / "docs"))
+        self.assertEqual("", git(worktree, "status", "--porcelain", "--untracked-files=all"))
+
+
+class BenchCommittedDocsTests(BenchCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.write_untracked_glossary_and_adrs()
+        cls.write_settings("committed")
+
+    def test_a_worktree_in_a_committed_repo_gets_no_copy_of_an_untracked_glossary_or_adrs(self):
+        _, worktree = self.started_worktree()
+
+        self.assertEqual(sorted([".git", "README.md"]), sorted(path.name for path in worktree.iterdir()))
+        self.assertEqual("", git(worktree, "status", "--porcelain", "--untracked-files=all"))
 
 
 class BenchRouteTests(BenchCase):

@@ -31,8 +31,10 @@ them or keeps them private. A key left out keeps its stored value, else
 GLOSSARY.md, docs/adr and committed. Private leaves both at their paths and
 adds one anchored line for each to the repo's git exclude file, which hides
 only files git does not track, so the script refuses private while git
-tracks either path. When the choice goes back to committed, or a private
-path changes, the script takes out the lines it added for the old paths and
+tracks either path. The ADR folder's line has no trailing slash, so it also
+hides the link a bench worktree holds there, and the script takes out the
+slashed form. When the choice goes back to committed, or a private path
+changes, the script takes out the lines it added for the old paths and
 keeps every other byte of the file.
 
 "rule_conflicts" lists the repo's rules that overrule jidoka's session rules.
@@ -131,21 +133,39 @@ def refuse_tracked_private_docs(main_tree: Path, settings: dict, timeout_seconds
 
 
 def private_lines(settings: dict) -> list[str]:
+    """The exclude lines of private settings, every one without a trailing slash.
+
+    A slash hides only a real folder, and a worktree holds the ADR folder as a link to the main checkout's.
+    """
     if settings.get(GLOSSARY_AND_ADRS) != PRIVATE:
         return []
-    return [git_exclude.exclude_line(settings[key], folder=key == "adrs")
+    return [git_exclude.exclude_line(settings[key], folder=False)
             for key in DOC_PATH_KEYS if is_text(settings.get(key))]
+
+
+def slashed_adr_line(settings: dict) -> list[str]:
+    """The ADR folder's exclude line in its slashed form, which hides the folder but not a worktree's link to it."""
+    if settings.get(GLOSSARY_AND_ADRS) != PRIVATE or not is_text(settings.get("adrs")):
+        return []
+    return [git_exclude.exclude_line(settings["adrs"], folder=True)]
 
 
 def hide_private_docs(main_tree: Path, previous: dict, settings: dict) -> None:
     """Adds the exclude lines the settings call for and takes out those the previous settings added."""
     wanted = private_lines(settings)
-    stale = [line for line in private_lines({**DOCS_DEFAULTS, **previous}) if line not in wanted]
+    earlier = {**DOCS_DEFAULTS, **previous}
+    candidates = private_lines(earlier) + slashed_adr_line(earlier) + slashed_adr_line(settings)
+    stale = [line for line in dict.fromkeys(candidates) if line not in wanted]
     if not (wanted or stale):
         return
     file = git_exclude.exclude_file(main_tree)
     git_exclude.remove(file, stale)
     git_exclude.add(file, wanted)
+
+
+def rehide_private_docs(main_tree: Path, settings: dict) -> None:
+    """Brings the exclude lines of unchanged settings in line with the form private_lines builds."""
+    hide_private_docs(main_tree, settings, settings)
 
 
 def settings_path(home: Path, main_tree: Path) -> Path:

@@ -582,7 +582,35 @@ class OnboardingTests(unittest.TestCase):
 
         lines = self.exclude_file(repo).read_text(encoding="utf-8").splitlines()
         self.assertEqual(1, lines.count("/GLOSSARY.md"), lines)
-        self.assertEqual(1, lines.count("/docs/adr/"), lines)
+        self.assertEqual(1, lines.count("/docs/adr"), lines)
+
+    def test_choosing_private_swaps_a_slashed_adr_line_for_one_that_also_hides_a_link_to_the_folder(self):
+        repo = self.repo_with_untracked_glossary_and_adrs()
+        with open(self.exclude_file(repo), "a", encoding="utf-8", newline="") as fh:
+            fh.write("/GLOSSARY.md\n/docs/adr/\n")
+        worktree = self.root / f"atlas-{self.count}-feature"
+        fixture.run(["git", "worktree", "add", "-q", "-b", "feature", str(worktree)], repo)
+        (worktree / "docs").mkdir()
+        (worktree / "docs" / "adr").symlink_to(repo / "docs" / "adr", target_is_directory=True)
+
+        done = self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private"})
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        lines = self.exclude_file(repo).read_text(encoding="utf-8").splitlines()
+        self.assertEqual((1, 0), (lines.count("/docs/adr"), lines.count("/docs/adr/")), lines)
+        self.assertEqual("", self.status(worktree))
+
+    def test_choosing_committed_again_takes_out_a_slashed_adr_line(self):
+        repo = self.repo_with_untracked_glossary_and_adrs()
+        self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private"})
+        with open(self.exclude_file(repo), "a", encoding="utf-8", newline="") as fh:
+            fh.write("/docs/adr/\n")
+
+        done = self.write(repo, {"glossary_and_adrs": "committed"})
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        lines = self.exclude_file(repo).read_text(encoding="utf-8").splitlines()
+        self.assertEqual((0, 0), (lines.count("/docs/adr"), lines.count("/docs/adr/")), lines)
 
     def test_private_hides_the_configured_paths(self):
         repo = self.repo_with_untracked_glossary_and_adrs()
@@ -635,7 +663,7 @@ class OnboardingTests(unittest.TestCase):
         lines = self.exclude_file(repo).read_text(encoding="utf-8").splitlines()
         self.assertNotIn("/GLOSSARY.md", lines)
         self.assertEqual(1, lines.count("/docs/WORDS.md"), lines)
-        self.assertEqual(1, lines.count("/docs/adr/"), lines)
+        self.assertEqual(1, lines.count("/docs/adr"), lines)
 
     def test_a_rerun_that_leaves_out_the_choice_keeps_it_with_its_paths_and_exclude_lines(self):
         repo = self.repo_with_untracked_glossary_and_adrs()

@@ -12,11 +12,14 @@ on the branch bench/<slug>, cut from main's head, and only then claims the
 bead, so a failed worktree step leaves the bead unclaimed. The slug comes
 from the bead's title. The script adds `.worktrees/` to the repo's
 info/exclude, so the worktree never shows in the main checkout's git
-status. It records the branch, the worktree and the sha the branch was cut
-from as the bead's bench.branch, bench.worktree and bench.start metadata,
-and a later start reuses them while the recorded branch exists. It posts
-`bench started at <sha> on <branch>` and prints the bead, branch, worktree
-and start sha as one JSON object.
+status. When the repo settings keep the glossary and ADRs private, the
+worktree gets a link at each of their paths to the main checkout's copy,
+and start refuses, before the claim, a worktree that holds its own file or
+folder at one of those paths. It records the branch, the worktree and the
+sha the branch was cut from as the bead's bench.branch, bench.worktree and
+bench.start metadata, and a later start reuses them while the recorded
+branch exists. It posts `bench started at <sha> on <branch>` and prints
+the bead, branch, worktree and start sha as one JSON object.
 
 `end <bead> <outcome>` posts `bench ended: <outcome>` on the bead.
 
@@ -44,6 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import git_exclude
+import private_docs
 import repo_settings
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, head_of, run, worktree_list
 
@@ -192,6 +196,7 @@ def start(bead_id: str, main_tree: Path) -> Workspace:
     workspace = planned_workspace(bead, main_tree)
     hide_worktrees(main_tree)
     make_worktree(workspace, main_tree)
+    private_docs.share(main_tree, workspace.worktree.resolve(), repo_settings.jidoka_home(None))
     run(["bd", "update", bead.id, "--claim"], main_tree, env)
     run(["bd", "update", bead.id,
          "--set-metadata", f"bench.branch={workspace.branch}",
@@ -258,7 +263,7 @@ def main(argv: list[str]) -> int:
             end(args.bead, args.outcome, main_tree)
         else:
             release(args.bead, main_tree)
-    except (BenchError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (BenchError, CommandError, repo_settings.SettingsError, private_docs.ClashError, OSError) as error:
         print(f"bench: {error}", file=sys.stderr)
         return 1
     return 0

@@ -40,7 +40,9 @@ message, which says to run the installer, and go to step 11 with
    Read the parent epic's description when there is one. Run
    `bench start <bead-id>`. It refuses an epic, which covers milestones
    and maps, a task whose epic carries the `factory` label, a bead
-   someone else has claimed, and a repo with no `git config user.name`.
+   someone else has claimed, a repo with no `git config user.name`, and,
+   when the repo keeps its glossary and ADRs private, a worktree that
+   holds its own file or folder at one of their paths.
    It refuses before it claims, and it makes the worktree before it
    claims, so a refusal or a failed worktree step leaves the bead
    unclaimed with no bench work to end. Show the message and stop there.
@@ -48,7 +50,8 @@ message, which says to run the installer, and go to step 11 with
    show the message and go to step 11 with `stopped: <reason>`. It prints
    JSON with `branch`, `worktree` and `start`. Every later step works in
    that worktree. A bead benched before reuses its worktree and branch,
-   with their commits.
+   with their commits. Private glossary and ADRs appear in the worktree
+   as links to the main checkout's copies, so an edit there changes those.
 2. **Research brief, light tier.** Skip it when the bead already has a
    `research brief:` comment. Otherwise start one read-only worker with
    the bead's title, description, Demo and Seams lines, the project's

@@ -345,7 +345,8 @@ run and test commands, and its hand-run tests, the paths of the repo's
 glossary and ADRs with whether the repo commits them or keeps them
 private, and its rule conflicts. Private glossaries and ADRs stay at their
 paths, hidden through the repo's git exclude file, for a shared repo whose
-team has not agreed to them.
+team has not agreed to them. A bench worktree links to the main checkout's
+copies, so every worktree shares one copy.
 _Avoid_: Repo config, profile, manifest
 
 **Rule conflict**:
