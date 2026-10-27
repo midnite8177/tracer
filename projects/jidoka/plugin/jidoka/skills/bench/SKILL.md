@@ -131,7 +131,14 @@ message, which says to run the installer, and go to step 11 with
    file, commit it and run step 5 again.
 8. **Show the human.** Show the diff `git diff main...HEAD`, the targeted-test
    command and its result, the Spec check outcome, and the builder's
-   choices and discovered work. Decide each discovered item with the human.
+   choices and discovered work. Settle each item the bead or the design
+   already decides, as in step 2, and say what you did with it. Ask about
+   the rest one at a time. Each ask says what the item is, with a short
+   example from the diff, then gives each option as the change it makes
+   to the code, such as "remove the retry loop from fetch" or "keep the
+   retry loop in fetch", with your confidence in percent, and recommends
+   one. Never name an option with a stock phrase such as "land as built",
+   "ship as is" or "as landed"; name the code it changes.
    Commit any change the human asks for, then run steps 5 to 7 again
    before step 9.
 9. **Commit message, light tier.** Start one worker that reads
