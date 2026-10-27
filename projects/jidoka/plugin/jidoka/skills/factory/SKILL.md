@@ -197,11 +197,16 @@ stop.
    - its job: newer work on the epic branch conflicts with the lap or broke
      its tests. In the worktree, it runs `git rebase <epic branch>`,
      resolves every conflict so that both laps' intent holds, runs
-     `git rebase --continue` until the rebase is finished, and fixes what
-     the merge broke. It leaves the worktree on the lap branch, never in the
-     middle of a rebase, and it commits nothing more: the scheduler folds
-     its fixes into the lap's commit. When a rebase is already in progress,
-     it runs `git rebase --abort` first;
+     `git add` on each resolved path and
+     `git -c core.editor=true rebase --continue` until the rebase is
+     finished, and fixes what the merge broke. It looks at the conflicts
+     with `git status`, `git diff` and `git log`. These are the git
+     commands the lap mod allows a merge worker, exactly as written here:
+     no other option, and no `--exec`, `-i` or `--output`. It leaves the
+     worktree on the lap branch, never in the middle of a rebase, and it
+     commits nothing more: the scheduler folds its fixes into the lap's
+     commit. When a rebase is already in progress, it runs
+     `git rebase --abort` first;
    - the same ending: `done` with the app and the filter that run the
      tests the merge touches, or `failed` with its `why`.
 
@@ -273,8 +278,11 @@ stop.
      outcome, `pass`, `"send back"` or `"cannot judge"`. Never `done`;
    - its reply ends with a question block: `question`;
    - its reply ends with a blocked block: `blocked`;
-   - its reply ends with a failed block, or holds no block you can read:
-     `failed`;
+   - its reply ends with a failed block: `failed --why "<why>"`, with the
+     block's `why` in double quotes, so that the try and the park name the
+     worker's reason. Take any `$`, backtick, `"` or `\` out of the why
+     first, so that the call stays one command of its own;
+   - its reply holds no block you can read: `failed`, with no `--why`;
    - it stopped before it replied on a usage limit, an outage, a billing
      error or an auth failure: `"cut off" --cause <cause>`, with the cause
      `usage-limit`, `outage`, `billing` or `auth`. That pauses the epic:

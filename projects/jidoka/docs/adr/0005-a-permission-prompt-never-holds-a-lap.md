@@ -8,7 +8,9 @@ session. So the lap mod decides every lap worker's tool call in
 `tool.check`, ahead of the rules, the mode and the prompt. It allows what
 jidoka's built-in list, the repo's list or the epic's factory rules
 allow, and it denies the rest with a reason, so the worker finds another
-way or parks its task with a question that names the call. A repo's first
+way or parks its task with a question that names the call. Some built-in
+entries belong to one stage and allow their exact form only, such as the
+git rebase that a merge worker needs and a build worker must not run. A repo's first
 epics park more often until its list fills in. In exchange no lap waits on
 a prompt, the outcome does not depend on the host's mode, and a
 permission is answered like any other question.

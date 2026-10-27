@@ -65,9 +65,9 @@ epic holds) and `lap.branch`. A rerun after a failure, and the lap that follows
 a park, reuse the worktree and branch they find. A new lap starts with no tries,
 no cutoffs, no send-backs and no merge tries, because each is a cap on one lap.
 
-`report <epic> <task> <outcome> [--app <app> --filter <filter>]` takes how
-the build of the task's open lap ended, one outcome of a fixed set, and
-makes the checks below first:
+`report <epic> <task> <outcome> [--app <app> --filter <filter>] [--why <why>]`
+takes how the build of the task's open lap ended, one outcome of a fixed set,
+and makes the checks below first:
   done       the build finished, with the app and the filter the builder
              named. The scheduler first stages everything the build left
              in the lap's worktree, apart from the scratch folder, and
@@ -80,7 +80,10 @@ makes the checks below first:
              epic branch moved during the run. A pass goes to the merge gate,
              merge_gate.py. When the gate finds the epic branch moved since
              the run, the tests run again, and that is not a try.
-  failed     the build worker failed.
+  failed     the build worker failed. `--why` carries the worker's own
+             reason into the try's comment and the park's, and goes with no
+             other outcome; without it they say the worker reported that the
+             stage failed.
   cut off    the build worker ended for a reason outside its work; the lap
              goes back to the build, and that is not a try. A stage that
              runs past its wall clock, 60 minutes for the build and 30 for
@@ -801,7 +804,8 @@ def working_lap(epic: Epic, task_id: str) -> Lap:
     raise SchedulerError(f"{task_id} is not an open task of {epic.id}, and nothing was written")
 
 
-def refuse_arguments(outcome: str, app: str | None, test_filter: str | None, cause: str | None, stage: str) -> None:
+def refuse_arguments(outcome: str, app: str | None, test_filter: str | None, cause: str | None, why: str | None,
+                     stage: str) -> None:
     if outcome == DONE and stage == SPEC_CHECK:
         raise SchedulerError(f"the {words(SPEC_CHECK)} ends {PASS}, {SEND_BACK} or {CANNOT_JUDGE}, never {DONE}, "
                              "and nothing was written")
@@ -817,6 +821,8 @@ def refuse_arguments(outcome: str, app: str | None, test_filter: str | None, cau
                              "written")
     if cause is not None and outcome != CUT_OFF:
         raise SchedulerError(f"--cause goes only with {CUT_OFF}, and nothing was written")
+    if why is not None and outcome != FAILED:
+        raise SchedulerError(f"--why goes only with {FAILED}, and nothing was written")
 
 
 def park_lap(lap: Lap, epic: str, tries: int, why: str, main_tree: Path) -> None:
@@ -1236,11 +1242,11 @@ def end_pause_after_a_retry_that_worked(epic: Epic, main_tree: Path) -> None:
 
 
 def report(bead: str, task_id: str, outcome: str, app: str | None, test_filter: str | None, cause: str | None,
-           home: Path, main_tree: Path) -> dict:
+           why: str | None, home: Path, main_tree: Path) -> dict:
     settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
     epic = checked_epic(bead, settings, main_tree)
     lap = working_lap(epic, task_id)
-    refuse_arguments(outcome, app, test_filter, cause, lap.stage)
+    refuse_arguments(outcome, app, test_filter, cause, why, lap.stage)
     if cause is not None:
         pause_on_trouble(lap, epic, cause, main_tree)
         return next_moves(bead, home, main_tree, [], False)
@@ -1257,7 +1263,8 @@ def report(bead: str, task_id: str, outcome: str, app: str | None, test_filter: 
     if outcome == CUT_OFF:
         rebuilds = cut_off(lap, epic.id, cutoff_why, main_tree)
     elif outcome == FAILED:
-        rebuilds = count_stage_try(lap, epic.id, f"the {lap.stage} worker reported that the {lap.stage} failed", main_tree)
+        failed_why = why or f"the {lap.stage} worker reported that the {lap.stage} failed"
+        rebuilds = count_stage_try(lap, epic.id, failed_why, main_tree)
     elif outcome == QUESTION:
         rebuilds = ask(lap, epic.id, main_tree)
     elif outcome == SEND_BACK and lap.stage == SPEC_CHECK:
@@ -1388,6 +1395,7 @@ def main(argv: list[str]) -> int:
     reporting.add_argument("--app", help="with done, the app whose targeted tests the builder named")
     reporting.add_argument("--filter", help="with done, the filter the builder named")
     reporting.add_argument("--cause", choices=pause.CAUSES, help="with cut off, the trouble that cut the worker off")
+    reporting.add_argument("--why", help="with failed, the why of the worker's failed block")
     args = parser.parse_args(argv)
 
     try:
@@ -1402,7 +1410,8 @@ def main(argv: list[str]) -> int:
         elif args.mode == "stop":
             printed = stop(args.epic, home, main_tree)
         else:
-            printed = report(args.epic, args.task, args.outcome, args.app, args.filter, args.cause, home, main_tree)
+            printed = report(args.epic, args.task, args.outcome, args.app, args.filter, args.cause, args.why, home,
+                             main_tree)
     except (SchedulerError, validation.ValidationError, HandoffError, BenchError, CommandError,
             repo_settings.SettingsError, holdouts.HoldoutsError, private_docs.ClashError, OSError) as error:
         print(f"scheduler: {error}", file=sys.stderr)

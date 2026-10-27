@@ -29,8 +29,8 @@ type World = {
   /** Every path exists and is its own real location, except a path here and what lies beneath it: it lands at the place named, or nowhere for null. */
   places: Record<string, string | null>
   statFails: boolean
-  /** The commands the launcher prints for `rules.py lap-commands` in the worktree: the epic's and the built-in list's additions. */
-  granted: string[]
+  /** What the launcher prints for `rules.py lap-commands` in the worktree: the built-in list's entries for the lap's stage, its additions and the epic's. */
+  granted: unknown[]
   spawn: () => Promise<{ model: string; agentId: string } | { deny: string }>
 }
 
@@ -226,6 +226,63 @@ test('a command the epic or the built-in list adds is allowed, and the lap\'s ot
   expect(await bash($, 'make lint --fix')).toBe('allow')
   expect(await bash($, 'dotnet build App.slnx && make lint')).toBe('allow')
   expect(await bash($, 'make deploy')).toBe('deny')
+})
+
+const EPIC_BRANCH = 'epic/take-card-payments'
+
+const MERGE_GRANT = [
+  { command: `git rebase ${EPIC_BRANCH}`, then: 'nothing' },
+  { command: 'git rebase --abort', then: 'nothing' },
+  { command: 'git -c core.editor=true rebase --continue', then: 'nothing' },
+  { command: 'git add', then: 'paths' },
+  { command: 'git status', then: 'words', refusing: ['--output'] },
+  { command: 'git diff', then: 'words', refusing: ['--output'] },
+  { command: 'git log', then: 'words', refusing: ['--output'] },
+]
+
+async function startMergeWorker($: Engine, on: On): Promise<void> {
+  engineWith(on, SETTINGS, { ...NOTHING, granted: MERGE_GRANT, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+  await $.agent.spawn({ prompt: `jidoka lap worktree: ${WORKTREE}\nReconcile the lap with the epic branch.` })
+}
+
+test('a merge worker may rebase onto the epic branch, add what it resolved, continue with no editor, abort and look at the conflicts', async ($, on) => {
+  await startMergeWorker($, on)
+
+  expect(await bash($, `git rebase ${EPIC_BRANCH}`)).toBe('allow')
+  expect(await bash($, 'git status --porcelain && git diff --name-only --diff-filter=U')).toBe('allow')
+  expect(await bash($, 'git add docs/table.md "notes/a b.md" -- -odd.md')).toBe('allow')
+  expect(await bash($, 'git -c core.editor=true rebase --continue')).toBe('allow')
+  expect(await bash($, 'git log --oneline -n 5')).toBe('allow')
+  expect(await bash($, 'git rebase --abort')).toBe('allow')
+})
+
+test('a build worker may not rebase, add or continue a rebase', async ($, on) => {
+  engineBeneath(on, SETTINGS)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, `git rebase ${EPIC_BRANCH}`)).toBe('deny')
+  expect(await bash($, 'git add docs/table.md')).toBe('deny')
+  expect(await bash($, 'git -c core.editor=true rebase --continue')).toBe('deny')
+  expect(await bash($, 'git rebase --abort')).toBe('deny')
+  expect(await bash($, 'git status')).toBe('deny')
+})
+
+test('a merge worker\'s git call that could run code, open an editor or write a file is denied', async ($, on) => {
+  await startMergeWorker($, on)
+
+  expect(await bash($, `git rebase ${EPIC_BRANCH} --exec "rm -rf /"`)).toBe('deny')
+  expect(await bash($, `git rebase -x sh ${EPIC_BRANCH}`)).toBe('deny')
+  expect(await bash($, `git rebase -i ${EPIC_BRANCH}`)).toBe('deny')
+  expect(await bash($, `git rebase --interactive ${EPIC_BRANCH}`)).toBe('deny')
+  expect(await bash($, 'git rebase --edit-todo')).toBe('deny')
+  expect(await bash($, 'git rebase main')).toBe('deny')
+  expect(await bash($, 'git rebase --continue')).toBe('deny')
+  expect(await bash($, 'git -c core.editor=vi rebase --continue')).toBe('deny')
+  expect(await bash($, 'git add -p docs/table.md')).toBe('deny')
+  expect(await bash($, 'git add --edit')).toBe('deny')
+  expect(await bash($, 'git diff --output=/etc/hosts')).toBe('deny')
+  expect(await bash($, 'git log -p --out /tmp/log.txt')).toBe('deny')
+  expect(await bash($, 'git status && sh -c "rm -rf /"')).toBe('deny')
 })
 
 test('a list entry matches whole words only', async ($, on) => {

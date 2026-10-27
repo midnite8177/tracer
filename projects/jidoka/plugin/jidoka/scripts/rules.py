@@ -37,8 +37,17 @@ of any the epic held.
 presets are bug-epic and improvement-epic.
 
 `lap-commands` runs in a lap's worktree and prints, as a JSON list, the
-commands the built-in list's additions and the lap's epic add to what the repo
-settings let a lap worker run. The lap mod reads it.
+commands the built-in list and the lap's epic add to what the repo settings
+let a lap worker run. The lap mod reads it. A text entry allows its words with
+any words after them: the built-in list's additions and the epic's
+extra_commands. An object entry is one of the built-in list's entries for the
+lap's stage, `{"command", "then"}`, which allows its words with nothing after
+them when `then` is `nothing`, with only paths after them when it is `paths`,
+and with any words but the long options in its `refusing` list, or an
+abbreviation of one, when it is `words`. A lap at the merge stage gets the
+merge worker's git commands: `git rebase <epic branch>`, `git rebase --abort`
+and `git -c core.editor=true rebase --continue` whole, `git add` of paths, and
+`git status`, `git diff` and `git log` without `--output`.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
@@ -55,7 +64,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypedDict
 
 import repo_settings
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, env_as_git_user, run
@@ -68,6 +77,23 @@ LAP_LIMIT = "lap_limit"
 COMMITS_ON_MAIN = ["one", "per_task"]
 EXTRA_COMMANDS = "extra_commands"
 LAP_BRANCH_PREFIX = "lap/"
+STAGE_KEY = "lap.stage"
+MERGE_STAGE = "merge"
+EPIC_BRANCH_KEY = "factory.branch"
+REBASE_STATES = ["rebase-merge", "rebase-apply"]
+HEADS_PREFIX = "refs/heads/"
+LOOKS_REFUSING = ["--output"]
+
+
+class Grant(TypedDict):
+    """A built-in entry for one stage: its command, and `nothing`, `paths` or `words` for what may follow it."""
+    command: str
+    then: str
+
+
+class RefusingGrant(Grant):
+    """A `words` entry, which refuses the long options in `refusing` and their abbreviations."""
+    refusing: list[str]
 
 
 class RulesError(Exception):
@@ -262,17 +288,44 @@ def allow_extra_command(epic: str, command: str, home: Path, main_tree: Path) ->
     return True
 
 
-def lap_commands(worktree: Path, home: Path, main_tree: Path) -> list[str]:
-    """The built-in list's additions, then the extra_commands of the epic that holds the lap's task."""
-    done = capture(["git", "rev-parse", "--abbrev-ref", "HEAD"], worktree, None)
-    branch = done.stdout.strip()
-    if done.returncode != 0 or not branch.startswith(LAP_BRANCH_PREFIX):
+def merge_grant(epic_branch: str) -> list[Grant]:
+    whole = [f"git rebase {epic_branch}", "git rebase --abort", "git -c core.editor=true rebase --continue"]
+    looks = ["git status", "git diff", "git log"]
+    return [*(Grant(command=command, then="nothing") for command in whole),
+            Grant(command="git add", then="paths"),
+            *(RefusingGrant(command=command, then="words", refusing=LOOKS_REFUSING) for command in looks)]
+
+
+def checked_out_or_rebasing_branch(worktree: Path) -> str:
+    """The branch checked out in the worktree, or the branch its rebase in progress rewrites, whose HEAD is
+    detached until the rebase ends; empty when it is neither."""
+    done = capture(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], worktree, None)
+    if done.returncode == 0:
+        return done.stdout.strip()
+    for state in REBASE_STATES:
+        found = capture(["git", "rev-parse", "--git-path", f"{state}/head-name"], worktree, None)
+        head_name = worktree / found.stdout.strip()
+        if found.returncode == 0 and head_name.is_file():
+            ref = head_name.read_text(encoding="utf-8").strip()
+            return ref[len(HEADS_PREFIX):] if ref.startswith(HEADS_PREFIX) else ""
+    return ""
+
+
+def lap_commands(worktree: Path, home: Path, main_tree: Path) -> list[str | Grant]:
+    """The built-in list's entries for the lap's stage, its additions, then the extra_commands of the epic that
+    holds the lap's task."""
+    branch = checked_out_or_rebasing_branch(worktree)
+    if not branch.startswith(LAP_BRANCH_PREFIX):
         raise RulesError(f"{worktree} is not a lap worktree: its branch is {branch or 'unknown'}, not "
                          f"{LAP_BRANCH_PREFIX}<task>")
     task = bd_show(branch[len(LAP_BRANCH_PREFIX):], main_tree)
     epic = str(task.get("parent") or "") if task is not None else ""
-    extra = of_epic(epic_to_write(epic, main_tree)).settings.get(EXTRA_COMMANDS, []) if epic else []
-    return [*repo_settings.built_in_commands(home), *(extra if isinstance(extra, list) else [])]
+    shown = epic_to_write(epic, main_tree) if epic else {}
+    extra = of_epic(shown).settings.get(EXTRA_COMMANDS, []) if epic else []
+    stage = str(((task or {}).get("metadata") or {}).get(STAGE_KEY) or "")
+    epic_branch = str((shown.get("metadata") or {}).get(EPIC_BRANCH_KEY) or "")
+    granted = merge_grant(epic_branch) if stage == MERGE_STAGE and epic_branch else []
+    return [*granted, *repo_settings.built_in_commands(home), *(extra if isinstance(extra, list) else [])]
 
 
 def shown_rules(epic: str, main_tree: Path) -> dict:

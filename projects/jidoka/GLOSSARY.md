@@ -453,9 +453,12 @@ permission prompt. It allows a call on the built-in list, the repo's
 list or the lap's epic's factory rules, refuses a write outside the lap's worktree, whether by its path or
 through a symlink, and denies the rest with a reason. It decides a worker's
 first call too, before the worker's agent id is known. The built-in list holds every call the tool marks read-only, a
-write inside the worktree, and each app's test command, and the commands a
-human added to it for every repo on the machine. The repo's list is the
-repo settings' worker commands.
+write inside the worktree, the commands a human added to it for every repo
+on the machine, and entries scoped to one stage: a merge worker alone may
+rebase the lap onto the epic branch, abort or continue that rebase, add
+paths and look at the conflicts with git. A stage-scoped entry says what
+may follow its words, so `git rebase` never takes `--exec`. The repo's list
+is the repo settings' worker commands and each app's test command.
 _Avoid_: Permission hook, guard, sandbox, allowlist
 
 **Permission question**:

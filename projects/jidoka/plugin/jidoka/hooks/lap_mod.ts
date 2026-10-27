@@ -1,5 +1,5 @@
 import type { EngineInterface, Register, Timer } from 'claude-code'
-import type { LapWorker } from '../types/index'
+import type { Grant, LapWorker, ListEntry } from '../types/index'
 
 const LAP_LINE = /^jidoka lap worktree: (.+?)\s*$/
 
@@ -152,19 +152,61 @@ function simpleCommands(command: string): string[][] | undefined {
   return commands
 }
 
-/** True when every simple command of `command` starts with the words of one entry. */
-function isListed(command: string, entries: readonly string[]): boolean {
+/** True when `word` is the long option, gives it a value, or abbreviates it as git lets a long option be abbreviated. */
+function isOption(word: string, option: string): boolean {
+  const name = word.split('=', 1)[0] ?? ''
+  return word === option || (name.startsWith('--') && name.length > 2 && option.startsWith(name))
+}
+
+function mayFollow(entry: Grant, rest: readonly string[]): boolean {
+  if (entry.then === 'nothing') return rest.length === 0
+  if (entry.then === 'paths') {
+    const end = rest.indexOf('--')
+    return (end === -1 ? rest : rest.slice(0, end)).every(word => !word.startsWith('-'))
+  }
+  return rest.every(word => !entry.refusing.some(option => isOption(word, option)))
+}
+
+/** True when every simple command of `command` starts with the words of one entry, followed by what it allows. */
+function isListed(command: string, entries: readonly ListEntry[]): boolean {
   const parts = simpleCommands(command)
   if (parts === undefined) return false
   const prefixes = entries.flatMap(entry => {
-    const parsed = simpleCommands(entry)
-    return parsed?.length === 1 && parsed[0] !== undefined && parsed[0].length > 0 ? [parsed[0]] : []
+    const grant: Grant = typeof entry === 'string' ? { command: entry, then: 'words', refusing: [] } : entry
+    const parsed = simpleCommands(grant.command)
+    return parsed?.length === 1 && parsed[0] !== undefined && parsed[0].length > 0 ? [{ words: parsed[0], grant }] : []
   })
-  return parts.every(words => prefixes.some(prefix => prefix.every((w, i) => words[i] === w)))
+  return parts.every(words =>
+    prefixes.some(
+      ({ words: own, grant }) => own.every((w, i) => words[i] === w) && mayFollow(grant, words.slice(own.length)),
+    ),
+  )
 }
 
 function textsOf(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+/** The entry `item` holds, or undefined when it holds text or an object of no shape the lists know. */
+function grantOf(item: unknown): Grant | undefined {
+  if (typeof item !== 'object' || item === null) return undefined
+  const { command, then, refusing } = item as Record<string, unknown>
+  if (typeof command !== 'string') return undefined
+  if (then === 'nothing' || then === 'paths') return { command, then }
+  if (then === 'words' && Array.isArray(refusing) && textsOf(refusing).length === refusing.length) {
+    return { command, then, refusing: textsOf(refusing) }
+  }
+  return undefined
+}
+
+/** The list entries in `value`, a JSON list of text and entry objects; an item of any other shape is left out. */
+function entriesOf(value: unknown): ListEntry[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item: unknown): ListEntry[] => {
+    if (typeof item === 'string') return [item]
+    const grant = grantOf(item)
+    return grant === undefined ? [] : [grant]
+  })
 }
 
 /**
@@ -190,22 +232,22 @@ async function repoCommands($: EngineInterface, worktree: string): Promise<strin
 }
 
 /**
- * The commands the built-in list's additions and the lap's epic allow, from
- * jidoka's own script run in the worktree; none when the script cannot print
- * them.
+ * The commands the built-in list's entries for the lap's stage, its additions
+ * and the lap's epic allow, from jidoka's own script run in the worktree;
+ * none when the script cannot print them.
  */
-async function grantedCommands($: EngineInterface, worktree: string): Promise<string[]> {
+async function grantedCommands($: EngineInterface, worktree: string): Promise<ListEntry[]> {
   const root = $.plugin.root
   const argv = ['sh', `${root}/bin/jidoka-run`, `${root}/scripts/rules.py`, 'lap-commands']
   try {
     const shown = await $.process.run(argv, { cwd: worktree })
-    return shown.exitCode === 0 ? textsOf(JSON.parse(shown.stdout)) : []
+    return shown.exitCode === 0 ? entriesOf(JSON.parse(shown.stdout)) : []
   } catch {
     return []
   }
 }
 
-async function listedCommands($: EngineInterface, worktree: string): Promise<string[]> {
+async function listedCommands($: EngineInterface, worktree: string): Promise<ListEntry[]> {
   return [...(await repoCommands($, worktree)), ...(await grantedCommands($, worktree))]
 }
 

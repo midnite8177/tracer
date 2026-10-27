@@ -740,12 +740,61 @@ class MergeWorkerTests(SchedulerCase):
         subprocess.run(["git", "rebase", epic_branch], cwd=worktree, capture_output=True, text=True)
 
     def reconcile(self, worktree: Path, epic_branch: str, name: str, text: str) -> None:
-        """Does what a merge worker does: rebases onto the epic branch, resolves the conflict and finishes."""
         self.rebase_unfinished(worktree, epic_branch)
         (worktree / name).write_text(text, encoding="utf-8")
         git(worktree, "add", name)
-        subprocess.run(["git", "rebase", "--continue"], cwd=worktree, capture_output=True, text=True,
-                       env={**os.environ, "GIT_EDITOR": "true"}, check=True)
+        subprocess.run(["git", "-c", "core.editor=true", "rebase", "--continue"], cwd=worktree, capture_output=True,
+                       text=True, env={k: v for k, v in os.environ.items() if k not in ("GIT_EDITOR", "EDITOR")},
+                       check=True)
+
+    def lap_commands(self, worktree: Path) -> list:
+        done = subprocess.run([str(LAUNCHER), str(RULES), "lap-commands"], capture_output=True, text=True,
+                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home),
+                              cwd=worktree)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_the_lap_commands_hold_the_merge_worker_s_git_commands_only_while_the_lap_is_at_the_merge(self):
+        lap = self.conflicting_lap()
+        at_the_build = self.lap_commands(lap.worktree)
+        self.build_done(lap.epic, lap.task)
+
+        at_the_merge = self.lap_commands(lap.worktree)
+
+        self.assertEqual([], at_the_build)
+        self.assertEqual([
+            {"command": f"git rebase {lap.epic_branch}", "then": "nothing"},
+            {"command": "git rebase --abort", "then": "nothing"},
+            {"command": "git -c core.editor=true rebase --continue", "then": "nothing"},
+            {"command": "git add", "then": "paths"},
+            {"command": "git status", "then": "words", "refusing": ["--output"]},
+            {"command": "git diff", "then": "words", "refusing": ["--output"]},
+            {"command": "git log", "then": "words", "refusing": ["--output"]},
+        ], at_the_merge)
+
+    def test_a_lap_at_the_merge_whose_worktree_is_in_the_middle_of_a_rebase_still_gets_the_merge_worker_s_commands(
+            self):
+        lap = self.conflicting_lap()
+        self.build_done(lap.epic, lap.task)
+        self.rebase_unfinished(lap.worktree, lap.epic_branch)
+
+        mid_rebase = self.lap_commands(lap.worktree)
+
+        self.assertIn({"command": "git rebase --abort", "then": "nothing"}, mid_rebase)
+        self.assertIn({"command": f"git rebase {lap.epic_branch}", "then": "nothing"}, mid_rebase)
+
+    def test_a_worktree_on_a_detached_head_with_no_rebase_is_no_lap_worktree(self):
+        lap = self.conflicting_lap()
+        self.build_done(lap.epic, lap.task)
+        git(lap.worktree, "checkout", "-q", "--detach")
+
+        done = subprocess.run([str(LAUNCHER), str(RULES), "lap-commands"], capture_output=True, text=True,
+                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home),
+                              cwd=lap.worktree)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("is not a lap worktree", done.stderr)
+        self.assertEqual("", done.stdout)
 
     def test_a_conflict_rebasing_the_lap_onto_the_epic_branch_calls_the_merge_worker_naming_the_files(self):
         lap = self.conflicting_lap()
@@ -830,6 +879,19 @@ class MergeWorkerTests(SchedulerCase):
         self.assertEqual([("merge", lap.task)], [(action["action"], action["task"]) for action in first["actions"]])
         self.assertEqual([], second["actions"])
         self.assertIn("the merge try cap of 2", self.assert_parked(lap, 0))
+
+    def test_a_failed_merge_worker_s_why_reaches_the_try_comment_and_the_park_comment(self):
+        lap = self.conflicting_lap()
+        self.build_done(lap.epic, lap.task)
+
+        self.report_printed(lap.epic, lap.task, "failed", "--why", "both laps rewrote the price table")
+        self.report_printed(lap.epic, lap.task, "failed", "--why", "the table's columns no longer line up")
+
+        self.assertIn("Merge try 1 of 2 failed: both laps rewrote the price table. The lap goes back to the merge "
+                      "worker.", self.texts(lap.task))
+        parked = self.assert_parked(lap, 0)
+        self.assertIn("merge try 2 of 2 failed: the table's columns no longer line up", parked)
+        self.assertNotIn("reported that the merge failed", parked)
 
     def test_a_merge_worker_that_leaves_the_rebase_unfinished_counts_a_try_and_the_worktree_is_back_on_the_lap_branch(
             self):
@@ -1806,6 +1868,17 @@ class ReportRefusalTests(SchedulerCase):
         self.assertIn("done needs --app and --filter", done.stderr)
         self.assertEqual(("build", 0), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
         self.assertEqual([], self.runs_of(lap.task))
+
+    def test_a_why_with_an_outcome_other_than_failed_is_refused_and_nothing_is_written(self):
+        lap = self.open_one_lap()
+
+        done = self.report(lap.epic, lap.task, "cut off", "--why", "the worker stopped")
+
+        self.assertEqual(1, done.returncode)
+        self.assertEqual("", done.stdout)
+        self.assertIn("--why goes only with failed", done.stderr)
+        self.assertEqual(("build", 0), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+        self.assertEqual("0", str(self.metadata(lap.task).get("lap.cutoffs", 0)))
 
     def test_a_report_on_a_task_with_no_open_lap_is_refused(self):
         epic = self.new_epic()
