@@ -105,7 +105,10 @@ stop.
      denies a call, find another way, or end failed and name the call;
    - this ending: the reply ends with one fenced `json` block, either
      `{"outcome": "done", "app": "<app>", "filter": "<filter>"}`, naming
-     the app and the filter that run the build's targeted tests, or
+     the app and the filter that run the build's targeted tests. The
+     filter is only the text that fills the `test_target`'s placeholder:
+     for `-k <name>` it is `test_validation`, never `-k test_validation`.
+     Or
      `{"outcome": "failed", "why": "<one line>"}`.
 
    Write the event line for the started build, with the route's model or
