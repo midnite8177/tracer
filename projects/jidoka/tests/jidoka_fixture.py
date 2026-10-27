@@ -3,7 +3,11 @@
 A checkout is a temporary git repo holding copies of install.py, release.py
 and plugin/. The claude, codex and bd stand-ins are small executables in a
 bin folder that becomes the whole PATH, so a test decides which tools exist.
-Each stand-in appends one JSON line per call to a log file.
+The claude and codex stand-ins append one JSON line per call to a log file.
+
+A fake beads workspace is a store of fake_bd.py, the bd stand-in that the
+scheduler, targeted tests and merge gate tests put first on the PATH,
+because every call of real bd opens its database and takes a second or more.
 
 A stealth beads workspace is a copy of one that bd init made in a template
 repo, because bd init takes seconds and a copy takes milliseconds. What plain
@@ -24,6 +28,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+import fake_bd
 from run_suite import SHARED_FOLDER
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -38,8 +43,9 @@ class FixtureError(Exception):
 
 
 class Bd(Enum):
+    """The bd a test's PATH holds: none, a stub that exits 0 whatever it is asked, or the real one."""
     NONE = "none"
-    FAKE = "fake"
+    STUB = "stub"
     REAL = "real"
 
 
@@ -52,8 +58,8 @@ class ToolsOnPath:
     codex: bool
 
 
-ALL_TOOLS = ToolsOnPath(git=True, bd=Bd.FAKE, claude=True, codex=True)
-WITHOUT_CODEX = ToolsOnPath(git=True, bd=Bd.FAKE, claude=True, codex=False)
+ALL_TOOLS = ToolsOnPath(git=True, bd=Bd.STUB, claude=True, codex=True)
+WITHOUT_CODEX = ToolsOnPath(git=True, bd=Bd.STUB, claude=True, codex=False)
 
 
 def run(args: list, cwd: Path) -> str:
@@ -175,6 +181,28 @@ def add_stealth_beads(repo: Path) -> None:
         fh.write((template / "exclude").read_text(encoding="utf-8"))
     for key, value in json.loads((template / "config.json").read_text(encoding="utf-8")):
         run(["git", "config", key, value], repo)
+
+
+def add_fake_beads(repo: Path, bin_dir: Path) -> Path:
+    """Gives a git repo an empty fake beads store and writes the fake bd into bin_dir, returning the fake's path.
+
+    The store's .beads folder gets the info/exclude line bd init writes, so git status shows it nowhere, and its
+    bead ids start with the repo folder's name.
+    """
+    fake_bd.new_store(repo / fake_bd.STORE, repo.name)
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(exist_ok=True)
+    with open(exclude, "a", encoding="utf-8", newline="") as fh:
+        fh.write("\n.beads/\n")
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    fake = bin_dir / "bd"
+    write_executable(fake, f'#!/bin/sh\nexec "{sys.executable}" "{Path(fake_bd.__file__).resolve()}" "$@"\n')
+    return fake
+
+
+def path_with(bin_dir: Path) -> str:
+    """The caller's PATH with bin_dir first, so the tools in it stand in for the installed ones."""
+    return f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 
 
 def add_committed_beads(repo: Path) -> None:
@@ -305,7 +333,7 @@ def build_bin(bin_dir: Path, tools: ToolsOnPath, log: Path, claude_fails_on: str
     bin_dir.mkdir(parents=True, exist_ok=True)
     if tools.git:
         write_shim(bin_dir / "git", real_tool("git"))
-    if tools.bd == Bd.FAKE:
+    if tools.bd == Bd.STUB:
         write_executable(bin_dir / "bd", "#!/bin/sh\nexit 0\n")
     elif tools.bd == Bd.REAL:
         write_shim(bin_dir / "bd", real_tool("bd"))

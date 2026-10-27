@@ -455,9 +455,9 @@ class PrerequisiteTests(InstallerTestCase):
 
     def test_a_missing_tool_is_named_and_nothing_is_installed(self):
         cases = {
-            "git": fixture.ToolsOnPath(git=False, bd=fixture.Bd.FAKE, claude=True, codex=True),
+            "git": fixture.ToolsOnPath(git=False, bd=fixture.Bd.STUB, claude=True, codex=True),
             "bd": fixture.ToolsOnPath(git=True, bd=fixture.Bd.NONE, claude=True, codex=True),
-            "claude": fixture.ToolsOnPath(git=True, bd=fixture.Bd.FAKE, claude=False, codex=True),
+            "claude": fixture.ToolsOnPath(git=True, bd=fixture.Bd.STUB, claude=False, codex=True),
         }
         for name, tools in cases.items():
             with self.subTest(missing=name):

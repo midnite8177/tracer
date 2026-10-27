@@ -73,7 +73,8 @@ def git(repo: Path, *args: str) -> str:
 
 
 class TargetedTestsCase(unittest.TestCase):
-    """The shop repo, its repo settings and the helpers of the targeted tests script tests.
+    """The shop repo, its repo settings, the fake bd first on the script's PATH, and the helpers of the targeted tests
+    script tests.
 
     Each subclass sets up its own.
     """
@@ -94,8 +95,8 @@ class TargetedTestsCase(unittest.TestCase):
         (cls.repo / "README.md").write_text("shop\n", encoding="utf-8")
         fixture.git_commit_all(cls.repo, "Start")
         git(cls.repo, "branch", "-M", "main")
-        cls.bd = fixture.real_tool("bd")
-        fixture.add_stealth_beads(cls.repo)
+        cls.bin = cls.root / "bin"
+        cls.bd = str(fixture.add_fake_beads(cls.repo, cls.bin))
         cls.test_command = f'"{sys.executable}" "{cls.runner}" "{cls.runs}"'
         cls.write_settings()
         cls.count = 0
@@ -180,7 +181,8 @@ class TargetedTestsCase(unittest.TestCase):
                                "--worktree", str(bead.worktree), "--base", base, "--app", app,
                                "--filter", test_filter, "--jidoka-home", str(home)],
                               capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              env={**os.environ, "JIDOKA_HOME": str(home)}, cwd=self.root)
+                              env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home)},
+                              cwd=self.root)
 
     def metadata(self, bead: Bead) -> dict:
         shown = json.loads(fixture.run([self.bd, "show", bead.id, "--json"], self.repo))[0]

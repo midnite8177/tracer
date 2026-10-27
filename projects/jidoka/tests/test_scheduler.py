@@ -60,7 +60,8 @@ class OpenLap:
 
 
 class SchedulerCase(unittest.TestCase):
-    """The shop repo, onboarded with a lap limit of two, and the helpers of the scheduler tests."""
+    """The shop repo, onboarded with a lap limit of two, with the fake bd first on its scripts' PATH, and the helpers
+    of the scheduler tests."""
 
     @classmethod
     def setUpClass(cls):
@@ -72,8 +73,8 @@ class SchedulerCase(unittest.TestCase):
         (cls.repo / "README.md").write_text("shop\n", encoding="utf-8")
         fixture.git_commit_all(cls.repo, "Start")
         git(cls.repo, "branch", "-M", "main")
-        cls.bd = fixture.real_tool("bd")
-        fixture.add_stealth_beads(cls.repo)
+        cls.bin = cls.root / "bin"
+        cls.bd = str(fixture.add_fake_beads(cls.repo, cls.bin))
         cls.count = 0
         cls.home = cls.root / "jidoka-home"
         cls.home.mkdir()
@@ -116,7 +117,7 @@ class SchedulerCase(unittest.TestCase):
         return home
 
     def caller_env(self, home: Path) -> dict[str, str]:
-        return {**os.environ, "JIDOKA_HOME": str(home), "BEADS_ACTOR": "claude", "BD_DISABLE_EVENT_FLUSH": "1"}
+        return {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home), "BEADS_ACTOR": "claude"}
 
     def launch(self, script: Path, *args: str) -> subprocess.CompletedProcess:
         return self.launch_in(self.home, script, *args)
