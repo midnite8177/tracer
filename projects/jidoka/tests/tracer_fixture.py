@@ -164,14 +164,33 @@ def install_machinery(repo: Path, revision: int) -> None:
 
 def build_bd_repo(repo: Path) -> None:
     """Makes a git repo with a real stealth bd workspace, bd's hooks and marked block, and project docs."""
-    repo.mkdir(parents=True, exist_ok=True)
-    run(["git", "init", "-q"], repo)
-    run(["git", "config", "user.email", "fixture@example.com"], repo)
-    run(["git", "config", "user.name", "Fixture"], repo)
+    init_git_repo(repo)
     jidoka_fixture.add_stealth_beads(repo)
     run(["bd", "setup", "claude", "--stealth"], repo)
     run(["bd", "hooks", "install"], repo)
     run(["bd", "create", "--title=Carry on", "--type=task"], repo)
+    write_project_docs(repo)
+
+
+def build_fake_bd_repo(repo: Path, bin_dir: Path) -> None:
+    """Makes a git repo with the fake bd's empty beads store, a CLAUDE.md that holds no bd text, and project docs.
+
+    It has none of the bytes real bd writes: no hooks, no marked block and no stealth heading in info/exclude.
+    """
+    init_git_repo(repo)
+    jidoka_fixture.add_fake_beads(repo, bin_dir)
+    write_text(repo, "CLAUDE.md", "# Project notes\n\nBuild with make.\n")
+    write_project_docs(repo)
+
+
+def init_git_repo(repo: Path) -> None:
+    repo.mkdir(parents=True, exist_ok=True)
+    run(["git", "init", "-q"], repo)
+    run(["git", "config", "user.email", "fixture@example.com"], repo)
+    run(["git", "config", "user.name", "Fixture"], repo)
+
+
+def write_project_docs(repo: Path) -> None:
     write_text(repo, "GLOSSARY-MAP.md", "# Glossary map\n\n- app: apps/app/GLOSSARY.md\n")
     write_text(repo, "GLOSSARY.md", "# Glossary\n\n**Widget**: a thing.\n")
     write_text(repo, "apps/app/GLOSSARY.md", "# App glossary\n\n**Gadget**: another thing.\n")

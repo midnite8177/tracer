@@ -42,8 +42,14 @@ opens its database and takes a second or more. It answers only the calls
 the scripts and their tests make, and fails on any other.
 `tests/test_fake_bd.py` runs those calls against real bd and the fake and
 compares what they print. Real bd still runs where a test needs what it
-writes: the stealth script's tests, the installer's stealth workspace test
-and the onboarding test that switches a repo to stealth. The `claude` and
+writes. These are the stealth script's tests, the installer's stealth
+workspace test, the onboarding test that switches a repo to stealth, and the
+test in `tests/test_jidoka_fixture.py`, which checks the workspace copied from
+the one bd init made. Three classes in `tests/test_untracer.py` also use real
+bd. `BdWrittenRemovalTests` and `BdWrittenRulesPlacementTests` check that
+untracer leaves bd's hooks, marked block, `info/exclude` heading and
+workspace as bd wrote them. `CommittedRulesTests` checks that a committed
+`CLAUDE.md` keeps the text bd wrote. The `claude` and
 `codex` they find are small fakes that record their arguments. The fake
 `codex` also keeps its marketplaces in a file, and refuses to add one it
 already has from a different source, as Codex does. The Python version check is
@@ -93,7 +99,7 @@ the same tests one at a time, and makes the workspace once in its process.
 | `tests/test_launcher.py` | The launcher tests, run as a process |
 | `tests/test_lap_mod.py` | Runs the real `claude plugin test` on a copy of the plugin, so the suite covers the lap mod's own tests |
 | `plugin/jidoka/scripts/park.py` | Parks a task on the human and posts a worker's question. A question report that holds `call` and `pattern` is a permission question: its options must be the three lists `epic`, `repo` and `built-in`, its `pattern` must be one simple command whose words appear in `call`, and its comment names the denied call and what each list means; its metadata gets `question.call` and `question.pattern`, both empty after any other question. The answer names one list: `epic` adds the pattern to the epic's `extra_commands` through `rules.py`, `repo` to the repo settings' `worker_commands` through `repo_settings.py`, and `built-in` to `<jidoka-home>/built_in_commands.json`. The scheduler applies the answer when it opens the lap that follows, and `park.py answer <task>` applies it from a command line; `park.py question <task> --scratch --worktree --branch --tries` posts a report |
-| `tests/test_permission_question.py` | The permission question tests, run as processes against a temporary git repo with a real stealth beads workspace and a temporary jidoka home |
+| `tests/test_permission_question.py` | The permission question tests, run as processes against a temporary git repo with the fake bd's beads and a temporary jidoka home |
 | `plugin/jidoka/scripts/notify.py` | Tells the human that the factory waits on them. `notify.py <event> <bead>` takes `task-parked`, `epic-parked`, `only-parked-left`, `acceptance-gate`, `factory-stopped`, `factory-paused` or `permission-prompt`, which takes no bead and names the running epic, an open epic with the `factory` label that is neither parked nor at the gate. It sends nothing when the event does not hold on the bead. Otherwise it prints one line for the host, records `<event>:<bead>` and a fingerprint of the announced state in the epic's `notification` metadata, so the same park is announced once and a later park of the task is a new notification, and sends a Pushover message where `<jidoka-home>/pushover.json` holds a `user_key` and an `app_token`. The message links to the bead's page in jidoka-ui at `ui_url`, `http://localhost:5099` when left out. A Pushover failure is a warning on stderr. The lap mod runs it with `permission-prompt` from the host's folder when the host is about to ask the human for a permission |
 | `tests/test_stop.py` | The scheduler's `stop` tests, run as a process through the launcher against a repo with the fake bd's beads, a temporary jidoka home and the Pushover stand-in of the notify tests; they read bead state through bd, git state, printed output and the messages the stand-in received |
 | `tests/test_resume.py` | The resume tests, run as processes through the launcher against a repo with the fake bd's beads, a temporary jidoka home that holds repo settings and one epic handed off with three tasks; they read bead state through bd, git state and printed output |
@@ -124,8 +130,8 @@ the same tests one at a time, and makes the workspace once in its process.
 | `tests/test_jidoka_fixture.py` | The test of the copied stealth beads workspace, against real bd |
 | `tests/run_suite.py` | Runs the test classes in parallel worker processes, takes unittest's `-k`, and prints and exits as unittest does |
 | `tests/test_run_suite.py` | The suite runner tests, run as a process over throwaway test modules |
-| `tests/test_untracer.py` | The untracer tests, at the process seam |
-| `tests/tracer_fixture.py` | Builds fixture repos with a stealth or a committed tracer install, from the files in `tests/fixtures/` |
+| `tests/test_untracer.py` | The untracer tests, at the process seam. The repo they copy holds the fake bd's beads and a plain `CLAUDE.md`; the three classes named above build it with real bd instead |
+| `tests/tracer_fixture.py` | Builds fixture repos with a stealth or a committed tracer install, from the files in `tests/fixtures/`, on a template repo that holds either the fake bd's beads or, from `build_bd_repo`, a real stealth workspace with bd's hooks and marked block |
 | `tests/fixtures/tracer-seed-<revision>.md` | Seed revisions 38, 41 and 42 byte for byte, each matching its hash in `untracer.py`'s `SEED_HASHES` |
 | `tests/fixtures/installed/` | The native files tracer installs, byte for byte, which the fixture writes into each tracer install: `plugin/` goes to `.claude/skills/tracer/`, and `statusline.py` to `.claude/statusline.py` |
 | `tests/fixtures/agents-local-42.md` | The `AGENTS.local.md` adopt writes from seed revision 42, checked by hand, which the fixture's own build must equal |

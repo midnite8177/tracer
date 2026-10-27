@@ -32,7 +32,7 @@ def report(**changes: object) -> dict:
 
 
 class PermissionCase(unittest.TestCase):
-    """A temporary git repo with a real stealth beads workspace and repo settings, and a temporary jidoka home."""
+    """A temporary git repo with the fake bd's beads and repo settings, and a temporary jidoka home."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -44,7 +44,8 @@ class PermissionCase(unittest.TestCase):
         (self.repo / "README.md").write_text("shop\n", encoding="utf-8")
         fixture.git_commit_all(self.repo, "Start")
         fixture.run(["git", "branch", "-M", "main"], self.repo)
-        fixture.add_stealth_beads(self.repo)
+        self.bin = self.root / "bin"
+        self.fake_bd = str(fixture.add_fake_beads(self.repo, self.bin))
         self.home = self.root / "jidoka-home"
         self.home.mkdir()
         (self.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
@@ -60,10 +61,11 @@ class PermissionCase(unittest.TestCase):
                cwd: Path | None = None) -> subprocess.CompletedProcess:
         return subprocess.run([str(LAUNCHER), str(script), *args], input=stdin, capture_output=True, text=True,
                               encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=cwd or self.repo,
-                              env={**os.environ, "JIDOKA_HOME": str(self.home), "BEADS_ACTOR": HUMAN})
+                              env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
+                                   "BEADS_ACTOR": HUMAN})
 
     def bd(self, *args: str) -> str:
-        return fixture.run(["bd", *args], self.repo)
+        return fixture.run([self.fake_bd, *args], self.repo)
 
     def create(self, title: str, *flags: str) -> str:
         return json.loads(self.bd("create", "--title", title, *flags, "--json"))["id"]

@@ -93,7 +93,11 @@ class InstalledRepoTests(unittest.TestCase):
     def setUpClass(cls):
         cls.template_dir = tempfile.TemporaryDirectory()
         cls.template = Path(cls.template_dir.name) / "repo"
-        fixture.build_bd_repo(cls.template)
+        cls.build_template()
+
+    @classmethod
+    def build_template(cls) -> None:
+        fixture.build_fake_bd_repo(cls.template, cls.template.parent / "bin")
 
     @classmethod
     def tearDownClass(cls):
@@ -118,6 +122,15 @@ class InstalledRepoTests(unittest.TestCase):
 
     def removed_paths(self, stdout: str) -> list:
         return [line[len("removed "):] for line in stdout.splitlines() if line.startswith("removed ")]
+
+
+class RealBdTemplate:
+    """Builds the template with the real bd, for the tests that check the bytes bd writes: its hooks, its marked block
+    in CLAUDE.md, its info/exclude heading and its workspace."""
+
+    @classmethod
+    def build_template(cls) -> None:
+        fixture.build_bd_repo(cls.template)
 
 
 class RemovalTests(InstalledRepoTests):
@@ -206,22 +219,6 @@ class RemovalTests(InstalledRepoTests):
         self.assertEqual(before, fixture.read_tree(self.repo))
         self.assertFalse(self.home.exists())
 
-    def test_the_exclude_file_loses_tracers_machinery_and_keeps_bds_blocks_and_the_rules_file_lines(self):
-        exclude = self.repo / ".git" / "info" / "exclude"
-        template_exclude = (self.template / ".git" / "info" / "exclude").read_text(encoding="utf-8")
-        self.assertIn("# Beads stealth mode", template_exclude)
-
-        run_untracer(self.repo, self.home)
-
-        after = exclude.read_text(encoding="utf-8")
-        self.assertTrue(after.startswith(template_exclude))
-        lines = after.splitlines()
-        for gone in fixture.EXCLUDE_HEADING, ".claude/skills/tracer/", ".claude/statusline.py", \
-                ".claude/statusline.sh", "docs/agents/", "docs/tracer.md", "docs/tracer-adopt-notes.md":
-            self.assertNotIn(gone, lines)
-        for kept in "# Local agent files", "AGENTS.local.md", "CLAUDE.local.md", ".audit/":
-            self.assertIn(kept, lines)
-
     def test_an_exclude_block_without_its_heading_loses_only_tracers_known_lines(self):
         exclude = self.repo / ".git" / "info" / "exclude"
         exclude.write_text(
@@ -293,6 +290,48 @@ class RemovalTests(InstalledRepoTests):
         self.assertIn("Nothing of tracer's was found", again.stdout)
         self.assertEqual(reworded, exclude.read_text(encoding="utf-8"))
 
+    def test_a_second_run_finds_nothing_and_leaves_the_first_backup_alone(self):
+        run_untracer(self.repo, self.home)
+        (first,) = self.backups()
+        saved = fixture.read_tree(first)
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("Nothing of tracer's was found", done.stdout)
+        self.assertNotIn("removed ", done.stdout)
+        self.assertEqual([first], self.backups())
+        self.assertEqual(saved, fixture.read_tree(first))
+
+    def test_running_again_after_a_reinstall_keeps_both_backups(self):
+        run_untracer(self.repo, self.home)
+        (first,) = self.backups()
+        fixture.install_tracer(self.repo, self.REVISION)
+
+        run_untracer(self.repo, self.home)
+
+        self.assertEqual(2, len(self.backups()))
+        self.assertIn(first, self.backups())
+        self.assertIn("docs/tracer.md", fixture.read_tree(first))
+
+
+class BdWrittenRemovalTests(RealBdTemplate, InstalledRepoTests):
+    def test_the_exclude_file_loses_tracers_machinery_and_keeps_bds_blocks_and_the_rules_file_lines(self):
+        exclude = self.repo / ".git" / "info" / "exclude"
+        template_exclude = (self.template / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+        self.assertIn("# Beads stealth mode", template_exclude)
+
+        run_untracer(self.repo, self.home)
+
+        after = exclude.read_text(encoding="utf-8")
+        self.assertTrue(after.startswith(template_exclude))
+        lines = after.splitlines()
+        for gone in fixture.EXCLUDE_HEADING, ".claude/skills/tracer/", ".claude/statusline.py", \
+                ".claude/statusline.sh", "docs/agents/", "docs/tracer.md", "docs/tracer-adopt-notes.md":
+            self.assertNotIn(gone, lines)
+        for kept in "# Local agent files", "AGENTS.local.md", "CLAUDE.local.md", ".audit/":
+            self.assertIn(kept, lines)
+
     def test_bds_workspace_hooks_and_marked_block_and_the_project_docs_are_unchanged(self):
         before = fixture.read_tree(self.repo)
 
@@ -327,30 +366,6 @@ class RemovalTests(InstalledRepoTests):
                          "apps/app/docs/adr/", ".audit/",
                          "~/.claude/settings.json"):
             self.assertIn("  " + expected, text)
-
-    def test_a_second_run_finds_nothing_and_leaves_the_first_backup_alone(self):
-        run_untracer(self.repo, self.home)
-        (first,) = self.backups()
-        saved = fixture.read_tree(first)
-
-        done = run_untracer(self.repo, self.home)
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.assertIn("Nothing of tracer's was found", done.stdout)
-        self.assertNotIn("removed ", done.stdout)
-        self.assertEqual([first], self.backups())
-        self.assertEqual(saved, fixture.read_tree(first))
-
-    def test_running_again_after_a_reinstall_keeps_both_backups(self):
-        run_untracer(self.repo, self.home)
-        (first,) = self.backups()
-        fixture.install_tracer(self.repo, self.REVISION)
-
-        run_untracer(self.repo, self.home)
-
-        self.assertEqual(2, len(self.backups()))
-        self.assertIn(first, self.backups())
-        self.assertIn("docs/tracer.md", fixture.read_tree(first))
 
 
 class RevisionThirtyEightTests(InstalledRepoTests):
@@ -612,25 +627,6 @@ class RulesPlacementTests(RulesFileTests):
         super().setUp()
         self.append("AGENTS.local.md", OWN_LINES)
 
-    def test_an_excluded_claude_md_keeps_only_bds_block_and_its_own_lines_move_to_claude_local_md(self):
-        bd_claude = self.read("CLAUDE.md")
-        begin = bd_claude.index("<!-- BEGIN BEADS INTEGRATION")
-        end = bd_claude.index("\n", bd_claude.index("<!-- END BEADS INTEGRATION")) + 1
-        bd_header, bd_block, bd_footer = bd_claude[:begin], bd_claude[begin:end], bd_claude[end:]
-        self.prepend("CLAUDE.md", "Use American spelling.\n\n" + self.read("CLAUDE.local.md") + "\n")
-        (self.repo / "CLAUDE.local.md").unlink()
-        self.append(".git/info/exclude", "CLAUDE.md\n")
-
-        done = run_untracer(self.repo, self.home)
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(bd_block, self.read("CLAUDE.md"))
-        self.assertEqual(
-            "Use American spelling.\n\n## Build\n\nRun make check before a commit.\n\n"
-            + bd_header + bd_footer.lstrip("\n"),
-            self.read("CLAUDE.local.md"))
-        self.assertFalse((self.repo / "AGENTS.local.md").exists())
-
     def test_an_excluded_claude_md_without_bds_block_goes_once_its_own_lines_move(self):
         (self.repo / "CLAUDE.md").write_text(
             "Use American spelling.\n\n" + self.read("CLAUDE.local.md"), encoding="utf-8")
@@ -716,7 +712,32 @@ class RulesPlacementTests(RulesFileTests):
                       section(done.stdout, "Refused:"))
 
 
-class CommittedRulesTests(RulesFileTests):
+class BdWrittenRulesPlacementTests(RealBdTemplate, RulesFileTests):
+    def setUp(self):
+        super().setUp()
+        self.append("AGENTS.local.md", OWN_LINES)
+
+    def test_an_excluded_claude_md_keeps_only_bds_block_and_its_own_lines_move_to_claude_local_md(self):
+        bd_claude = self.read("CLAUDE.md")
+        begin = bd_claude.index("<!-- BEGIN BEADS INTEGRATION")
+        end = bd_claude.index("\n", bd_claude.index("<!-- END BEADS INTEGRATION")) + 1
+        bd_header, bd_block, bd_footer = bd_claude[:begin], bd_claude[begin:end], bd_claude[end:]
+        self.prepend("CLAUDE.md", "Use American spelling.\n\n" + self.read("CLAUDE.local.md") + "\n")
+        (self.repo / "CLAUDE.local.md").unlink()
+        self.append(".git/info/exclude", "CLAUDE.md\n")
+
+        done = run_untracer(self.repo, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(bd_block, self.read("CLAUDE.md"))
+        self.assertEqual(
+            "Use American spelling.\n\n## Build\n\nRun make check before a commit.\n\n"
+            + bd_header + bd_footer.lstrip("\n"),
+            self.read("CLAUDE.local.md"))
+        self.assertFalse((self.repo / "AGENTS.local.md").exists())
+
+
+class CommittedRulesTests(RealBdTemplate, RulesFileTests):
     REVISION = 41
 
     def install(self) -> None:
