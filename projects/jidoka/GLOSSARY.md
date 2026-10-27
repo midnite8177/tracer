@@ -150,6 +150,12 @@ The last stage of a lap, a script with no model in it that merges the
 task into the epic branch only when the lap's record supports it.
 _Avoid_: Land, merge agent, approval
 
+**Protected path**:
+A path that no lap may change, so the merge gate refuses a lap whose diff
+touches one: any path inside an app's acceptance folder, as the repo
+settings name it.
+_Avoid_: Locked path, guarded file, read-only path
+
 **Test cleanup**:
 The first stage of a pass, which deletes the tests the epic added or
 changed that add neither confidence nor communication. Each deletion names
@@ -292,6 +298,20 @@ _Avoid_: Orchestrator, coordinator, root agent
 The script that reads an epic's beads and says what the manager does
 next. It applies the dependencies, areas and caps; the manager never does.
 _Avoid_: Orchestrator, dispatcher, engine, conductor
+
+**Outcome**:
+How a worker's stage ended, as the manager reports it to the scheduler,
+from a fixed set. A build ends done, failed or cut off. Done names the
+app and the filter of the build's targeted tests.
+_Avoid_: Result, status, verdict
+
+**Try**:
+One failed go at a lap's stage, which counts toward the stage's cap. A
+failed build, red targeted tests, a filter the targeted tests refuse and
+a lap with no commit the epic branch lacks are each a try of the build,
+and the third parks the task. A cutoff is not a try, nor is the epic
+branch moving under the merge gate.
+_Avoid_: Attempt, retry, strike
 
 **Worker**:
 An agent the manager starts to run one stage, in the host's own harness

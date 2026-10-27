@@ -93,7 +93,7 @@ message, which says to run the installer, and go to step 11 with
    report. Commit what it left in the worktree on the bench branch with a
    message that names no bead.
 5. **Targeted tests.** Run `targeted tests --bead <bead-id> --worktree
-   <worktree> --app <app> --filter <filter> --jidoka-home ...` with the
+   <worktree> --base main --app <app> --filter <filter> --jidoka-home ...` with the
    app and filter the builder named. Exit 3 means the tests failed. Send
    the output back to the builder, then commit and run them again. Exit 4
    means the filter needs fixing, because it repeats the text the `test_target`

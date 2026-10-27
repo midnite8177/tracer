@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Runs an app's targeted tests on a bead's worktree merged with main, and records the run on the bead.
+"""Runs an app's targeted tests on a bead's worktree merged with a base branch, and records the run on the bead.
 
-The command is the app's test command from the repo settings, followed by its
+The base branch is main for bench work and the epic branch for a lap. The
+command is the app's test command from the repo settings, followed by its
 test_target with the one <...> placeholder replaced by the filter given. The
-script merges main into the worktree, runs the command once, and when main
-moved during the run it merges again and runs the command once more. It sets
-the metadata keys tests.command, tests.base and tests.result (pass or fail),
-then posts one comment on the bead that quotes the command, the result and
-the main sha the run merged in. The only commit it makes is the merge commit
-git makes.
+script merges the base branch into the worktree, runs the command once, and
+when the base branch moved during the run it merges again and runs the
+command once more. It sets the metadata keys tests.command, tests.base (the
+sha the run merged in) and tests.result (pass or fail), then posts one
+comment on the bead that quotes the command, the result, the base branch
+and that sha. The only commit it makes is the merge commit git makes.
 
 A run that executed no tests records nothing. The script reads that from the
 output: dotnet test's summary lines, summed over the test assemblies, or its
@@ -20,9 +21,10 @@ Exit codes:
   1  refused or stopped. When it stops before a run is recorded, nothing is
      set on the bead: no repo settings, settings with no untested_apps list,
      an unknown or incomplete app, an app with no test command, a
-     test_target without one placeholder, a merge conflict with main, or a
-     failed git command. The script refuses an app with no test command
-     before it merges main, and says to build a test project for it at the
+     test_target without one placeholder, a base branch that does not
+     exist, a merge conflict with the base branch, or a failed git command.
+     The script refuses an app with no test command before it merges the
+     base branch, and says to build a test project for it at the
      bench and then run /jidoka:onboard to record its command. When bd
      fails while recording, the metadata may be set without the comment.
   3  the tests failed, and the failure is recorded.
@@ -43,7 +45,6 @@ from pathlib import Path
 import repo_settings
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, head_of, run, run_test_command
 
-MAIN_REF = "refs/heads/main"
 TESTS_FAILED_EXIT_CODE = 3
 FILTER_REFUSED_EXIT_CODE = 4
 PLACEHOLDER = re.compile(r"<[^<>]+>")
@@ -60,8 +61,16 @@ class FilterRefused(Exception):
     """A filter that selects no tests or repeats the test_target's text, worded for the builder who fixes it."""
 
 
+class MergeConflict(TestRunError):
+    """A merge of the base branch into the worktree that conflicted, with the conflicting files, after the abort."""
+
+    def __init__(self, message: str, files: list[str]):
+        super().__init__(message)
+        self.files = files
+
+
 class NoTestsExecuted(Exception):
-    """A run whose output shows it executed no tests, on the worktree merged with main at base."""
+    """A run whose output shows it executed no tests, on the worktree merged with the base branch at base."""
 
     def __init__(self, base: str):
         super().__init__(base)
@@ -87,7 +96,7 @@ class App:
 
 @dataclass(frozen=True)
 class TestRun:
-    """One run of the test command on the worktree merged with main at base."""
+    """One run of the test command on the worktree merged with the base branch at the sha base."""
     base: str
     exit_code: int
 
@@ -102,19 +111,21 @@ class TestRun:
 
 @dataclass(frozen=True)
 class TestOutcome:
-    """The command, the run the bead records, and the earlier run it replaced when main moved during that run."""
+    """The command, the base branch, the run the bead records, and the earlier run it replaced when the base
+    branch moved during that run."""
     command: str
+    base_branch: str
     recorded: TestRun
     replaced: TestRun | None
 
     def comment(self) -> str:
         verdict = "passed" if self.recorded.passed else "failed"
         lines = [f"Targeted tests {verdict} with exit code {self.recorded.exit_code}, "
-                 f"on the worktree merged with main at {self.recorded.base}.",
+                 f"on the worktree merged with {self.base_branch} at {self.recorded.base}.",
                  "Command:",
                  self.command]
         if self.replaced is not None:
-            lines.append(f"Main moved during an earlier run on {self.replaced.base}, which exited "
+            lines.append(f"{self.base_branch} moved during an earlier run on {self.replaced.base}, which exited "
                          f"{self.replaced.exit_code}, so this is the rerun.")
         return "\n".join(lines)
 
@@ -176,28 +187,29 @@ def refuse_a_repeated_prefix(app: App, test_filter: str, prefix: str) -> None:
                 f"hold it twice. Nothing ran; pass \"{test_filter[len(repeated):]}\" instead")
 
 
-def main_head(worktree: Path) -> str:
-    head = head_of(MAIN_REF, worktree)
+def base_head(base_branch: str, worktree: Path) -> str:
+    head = head_of(f"refs/heads/{base_branch}", worktree)
     if head is None:
-        raise TestRunError("the repo has no main branch to merge into the worktree")
+        raise TestRunError(f"the repo has no branch {base_branch} to merge into the worktree")
     return head
 
 
-def merge_main(worktree: Path) -> str:
-    """Returns the main sha merged in.
+def merge_base_branch(base_branch: str, worktree: Path) -> str:
+    """Returns the sha of the base branch merged in.
 
-    On a conflict it aborts the merge, so the worktree is as it was, and raises TestRunError naming the files.
+    On a conflict it aborts the merge, so the worktree is as it was, and raises MergeConflict naming the files.
     """
-    base = main_head(worktree)
+    base = base_head(base_branch, worktree)
     done = capture(["git", "merge", "--no-edit", base], worktree, None)
     if done.returncode == 0:
         return base
     conflicted = run(["git", "diff", "--name-only", "--diff-filter=U"], worktree, None).split()
     capture(["git", "merge", "--abort"], worktree, None)
     if conflicted:
-        raise TestRunError("the worktree conflicts with main, so the script aborted the merge and ran no tests. "
-                           "Conflicting files:\n" + "\n".join(f"  {name}" for name in conflicted))
-    raise TestRunError(f"git merge main failed: {done.stderr.strip() or done.stdout.strip()}")
+        raise MergeConflict(f"the worktree conflicts with {base_branch}, so the script aborted the merge and ran "
+                            "no tests. Conflicting files:\n" + "\n".join(f"  {name}" for name in conflicted),
+                            conflicted)
+    raise TestRunError(f"git merge {base_branch} failed: {done.stderr.strip() or done.stdout.strip()}")
 
 
 def tests_executed(output: str) -> int | None:
@@ -217,7 +229,7 @@ def tests_executed(output: str) -> int | None:
 
 
 def run_tests(command: str, worktree: Path, base: str) -> TestRun:
-    """Runs the command on the worktree merged with main at base.
+    """Runs the command on the worktree merged with the base branch at the sha base.
 
     It raises NoTestsExecuted for a run that tested nothing, whatever its exit code, and reads output in
     no known shape by the exit code alone.
@@ -231,29 +243,35 @@ def run_tests(command: str, worktree: Path, base: str) -> TestRun:
     return TestRun(base, done.returncode)
 
 
-def run_on_merged_head(command: str, worktree: Path) -> TestOutcome:
-    base = merge_main(worktree)
+def run_on_merged_head(command: str, worktree: Path, base_branch: str) -> TestOutcome:
+    base = merge_base_branch(base_branch, worktree)
     first = run_tests(command, worktree, base)
-    if main_head(worktree) == base:
-        return TestOutcome(command, first, None)
-    print("main moved during the run, so the tests run again on the worktree merged with main")
+    if base_head(base_branch, worktree) == base:
+        return TestOutcome(command, base_branch, first, None)
+    print(f"{base_branch} moved during the run, so the tests run again on the worktree merged with {base_branch}")
     try:
-        second_base = merge_main(worktree)
+        second_base = merge_base_branch(base_branch, worktree)
+    except MergeConflict as error:
+        raise MergeConflict(f"the run on {base_branch} at {base} exited {first.exit_code} and is not recorded, "
+                            f"because {base_branch} moved during it and the merge again failed: {error}",
+                            error.files) from error
     except TestRunError as error:
-        raise TestRunError(f"the run on main at {base} exited {first.exit_code} and is not recorded, "
-                           f"because main moved during it and the merge again failed: {error}") from error
-    return TestOutcome(command, run_tests(command, worktree, second_base), first)
+        raise TestRunError(f"the run on {base_branch} at {base} exited {first.exit_code} and is not recorded, "
+                           f"because {base_branch} moved during it and the merge again failed: {error}") from error
+    return TestOutcome(command, base_branch, run_tests(command, worktree, second_base), first)
 
 
-def record(bead: str, outcome: TestOutcome, main_tree: Path) -> None:
+def record(bead: str, outcome: TestOutcome, main_tree: Path, env: dict[str, str] | None) -> None:
     run(["bd", "update", bead,
          "--set-metadata", f"tests.command={outcome.command}",
          "--set-metadata", f"tests.base={outcome.recorded.base}",
-         "--set-metadata", f"tests.result={outcome.recorded.result}"], main_tree, None)
-    run(["bd", "comment", bead, outcome.comment()], main_tree, None)
+         "--set-metadata", f"tests.result={outcome.recorded.result}"], main_tree, env)
+    run(["bd", "comment", bead, outcome.comment()], main_tree, env)
 
 
-def targeted_tests(bead: str, worktree: Path, app: str, test_filter: str, home: Path) -> TestRun:
+def targeted_tests(bead: str, worktree: Path, base_branch: str, app: str, test_filter: str, home: Path,
+                   env: dict[str, str] | None) -> TestRun:
+    """Runs and records the tests, writing to the bead in env, or in the inherited environment when env is None."""
     try:
         main_tree = repo_settings.main_worktree(worktree, COMMAND_TIMEOUT_SECONDS)
     except repo_settings.SettingsError as error:
@@ -262,13 +280,14 @@ def targeted_tests(bead: str, worktree: Path, app: str, test_filter: str, home: 
     command = test_command(settings, test_filter)
     print(f"running: {command}", flush=True)
     try:
-        outcome = run_on_merged_head(command, worktree)
+        outcome = run_on_merged_head(command, worktree, base_branch)
     except NoTestsExecuted as error:
-        raise FilterRefused(f"the run on the worktree merged with main at {error.base} executed no tests, so "
+        raise FilterRefused(f"the run on the worktree merged with {base_branch} at {error.base} executed no "
+                            f"tests, so "
                             f"nothing is recorded on the bead. Check the --filter {test_filter!r} against the "
                             f"test_target of app {app!r}, {settings.test_target!r}, and the output above"
                             f"{left_out(settings)}") from error
-    record(bead, outcome, main_tree)
+    record(bead, outcome, main_tree, env)
     return outcome.recorded
 
 
@@ -283,17 +302,18 @@ def left_out(app: App) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run an app's targeted tests on a bead's worktree merged with main, and record the run.")
+        description="Run an app's targeted tests on a bead's worktree merged with a base branch, and record the run.")
     parser.add_argument("--bead", required=True)
     parser.add_argument("--worktree", type=Path, required=True)
+    parser.add_argument("--base", required=True, help="the branch to merge into the worktree, such as main")
     parser.add_argument("--app", required=True, help="the app's name in the repo settings")
     parser.add_argument("--filter", required=True, help="the value that replaces the test_target placeholder")
     parser.add_argument("--jidoka-home", type=Path, required=True)
     args = parser.parse_args()
 
     try:
-        recorded = targeted_tests(args.bead, args.worktree.resolve(), args.app, args.filter,
-                                  args.jidoka_home.expanduser().resolve())
+        recorded = targeted_tests(args.bead, args.worktree.resolve(), args.base, args.app, args.filter,
+                                  args.jidoka_home.expanduser().resolve(), None)
     except FilterRefused as error:
         print(f"targeted_tests: {error}", file=sys.stderr)
         return FILTER_REFUSED_EXIT_CODE
@@ -301,7 +321,7 @@ def main() -> int:
         print(f"targeted_tests: {error}", file=sys.stderr)
         return 1
     print(f"targeted_tests: {recorded.result}, exit code {recorded.exit_code}, "
-          f"on main at {recorded.base}, recorded on {args.bead}")
+          f"on {args.base} at {recorded.base}, recorded on {args.bead}")
     return 0 if recorded.passed else TESTS_FAILED_EXIT_CODE
 
 

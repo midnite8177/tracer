@@ -114,6 +114,11 @@ def lock_holder(lock: Path) -> str:
     return f"held by process {recorded}" if recorded else "holder not recorded"
 
 
+def merge_lock(home: Path) -> Path:
+    """The one lock that landing and the merge gate take before they move a branch."""
+    return home / "locks" / "merge.lock"
+
+
 def acquire_lock(lock: Path) -> None:
     """Creates the lock file exclusively, polling until the holder removes it."""
     lock.parent.mkdir(parents=True, exist_ok=True)
@@ -234,13 +239,14 @@ def edited_paths(checkout: Path) -> set[str]:
     return paths
 
 
-def changed_paths(branch: str, checkout: Path) -> set[str]:
-    listed = run(["git", "diff", "--name-only", "--no-renames", "-z", f"main...{branch}"], checkout, None)
+def changed_paths(base: str, branch: str, checkout: Path) -> set[str]:
+    """Every path the branch changed since it left base, both sides of a rename included."""
+    listed = run(["git", "diff", "--name-only", "--no-renames", "-z", f"{base}...{branch}"], checkout, None)
     return {path for path in listed.split("\0") if path}
 
 
 def refuse_overlapping_edits(branch: str, checkout: Path) -> None:
-    overlap = sorted(edited_paths(checkout) & changed_paths(branch, checkout))
+    overlap = sorted(edited_paths(checkout) & changed_paths("main", branch, checkout))
     if overlap:
         raise WaitingOnEdits(overlap)
 
@@ -310,9 +316,10 @@ def squash_onto_main(bead: str, branch: str, worktree: Path, message: str, check
     return run(["git", "rev-parse", "HEAD"], checkout, None).strip()
 
 
-def attempt(name: str, args: list[str], cwd: Path, failed: list[str]) -> bool:
+def attempt(name: str, args: list[str], cwd: Path, env: dict[str, str] | None, failed: list[str]) -> bool:
+    """Runs one closing step in env, or in the inherited environment when env is None, and notes its failure."""
     try:
-        run(args, cwd, None)
+        run(args, cwd, env)
     except (LandingError, CommandError) as error:
         failed.append(f"{name}: {error}")
         return False
@@ -325,12 +332,14 @@ def close_out(bead: str, branch: str, worktree: Path, message: str, sha: str, ch
     The branch is the only way a rerun finds the landed work, so it stays while the bead is still open.
     """
     failed: list[str] = []
-    closed = attempt("bd close", ["bd", "close", bead, "--reason", f"{sha}: {subject(message)}"], checkout, failed)
+    closed = attempt("bd close", ["bd", "close", bead, "--reason", f"{sha}: {subject(message)}"], checkout, None,
+                     failed)
     # The work is already on main, so forcing the worktree off and deleting the branch loses nothing.
     if worktree.exists():
-        attempt("git worktree remove", ["git", "worktree", "remove", "--force", str(worktree)], checkout, failed)
+        attempt("git worktree remove", ["git", "worktree", "remove", "--force", str(worktree)], checkout, None,
+                failed)
     if closed:
-        attempt("git branch -D", ["git", "branch", "-D", branch], checkout, failed)
+        attempt("git branch -D", ["git", "branch", "-D", branch], checkout, None, failed)
     return Landed(sha, failed)
 
 
@@ -368,7 +377,7 @@ def main() -> int:
         print(f"land: {error}", file=sys.stderr)
         return 1
 
-    lock = args.jidoka_home / "locks" / "merge.lock"
+    lock = merge_lock(args.jidoka_home)
     acquire_lock(lock)
     try:
         landed = land(args.bead, args.branch, args.worktree, args.message, checkout, settings)

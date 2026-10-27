@@ -172,9 +172,13 @@ class TargetedTestsCase(unittest.TestCase):
         return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
     def targeted_tests(self, bead: Bead, app: str, test_filter: str, home: Path) -> subprocess.CompletedProcess:
+        return self.targeted_tests_on(bead, app, test_filter, home, "main")
+
+    def targeted_tests_on(self, bead: Bead, app: str, test_filter: str, home: Path,
+                          base: str) -> subprocess.CompletedProcess:
         return subprocess.run([str(LAUNCHER), str(TARGETED_TESTS), "--bead", bead.id,
-                               "--worktree", str(bead.worktree), "--app", app, "--filter", test_filter,
-                               "--jidoka-home", str(home)],
+                               "--worktree", str(bead.worktree), "--base", base, "--app", app,
+                               "--filter", test_filter, "--jidoka-home", str(home)],
                               capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
                               env={**os.environ, "JIDOKA_HOME": str(home)}, cwd=self.root)
 
@@ -252,6 +256,38 @@ class RecordedRunTests(TargetedTestsCase):
         [comment] = self.comments(bead)
         self.assertIn(moved, comment)
         self.assertIn("passed", comment)
+
+
+class BaseBranchTests(TargetedTestsCase):
+    def test_the_tests_run_on_the_worktree_merged_with_the_base_branch_named_and_record_its_head(self):
+        bead = self.new_bead()
+        type(self).count += 1
+        base = f"epic/greeting-{self.count}"
+        git(self.repo, "branch", base, "main")
+        tree = git(self.repo, "rev-parse", "main^{tree}")
+        base_head = git(self.repo, "commit-tree", tree, "-p", base, "-m", "Work on the epic")
+        git(self.repo, "update-ref", f"refs/heads/{base}", base_head)
+        branch_head = git(bead.worktree, "rev-parse", "HEAD")
+        main_before = self.main_head()
+
+        done = self.targeted_tests_on(bead, "shop", "test_greeting", self.home, base)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(f"{branch_head} {base_head}", git(bead.worktree, "log", "-1", "--format=%P"))
+        self.assertEqual(base_head, self.metadata(bead)["tests.base"])
+        self.assertEqual(main_before, self.main_head())
+        [comment] = self.comments(bead)
+        self.assertIn(f"merged with {base} at {base_head}", comment)
+
+    def test_a_base_branch_that_does_not_exist_is_refused_and_nothing_runs(self):
+        bead = self.new_bead()
+
+        done = self.targeted_tests_on(bead, "shop", "test_greeting", self.home, "epic/gone")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("no branch epic/gone", done.stderr)
+        self.assertEqual([], self.runs_of(bead))
+        self.assertEqual({}, self.metadata(bead))
 
 
 class RefusedRunTests(TargetedTestsCase):

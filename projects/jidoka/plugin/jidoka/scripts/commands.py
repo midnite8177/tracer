@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 COMMAND_TIMEOUT_SECONDS = 120
+FACTORY_ACTOR = "jidoka"
 
 
 class CommandError(Exception):
@@ -51,6 +52,11 @@ def env_as_git_user(main_tree: Path) -> dict[str, str]:
         raise CommandError(f"git config user.name is not set in {main_tree}, and jidoka writes to the beads "
                            "under that name. Set it with git config user.name \"<your name>\"")
     return {**os.environ, "BEADS_ACTOR": name}
+
+
+def env_as_factory() -> dict[str, str]:
+    """The environment bd runs in for what the factory writes on a lap, with BEADS_ACTOR set to jidoka."""
+    return {**os.environ, "BEADS_ACTOR": FACTORY_ACTOR}
 
 
 def head_of(ref: str, cwd: Path) -> str | None:

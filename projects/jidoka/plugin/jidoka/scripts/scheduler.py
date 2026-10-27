@@ -3,7 +3,7 @@
 
 Run it from inside any checkout of the repo. The epic's tasks are its
 children that are neither closed nor epics. A lap is open while its task is
-not closed and its metadata holds `lap.stage`.
+not closed and its metadata holds a `lap.stage` other than parked.
 
 `next <epic>` makes the checks below, then opens a lap for each ready task,
 in bd priority order and then by id, while the open laps of the epic number
@@ -23,13 +23,42 @@ worktree), `lap.slot` (the lowest slot from 1 up that no open lap of the
 epic holds) and `lap.branch`. A rerun after a failure reuses the worktree
 and branch it finds.
 
-It prints one JSON object:
+`report <epic> <task> <outcome> [--app <app> --filter <filter>]` takes how
+the build of the task's open lap ended, one outcome of a fixed set, and
+makes the checks below first:
+  done       the build finished, with the app and the filter the builder
+             named. The scheduler runs that app's targeted tests with that
+             filter, through targeted_tests.py, on the lap's head merged
+             with the epic branch, and again after a fresh merge when the
+             epic branch moved during the run. A pass goes to the merge gate,
+             merge_gate.py. When the gate finds the epic branch moved since
+             the run, the tests run again, and that is not a try.
+  failed     the build worker failed.
+  cut off    the build worker ended for a reason outside its work; the lap
+             goes back to the build, and that is not a try.
+A failed build, a red targeted run, a filter the targeted tests refuse or
+that runs no tests, and a lap the merge gate finds with no commit the epic
+branch lacks are each a try: the lap's `lap.tries` goes up by one, a comment
+says why, and the lap goes back to the build. The third try parks the task.
+So do a conflict while merging the epic branch into the lap, naming the
+files, and any other refusal of the merge gate, naming its check. A
+parked task gets `lap.stage` parked, status open, no assignee, the human
+label and a comment saying why; its worktree and branch stay. Its lap no
+longer holds a slot or an area, and the task is not ready while it carries
+the human label. A merged lap's task is closed, and its worktree and lap
+branch are gone. Everything the scheduler, the targeted tests and the merge
+gate write on a lap, they write with BEADS_ACTOR set to jidoka. The output
+of the tests and the gate goes to stderr. Then the call does what `next`
+does, and its actions start with the lap that went back to the build.
+
+Each call prints one JSON object:
   epic       the epic's id.
   branch     the epic branch.
   lap_limit  the repo settings' lap limit.
-  actions    the laps this call opened, each with action ("build"), task,
-             title, area, lap (its number), slot, branch, worktree and
-             scratch. An empty list when no task is ready or none fits.
+  actions    the lap a report sent back to the build, then the laps this
+             call opened, each with action ("build"), task, title, area,
+             lap (its number), slot, branch, worktree and scratch. An empty
+             list when nothing goes back, and no task is ready or none fits.
   laps       every open lap of the epic after this call, with the fields
              of an action but action, and with stage and tries.
 
@@ -49,30 +78,40 @@ The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 Exit codes:
   0  success.
   1  it refused, or a git or bd command failed, with the reason on stderr;
-     a refusal writes nothing.
+     a refusal writes nothing. A report also refuses a task with no open
+     lap at the build stage, done without --app and --filter, the other
+     outcomes with them, and an app the targeted tests cannot run.
   2  a usage error.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
+import dataclasses
 import itertools
 import json
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import git_exclude
 import holdouts
+import merge_gate
 import repo_settings
+import targeted_tests
 from bench import FACTORY_LABEL, WORKTREE_FOLDER, BenchError, Workspace, hide_worktrees, make_worktree
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, head_of, run
+from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, CommandError, env_as_factory, head_of, run
 from handoff import BLOCKING, BRANCH_KEY, CLOSED, ONBOARD, Epic, HandoffError, Rerun, epic_of, recorded_branch, \
     problems_while_held
 
-ACTOR = "jidoka"
 HUMAN_LABEL = "human"
 BUILD = "build"
+PARKED = "parked"
+DONE = "done"
+FAILED = "failed"
+CUT_OFF = "cut off"
+OUTCOMES = [DONE, FAILED, CUT_OFF]
+TRY_CAP = 3
 FIRST_LAP = 1
 FIRST_SLOT = 1
 NO_TRIES = 0
@@ -129,7 +168,7 @@ def whole_number(value: object) -> int:
 
 def open_lap(task: dict) -> Lap | None:
     metadata = metadata_of(task)
-    if not metadata.get("lap.stage"):
+    if not metadata.get("lap.stage") or metadata["lap.stage"] == PARKED:
         return None
     return Lap(task=str(task["id"]), title=str(task.get("title") or ""), area=str(metadata.get("lap.area") or ""),
                number=whole_number(metadata.get("lap.number")), slot=whole_number(metadata.get("lap.slot")),
@@ -202,23 +241,28 @@ def open_workspace(lap: Lap, epic_head: str, main_tree: Path) -> None:
 
 
 def record(lap: Lap, main_tree: Path) -> None:
-    env = {**os.environ, "BEADS_ACTOR": ACTOR}
-    run(["bd", "update", lap.task, "--status=in_progress", f"--assignee={ACTOR}",
+    run(["bd", "update", lap.task, "--status=in_progress", f"--assignee={FACTORY_ACTOR}",
          "--set-metadata", f"lap.number={lap.number}",
          "--set-metadata", f"lap.stage={lap.stage}",
          "--set-metadata", f"lap.tries={lap.tries}",
          "--set-metadata", f"lap.workspace={lap.worktree}",
          "--set-metadata", f"lap.slot={lap.slot}",
-         "--set-metadata", f"lap.branch={lap.branch}"], main_tree, env)
+         "--set-metadata", f"lap.branch={lap.branch}"], main_tree, env_as_factory())
 
 
-def next_moves(bead: str, home: Path, main_tree: Path) -> dict:
+def checked_epic(bead: str, settings: dict, main_tree: Path) -> Epic:
     epic = epic_of(bead, main_tree, RERUN)
-    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
     problems = scheduler_problems(epic, settings, main_tree)
     if problems:
         raise SchedulerError(f"the factory takes no next move on {epic.id}, and nothing was written:\n"
                              + "\n".join(f"  {problem}" for problem in problems))
+    return epic
+
+
+def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap]) -> dict:
+    """Opens the laps that fit and prints them as build actions, after the rebuilds of laps sent back."""
+    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    epic = checked_epic(bead, settings, main_tree)
     tasks = tasks_of(epic)
     held = [lap for lap in map(open_lap, tasks) if lap is not None]
     limit = lap_limit_of(settings)
@@ -235,24 +279,129 @@ def next_moves(bead: str, home: Path, main_tree: Path) -> dict:
     for lap in planned:
         record(lap, main_tree)
     return {"epic": epic.id, "branch": epic_branch, "lap_limit": limit,
-            "actions": [{"action": BUILD, **lap.fields()} for lap in planned],
+            "actions": [{"action": BUILD, **lap.fields()} for lap in rebuilds + planned],
             "laps": [{**lap.fields(), "stage": lap.stage, "tries": lap.tries}
                      for lap in sorted(held + planned, key=lambda lap: lap.slot)]}
 
 
+def building_lap(epic: Epic, task_id: str) -> Lap:
+    for task in tasks_of(epic):
+        if str(task["id"]) == task_id:
+            lap = open_lap(task)
+            if lap is None:
+                raise SchedulerError(f"{task_id} has no open lap, so it takes no outcome, and nothing was written")
+            if lap.stage != BUILD:
+                raise SchedulerError(f"the lap of {task_id} is at the stage {lap.stage}, not {BUILD}, so it takes "
+                                     "no build outcome, and nothing was written")
+            return lap
+    raise SchedulerError(f"{task_id} is not an open task of {epic.id}, and nothing was written")
+
+
+def refuse_arguments(outcome: str, app: str | None, test_filter: str | None) -> None:
+    if outcome == DONE and not (app and test_filter):
+        raise SchedulerError(f"{DONE} needs --app and --filter, the app and the filter the builder named, and "
+                             "nothing was written")
+    if outcome != DONE and (app is not None or test_filter is not None):
+        raise SchedulerError(f"--app and --filter go only with {DONE}, and nothing was written")
+
+
+def park(lap: Lap, tries: int, why: str, main_tree: Path) -> None:
+    """Ends the lap parked: the task waits on the human, open and unassigned, with its worktree and branch kept."""
+    env = env_as_factory()
+    run(["bd", "comment", lap.task, f"Parked: {why}. The worktree {lap.worktree} and the branch {lap.branch} "
+         f"keep the work. Take the {HUMAN_LABEL} label off to give the task a new lap."], main_tree, env)
+    run(["bd", "update", lap.task, "--status=open", "--assignee=", f"--add-label={HUMAN_LABEL}",
+         "--set-metadata", f"lap.stage={PARKED}", "--set-metadata", f"lap.tries={tries}"], main_tree, env)
+
+
+def count_try(lap: Lap, why: str, main_tree: Path) -> list[Lap]:
+    """Counts a failed try. The third parks the task; an earlier one sends the lap back to the build."""
+    tries = lap.tries + 1
+    if tries >= TRY_CAP:
+        park(lap, tries, f"build try {tries} of {TRY_CAP} failed: {why}", main_tree)
+        return []
+    env = env_as_factory()
+    run(["bd", "comment", lap.task, f"Build try {tries} of {TRY_CAP} failed: {why}. The lap goes back to the build."],
+        main_tree, env)
+    run(["bd", "update", lap.task, "--set-metadata", f"lap.tries={tries}"], main_tree, env)
+    return [dataclasses.replace(lap, tries=tries)]
+
+
+def through_the_gate(lap: Lap, app: str, test_filter: str, epic_branch: str, settings: dict, home: Path,
+                     main_tree: Path) -> list[Lap]:
+    """Runs the targeted tests and, when they pass, the merge gate; returns the lap when it goes back to the build."""
+    while True:
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                tested = targeted_tests.targeted_tests(lap.task, lap.worktree, epic_branch, app, test_filter, home,
+                                                       env_as_factory())
+        except targeted_tests.MergeConflict as conflict:
+            park(lap, lap.tries, f"merging {epic_branch} into the lap conflicts in {', '.join(conflict.files)}",
+                 main_tree)
+            return []
+        except targeted_tests.FilterRefused as refused:
+            return count_try(lap, f"the filter needs fixing: {refused}", main_tree)
+        except targeted_tests.TestRunError as error:
+            raise SchedulerError(f"the targeted tests of {lap.task} did not run: {error}") from error
+        if not tested.passed:
+            return count_try(lap, f"the targeted tests failed with exit code {tested.exit_code}", main_tree)
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                merged = merge_gate.merge(merge_gate.LapToMerge(lap.task, lap.branch, lap.worktree, epic_branch),
+                                          settings, home, main_tree)
+        except merge_gate.EpicBranchMoved as moved:
+            print(f"scheduler: {moved}, so the targeted tests run again", file=sys.stderr)
+            continue
+        except merge_gate.EmptyLap as empty:
+            return count_try(lap, str(empty), main_tree)
+        except merge_gate.GateRefused as refused:
+            park(lap, lap.tries, f"the merge gate refused the lap: {refused}", main_tree)
+            return []
+        if merged.failed_steps:
+            raise SchedulerError(f"{epic_branch} has the lap's commit {merged.sha}, but these steps failed:\n"
+                                 + "\n".join(f"  {step}" for step in merged.failed_steps))
+        return []
+
+
+def report(bead: str, task_id: str, outcome: str, app: str | None, test_filter: str | None, home: Path,
+           main_tree: Path) -> dict:
+    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    epic = checked_epic(bead, settings, main_tree)
+    lap = building_lap(epic, task_id)
+    refuse_arguments(outcome, app, test_filter)
+    if outcome == CUT_OFF:
+        rebuilds = [lap]
+    elif outcome == FAILED:
+        rebuilds = count_try(lap, "the build worker reported that the build failed", main_tree)
+    else:
+        rebuilds = through_the_gate(lap, str(app), str(test_filter), recorded_branch(epic), settings, home,
+                                    main_tree)
+    return next_moves(bead, home, main_tree, rebuilds)
+
+
 def main(argv: list[str]) -> int:
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument("epic")
+    shared.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     parser = argparse.ArgumentParser(prog="scheduler.py", description="Print the manager's next moves on a "
                                                                        "handed-off epic.")
     modes = parser.add_subparsers(dest="mode", required=True)
-    nexting = modes.add_parser("next", help="open the laps that fit and print the next moves")
-    nexting.add_argument("epic")
-    nexting.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
+    modes.add_parser("next", parents=[shared], help="open the laps that fit and print the next moves")
+    reporting = modes.add_parser("report", parents=[shared], help="take how a lap's build ended, and print the "
+                                                                  "next moves")
+    reporting.add_argument("task")
+    reporting.add_argument("outcome", choices=OUTCOMES)
+    reporting.add_argument("--app", help="with done, the app whose targeted tests the builder named")
+    reporting.add_argument("--filter", help="with done, the filter the builder named")
     args = parser.parse_args(argv)
 
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         home = repo_settings.jidoka_home(args.jidoka_home)
-        printed = next_moves(args.epic, home, main_tree)
+        if args.mode == "next":
+            printed = next_moves(args.epic, home, main_tree, [])
+        else:
+            printed = report(args.epic, args.task, args.outcome, args.app, args.filter, home, main_tree)
     except (SchedulerError, HandoffError, BenchError, CommandError, repo_settings.SettingsError,
             holdouts.HoldoutsError, OSError) as error:
         print(f"scheduler: {error}", file=sys.stderr)
