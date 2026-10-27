@@ -11,6 +11,41 @@ its own subagent so a clean lane cannot hide a dirty one. Findings are
 hypotheses: every one cites file and line, and the reader checks the
 citation. This skill reports; it never edits code.
 
+## Unattended
+
+A caller that says the run is unattended (each lane of the factory's review
+stage does) names one lane, a fixed point, a head, a file list and a report
+path, and no human is in the loop. Ask nothing. Step 1 takes the caller's
+fixed point and head, and the diff is `git diff <fixed-point> <head> --
+<files>`; an empty diff is a clean lane, not a stop. Step 2's spec source is
+the epic and its tasks, read with `bd show`. Run only the named lane, in this
+worker, with no subagent, as step 5 describes it. Give every finding a size
+and a confidence:
+
+- **size**: `small` is a few lines in one place; `medium` is one function or
+  one file; `large` reshapes a module or spans files, and is a task of its
+  own.
+- **confidence**: `high`, `medium` or `low`, as in step 6. It is a grade, not
+  a question's percent. Mechanical findings are `high`.
+
+Write the lane's findings to the report as a JSON list of `{"file", "line",
+"title", "note", "size", "confidence"}`, where `title` is the smell or rule
+and `note` says what it looks like here and the fix. Write `[]` when the lane
+finds nothing. Change no other file, and end with the count of findings.
+
+The **Design** lane differs. Its `files` are every module the epic touched, and
+it reads each one whole, not as a diff, with the code that calls it and the
+code it calls where the judgment needs them. Its catalog is Part 3 of
+`smells.md`: Ousterhout's red flags, `../codebase-design/SKILL.md`'s terms and
+Farley's tells; Parts 1 and 2 belong to the other lanes. Name a finding by the
+red flag, term or tell, in the glossary's words. A caller that passes `hints`
+gives lizard's list of functions the epic added or grew past the repo's limits.
+A hint is a lead: read the function, report a finding only when the design
+reason holds, and leave the hint itself out of the report, since the scheduler
+lists every hint at the gate. Size a finding `large` when the module's shape
+changes. Most of a module's problems predate the epic: report them too, and the
+file and line make the finding.
+
 **1. Pin the fixed point.** Resolution order, and nothing else: (1) a
 commit, branch or tag the user passed; (2) if the argument is a bead
 id, the SHA in that bead's `bench started at <sha>` or `implement

@@ -39,6 +39,10 @@ slashed form. When the choice goes back to committed, or a private path
 changes, the script takes out the lines it added for the old paths and
 keeps every other byte of the file.
 
+"lizard_limits" holds the limits that lizard_hints.py measures functions against: "ccn" for cyclomatic
+complexity, "length" for the lines a function spans and "arguments" for its parameter count, each a whole number
+above zero. The object replaces the stored one whole. Left out, it keeps the stored limits, else 15, 80 and 6.
+
 "rule_conflicts" lists the repo's rules that overrule jidoka's session rules.
 Each one quotes the repo's rule as "repo_rule", names the file that says it,
 relative to the repo root, as "written_in", and quotes the jidoka rule it
@@ -75,7 +79,10 @@ COMMITTED, PRIVATE = "committed", "private"
 DOC_PATH_KEYS = ["glossary", "adrs"]
 DOCS_DEFAULTS = {"glossary": "GLOSSARY.md", "adrs": "docs/adr", GLOSSARY_AND_ADRS: COMMITTED}
 RULE_CONFLICTS = "rule_conflicts"
-DEFAULTS = {**DOCS_DEFAULTS, RULE_CONFLICTS: []}
+LIZARD_LIMITS = "lizard_limits"
+LIZARD_METRICS = ("ccn", "length", "arguments")
+DEFAULT_LIZARD_LIMITS = {"ccn": 15, "length": 80, "arguments": 6}
+DEFAULTS = {**DOCS_DEFAULTS, RULE_CONFLICTS: [], LIZARD_LIMITS: DEFAULT_LIZARD_LIMITS}
 DERIVED_KEYS = ["build", "full_suite", "hand_run", "untested_apps"]
 MOVED_LINES = "moved_lines"
 APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_full", "test_target", "hand_run", "acceptance"]
@@ -320,6 +327,20 @@ def problems_in(settings: dict) -> list[str]:
         problems.append(f"{GLOSSARY_AND_ADRS} must be one of {COMMITTED}, {PRIVATE}")
     if RULE_CONFLICTS in settings:
         problems += rule_conflicts_problems(settings[RULE_CONFLICTS])
+    if LIZARD_LIMITS in settings:
+        problems += lizard_limits_problems(settings[LIZARD_LIMITS])
+    return problems
+
+
+def lizard_limits_problems(limits: object) -> list[str]:
+    if not isinstance(limits, dict):
+        return [f"{LIZARD_LIMITS} must be an object with {', '.join(LIZARD_METRICS)}"]
+    unknown = sorted(set(limits) - set(LIZARD_METRICS))
+    problems = [f"{LIZARD_LIMITS} has keys jidoka does not know: {', '.join(unknown)}"] if unknown else []
+    for metric in LIZARD_METRICS:
+        value = limits.get(metric)
+        if not (isinstance(value, int) and not isinstance(value, bool) and value > 0):
+            problems.append(f"{LIZARD_LIMITS} needs a whole number above zero for {metric}")
     return problems
 
 

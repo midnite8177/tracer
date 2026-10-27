@@ -21,6 +21,10 @@ Use the caller's files or diff. Otherwise use the current diff against the base 
 
 Read the repo's rules before jidoka's: its `CLAUDE.md`, `AGENTS.md` and the files they import, and `CONTRIBUTING.md`, `CODING_STANDARDS.md` and the like. The session opened with the rule conflicts onboarding recorded, under "This repo's rules win over jidoka's where they conflict". Each names a repo rule that wins over the jidoka rule it quotes, such as a `CONTRIBUTING.md` that wants a `///` doc comment on every public member.
 
+## Unattended
+
+A caller that says the run is unattended (the factory's tidy stage does) gets the steps below with these changes, and no human in the loop. Ask nothing. The scope is the caller's file list, and no file outside it changes. Step 5 does not wait for approval: delete each constraint comment, report the constraint open, and encode nothing. Step 2's rerun still happens once. Leave the edits uncommitted, and end with the report from step 6.
+
 ## Steps
 
 1. Spawn a subagent of type `jidoka:comment-sicko` (if the harness rejects the namespaced name, `comment-sicko`). Pass the scope, and every repo rule that overrules jidoka's, quoted with its file, as rules that win over its own. Do not restate its rules.

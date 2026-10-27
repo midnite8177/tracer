@@ -1,6 +1,6 @@
 # Smells
 
-A single catalog of code smells and comment smells, in the style of Fowler's *Refactoring*. Part 1 is Fowler's catalog (2nd ed., 2018) with fixes and language notes. Part 2 is our comment-smell catalog, blending Robert Martin (*Clean Code*, ch. 4), Fowler, and Hunt & Thomas (*The Pragmatic Programmer*). Applies to C++, C#, and Python.
+A single catalog of code smells and comment smells, in the style of Fowler's *Refactoring*. Part 1 is Fowler's catalog (2nd ed., 2018) with fixes and language notes. Part 2 is our comment-smell catalog, blending Robert Martin (*Clean Code*, ch. 4), Fowler, and Hunt & Thomas (*The Pragmatic Programmer*). Part 3 is the Design lane's catalog of design red flags and tells. Applies to C++, C#, and Python.
 
 A smell is a hint, not a verdict. Each entry names what it looks like, why it hurts, and the refactoring that fixes it.
 
@@ -136,10 +136,56 @@ A comment carries what the code cannot. If the code could carry it, change the c
 
 ---
 
+# Part 3 — Design Catalog (the Design lane)
+
+Read whole modules, not diffs. Every entry is a judgment call, and a finding names the entry it matches. Where the repo's glossary or an ADR endorses what an entry flags, the repo wins.
+
+## Ousterhout's red flags (*A Philosophy of Software Design*)
+
+| Red flag | Looks like | Fix |
+|---|---|---|
+| **Shallow Module** | An interface nearly as complex as its implementation; a class that adds little over what it wraps | Merge into a deeper module; hide more behind fewer methods |
+| **Information Leakage** | One design decision (a format, a protocol, an ordering) reflected in several modules | Pull the decision into one module that owns it |
+| **Temporal Decomposition** | Modules split by when things happen (read, then process, then write) rather than by what knowledge they hold | Regroup around the knowledge |
+| **Overexposure** | A common-case call forces the caller to learn rarely used features | Default the rare case away |
+| **Pass-Through Method** | A method that only forwards its arguments to another with a similar signature | Expose the callee, move the work, or merge the classes |
+| **Repetition** | The same nontrivial code in several places | Extract it into one place |
+| **Special-General Mixture** | A general-purpose module carrying code for one use | Move the special case to its user |
+| **Conjoined Methods** | Two methods you cannot understand without reading both | Merge them, or separate what they share |
+| **Comment Repeats Code** | A comment that restates the code beside it | Delete it, or write what the code cannot say |
+| **Implementation Documentation Contaminates Interface** | An interface comment describing how, not what | Move it into the body |
+| **Vague Name** | `data`, `info`, `manager`, `handle` | Name what it holds or does |
+| **Hard to Pick Name** | No name fits because the thing does two jobs | Split it |
+| **Hard to Describe** | A complete comment would be long or full of "and" | Redraw the module's edge |
+| **Nonobvious Code** | A reader cannot tell what it does or why without tracing it | Rename, restructure, or explain |
+
+## codebase-design's terms
+
+| Tell | Looks like | Fix |
+|---|---|---|
+| **Shallow interface** | A module whose interface a caller must learn in full to use any of it, for little behaviour | Deepen: fewer methods, more behaviour behind them |
+| **Misplaced seam** | A seam where nothing varies, or none where tests and callers need to swap behaviour | Move the seam to where the behaviour changes |
+| **Low leverage** | Each caller repeats work the module could do once | Move the repeated work behind the interface |
+| **Low locality** | One change, bug or fact spread over several modules | Gather it in one module |
+| **Adapter with a role it does not fill** | A concrete type named for its substance, or one that satisfies no interface at a seam | Name it by role, or fold it into its caller |
+
+## Farley's tells (*Modern Software Engineering*)
+
+| Tell | Looks like | Fix |
+|---|---|---|
+| **Low cohesion** | A module whose parts change for different reasons | Split along the reasons to change |
+| **Tight coupling** | A change to one module forces a change to another, or a test cannot run without a collaborator's internals | Put an abstraction at the boundary |
+| **Poor separation of concerns** | Business rules mixed with I/O, parsing, or presentation | Separate the concern behind a seam |
+| **Leaked information** | A module exposing its representation or a dependency's | Hide it behind the interface |
+| **Hard to test** | Behaviour only reachable through a real network, clock, file system or global | Inject the dependency at a seam |
+| **Hard to change in small steps** | A change must land whole because the pieces depend on each other | Cut the dependency so a step can ship alone |
+
+---
+
 # Severity guidance for review tooling
 
 **Mechanical** (a pattern can catch it; flag every time):
 Sticky Note, Zombie Code, Ship's Log, Autograph, Fence Post, Breadcrumb, Costume, Prose Attribute, Price Tag, Echo (summary text ≈ member name), Long Parameter List (count), Long Function (length), Dead Code (unreferenced), Repeated Switches (same discriminant in N places).
 
 **Judgment** (model reads the code):
-All other code smells; Subtitles, Deodorant, Empty Theater, Liar, Ghost Reference, Gossip, Mumble, Uniform, Encyclopedia, Riddle, and whether an Amplifier names its failure.
+Every entry of Part 3; all other code smells; Subtitles, Deodorant, Empty Theater, Liar, Ghost Reference, Gossip, Mumble, Uniform, Encyclopedia, Riddle, and whether an Amplifier names its failure.

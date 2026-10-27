@@ -150,6 +150,14 @@ The settings:
   word. Left out, it keeps its stored value, else `[]`. Every session in
   the repo lists them after jidoka's rules, each as the repo's rule
   winning over the jidoka rule.
+- `lizard_limits`: the limits the Design lane's lizard hints measure functions
+  against, `{"ccn": <n>, "length": <n>, "arguments": <n>}`: cyclomatic
+  complexity, the lines a function spans, and its parameter count, each a
+  whole number above zero. Propose 15, 80 and 6, or the limits the repo's
+  own linter or standards already set, quoted with their file, and ask the
+  user to confirm or change them. Passing the key replaces all three limits.
+  Left out, it keeps its stored value, else 15, 80 and 6. A hint is only a
+  lead for the review; no limit stops a pass.
 - `moved_lines`: the exact lines to take out of `CLAUDE.local.md`.
 
 A person never reads `null`. When you offer a null value as a choice or show

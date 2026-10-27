@@ -867,6 +867,37 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn("rule_conflicts must be a list of conflicts", done.stderr)
         self.assertEqual([], self.stored_files())
 
+    def test_settings_hold_the_default_lizard_limits_when_none_are_given(self):
+        done = self.write(self.repo, tracer_settings())
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({"ccn": 15, "length": 80, "arguments": 6},
+                         json.loads(self.show(self.repo).stdout)["lizard_limits"])
+
+    def test_the_lizard_limits_are_recorded_replaced_and_kept_by_a_rerun_that_leaves_them_out(self):
+        limits = {"ccn": 10, "length": 50, "arguments": 4}
+        self.write(self.repo, {**tracer_settings(), "lizard_limits": limits})
+
+        kept = self.write(self.repo, {"lap_limit": 5})
+        kept_limits = json.loads(self.show(self.repo).stdout)["lizard_limits"]
+        replaced = self.write(self.repo, {"lizard_limits": {"ccn": 8, "length": 40, "arguments": 3}})
+
+        for done in (kept, replaced):
+            self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(limits, kept_limits)
+        self.assertEqual({"ccn": 8, "length": 40, "arguments": 3},
+                         json.loads(self.show(self.repo).stdout)["lizard_limits"])
+
+    def test_refuses_lizard_limits_that_are_not_whole_numbers_above_zero_and_writes_nothing(self):
+        for limits in ({"ccn": 0, "length": 50, "arguments": 4}, {"ccn": 10, "length": "long", "arguments": 4},
+                       {"ccn": 10, "length": 50}, {"ccn": 10, "length": 50, "arguments": 4, "depth": 3}, [10, 50, 4]):
+            with self.subTest(limits=limits):
+                done = self.write(self.repo, {**tracer_settings(), "lizard_limits": limits})
+
+                self.assertEqual(1, done.returncode)
+                self.assertIn("lizard_limits", done.stderr)
+                self.assertEqual([], self.stored_files())
+
     def test_the_session_hook_says_to_onboard_a_beads_repo_without_settings(self):
         for cwd in (self.repo, self.worktree):
             with self.subTest(cwd=cwd):

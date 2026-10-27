@@ -67,6 +67,11 @@ track's stages, which the scheduler calls for in order.
 | app-check | full | standard |
 | spec-check | full | standard |
 | merge | simple or full | deep |
+| test-cleanup | the pass | deep |
+| tidy | the pass | local |
+| review (comments, standards and spec lanes) | the pass | standard |
+| review (design lane) | the pass | deep |
+| fix | the pass | standard |
 
 The merge stage runs only when newer work on the epic branch conflicts with
 a lap or breaks its tests; the scheduler calls it, never the manager. A
@@ -254,6 +259,73 @@ stop.
    own: it picks the port or folder `slot_use` names from it, so that no other
    app check shares it. Write the event line for the started app check worker.
 
+   An action whose `action` is `test-cleanup` has no task: every task has
+   merged, and the epic branch holds tests the epic added or changed. Start one
+   lap worker on the deep tier's route, with the first line
+   `jidoka lap worktree: <worktree>`, the action's `worktree`. Its prompt holds
+   the paths of the glossary and the house rules, each app's `name`, `test` and
+   `test_target`, and these limits: it works only in the worktree, commits
+   nothing, runs no `bd` command that changes anything, starts no workers, and
+   touches only the files in the action's `tests`. Its job: delete the tests
+   that add neither confidence nor communication, such as duplicates of another
+   test's behavior. Run only the test files its edits reach, and never an app's
+   `test` command alone. It lists each deletion in the action's `report`, a
+   JSON list of `{"test", "file", "covered_by"}`, where `covered_by` names the
+   kept test or acceptance spec that covers the same behavior and is not itself
+   deleted. When it deletes nothing it writes `[]`. Its ending is
+   `{"outcome": "done"}` or `{"outcome": "failed", "why": "<one line>"}`. Write
+   the event line `<epic-id> test-cleanup started: <tests> files on <head>`
+   with the count of the action's `tests`.
+
+   An action whose `action` is `tidy` has no task: every task has merged and
+   the test cleanup is done. Run `bench route local` once, and start one lap
+   worker on that route; the local route runs in the host's own harness until
+   the local-model trial, so it falls back to native with no extra step. Its
+   first line is `jidoka lap worktree: <worktree>`, the action's `worktree`.
+   Its prompt holds the paths of the glossary and the house rules, and these
+   limits: it works only in the worktree, commits nothing, runs no `bd`
+   command that changes anything, starts no workers other than
+   comment-sicko, and asks no question. Its job: run the `jidoka:no-comments`
+   skill and then the `jidoka:unslop` skill in their unattended mode over
+   the action's `files`, and no other file. Its ending is
+   `{"outcome": "done"}` or `{"outcome": "failed", "why": "<one line>"}`. Write
+   the event line `<epic-id> tidy started: <files> files on <head>` with the
+   count of the action's `files`.
+
+   Actions whose `action` is `review` come together, one for each lane
+   (`comments`, `standards`, `spec`, `design`), and have no task: the tidy is
+   done. Start one lap worker for each, side by side, on the standard tier's
+   route, and the `design` lane's on the deep tier's route, each with the first line `jidoka lap worktree: <worktree>`, the action's
+   `worktree`, which the lanes share. Each prompt holds the paths of the
+   glossary and the house rules, the epic as `bd show` printed it with its
+   tasks' titles, and these limits: it works only in the worktree, changes no
+   file but its `report`, commits nothing, runs no `bd` command that changes
+   anything, starts no workers, and asks no question. Its job: read
+   `<skill folder>/../code-review/SKILL.md` and run its unattended mode for
+   the action's `lane` alone, over `git diff <base> <head> -- <files>` with the
+   action's `base`, `head` and `files`. It writes its findings to the action's
+   `report`, a JSON list of `{"file", "line", "title", "note", "size",
+   "confidence"}`, and `[]` when it finds nothing. The `design` lane's prompt
+   also holds the action's `files`, which it reads whole, and its `hints`,
+   which it weighs and never copies into its report. Its ending is
+   `{"outcome": "done"}` or `{"outcome": "failed", "why": "<one line>"}`.
+   Write the event line `<epic-id> review started: <lane> lane, <files> files
+   on <base>..<head>` for each.
+
+   An action whose `action` is `fix` has no task: the review left findings to
+   fix. Start one lap worker on the standard tier's route, with the first
+   line `jidoka lap worktree: <worktree>`, the action's `worktree`. Its prompt
+   holds the paths of the glossary and the house rules, each app's `name`,
+   `test` and `test_target`, every finding of the action's `findings` with its
+   `lane`, `file`, `line`, `title`, `note` and `size`, and these limits: it
+   works only in the worktree, edits only the action's `files`, commits
+   nothing, runs no `bd` command that changes anything, starts no workers, and
+   asks no question. Its job: fix each finding, and leave alone one that turns
+   out wrong. Run only the test files its edits reach, and never an app's
+   `test` command alone. Its ending is `{"outcome": "done"}` or
+   `{"outcome": "failed", "why": "<one line>"}`. Write the event line
+   `<epic-id> fix started: <findings> findings on <head>`.
+
    An action whose `action` is `holdouts` has no task: the epic's full suite
    is green and its holdouts have not run. Start one worker with the Agent
    tool, in the background, with `subagent_type` `jidoka:validation`, on the
@@ -292,6 +364,43 @@ stop.
      and an outage past an hour;
    - it stopped before it replied on any other error or an interruption:
      `"cut off"`.
+
+   A test cleanup worker's reply that ends with `{"outcome": "done"}` is
+   reported with `scheduler report-cleanup <epic-id> --jidoka-home ...`, which
+   prints the same JSON as `next`, with the validation that follows. Write
+   `<epic-id> test-cleanup ended: done`. Exit 1 means the report was refused;
+   show stderr and stop, and the next `scheduler next` starts the worker again.
+   A worker that fails or is cut off is not reported: write
+   `<epic-id> test-cleanup ended: failed` and stop.
+
+   A tidy worker's reply that ends with `{"outcome": "done"}` is reported
+   with `scheduler report-tidy <epic-id> --jidoka-home ...`, which prints the
+   same JSON as `next`, with the review that follows. Write
+   `<epic-id> tidy ended: done`. Exit 1 means the report was refused; show
+   stderr and stop, and the next `scheduler next` starts the worker again.
+   A worker that fails or is cut off is not reported: write
+   `<epic-id> tidy ended: failed` and stop.
+
+   Wait for all four review lane workers. When each ended with
+   `{"outcome": "done"}`, report them once, together, with
+   `scheduler report-review <epic-id> --jidoka-home ...`, which prints the
+   same JSON as `next`: a `fix` action, laps for the tasks its large findings
+   filed, or the validation that follows. Write `<epic-id> review ended: done`.
+   Exit 1 means the report was refused; show stderr and stop, and the next
+   `scheduler next` starts the lanes again. When any lane fails or is cut off,
+   report none: write `<epic-id> review ended: failed` and stop.
+
+   A fix worker's reply that ends with `{"outcome": "done"}` is reported with
+   `scheduler report-fix <epic-id> --jidoka-home ...`, which prints the same
+   JSON as `next`, with the laps of the tasks the large findings filed or the
+   validation that follows. Write `<epic-id> fix ended: done`. Exit 1 means
+   the report was refused; show stderr and stop, and the next
+   `scheduler next` starts the worker again. A worker that fails or is cut off
+   is not reported: write `<epic-id> fix ended: failed` and stop.
+
+   An epic that holds open tasks after its third review parks with a question
+   instead of a fourth pass, and the call that parks it opens no lap and
+   sends the epic-parked notification. Go to step 6 as for any parked epic.
 
    A validation worker's reply that ends with `{"outcome": "done"}` is
    reported with `scheduler report-holdouts <epic-id> --jidoka-home ...`,

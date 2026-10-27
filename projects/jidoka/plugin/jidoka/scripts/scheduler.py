@@ -215,8 +215,60 @@ of the tests and the gate goes to stderr. Then the call does what `next`
 does, and its actions start with the lap that went back to a worker.
 
 When `next` or `report` finds the epic with every task closed, a bead
-that has neither the human label nor a gate.state in its metadata, it
-runs validation, validation.py, before anything else. Green leaves the epic
+that has neither the human label nor a gate.state in its metadata, the pass
+begins with test cleanup, cleanup.py, when the epic branch holds tests the
+epic added or changed and the epic's `cleanup.state` is not done: the call
+prints a `test-cleanup` action (`epic`, `branch`, `head`, `worktree`,
+`scratch`, `report`, `tests`) for a worker on the deep tier, runs no
+validation, and repeats the action on every call until the report is taken.
+`report-cleanup <epic>` takes the worker's report, commits the deletions as
+their own commit on the epic branch, records them, and does what `carry-on`
+does, which runs validation; it prints the same JSON as `next`, with
+`cleanup` holding the new `head` and the `removed` tests. A report that is
+missing, unusable, or that changes a path that is not a test the epic added or
+changed refuses the call and writes nothing. An epic with no such test goes
+straight to the tidy.
+
+Then comes the tidy, tidy.py, once per pass: when the epic branch differs from
+main in files outside every acceptance folder and the epic's `tidy.state` is not
+done, the call prints a `tidy` action (`epic`, `branch`, `head`, `worktree`,
+`scratch`, `files`) for a worker on the local tier, runs no validation, and
+repeats the action on every call until the worker is reported. The worker runs
+no-comments, with comment-sicko, and unslop in their unattended mode over those
+files, asks no question and commits nothing. `report-tidy <epic>` commits what
+it left as the one commit "No comments and unslop" on the epic branch, records
+`tidy.state`, and does what `carry-on` does, which starts the review; it prints
+the same JSON as `next`, with `tidy` holding the new `head` and the `changed`
+files. A worktree that changed a file outside the epic's files refuses the call
+and writes nothing.
+
+Then comes the review, review.py: when the epic's files changed since the
+review's fixed point, the call prints one `review` action for each lane,
+`comments`, `standards`, `spec` and `design` in that order, each with `lane`,
+`epic`, `branch`, `base` (the fixed point), `head`, `worktree` (one for all
+four), `scratch`, `report` (the lane's own) and `files`, for workers that the
+manager starts side by side, the first three on the standard tier and the
+design lane on the deep tier. The design lane's `files` are every module the
+epic touched, and it also carries `hints`, the lizard hints of review.py. It
+runs no validation, and repeats the actions on every call until they are
+reported. `report-review <epic>` takes the four reports at once, as review.py describes, and does what
+`carry-on` does; it prints the same JSON as `next`, with `review` holding the
+`head` it covered, the `fixes`, the `filed` tasks and the `low` findings. A
+missing or unusable report refuses the call and writes nothing. A review with
+findings to fix leaves a `fix` action (`epic`, `branch`, `head`, `worktree`,
+`scratch`, `files`, `findings`) for one worker on the standard tier, which
+every call repeats until `report-fix <epic>` commits what the worker left as
+the one commit "Review fixes", files the review's large findings as tasks and
+prints the same JSON as `next`, with `fix` holding the new `head`, the
+`changed` files and the `filed` tasks. A worktree that changed a file outside
+the epic's files refuses the call and writes nothing. Large findings filed as
+tasks end the pass, and this call opens their laps; the next pass reviews only
+what changed since. An epic that holds open tasks after its third review
+parks with a question instead of opening laps, and sends the epic-parked
+notification; taking the human label off runs the next pass, and each pass
+past the third asks again.
+
+Validation runs next. Green leaves the epic
 at the acceptance gate, with the human label, gate.state waiting and a gate
 comment. Red files a task in the epic, and this call opens its lap with the
 others. A merge of main that conflicts stops the call with the files named.
@@ -252,8 +304,9 @@ Each call prints one JSON object:
   watch      true when the epic has an open task and is not at the acceptance gate, so a manager with nothing
              running waits with watch.py instead of ending.
   actions    the lap a report sent back to a worker or on to the next one,
-             then the laps this call opened, then the holdouts run when
-             the epic waits on one, each lap with action ("research",
+             then the laps this call opened, then the pass stage's actions
+             (test-cleanup, tidy, fix or the review lanes), then the
+             holdouts run when the epic waits on one, each lap with action ("research",
              "build", "app-check", "spec-check" or "merge"), task, title,
              area, lap (its number), slot, branch, worktree, scratch, track
              ("simple" or "full"), answer, findings (null unless a Spec
@@ -308,6 +361,8 @@ from pathlib import Path
 
 import app_check
 import caps
+import cleanup
+import tidy
 import clock
 import discovered
 import git_exclude
@@ -320,6 +375,7 @@ import pause
 import private_docs
 import repo_settings
 import resume
+import review
 import rules
 import spec_check
 import targeted_tests
@@ -704,6 +760,24 @@ def resume_laps(epic: Epic, home: Path, main_tree: Path) -> set[str]:
     return interrupted
 
 
+def pass_stage_actions(epic: Epic, settings: dict, home: Path, main_tree: Path) -> list[dict]:
+    """The actions of the first stage of the pass that a finished epic still owes, in the order test cleanup, tidy,
+    fix, review; empty when only validation is left. A fix owed comes before a review, so the fix of one review is
+    never reviewed as the next one's diff."""
+    branch = recorded_branch(epic)
+    cleaned = cleanup.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
+    if cleaned is not None:
+        return [cleaned.fields()]
+    tidied = tidy.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
+    if tidied is not None:
+        return [tidied.fields()]
+    fixing = review.fix_to_run(epic.id, epic.shown, branch, settings, home, main_tree)
+    if fixing is not None:
+        return [fixing.fields()]
+    reviewing = review.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
+    return reviewing.actions() if reviewing is not None else []
+
+
 def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], restarting: bool) -> dict:
     """Opens the laps that fit and prints them as build actions, after the rebuilds of laps sent back.
 
@@ -721,12 +795,19 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
         epic = checked_epic(bead, settings, main_tree)
     validated = None
     holdouts_run = None
+    pass_actions: list[dict] = []
     if is_finished(epic):
-        validated = validation.validate(epic.id, recorded_branch(epic), settings, home, main_tree)
-        holdouts_run = validated.waiting
-        epic = checked_epic(bead, settings, main_tree)
+        pass_actions = pass_stage_actions(epic, settings, home, main_tree)
+        if not pass_actions:
+            validated = validation.validate(epic.id, recorded_branch(epic), settings, home, main_tree)
+            holdouts_run = validated.waiting
+            epic = checked_epic(bead, settings, main_tree)
     elif validation.awaits_holdouts(epic.shown):
         holdouts_run = validation.holdouts_to_run(epic.id, epic.shown, home, main_tree)
+    if review.parks_at_the_cap(epic.shown, bool(epic.tasks)):
+        review.park_at_the_cap(epic.id, epic.shown, main_tree)
+        epic = checked_epic(bead, settings, main_tree)
+        announce(notify.EPIC_PARKED, epic.id, home, main_tree)
     tasks = tasks_of(epic)
     held = [lap for lap in map(open_lap, tasks) if lap is not None]
     if restarting:
@@ -785,7 +866,8 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
             "paused": waiting.fields(now) if waiting is not None else None,
             "watch": has_work_to_wait_for(epic),
             "actions": [action_of(lap, answer_fields(lap, metadata[lap.task], epic.id, home, main_tree))
-                        for lap in rebuilds + planned] + ([holdouts_run.fields()] if holdouts_run is not None else []),
+                        for lap in rebuilds + planned] + pass_actions
+                       + ([holdouts_run.fields()] if holdouts_run is not None else []),
             "laps": [{**lap.fields(), "stage": lap.stage, "tries": lap.tries}
                      for lap in sorted(held + planned, key=lambda lap: lap.slot)]}
 
@@ -1303,6 +1385,50 @@ def report_holdouts(bead: str, home: Path, main_tree: Path) -> dict:
     return printed
 
 
+def report_cleanup(bead: str, home: Path, main_tree: Path) -> dict:
+    """Takes the test cleanup worker's report, commits its deletions on the epic branch, then does what `carry-on`
+    does, which runs validation."""
+    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    epic = checked_epic(bead, settings, main_tree)
+    cleaned = cleanup.settle(epic.id, recorded_branch(epic), settings, home, main_tree)
+    printed = next_moves(bead, home, main_tree, [], False)
+    printed["cleanup"] = cleaned.fields()
+    return printed
+
+
+def report_tidy(bead: str, home: Path, main_tree: Path) -> dict:
+    """Takes the tidy worker's word that it is done, commits what it left on the epic branch, then does what
+    `carry-on` does, which starts the review."""
+    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    epic = checked_epic(bead, settings, main_tree)
+    tidied = tidy.settle(epic.id, recorded_branch(epic), settings, home, main_tree)
+    printed = next_moves(bead, home, main_tree, [], False)
+    printed["tidy"] = tidied.fields()
+    return printed
+
+
+def report_review(bead: str, home: Path, main_tree: Path) -> dict:
+    """Takes the reports of the review's lanes, then does what `carry-on` does: the fix, the next pass, or
+    validation."""
+    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    epic = checked_epic(bead, settings, main_tree)
+    reviewed = review.settle(epic.id, recorded_branch(epic), settings, home, main_tree)
+    printed = next_moves(bead, home, main_tree, [], False)
+    printed["review"] = reviewed.fields()
+    return printed
+
+
+def report_fix(bead: str, home: Path, main_tree: Path) -> dict:
+    """Takes the fix worker's word that it is done, commits what it left on the epic branch, then does what
+    `carry-on` does."""
+    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    epic = checked_epic(bead, settings, main_tree)
+    fixed = review.settle_fix(epic.id, recorded_branch(epic), settings, home, main_tree)
+    printed = next_moves(bead, home, main_tree, [], False)
+    printed["fix"] = fixed.fields()
+    return printed
+
+
 def build_done(lap: Lap, epic: str, app: str, test_filter: str, epic_branch: str, settings: dict, home: Path,
                main_tree: Path) -> list[Lap]:
     """Takes a finished build: files its discovered work, commits what it left, and sends the lap through the
@@ -1388,6 +1514,14 @@ def main(argv: list[str]) -> int:
                                                         "unparked or added, or a lap merged, with no restart")
     modes.add_parser("report-holdouts", parents=[shared], help="take the validation worker's report on the epic's "
                                                                "holdouts, and print the next moves")
+    modes.add_parser("report-cleanup", parents=[shared], help="take the test cleanup worker's report, and print the "
+                                                              "next moves")
+    modes.add_parser("report-tidy", parents=[shared], help="take the tidy worker's word that it is done, and print "
+                                                           "the next moves")
+    modes.add_parser("report-review", parents=[shared], help="take the reports of the review's lanes, and print "
+                                                             "the next moves")
+    modes.add_parser("report-fix", parents=[shared], help="take the fix worker's word that it is done, and print "
+                                                          "the next moves")
     reporting = modes.add_parser("report", parents=[shared], help="take how a lap's build ended, and print the "
                                                                   "next moves")
     reporting.add_argument("task")
@@ -1407,12 +1541,21 @@ def main(argv: list[str]) -> int:
             printed = next_moves(args.epic, home, main_tree, [], False)
         elif args.mode == "report-holdouts":
             printed = report_holdouts(args.epic, home, main_tree)
+        elif args.mode == "report-cleanup":
+            printed = report_cleanup(args.epic, home, main_tree)
+        elif args.mode == "report-tidy":
+            printed = report_tidy(args.epic, home, main_tree)
+        elif args.mode == "report-review":
+            printed = report_review(args.epic, home, main_tree)
+        elif args.mode == "report-fix":
+            printed = report_fix(args.epic, home, main_tree)
         elif args.mode == "stop":
             printed = stop(args.epic, home, main_tree)
         else:
             printed = report(args.epic, args.task, args.outcome, args.app, args.filter, args.cause, args.why, home,
                              main_tree)
-    except (SchedulerError, validation.ValidationError, HandoffError, BenchError, CommandError,
+    except (SchedulerError, validation.ValidationError, cleanup.CleanupError, tidy.TidyError, review.ReviewError,
+            HandoffError, BenchError, CommandError,
             repo_settings.SettingsError, holdouts.HoldoutsError, private_docs.ClashError, OSError) as error:
         print(f"scheduler: {error}", file=sys.stderr)
         return 1

@@ -75,9 +75,15 @@ def git_commit_all(repo: Path, message: str) -> None:
 
 
 def init_repo(repo: Path) -> None:
-    """Makes an empty git repo that can commit."""
+    """Makes an empty git repo that can commit.
+
+    A commit starts git's automatic maintenance as a detached process, which can still be writing
+    into .git when a test removes the repo's folder, so the repo turns that maintenance off.
+    """
     repo.mkdir(parents=True, exist_ok=True)
     run(["git", "init", "-q"], repo)
+    run(["git", "config", "maintenance.auto", "false"], repo)
+    run(["git", "config", "gc.auto", "0"], repo)
     run(["git", "config", "user.email", "fixture@example.com"], repo)
     run(["git", "config", "user.name", "Fixture"], repo)
 

@@ -170,6 +170,10 @@ class SchedulerCase(unittest.TestCase):
         self.assertEqual(0, done.returncode, done.stderr)
         return json.loads(done.stdout)
 
+    def lap_actions(self, printed: dict) -> list[dict]:
+        """The actions that start a lap's worker, leaving out the pass's own actions."""
+        return [action for action in printed["actions"] if "task" in action]
+
     def build_done(self, epic: str, task: str) -> dict:
         return self.report_printed(epic, task, "done", "--app", "shop", "--filter", "test_card")
 
@@ -533,7 +537,7 @@ class ManagerDrivesAnEpicTests(SchedulerCase):
 
         self.assertEqual([first, second], sorted(built))
         self.assertEqual(([], [second]), (after_first["actions"], [lap["task"] for lap in after_first["laps"]]))
-        self.assertEqual(([], []), (after_second["actions"], after_second["laps"]))
+        self.assertEqual(([], []), (self.lap_actions(after_second), after_second["laps"]))
         self.assertEqual(("closed", "closed"), (self.shown(first)["status"], self.shown(second)["status"]))
         self.assertEqual([f"Add {first}.txt", f"Add {second}.txt"],
                          git(self.repo, "log", "--reverse", "--format=%s", f"{branch}~2..{branch}").splitlines())
@@ -550,7 +554,7 @@ class ManagerDrivesAnEpicTests(SchedulerCase):
         self.build_done(epic, first)
         after_second = self.build_done(epic, second)
 
-        self.assertEqual(([], []), (after_second["actions"], after_second["laps"]))
+        self.assertEqual(([], []), (self.lap_actions(after_second), after_second["laps"]))
         self.assertEqual(("closed", "closed"), (self.shown(first)["status"], self.shown(second)["status"]))
         self.assertEqual(("built", "built"), (git(self.repo, "show", f"{branch}:{first}.txt"),
                                               git(self.repo, "show", f"{branch}:{second}.txt")))
@@ -848,7 +852,7 @@ class MergeWorkerTests(SchedulerCase):
 
         printed = self.build_done(lap.epic, lap.task)
 
-        self.assertEqual([], printed["actions"])
+        self.assertEqual([], self.lap_actions(printed))
         shown = self.shown(lap.task)
         self.assertEqual(("closed", "merged"), (shown["status"], (shown.get("metadata") or {}).get("lap.stage")))
         self.assertEqual(newer, git(self.repo, "rev-parse", f"{lap.epic_branch}~1"))
@@ -964,7 +968,7 @@ class MergeWorkerTests(SchedulerCase):
         merged = self.build_done(epic, second)
 
         self.assertEqual(["merge"], [action["action"] for action in called["actions"]])
-        self.assertEqual([], merged["actions"])
+        self.assertEqual([], self.lap_actions(merged))
         self.assertEqual(("closed", "closed"), (self.shown(first)["status"], self.shown(second)["status"]))
         self.assertEqual("def total():\n    return 1 + 2", git(self.repo, "show", f"{branch}:card.py"))
 
@@ -1850,7 +1854,7 @@ class EpicBranchMovesBeforeTheGateTests(SchedulerCase):
             process.wait()
 
         self.assertEqual(0, process.returncode)
-        self.assertEqual([], json.loads(out)["actions"])
+        self.assertEqual([], self.lap_actions(json.loads(out)))
         self.assertEqual(["-k test_card", "-k test_card"], self.runs_of(lap.task))
         self.assertEqual(moved, git(self.repo, "rev-parse", f"{lap.epic_branch}~1"))
         self.assertEqual("closed", self.shown(lap.task)["status"])
@@ -2162,7 +2166,7 @@ class FullTrackCase(SchedulerCase):
         return self.report_printed(lap.epic, lap.task, "pass")
 
     def stages_of(self, printed: dict) -> list[str]:
-        return [action["action"] for action in printed["actions"]]
+        return [action["action"] for action in printed["actions"] if action["action"] != "tidy"]
 
 
 class FullTrackLapTests(FullTrackCase):
@@ -2665,7 +2669,7 @@ class TrackMoveTests(FullTrackCase):
 
         merged = self.report_printed(lap.epic, lap.task, "pass")
 
-        self.assertEqual([], merged["actions"])
+        self.assertEqual([], self.lap_actions(merged))
         self.assertEqual(("closed", "full"), (self.shown(lap.task)["status"], self.metadata(lap.task)["lap.track"]))
 
 

@@ -66,6 +66,26 @@ class ValidationCase(test_scheduler.SchedulerCase):
         self.leave_in(Path(action["worktree"]), "till.txt", "built\n")
         return epic, task, branch
 
+    def settle_tidy_and_review(self, printed: dict) -> dict:
+        """Reports the tidy worker done with nothing changed, and every review lane with no finding, for as long as
+        the moves hold a tidy or a review action, as a test does that is about neither."""
+        while True:
+            stages = {each["action"] for each in printed["actions"]}
+            if "tidy" in stages:
+                done = self.launch(test_scheduler.SCHEDULER, "report-tidy", printed["epic"])
+            elif "review" in stages:
+                for action in printed["actions"]:
+                    if action["action"] == "review":
+                        Path(action["report"]).write_text("[]", encoding="utf-8")
+                done = self.launch(test_scheduler.SCHEDULER, "report-review", printed["epic"])
+            else:
+                return printed
+            self.assertEqual(0, done.returncode, done.stderr)
+            printed = json.loads(done.stdout)
+
+    def build_done(self, epic: str, task: str) -> dict:
+        return self.settle_tidy_and_review(super().build_done(epic, task))
+
     def validation_runs_of(self, epic: str) -> list[str]:
         log = self.runs / f"validation-{epic}.log"
         return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
@@ -392,7 +412,11 @@ class ValidationMergeConflictTests(ValidationCase):
         self.commit_in(self.repo, "clash.txt", "main's\n")
         epic_head_before = git(self.repo, "rev-parse", branch)
 
-        done = self.report(epic, task, "done", "--app", "shop", "--filter", "test_card")
+        self.report_printed(epic, task, "done", "--app", "shop", "--filter", "test_card")
+        tidied = self.launch(test_scheduler.SCHEDULER, "report-tidy", epic)
+        for action in json.loads(tidied.stdout)["actions"]:
+            Path(action["report"]).write_text("[]", encoding="utf-8")
+        done = self.launch(test_scheduler.SCHEDULER, "report-review", epic)
 
         shown = self.shown(epic)
         self.assertEqual(1, done.returncode)

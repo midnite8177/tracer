@@ -24,7 +24,8 @@ This command is _informed_ by the project's domain model and built on a shared d
 **Scope before you scan: YAGNI.** Deepening a module pays off by making future changes to it easier, so put extra weight on the parts of the codebase that have recently changed. Decide *where* to look before you look:
 
 - If the user named a direction (a module, a subsystem, a pain point), take it, and skip the inference below.
-- Otherwise, walk back a good stretch of the commit history (`git log --oneline`) to find the codebase's hot spots, the files and areas that keep coming up, and let those paths pull your attention first. If the changes are scattered with no clear hot spot, widen the net.
+- Otherwise, read the open **design findings** first: run the design findings script, `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/design_findings.py" --open`. It prints a JSON list of `bead`, `file`, `title` and `sightings`, the most sighted first. A finding that reviews met in several epics is the strongest sign of friction, so let those files pull your attention before anything else, and cite each finding's bead in its candidate.
+- Only after the findings, or when there are none, walk back a good stretch of the commit history (`git log --oneline`) to find the codebase's hot spots, the files and areas that keep coming up, and let those paths pull your attention next. If the changes are scattered with no clear hot spot, widen the net.
 
 Read the project's domain glossary (`GLOSSARY.md`) and any ADRs in the area you're touching first.
 

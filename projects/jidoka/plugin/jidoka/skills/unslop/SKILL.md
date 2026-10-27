@@ -18,6 +18,10 @@ Edit text to remove AI patterns and add human voice.
 3. Add soul (see next section).
 4. Self-audit: "What makes this obviously AI generated?" Fix remaining tells.
 
+## Unattended
+
+A caller that says the run is unattended (the factory's tidy stage does) gets the same edit with no human in the loop. Ask nothing. Scope is the caller's file list: read every prose line in those files (docs, doc comments, log and error messages, strings a user reads) and edit only them. Skip text whose wording another file, a test or a contract fixes. Change prose only; never touch code, and never a file outside the list. Leave the edits uncommitted, and end with the files changed and any text you skipped, with the reason.
+
 ## Adding soul
 
 Removing patterns is half the job. Sterile, voiceless writing is just as obvious.

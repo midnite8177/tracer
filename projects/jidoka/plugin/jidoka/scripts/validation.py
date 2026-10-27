@@ -22,11 +22,14 @@ tests read it: dotnet test's summary lines and unittest's "Ran N tests" and
 
 Green puts the epic at the acceptance gate with one comment that starts with
 "Acceptance gate:" and lists the commits the epic branch holds that main
-lacks, the figures, and each hand-run group with the command that runs it.
+lacks, the figures, the Tests removed table from the epic's `cleanup.removed`
+metadata when a test cleanup removed any test, the review's findings of low confidence from `review.low`, which
+were never fixed, and each hand-run group with the command that runs it.
 Then it sets the epic's `gate.state` to waiting and adds the human label,
 last, so a labeled epic always has its comment.
 
-Red files one task in the epic, with the failing commands and the end of
+A red result takes `cleanup.state` and `tidy.state` off the epic, so the next
+pass starts with a test cleanup and a tidy again. Red files one task in the epic, with the failing commands and the end of
 their output, the track simple and the area of the first failing command's
 app. The scheduler then opens its lap, and the next pass begins.
 
@@ -76,6 +79,10 @@ DOTNET_SKIPPED = re.compile(r"[A-Za-z]+!\s+-\s+Failed:\s*\d+,\s*Passed:\s*\d+,\s
 UNITTEST_SKIPPED = re.compile(r"^(?:OK|FAILED) \([^)]*\bskipped=(\d+)", re.MULTILINE)
 HAND_RUN_FIELDS = ("app", "name", "reason", "command")
 UNKNOWN_FIGURES = "no test count in its output"
+CLEANUP_STATE_KEY = "cleanup.state"
+TIDY_STATE_KEY = "tidy.state"
+REMOVED_KEY = "cleanup.removed"
+LOW_KEY = "review.low"
 RESULT_KEY = "validation.result"
 HEAD_KEY = "validation.head"
 RUNS_KEY = "validation.runs"
@@ -285,12 +292,45 @@ def figures_lines(validated: Validated) -> list[str]:
             *(f"- {each.suite.app}: {each.suite.command}, {each.figures()}" for each in validated.runs)]
 
 
-def gate_comment(epic: str, branch: str, validated: Validated, hand_run: list[HandRunGroup],
+def tests_removed_lines(shown: dict) -> list[str]:
+    """The gate comment's Tests removed table from the deletions the epic records, or no line when none."""
+    metadata = shown.get("metadata") if isinstance(shown.get("metadata"), dict) else {}
+    value = metadata.get(REMOVED_KEY)
+    if value in (None, ""):
+        return []
+    try:
+        listed = json.loads(value) if isinstance(value, str) else value
+        rows = [f"| {each['test']} | {each['file']} | {each['covered_by']} |" for each in listed]
+    except (ValueError, KeyError, TypeError) as error:
+        raise ValidationError(f"the {REMOVED_KEY} metadata of the epic cannot be read: {error!r}") from error
+    if not rows:
+        return []
+    return ["", "Tests removed:", "| Test | File | Covered by |", "| --- | --- | --- |", *rows]
+
+
+def low_confidence_lines(shown: dict) -> list[str]:
+    """The gate comment's list of the review findings of low confidence, which no fix touched, or no line when
+    none."""
+    metadata = shown.get("metadata") if isinstance(shown.get("metadata"), dict) else {}
+    value = metadata.get(LOW_KEY)
+    if value in (None, ""):
+        return []
+    try:
+        listed = json.loads(value) if isinstance(value, str) else value
+        rows = [f"- {each['lane']}, {each['file']}:{each['line']}: {each['title']}. {each['note']}" for each in listed]
+    except (ValueError, KeyError, TypeError) as error:
+        raise ValidationError(f"the {LOW_KEY} metadata of the epic cannot be read: {error!r}") from error
+    if not rows:
+        return []
+    return ["", "Review findings of low confidence, which were never fixed:", *rows]
+
+
+def gate_comment(epic: str, branch: str, validated: Validated, hand_run: list[HandRunGroup], removed: list[str],
                  main_tree: Path) -> str:
     commits = merged_commits(validated.head, main_tree)
     lines = [f"{GATE_COMMENT_HEADING} {epic} waits for the human, on the epic branch {branch} at {validated.head}.",
              "", "Merged into the epic branch:", *(f"- {commit}" for commit in commits), "",
-             *figures_lines(validated)]
+             *figures_lines(validated), *removed]
     if hand_run:
         lines += ["", "Hand-run tests, which validation never runs. Run each one yourself before you trust the "
                       "branch:"]
@@ -319,18 +359,22 @@ def record(epic: str, validated: Validated, main_tree: Path) -> None:
     env = env_as_factory()
     run(["bd", "comment", epic, "\n".join([validated.headline, *figures_lines(validated)])], main_tree, env)
     waiting = ["--set-metadata", f"{HOLDOUTS_KEY}={PENDING}"] if validated.waiting is not None else []
+    again = (["--unset-metadata", CLEANUP_STATE_KEY, "--unset-metadata", TIDY_STATE_KEY]
+             if validated.result == FAIL else [])
     run(["bd", "update", epic, "--set-metadata", f"{RESULT_KEY}={validated.result}",
          "--set-metadata", f"{HEAD_KEY}={validated.head}",
          "--set-metadata", f"validation.seconds={validated.seconds}",
          "--set-metadata", f"validation.tests={validated.tests}",
          "--set-metadata", f"validation.skipped={validated.skipped}",
-         "--set-metadata", f"{RUNS_KEY}={runs_as_text(validated.runs)}", *waiting], main_tree, env)
+         "--set-metadata", f"{RUNS_KEY}={runs_as_text(validated.runs)}", *waiting, *again], main_tree, env)
 
 
 def reach_the_gate(epic: str, branch: str, validated: Validated, hand_run: list[HandRunGroup],
                    main_tree: Path) -> None:
     env = env_as_factory()
-    run(["bd", "comment", epic, gate_comment(epic, branch, validated, hand_run, main_tree)], main_tree, env)
+    shown = bd_show(epic, main_tree)
+    removed = [*tests_removed_lines(shown), *low_confidence_lines(shown)] if shown is not None else []
+    run(["bd", "comment", epic, gate_comment(epic, branch, validated, hand_run, removed, main_tree)], main_tree, env)
     run(["bd", "update", epic, "--set-metadata", f"{GATE_STATE_KEY}={WAITING}", f"--add-label={HUMAN_LABEL}"],
         main_tree, env)
 
@@ -359,7 +403,7 @@ def file_failure(epic: str, failed: list[CommandRun], main_tree: Path) -> str:
                      main_tree)
 
 
-def file_task(epic: str, title: str, description: str, app: str, main_tree: Path) -> str:
+def file_task(epic: str, title: str, description: str, area: str, main_tree: Path) -> str:
     env = env_as_factory()
     created = run(["bd", "create", "--title", title, "--type", "task", "--parent", epic, "--description",
                    description, "--json"], main_tree, env)
@@ -368,7 +412,7 @@ def file_task(epic: str, title: str, description: str, app: str, main_tree: Path
     except (ValueError, KeyError, TypeError) as error:
         raise ValidationError(f"bd create did not print the id of the task it made: {created.strip()[:200]!r}") \
             from error
-    run(["bd", "update", task, "--set-metadata", f"lap.track={TRACK}", "--set-metadata", f"lap.area={app}"],
+    run(["bd", "update", task, "--set-metadata", f"lap.track={TRACK}", "--set-metadata", f"lap.area={area}"],
         main_tree, env)
     return task
 
@@ -529,7 +573,8 @@ def settle_holdouts(epic: str, branch: str, settings: dict, home: Path, main_tre
     run(["bd", "comment", epic, f"Holdouts: {len(verdicts) - len(red)} of {len(verdicts)} passed on {to_run.head}."
          + (f" The red ones are filed as {', '.join(filed)}." if filed else "")], main_tree, env)
     run(["bd", "update", epic, "--set-metadata", f"{RESULT_KEY}={validated.result}",
-         "--unset-metadata", HOLDOUTS_KEY], main_tree, env)
+         "--unset-metadata", HOLDOUTS_KEY, *(["--unset-metadata", CLEANUP_STATE_KEY, "--unset-metadata", TIDY_STATE_KEY] if red else [])],
+        main_tree, env)
     remove_worktree(to_run.worktree, main_tree)
     if not red:
         reach_the_gate(epic, branch, validated, hand_run, main_tree)

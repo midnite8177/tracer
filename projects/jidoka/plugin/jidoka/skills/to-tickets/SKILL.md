@@ -26,6 +26,10 @@ If you have not already explored the codebase, do so to understand the current s
 
 Look for opportunities to prefactor the code to make the implementation easier. "Make the change easy, then make the easy change."
 
+Read the open **design findings** about the files the work will change. List the files, then run the design findings script, `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/design_findings.py" --open <file> ...`. It prints a JSON list of `bead`, `file`, `title` and `sightings`, the most sighted first. For each finding that sits in the way of a slice, propose a **prefactoring ticket** that fixes it, placed first among the tickets and blocking the slices that touch that code. Name the finding's bead in the ticket's `## What` so the fix can close it.
+
+For each behavior a slice must keep in that code, check whether a test pins it. Where none does, propose a **characterization-test ticket** that writes tests recording what the code does now, blocking the prefactoring ticket and the slices that change that code.
+
 ### 3. Draft vertical slices
 
 Break the work into **tracer bullet** tickets.
