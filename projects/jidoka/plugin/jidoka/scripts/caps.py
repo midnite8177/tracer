@@ -3,9 +3,9 @@
 The scheduler imports it; no command line runs it. A cap parks one task and
 never stops the factory. The caps of a lap are three build tries, two
 send-backs from the checks together, three cutoffs of one stage, and two
-tries of the merge worker. The human's own stop is no cutoff: a lap an
-earlier session left with no worker goes back to its stage without counting
-one.
+tries of the merge worker. A stop is no cutoff: a lap an earlier session
+left with no worker ends interrupted, and its task gets a new lap, without
+counting one.
 
 A stage that runs past its wall clock ends cut off: 60 minutes for the build
 and 30 for every other stage. The lap records when its stage started as

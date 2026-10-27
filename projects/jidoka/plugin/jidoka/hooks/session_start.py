@@ -10,13 +10,15 @@ repo settings keep them private, and that they are always committed
 otherwise, also when the settings are missing or cannot be read. After the
 rules it lists each rule conflict the repo settings record, the repo's rule
 winning over the jidoka rule it quotes, and lists none when it cannot read
-them. Anywhere else it prints nothing. A failure also prints nothing,
+them. Last it names each epic the factory stopped on with work left, one line with the epic's title and id and
+the command that resumes it, and names none when it cannot read the epics. Anywhere else it prints nothing. A failure also prints nothing,
 because this hook must never keep a session from starting.
 """
 from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parents[1]
@@ -140,15 +142,30 @@ def announcement(main_tree: Path | None) -> str:
             f"domain doc: {DOCS / 'domain.md'}\n")
 
 
+def stopped_factories(main_tree: Path | None) -> str:
+    """One line for each epic the factory stopped on, naming the command that resumes it, or nothing when none
+    stopped or the epics cannot be read."""
+    if main_tree is None:
+        return ""
+    try:
+        script = repo_settings()
+        import resume
+        stopped = resume.stopped_epics(script.jidoka_home(None), main_tree, int(time.time()))
+    except Exception:
+        return ""
+    return "".join(f"\n{epic.line()}\n" for epic in stopped)
+
+
 def start(raw: str) -> str:
     try:
         folder = session_folder(raw)
         main_tree = main_tree_of(folder)
         if not is_beads_repo(folder, main_tree):
             return ""
+        text = announcement(main_tree)
         if main_tree is not None and not settings_file(main_tree).is_file():
-            return announcement(main_tree) + ONBOARDING
-        return announcement(main_tree)
+            text += ONBOARDING
+        return text + stopped_factories(main_tree)
     except Exception:
         return ""
 

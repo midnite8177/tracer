@@ -17,10 +17,16 @@ release.py gives the change a new version. The source repo is the main
 worktree of the repo this file is in, found with git, so an install from a
 linked worktree records the main checkout. Retro files a fix to jidoka
 there, from whatever repo it runs in.
+
+At a terminal it also asks for the Pushover user key, application token and jidoka-ui address that
+notify.py uses, and writes them to <jidoka-home>/pushover.json, readable by its owner only. It asks nowhere
+else: the keys are typed into this script and never pass through a model. An empty user key leaves the
+file as it was, and a run with no terminal asks nothing.
 """
 from __future__ import annotations
 
 import argparse
+import getpass
 import io
 import json
 import os
@@ -41,6 +47,8 @@ PLUGIN_FOLDER = Path(__file__).resolve().parent / "plugin"
 PLUGIN_MANIFEST = Path("jidoka") / ".claude-plugin" / "plugin.json"
 TREE_FILE = "plugin-tree-id"
 OWNED_SETTINGS = ["python", "config_dirs", "routes", "source_repo"]
+PUSHOVER_FILE = "pushover.json"
+DEFAULT_UI_URL = "http://localhost:5099"
 
 
 class InstallerError(Exception):
@@ -54,6 +62,13 @@ class Route:
     model: str | None
     version: str | None
     effort: str | None
+
+
+@dataclass(frozen=True)
+class Terminal:
+    """The person at the keyboard: `ask` shows what they type, `ask_secret` hides it."""
+    ask: Callable[[str], str]
+    ask_secret: Callable[[str], str]
 
 
 @dataclass(frozen=True)
@@ -277,7 +292,46 @@ def install_into_codex(codex: str, snapshot: Path) -> None:
     run_tool(codex, ["plugin", "add", PLUGIN_ID], env)
 
 
-def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[int, int], python: str) -> None:
+def read_pushover(home: Path) -> dict:
+    """The Pushover file as it stands, or an empty object when it is missing or not a JSON object."""
+    try:
+        held = json.loads((home / PUSHOVER_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return held if isinstance(held, dict) else {}
+
+
+def ask_for_pushover(home: Path, terminal: Terminal | None) -> str:
+    """Asks the person at the terminal for the Pushover keys, writes them to <jidoka-home>/pushover.json and
+    returns the line to print.
+
+    The keys are asked here and nowhere else, so no model ever sees them. An empty answer leaves the file as
+    it was, and without a terminal nothing is asked.
+    """
+    if terminal is None:
+        return (f"Pushover keys were not asked, because this is not a terminal. Run install.py in one to set "
+                f"them. {'Pushover is set up.' if read_pushover(home) else 'Pushover is off.'}")
+    held = read_pushover(home)
+    user_key = terminal.ask("Pushover user key (Enter to " + ("keep what is set" if held else "skip Pushover")
+                            + "): ").strip()
+    if not user_key:
+        return "Pushover left as it was."
+    app_token = terminal.ask_secret("Pushover application token (typing is hidden): ").strip()
+    if not app_token:
+        return "Pushover left as it was, because no application token was given."
+    ui_url = terminal.ask(f"Address jidoka-ui answers at, which each message links to (Enter for "
+                          f"{DEFAULT_UI_URL}): ").strip()
+    kept = {key: value for key, value in held.items() if key not in ("user_key", "app_token", "ui_url")}
+    written = {"user_key": user_key, "app_token": app_token, "ui_url": ui_url or DEFAULT_UI_URL, **kept}
+    home.mkdir(parents=True, exist_ok=True)
+    path = home / PUSHOVER_FILE
+    path.write_text(json.dumps(written, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    path.chmod(0o600)
+    return f"Pushover is set up in {path}."
+
+
+def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[int, int], python: str,
+            terminal: Terminal | None) -> None:
     missing = find_missing(python_version, shutil.which)
     if missing:
         raise InstallerError("these are missing, and the installer installs none of them: " + ", ".join(missing))
@@ -298,6 +352,7 @@ def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[in
     if tools.codex is not None:
         install_into_codex(tools.codex, snapshot)
         print(f"Installed jidoka {version} into Codex")
+    print(ask_for_pushover(jidoka_home, terminal))
     if unnamed:
         print("These config dirs were recorded by an earlier run and not named in this one, so they still run the "
               "plugin from their earlier source. Name them to move them to the snapshot:\n"
@@ -311,8 +366,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--jidoka-home", default="~/.jidoka", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
     config_dirs = [Path(path).expanduser().resolve() for path in args.config_dir]
+    terminal = Terminal(input, getpass.getpass) if sys.stdin.isatty() and sys.stdout.isatty() else None
     try:
-        install(config_dirs, Path(args.jidoka_home).expanduser().resolve(), sys.version_info[:2], sys.executable)
+        install(config_dirs, Path(args.jidoka_home).expanduser().resolve(), sys.version_info[:2], sys.executable,
+                terminal)
     except (InstallerError, OSError) as err:
         print(f"install.py: {err}", file=sys.stderr)
         return 2

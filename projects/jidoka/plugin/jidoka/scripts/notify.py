@@ -1,0 +1,393 @@
+#!/usr/bin/env python3
+"""Tells the human that the factory waits on them: one notification for one event on one bead.
+
+`notify.py <event> <bead>` sends one notification, once. Run it from inside any checkout of the repo. The
+events are:
+  task-parked        a task is parked; the bead is the task.
+  epic-parked        an epic is parked, apart from the acceptance gate; the bead is the epic.
+  only-parked-left   every open task of the epic is parked; the bead is the epic.
+  acceptance-gate    the epic waits at the acceptance gate; the bead is the epic.
+  factory-stopped    the epic has open tasks and no manager runs it; the bead is the epic. The caller knows
+                     the factory stopped, and the script checks only that the epic has work left.
+                     Its fingerprint holds each open task's lap number, so a stop after a resume is a new one.
+  factory-paused     the epic's pause waits on the human: a billing error, an auth failure, or an outage
+                     that has lasted an hour; the bead is the epic. A pause on a usage limit waits on the
+                     reset, and sends nothing.
+  permission-prompt  the host asks the human for a permission while an epic runs. It takes no bead, and
+                     names the running epic: an open epic with the `factory` label that is neither parked
+                     nor at the gate. Where none runs, it sends nothing.
+
+The script checks that the bead is in the state the event names, so a caller that asks for an event that
+does not hold sends nothing. A notification points at one bead: the task for task-parked, the first parked
+task for only-parked-left, and the epic otherwise. Each one is delivered three ways. It prints one line,
+which the host shows. It records itself in the epic's `notification` metadata, a JSON object from
+`<event>:<bead>` to a fingerprint of the state it announced, and it sends nothing for an event whose
+fingerprint the object already holds, so a park is announced once and a later park of the same task is a
+new one. And it sends a Pushover message where this machine has Pushover keys, with a link to the bead in
+jidoka-ui.
+
+The Pushover keys live in <jidoka-home>/pushover.json, which install.py writes: `user_key` and `app_token`,
+both required, `ui_url` (the address jidoka-ui answers at, http://localhost:5099 when left out) and `api_url`
+(the Pushover endpoint, for tests and compatible services). A file that is missing, unreadable or short of a
+key means no Pushover, and the notification goes only to the host and the epic's key. A Pushover failure is a
+warning on stderr, and the notification still counts as sent. The link is <ui_url>/bead/<id>?project=<the
+main worktree>, the address jidoka-ui gives a bead's page.
+
+The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
+
+Exit codes:
+  0  the notification was sent, or nothing needed sending, with the reason on stderr.
+  1  it refused, or a bd command failed, with the reason on stderr.
+  2  a usage error.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import sys
+import time
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+
+import clock
+import park
+import pause
+import repo_settings
+import validation
+from bench import FACTORY_LABEL
+from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, env_as_factory, run
+from handoff import CLOSED, EPIC_TYPE, HandoffError, child_ids, shown_beads
+
+TASK_PARKED = "task-parked"
+EPIC_PARKED = "epic-parked"
+ONLY_PARKED_LEFT = "only-parked-left"
+ACCEPTANCE_GATE = "acceptance-gate"
+FACTORY_STOPPED = "factory-stopped"
+FACTORY_PAUSED = "factory-paused"
+PERMISSION_PROMPT = "permission-prompt"
+EVENTS = [TASK_PARKED, EPIC_PARKED, ONLY_PARKED_LEFT, ACCEPTANCE_GATE, FACTORY_STOPPED, FACTORY_PAUSED,
+          PERMISSION_PROMPT]
+PAUSE_HINTS = {pause.BILLING: "Fix the billing, and the factory carries on at its next retry.",
+               pause.AUTH: "Sign in again, and the factory carries on at its next retry.",
+               pause.OUTAGE: "The factory keeps retrying by itself, once an hour.",
+               pause.USAGE_LIMIT: "The factory carries on when the limit resets."}
+NOTIFICATION_KEY = "notification"
+VALIDATION_HEAD_KEY = "validation.head"
+PUSHOVER_FILE = "pushover.json"
+PUSHOVER_API = "https://api.pushover.net/1/messages.json"
+UI_ADDRESS = "http://localhost:5099"
+PUSHOVER_TIMEOUT_SECONDS = 15
+TITLE_LIMIT = 250
+MESSAGE_LIMIT = 1024
+DETAIL_LIMIT = 300
+FINGERPRINT_LENGTH = 12
+PARK_PREFIXES = (park.QUESTION_PREFIX, park.PARKED_PREFIX, park.BLOCKED_PREFIX)
+
+
+class NotifyError(Exception):
+    """A reason the script sends nothing, worded for the person who reads stderr."""
+
+
+class NothingToSend(Exception):
+    """The event does not hold on the bead, or was already announced; the reason goes to stderr."""
+
+
+@dataclass(frozen=True)
+class Notice:
+    """One notification: the epic whose key records it, the bead it points at, and what it says."""
+    event: str
+    epic: str
+    bead: str
+    title: str
+    text: str
+    fingerprint: str
+
+
+@dataclass(frozen=True)
+class Pushover:
+    """The keys of this machine's Pushover account and application, and where jidoka-ui answers."""
+    user_key: str
+    app_token: str
+    ui_url: str
+    api_url: str
+
+
+def digest(*parts: str) -> str:
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:FINGERPRINT_LENGTH]
+
+
+def shortened(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def shown_or_refuse(bead: str, main_tree: Path) -> dict:
+    shown = bd_show(bead, main_tree)
+    if shown is None:
+        raise NotifyError(f"bd show printed nothing usable for {bead}")
+    return shown
+
+
+def labels_of(shown: dict) -> list[str]:
+    return [str(label) for label in shown.get("labels") or []]
+
+
+def metadata_of(shown: dict) -> dict:
+    metadata = shown.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def is_closed(shown: dict) -> bool:
+    return shown.get("status") == CLOSED
+
+
+def at_the_gate(shown: dict) -> bool:
+    return metadata_of(shown).get(validation.GATE_STATE_KEY) == validation.WAITING
+
+
+def last_park(bead: str, main_tree: Path) -> tuple[str, str]:
+    """The fingerprint and the first line of the factory's latest park comment on the bead.
+
+    Both are empty when the factory never parked it, as when the human did.
+    """
+    parks = [comment for comment in park.posted_comments(bead, main_tree)
+             if comment.get("author") == park.FACTORY_ACTOR
+             and str(comment.get("text") or "").startswith(PARK_PREFIXES)]
+    if not parks:
+        return "", ""
+    latest = parks[-1]
+    text = str(latest.get("text") or "")
+    prefix = next(prefix for prefix in PARK_PREFIXES if text.startswith(prefix))
+    first_line = text[len(prefix):].strip().splitlines()[0] if text[len(prefix):].strip() else ""
+    return digest(str(latest.get("id") or ""), str(latest.get("created_at") or ""), text), first_line
+
+
+def parked_task(task: str, main_tree: Path) -> Notice:
+    shown = shown_or_refuse(task, main_tree)
+    if is_closed(shown) or park.HUMAN_LABEL not in labels_of(shown):
+        raise NothingToSend(f"{task} is not parked")
+    epic = str(shown.get("parent") or "")
+    if not epic:
+        raise NotifyError(f"{task} is held by no epic, so there is no epic key to record the notification in")
+    fingerprint, detail = last_park(task, main_tree)
+    return Notice(TASK_PARKED, epic, task, f"Task parked: {shown.get('title') or task}",
+                  detail or "The task waits on you.", fingerprint or "parked")
+
+
+def epic_of(bead: str, main_tree: Path) -> dict:
+    shown = shown_or_refuse(bead, main_tree)
+    if shown.get("issue_type") != EPIC_TYPE:
+        raise NotifyError(f"{bead} is a {shown.get('issue_type') or 'bead'}, not an epic")
+    return shown
+
+
+def parked_epic(epic: str, main_tree: Path) -> Notice:
+    shown = epic_of(epic, main_tree)
+    if is_closed(shown) or park.HUMAN_LABEL not in labels_of(shown) or at_the_gate(shown):
+        raise NothingToSend(f"{epic} is not parked")
+    fingerprint, detail = last_park(epic, main_tree)
+    return Notice(EPIC_PARKED, epic, epic, f"Epic parked: {shown.get('title') or epic}",
+                  detail or "The epic waits on you.", fingerprint or "parked")
+
+
+def open_tasks(epic: str, main_tree: Path) -> list[dict]:
+    """The epic's tasks that are not closed, by id."""
+    held = shown_beads(child_ids(epic, main_tree), main_tree)
+    return sorted((bead for bead in held if bead.get("issue_type") != EPIC_TYPE and not is_closed(bead)),
+                  key=lambda bead: str(bead["id"]))
+
+
+def only_parked_tasks_left(epic: str, main_tree: Path) -> Notice:
+    shown = epic_of(epic, main_tree)
+    if is_closed(shown) or at_the_gate(shown):
+        raise NothingToSend(f"{epic} is closed or at the acceptance gate")
+    tasks = open_tasks(epic, main_tree)
+    if not tasks or any(park.HUMAN_LABEL not in labels_of(task) for task in tasks):
+        raise NothingToSend(f"{epic} has a task that is not parked")
+    parks = {str(task["id"]): last_park(str(task["id"]), main_tree)[0] for task in tasks}
+    first = str(tasks[0]["id"])
+    names = ", ".join(parks)
+    return Notice(ONLY_PARKED_LEFT, epic, first, f"Only parked tasks left: {shown.get('title') or epic}",
+                  f"{len(tasks)} parked and waiting on you: {names}.",
+                  digest(*(f"{task}:{fingerprint}" for task, fingerprint in parks.items())))
+
+
+def at_acceptance_gate(epic: str, main_tree: Path) -> Notice:
+    shown = epic_of(epic, main_tree)
+    if is_closed(shown) or not at_the_gate(shown):
+        raise NothingToSend(f"{epic} is not at the acceptance gate")
+    head = str(metadata_of(shown).get(VALIDATION_HEAD_KEY) or "")
+    return Notice(ACCEPTANCE_GATE, epic, epic, f"Ready for acceptance: {shown.get('title') or epic}",
+                  "The factory has finished its work on the epic. Merge it, send it back or drop it.",
+                  digest(validation.WAITING, head))
+
+
+def stopped_with_work_left(epic: str, main_tree: Path) -> Notice:
+    shown = epic_of(epic, main_tree)
+    if is_closed(shown) or at_the_gate(shown):
+        raise NothingToSend(f"{epic} is closed or at the acceptance gate, so it has no work left")
+    tasks = open_tasks(epic, main_tree)
+    if not tasks:
+        raise NothingToSend(f"{epic} has no open task, so it has no work left")
+    ids = [str(task["id"]) for task in tasks]
+    return Notice(FACTORY_STOPPED, epic, epic, f"Factory stopped: {shown.get('title') or epic}",
+                  f"{len(ids)} open tasks are left: {', '.join(ids)}. Start the factory again to carry on.",
+                  digest(*(f"{task['id']}:{metadata_of(task).get('lap.number') or ''}" for task in tasks)))
+
+
+def paused_on_the_human(epic: str, main_tree: Path) -> Notice:
+    shown = epic_of(epic, main_tree)
+    if is_closed(shown):
+        raise NothingToSend(f"{epic} is closed")
+    held = pause.held_by(shown)
+    if held is None:
+        raise NothingToSend(f"{epic} is not paused")
+    if not held.needs_human(clock.now()):
+        raise NothingToSend(f"the pause on {epic} waits only on the clock")
+    return Notice(FACTORY_PAUSED, epic, epic, f"Factory paused: {shown.get('title') or epic}",
+                  f"The factory is paused on {pause.WORDS[held.cause]}. {PAUSE_HINTS[held.cause]}",
+                  digest(held.cause, str(held.since)))
+
+
+def epics_of(main_tree: Path) -> list[dict]:
+    """Every epic of the repo as bd shows it, by id."""
+    listing = run(["bd", "list", "--all", "--limit", "0", "--json"], main_tree, None)
+    try:
+        listed = json.loads(listing or "[]")
+    except ValueError as error:
+        raise NotifyError(f"bd list did not print JSON: {listing.strip()[:200]!r}") from error
+    ids = sorted(str(item["id"]) for item in listed
+                 if isinstance(item, dict) and item.get("id") and item.get("issue_type") == EPIC_TYPE)
+    return [shown_or_refuse(epic, main_tree) for epic in ids]
+
+
+def is_running(shown: dict) -> bool:
+    """True for an open epic the factory holds that is neither parked nor at the gate."""
+    labels = labels_of(shown)
+    return (FACTORY_LABEL in labels and park.HUMAN_LABEL not in labels and not is_closed(shown)
+            and not at_the_gate(shown))
+
+
+def running_epics(main_tree: Path) -> list[str]:
+    """The ids of the epics that run, by id."""
+    return [str(shown["id"]) for shown in epics_of(main_tree) if is_running(shown)]
+
+
+def running_epic(main_tree: Path) -> str:
+    """The id of the first epic that runs, or raises NothingToSend."""
+    running = running_epics(main_tree)
+    if not running:
+        raise NothingToSend("no epic is running")
+    return running[0]
+
+
+def host_prompt(epic: str, main_tree: Path) -> Notice:
+    shown = epic_of(epic, main_tree)
+    return Notice(PERMISSION_PROMPT, epic, epic, f"Permission prompt: {shown.get('title') or epic}",
+                  "The host asks you for a permission while the epic runs.", str(time.time_ns()))
+
+
+def notice_for(event: str, bead: str | None, main_tree: Path) -> Notice:
+    """The notification the event makes on the bead; raises NothingToSend when the event does not hold."""
+    if event == PERMISSION_PROMPT:
+        return host_prompt(bead or running_epic(main_tree), main_tree)
+    if bead is None:
+        raise NotifyError(f"{event} needs the bead it is about")
+    makers = {TASK_PARKED: parked_task, EPIC_PARKED: parked_epic, ONLY_PARKED_LEFT: only_parked_tasks_left,
+              ACCEPTANCE_GATE: at_acceptance_gate, FACTORY_STOPPED: stopped_with_work_left,
+              FACTORY_PAUSED: paused_on_the_human}
+    return makers[event](bead, main_tree)
+
+
+def sent_so_far(epic: dict) -> dict[str, str]:
+    held = metadata_of(epic).get(NOTIFICATION_KEY)
+    if isinstance(held, str):
+        try:
+            held = json.loads(held)
+        except ValueError:
+            held = {}
+    return {str(key): str(value) for key, value in held.items()} if isinstance(held, dict) else {}
+
+
+def record(notice: Notice, main_tree: Path) -> None:
+    """Writes the notice into the epic's key; raises NothingToSend when the key already holds its fingerprint."""
+    sent = sent_so_far(shown_or_refuse(notice.epic, main_tree))
+    name = f"{notice.event}:{notice.bead}"
+    if sent.get(name) == notice.fingerprint:
+        raise NothingToSend(f"{notice.event} on {notice.bead} was already sent")
+    written = json.dumps({**sent, name: notice.fingerprint}, sort_keys=True)
+    run(["bd", "update", notice.epic, "--set-metadata", f"{NOTIFICATION_KEY}={written}"], main_tree,
+        env_as_factory())
+
+
+def pushover_settings(home: Path) -> Pushover | None:
+    """This machine's Pushover keys, or None when the file is missing or holds no usable pair."""
+    path = home / PUSHOVER_FILE
+    if not path.is_file():
+        return None
+    try:
+        held = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        print(f"notify: {path} cannot be read, so Pushover is off: {error}", file=sys.stderr)
+        return None
+    if not isinstance(held, dict):
+        print(f"notify: {path} does not hold a JSON object, so Pushover is off", file=sys.stderr)
+        return None
+    keys = [str(held.get(key) or "").strip() for key in ("user_key", "app_token", "ui_url", "api_url")]
+    user_key, app_token, ui_url, api_url = keys
+    if not user_key or not app_token:
+        return None
+    return Pushover(user_key, app_token, (ui_url or UI_ADDRESS).rstrip("/"), api_url or PUSHOVER_API)
+
+
+def bead_link(pushover: Pushover, bead: str, main_tree: Path) -> str:
+    return (f"{pushover.ui_url}/bead/{urllib.parse.quote(bead, safe='')}"
+            f"?project={urllib.parse.quote(str(main_tree), safe='')}")
+
+
+def send_pushover(pushover: Pushover, notice: Notice, main_tree: Path) -> None:
+    fields = {"token": pushover.app_token, "user": pushover.user_key,
+              "title": shortened(notice.title, TITLE_LIMIT), "message": shortened(notice.text, MESSAGE_LIMIT),
+              "url": bead_link(pushover, notice.bead, main_tree), "url_title": notice.bead}
+    request = urllib.request.Request(pushover.api_url, data=urllib.parse.urlencode(fields).encode("utf-8"),
+                                     method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=PUSHOVER_TIMEOUT_SECONDS) as response:
+            response.read()
+    except OSError as error:
+        print(f"notify: Pushover did not take the message: {error}", file=sys.stderr)
+
+
+def notify(event: str, bead: str | None, home: Path, main_tree: Path) -> str:
+    """Sends the notification once and returns the line for the host; raises NothingToSend when there is none."""
+    notice = notice_for(event, bead, main_tree)
+    record(notice, main_tree)
+    pushover = pushover_settings(home)
+    if pushover is not None:
+        send_pushover(pushover, notice, main_tree)
+    return f"jidoka: {notice.title}. {notice.text} ({notice.bead})"
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="notify.py", description="Tell the human that the factory waits on them.")
+    parser.add_argument("event", choices=EVENTS)
+    parser.add_argument("bead", nargs="?", help="the bead the event is about; permission-prompt finds its own")
+    parser.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
+    args = parser.parse_args(argv)
+    try:
+        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        line = notify(args.event, args.bead, repo_settings.jidoka_home(args.jidoka_home), main_tree)
+    except NothingToSend as reason:
+        print(f"notify: nothing to send: {reason}", file=sys.stderr)
+        return 0
+    except (NotifyError, HandoffError, CommandError, repo_settings.SettingsError, OSError) as error:
+        print(f"notify: {error}", file=sys.stderr)
+        return 1
+    print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

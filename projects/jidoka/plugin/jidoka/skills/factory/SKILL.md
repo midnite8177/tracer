@@ -18,6 +18,7 @@ The scripts, run from inside the repo:
 - scheduler: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/scheduler.py"`
 - bench: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/bench.py"`
 - repo settings: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py"`
+- watcher: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/watch.py"`
 
 The skill folder is the directory that holds this SKILL.md. Write every
 path as one absolute path with the `../..` resolved, so the launcher is
@@ -43,6 +44,8 @@ echo of a script's output. The events and their lines:
 - a lap merged: `<task> merged into <epic branch>`
 - a lap parked: `<task> parked: <why>`
 - a lap blocked: `<task> blocked: <why>`
+- the factory paused: `<epic-id> paused: <cause>, retrying in <minutes> minutes`
+- nothing can run yet: `<epic-id>: waiting`
 - nothing left to run: `<epic-id>: nothing left to run`
 
 A refusal is not an event. Show the script's message verbatim and stop.
@@ -82,11 +85,14 @@ stop.
    `test_target` for the workers' prompts.
 3. **Next.** Run `scheduler next <epic-id> --jidoka-home ...`. Exit 1 means
    it refused and wrote nothing; stderr lists every reason. Show it and
-   stop. Exit 0 prints JSON with `epic`, `branch` (the epic branch),
-   `lap_limit`, `actions` and `laps`. A lap an earlier session left at the
-   build with no worker is already cut off: the scheduler lists it first in
-   `actions`, with its tries unchanged. Start a build worker for each
-   action, as in step 4. When `actions` is empty and no worker of yours is
+   stop. A refusal because the epic already has a manager means its
+   heartbeat is fresh: show it and stop. Exit 0 prints JSON with `epic`,
+   `branch` (the epic branch), `lap_limit`, `actions` and `laps`. On a
+   stopped epic this call is the resume: it has ended each lap an earlier
+   session left running as interrupted, stopped the workers they left, put
+   git's word over the records where they disagree, and cleared a dead
+   merge lock, then listed each of those tasks in `actions` with a new lap
+   on its worktree. Start a build worker for each action, as in step 4. When `actions` is empty and no worker of yours is
    running, go to step 6.
 4. **Start a build worker.** For each action, read the task with
    `bd show <task>`. Start one worker with the Agent tool, in the
@@ -189,8 +195,15 @@ stop.
    - its reply ends with a blocked block: `blocked`;
    - its reply ends with a failed block, or holds no block you can read:
      `failed`;
-   - it stopped before it replied, on an error, an interruption, a usage
-     limit or an outage: `"cut off"`.
+   - it stopped before it replied on a usage limit, an outage, a billing
+     error or an auth failure: `"cut off" --cause <cause>`, with the cause
+     `usage-limit`, `outage`, `billing` or `auth`. That pauses the epic:
+     the scheduler ends the lap interrupted, counts no cutoff, and opens
+     nothing until its back-off is over, 5, 15 and 30 minutes and then an
+     hour, and it notifies the human of a billing error, an auth failure
+     and an outage past an hour;
+   - it stopped before it replied on any other error or an interruption:
+     `"cut off"`.
 
    A merge worker's reply is reported the same way. Write the worker's
    event line first. A report on done commits the build's work and runs the
@@ -210,5 +223,29 @@ stop.
    for the stage that keeps failing, and gives it an area with
    `bd update <task> --set-metadata lap.area=<area>`; it is the one
    `bd` write the manager makes. The next scheduler call lifts the brake.
+   When `paused` is not null, the epic is paused: write the paused event
+   line with the cause and `wait_seconds` in minutes. Nothing starts until
+   the pause is over.
    When `actions` is empty and no worker of yours is running, go to step 6.
-6. **End.** Write `<epic-id>: nothing left to run` and stop.
+6. **Wait or end.** When `watch` is true, something is still open and
+   nothing can run now: the epic is paused, parked, or holds only parked
+   or blocked tasks. Write `<epic-id>: waiting`, then start the watcher
+   in the background (`run_in_background: true`) with
+   `watch <epic-id>` and wait. It exits when a task is unparked, a task is
+   added, a task merges, or the pause is over, and prints which. Then run
+   `scheduler carry-on <epic-id> --jidoka-home ...`, which opens what fits,
+   with no restart, and go on from step 4. A prompt that starts with
+   `jidoka: the last turn ended on an API error` wakes you the same way: run
+   what it says. When `watch` is false, write `<epic-id>: nothing left to
+   run` and stop.
+
+## When the human tells the host to stop
+
+When the human tells you to stop at once, stop every worker of yours that
+still runs, then run `scheduler stop <epic-id> --jidoka-home ...` and
+nothing else: it ends each running lap interrupted, which counts no
+cutoff, no try and no cap, and sends the one notification that the
+factory stopped with work left. Write `<epic-id>: stopped` and stop. The
+next session opens with a line naming the stopped epic and the command that
+resumes it, `/jidoka:factory <epic-id>`, and that run of `scheduler next`
+gives each interrupted task a new lap on the work it left.

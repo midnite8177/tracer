@@ -5,12 +5,13 @@ second or more, and a scheduler test makes a couple of dozen calls. This
 fake answers in the time Python takes to start.
 
 It speaks only the calls that scheduler.py, handoff.py, holdouts.py,
-targeted_tests.py, merge_gate.py, bench.py, land.py and the issues and
+targeted_tests.py, merge_gate.py, bench.py, land.py, notify.py, resume.py and the issues and
 context skills' scripts make, and the ones their tests make to set up and
 read beads:
   show <id>... --json
   list [--parent <id>] --all --limit 0 --json
   list [--status <status>] --json
+  list --label <label> --type <type> --limit 0 --json
   ready --json
   blocked --json
   create --title <title> [--type <type>] [--parent <id>] [--labels <label,...>] [--priority <n>]
@@ -237,10 +238,20 @@ def list_beads(store: dict, flags: Flags) -> bool:
     need_positionals("list", flags, 0)
     parent, status = flags.one("--parent"), flags.one("--status")
     every = "--all" in flags.switches
+    label, kind = flags.one("--label"), flags.one("--type")
+    if label is not None or kind is not None:
+        if label is None or kind is None or flags.one("--limit") != "0" or every or parent is not None \
+                or status is not None:
+            raise Refused("the fake bd answers bd list with --label and --type only as "
+                          "list --label <label> --type <type> --limit 0 --json")
+        print(json.dumps([plain(bead) for bead in store["beads"].values()
+                          if bead["status"] != CLOSED and label in bead["labels"] and bead["issue_type"] == kind],
+                         indent=2))
+        return True
     if every or parent is not None or "--limit" in flags.values:
         if not every or flags.one("--limit") != "0" or status is not None:
-            raise Refused("the fake bd answers bd list only as list [--parent <id>] --all --limit 0 --json "
-                          "or list [--status <status>] --json")
+            raise Refused("the fake bd answers bd list only as list [--parent <id>] --all --limit 0 --json, "
+                          "list [--status <status>] --json or list --label <label> --type <type> --limit 0 --json")
     elif status is not None and status not in STATUSES:
         raise Refused(f"bd list --status takes one of {sorted(STATUSES)}, not {status!r}")
 
@@ -412,7 +423,8 @@ def answer(argv: list[str], cwd: Path) -> bool:
     if command == "show":
         return show(store, parse(command, args, set(), {"--json"}))
     if command == "list":
-        return list_beads(store, parse(command, args, {"--parent", "--limit", "--status"}, {"--all", "--json"}))
+        return list_beads(store, parse(command, args, {"--parent", "--limit", "--status", "--label", "--type"},
+                                       {"--all", "--json"}))
     if command == "ready":
         return ready(store, parse(command, args, set(), {"--json"}))
     if command == "blocked":

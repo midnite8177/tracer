@@ -448,6 +448,90 @@ class RecordedSettingsTests(InstallerTestCase):
         self.assertTrue((self.user_home / ".jidoka" / "python").is_file())
 
 
+class ScriptedTerminal:
+    """A person at the keyboard who gives the answers in order, and keeps what each prompt said and whether it hid the typing."""
+
+    def __init__(self, *answers: str) -> None:
+        self.answers = list(answers)
+        self.prompts: list[tuple[str, bool]] = []
+
+    def terminal(self) -> install.Terminal:
+        return install.Terminal(lambda prompt: self.answer(prompt, False), lambda prompt: self.answer(prompt, True))
+
+    def answer(self, prompt: str, hidden: bool) -> str:
+        self.prompts.append((prompt, hidden))
+        return self.answers.pop(0)
+
+
+class PushoverKeysTests(InstallerTestCase):
+    def pushover(self) -> dict:
+        return json.loads((self.home / "pushover.json").read_text(encoding="utf-8"))
+
+    def test_the_keys_typed_at_the_terminal_are_written_to_the_pushover_file_for_its_owner_only(self):
+        person = ScriptedTerminal("u-pat", "a-jidoka", "http://board.example:5099")
+
+        line = install.ask_for_pushover(self.home, person.terminal())
+
+        self.assertEqual({"user_key": "u-pat", "app_token": "a-jidoka", "ui_url": "http://board.example:5099"},
+                         self.pushover())
+        self.assertEqual(0o600, (self.home / "pushover.json").stat().st_mode & 0o777)
+        self.assertIn("Pushover is set up", line)
+
+    def test_the_application_token_is_typed_hidden_and_the_other_answers_are_not(self):
+        person = ScriptedTerminal("u-pat", "a-jidoka", "")
+
+        install.ask_for_pushover(self.home, person.terminal())
+
+        self.assertEqual([False, True, False], [hidden for _, hidden in person.prompts])
+
+    def test_an_empty_address_means_the_default_address_of_jidoka_ui(self):
+        person = ScriptedTerminal("u-pat", "a-jidoka", "")
+
+        install.ask_for_pushover(self.home, person.terminal())
+
+        self.assertEqual("http://localhost:5099", self.pushover()["ui_url"])
+
+    def test_an_empty_user_key_leaves_pushover_off_and_writes_nothing(self):
+        person = ScriptedTerminal("")
+
+        line = install.ask_for_pushover(self.home, person.terminal())
+
+        self.assertFalse((self.home / "pushover.json").exists())
+        self.assertEqual(1, len(person.prompts))
+        self.assertIn("left as it was", line)
+
+    def test_an_empty_user_key_keeps_the_keys_that_were_set_before(self):
+        install.ask_for_pushover(self.home, ScriptedTerminal("u-pat", "a-jidoka", "").terminal())
+
+        install.ask_for_pushover(self.home, ScriptedTerminal("").terminal())
+
+        self.assertEqual("u-pat", self.pushover()["user_key"])
+
+    def test_new_keys_replace_the_old_and_keep_the_endpoint_the_file_names(self):
+        self.home.mkdir()
+        (self.home / "pushover.json").write_text(
+            json.dumps({"user_key": "old", "app_token": "old", "ui_url": "http://old", "api_url": "http://stand-in"}),
+            encoding="utf-8")
+
+        install.ask_for_pushover(self.home, ScriptedTerminal("u-pat", "a-jidoka", "").terminal())
+
+        self.assertEqual({"user_key": "u-pat", "app_token": "a-jidoka", "ui_url": "http://localhost:5099",
+                          "api_url": "http://stand-in"}, self.pushover())
+
+    def test_a_missing_application_token_leaves_the_file_as_it_was(self):
+        line = install.ask_for_pushover(self.home, ScriptedTerminal("u-pat", "").terminal())
+
+        self.assertFalse((self.home / "pushover.json").exists())
+        self.assertIn("no application token", line)
+
+    def test_a_run_with_no_terminal_asks_nothing_and_says_so(self):
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("not a terminal", done.stdout)
+        self.assertFalse((self.home / "pushover.json").exists())
+
+
 class PrerequisiteTests(InstallerTestCase):
     def assert_nothing_installed(self):
         self.assertFalse(self.home.exists())

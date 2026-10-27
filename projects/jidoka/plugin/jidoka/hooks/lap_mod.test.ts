@@ -1,5 +1,5 @@
 import type { On } from 'claude-code'
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 const WORKTREE = '/repo/.worktrees/lap-t1'
@@ -549,4 +549,189 @@ test('a write whose location cannot be resolved is denied', async ($, on) => {
   const verdict = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/src/a.py`, content: '' }, agentId: 'a1' })
 
   expect(verdict.decision).toBe('deny')
+})
+
+const HOST_FOLDER = '/repo'
+const RAN = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
+
+type Call = { argv: string[]; cwd: string | undefined }
+
+test("a host permission prompt calls the notify script from the host's folder and still reaches the host", async ($, on) => {
+  const calls: Call[] = []
+  on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('process.run', (_, e) => {
+    calls.push({ argv: e.argv, cwd: e.init?.cwd })
+    return { value: RAN }
+  })
+  on('classic.PermissionRequest', () => ({}))
+
+  const answer = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'make deploy' } })
+
+  expect(answer).toEqual({})
+  const [launcher = '', script = ''] = calls[0]?.argv.slice(1) ?? []
+  expect(calls).toHaveLength(1)
+  expect(calls[0]?.argv[0]).toBe('sh')
+  expect(launcher.endsWith('/bin/jidoka-run')).toBe(true)
+  expect(script).toBe(`${launcher.slice(0, -'/bin/jidoka-run'.length)}/scripts/notify.py`)
+  expect(calls[0]?.argv.slice(3)).toEqual(['permission-prompt'])
+  expect(calls[0]?.cwd).toBe(HOST_FOLDER)
+})
+
+const SESSION = { surface: 'terminal', isInteractive: true, cwd: HOST_FOLDER } as const
+const MINUTE = 60_000
+
+test("the heartbeat script runs from the host's folder every minute after the session starts", async ($, on) => {
+  const calls: Call[] = []
+  const clock = mock.clock(on)
+  on('session.start', () => ({ cwd: HOST_FOLDER }))
+  on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('process.run', (_, e) => {
+    calls.push({ argv: e.argv, cwd: e.init?.cwd })
+    return { value: RAN }
+  })
+
+  await $.session.start(SESSION)
+  await clock.advance(MINUTE - 1)
+  expect(calls).toHaveLength(0)
+  await clock.advance(1)
+  await clock.advance(2 * MINUTE)
+
+  const [launcher = '', script = ''] = calls[0]?.argv.slice(1) ?? []
+  expect(calls).toHaveLength(3)
+  expect(calls[0]?.argv[0]).toBe('sh')
+  expect(launcher.endsWith('/bin/jidoka-run')).toBe(true)
+  expect(script).toBe(`${launcher.slice(0, -'/bin/jidoka-run'.length)}/scripts/heartbeat.py`)
+  expect(calls[0]?.argv.slice(3)).toEqual(['beat'])
+  expect(calls[0]?.cwd).toBe(HOST_FOLDER)
+})
+
+test('a second session start does not double the heartbeat', async ($, on) => {
+  let runs = 0
+  const clock = mock.clock(on)
+  on('session.start', () => ({ cwd: HOST_FOLDER }))
+  on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('process.run', () => {
+    runs++
+    return { value: RAN }
+  })
+
+  await $.session.start(SESSION)
+  await $.session.start(SESSION)
+  await clock.advance(MINUTE)
+
+  expect(runs).toBe(1)
+})
+
+test('the heartbeat keeps beating after a beat whose script cannot run', async ($, on) => {
+  let attempts = 0
+  const clock = mock.clock(on)
+  on('session.start', () => ({ cwd: HOST_FOLDER }))
+  on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('process.run', () => {
+    attempts++
+    throw new Error('no such launcher')
+  })
+
+  await $.session.start(SESSION)
+  await clock.advance(2 * MINUTE)
+
+  expect(attempts).toBe(2)
+})
+
+test('a host permission prompt reaches the host even when the notify script cannot run', async ($, on) => {
+  on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('process.run', () => {
+    throw new Error('no such launcher')
+  })
+  on('classic.PermissionRequest', () => ({}))
+
+  const answer = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'make deploy' } })
+
+  expect(answer).toEqual({})
+})
+
+const WAKE_PRINTED = (seconds: number) => ({
+  ...RAN,
+  stdout: JSON.stringify({ epic: 'e1', seconds, text: 'jidoka: carry on' }),
+})
+
+/** Stands for the host: its folder, the wake script (which prints what `printed` returns for the n-th failure in a row), and the prompts submitted to it. */
+function hostWithWake(on: On, printed: (failures: number) => typeof RAN): { asked: string[][]; submitted: string[] } {
+  const world = { asked: [] as string[][], submitted: [] as string[] }
+  on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('process.run', (_, e) => {
+    world.asked.push(e.argv)
+    return { value: printed(Number(e.argv[4])) }
+  })
+  on('prompt.submit', (_, e) => {
+    world.submitted.push(e.text)
+    return { text: e.text }
+  })
+  on('classic.StopFailure', () => ({}))
+  on('classic.Stop', () => ({}))
+  return world
+}
+
+test('a failed turn wakes the host with the wake text after the back-off the wake script names', async ($, on) => {
+  const clock = mock.clock(on)
+  const world = hostWithWake(on, () => WAKE_PRINTED(300))
+
+  await $.classic.StopFailure({ error: 'rate_limit' })
+  await clock.advance(300 * 1000 - 1)
+  expect(world.submitted).toEqual([])
+  await clock.advance(1)
+
+  const [launcher = '', script = ''] = world.asked[0]?.slice(1) ?? []
+  expect(script).toBe(`${launcher.slice(0, -'/bin/jidoka-run'.length)}/scripts/wake.py`)
+  expect(world.asked[0]?.slice(3)).toEqual(['--failures', '1'])
+  expect(world.submitted).toEqual(['jidoka: carry on'])
+})
+
+test('a second failed turn in a row asks for the back-off after two failures and replaces the first timer', async ($, on) => {
+  const clock = mock.clock(on)
+  const world = hostWithWake(on, failures => WAKE_PRINTED(failures === 1 ? 300 : 900))
+
+  await $.classic.StopFailure({ error: 'rate_limit' })
+  await $.classic.StopFailure({ error: 'rate_limit' })
+  await clock.advance(300 * 1000)
+  expect(world.submitted).toEqual([])
+  await clock.advance(600 * 1000)
+
+  expect(world.asked.map(argv => argv[4])).toEqual(['1', '2'])
+  expect(world.submitted).toEqual(['jidoka: carry on'])
+})
+
+test('a turn that ends well cancels the wake and starts the count again', async ($, on) => {
+  const clock = mock.clock(on)
+  const world = hostWithWake(on, () => WAKE_PRINTED(300))
+
+  await $.classic.StopFailure({ error: 'rate_limit' })
+  await $.classic.Stop({})
+  await clock.advance(300 * 1000)
+  await $.classic.StopFailure({ error: 'rate_limit' })
+
+  expect(world.submitted).toEqual([])
+  expect(world.asked.map(argv => argv[4])).toEqual(['1', '1'])
+})
+
+test('a failed turn where no epic runs wakes nobody', async ($, on) => {
+  const clock = mock.clock(on)
+  const world = hostWithWake(on, () => RAN)
+
+  await $.classic.StopFailure({ error: 'rate_limit' })
+  await clock.advance(2 * 60 * 60 * 1000)
+
+  expect(world.submitted).toEqual([])
+})
+
+test('a failed turn still reaches the host when the wake script cannot run', async ($, on) => {
+  on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('process.run', () => {
+    throw new Error('no such launcher')
+  })
+  on('classic.StopFailure', () => ({}))
+
+  const answer = await $.classic.StopFailure({ error: 'rate_limit' })
+
+  expect(answer).toEqual({})
 })

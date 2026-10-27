@@ -1,4 +1,4 @@
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, Timer } from 'claude-code'
 import type { LapWorker } from '../types/index'
 
 const LAP_LINE = /^jidoka lap worktree: (.+?)\s*$/
@@ -260,7 +260,127 @@ async function lapOf($: EngineInterface, agentId: string): Promise<LapWorker | u
   return starting.lap
 }
 
+/**
+ * Tells jidoka's notify script that the host is about to ask the human for a
+ * permission, run in the host's own folder so that it finds the repo and the
+ * epic that runs there. The notify script sends nothing where no epic runs,
+ * and a failure here never changes what the host asks.
+ */
+async function notifyPermissionPrompt($: EngineInterface): Promise<void> {
+  const root = $.plugin.root
+  try {
+    const cwd = await $.session.cwd()
+    await $.process.run(['sh', `${root}/bin/jidoka-run`, `${root}/scripts/notify.py`, 'permission-prompt'], { cwd })
+  } catch {
+    return
+  }
+}
+
+const HEARTBEAT_MS = 60_000
+let heartbeat: Timer | undefined
+
+/**
+ * Tells jidoka's heartbeat script to beat, run in the host's own folder so
+ * that it finds the repo whose epics run there. The script writes a beat only
+ * for an epic that runs, and a failure here never reaches the host.
+ */
+async function beat($: EngineInterface): Promise<void> {
+  const root = $.plugin.root
+  try {
+    const cwd = await $.session.cwd()
+    await $.process.run(['sh', `${root}/bin/jidoka-run`, `${root}/scripts/heartbeat.py`, 'beat'], { cwd })
+  } catch {
+    return
+  }
+}
+
+/** Beats once a minute from now on, in place of any earlier timer of this host. */
+function startHeartbeat($: EngineInterface): void {
+  try {
+    heartbeat?.cancel()
+  } catch {
+    heartbeat = undefined
+  }
+  heartbeat = $.clock.every(HEARTBEAT_MS, () => {
+    void beat($)
+  })
+}
+
+const SECOND_MS = 1000
+let failedTurns = 0
+let wake: Timer | undefined
+
+type Wake = { seconds: number; text: string }
+
+/** What jidoka's wake script prints, or undefined where it printed nothing or something else. */
+function wakeIn(stdout: string): Wake | undefined {
+  try {
+    const printed: unknown = JSON.parse(stdout)
+    if (typeof printed !== 'object' || printed === null) return undefined
+    const { seconds, text } = printed as Record<string, unknown>
+    return typeof seconds === 'number' && typeof text === 'string' ? { seconds, text } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function cancelWake(): void {
+  try {
+    wake?.cancel()
+  } catch {
+    // a timer that is already gone needs no cancel
+  }
+  wake = undefined
+}
+
+/**
+ * Asks jidoka's wake script, run in the host's own folder, how long to wait
+ * after the host's latest failed turn and what to say then. Where an epic
+ * runs, a timer submits that prompt to the host, which would otherwise sit
+ * idle after an API error for good; a later failure replaces the timer. The
+ * host never learns of a failure here.
+ */
+async function wakeAfterFailure($: EngineInterface): Promise<void> {
+  failedTurns++
+  const root = $.plugin.root
+  try {
+    const cwd = await $.session.cwd()
+    const argv = ['sh', `${root}/bin/jidoka-run`, `${root}/scripts/wake.py`, '--failures', String(failedTurns)]
+    const printed = await $.process.run(argv, { cwd })
+    const due = printed.exitCode === 0 ? wakeIn(printed.stdout) : undefined
+    if (due === undefined) return
+    cancelWake()
+    wake = $.clock.after(due.seconds * SECOND_MS, () => {
+      wake = undefined
+      $.prompt.submit({ text: due.text }).catch(() => undefined)
+    })
+  } catch {
+    return
+  }
+}
+
 export const register: Register = on => {
+  on('session.start', async ($, e, next) => {
+    startHeartbeat($)
+    return next(e)
+  })
+
+  on('classic.StopFailure', async ($, e, next) => {
+    await wakeAfterFailure($)
+    return next(e)
+  })
+
+  on('classic.Stop', async ($, e, next) => {
+    failedTurns = 0
+    cancelWake()
+    return next(e)
+  })
+
+  on('classic.PermissionRequest', async ($, e, next) => {
+    await notifyPermissionPrompt($)
+    return next(e)
+  })
+
   on('agent.spawn', async ($, e, next) => {
     const worktree = worktreeOf(e.prompt)
     if (worktree === undefined) return next(e)

@@ -141,6 +141,8 @@ class SchedulerCase(unittest.TestCase):
         return json.loads(done.stdout)["branch"]
 
     def next_moves(self, epic: str) -> subprocess.CompletedProcess:
+        """Runs `next` as a manager that starts after the one before it is gone, so the epic holds no heartbeat."""
+        (self.home / "heartbeat" / f"{epic}.json").unlink(missing_ok=True)
         return self.launch(SCHEDULER, "next", epic)
 
     def next_printed(self, epic: str) -> dict:
@@ -451,41 +453,42 @@ class SchedulerPrivateDocsTests(SchedulerCase):
 
 
 class SchedulerLapStateTests(SchedulerCase):
-    def test_a_second_call_opens_no_new_lap_and_lists_the_open_laps(self):
+    def test_a_second_call_opens_each_open_lap_again_as_the_next_lap_on_the_same_slot_and_lists_them(self):
         epic = self.new_epic()
-        first, second, third = (self.new_task_under(epic) for _ in range(3))
+        first, second, third = (self.new_task_under(epic, "--priority", str(number)) for number in (1, 2, 3))
         self.hand_off(epic, {first: "till", second: "receipts", third: "shelf"})
         opened = self.next_printed(epic)["actions"]
 
         printed = self.next_printed(epic)
 
         self.assertEqual([{**{key: value for key, value in action.items() if key not in ("action", "answer")},
-                           "stage": "build", "tries": 0} for action in opened],
+                           "lap": 2, "stage": "build", "tries": 0} for action in opened],
                          printed["laps"])
         self.assertNotIn("lap.stage", self.metadata(third))
 
-    def test_a_lap_left_at_the_build_with_no_worker_goes_back_to_the_build_when_next_runs_again(self):
+    def test_a_lap_left_at_the_build_with_no_worker_ends_interrupted_and_starts_again_when_next_runs_again(self):
         lap = self.open_one_lap()
 
         done = self.next_moves(lap.epic)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual([("build", lap.task, str(lap.worktree))],
-                         [(action["action"], action["task"], action["worktree"])
+        self.assertEqual([("build", lap.task, str(lap.worktree), 2)],
+                         [(action["action"], action["task"], action["worktree"], action["lap"])
                           for action in json.loads(done.stdout)["actions"]])
-        self.assertIn(f"{lap.task} was cut off", done.stderr)
+        self.assertIn(f"{lap.task} was left at the build with no worker", done.stderr)
+        self.assertEqual(1, len([text for text in self.texts(lap.task) if text.startswith("Interrupted: ")]))
 
-    def test_a_lap_left_at_the_build_keeps_its_tries_when_next_runs_again(self):
+    def test_a_lap_left_at_the_build_starts_again_with_no_tries_when_next_runs_again(self):
         lap = self.open_one_lap()
         self.report_printed(lap.epic, lap.task, "failed")
 
         printed = self.next_printed(lap.epic)
 
         self.assertEqual([lap.task], [action["task"] for action in printed["actions"]])
-        self.assertEqual([("build", 1)], [(open_lap["stage"], open_lap["tries"]) for open_lap in printed["laps"]])
-        self.assertEqual(1, self.metadata(lap.task)["lap.tries"])
+        self.assertEqual([("build", 0)], [(open_lap["stage"], open_lap["tries"]) for open_lap in printed["laps"]])
+        self.assertEqual(0, self.metadata(lap.task)["lap.tries"])
 
-    def test_a_lap_that_next_opens_in_the_same_call_is_not_reported_cut_off(self):
+    def test_a_lap_that_next_opens_in_the_same_call_is_not_reported_interrupted(self):
         epic = self.new_epic()
         task = self.new_task_under(epic)
         self.hand_off(epic, {task: "till"})
@@ -493,7 +496,7 @@ class SchedulerLapStateTests(SchedulerCase):
         done = self.next_moves(epic)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertNotIn("cut off", done.stderr)
+        self.assertNotIn("interrupted", done.stderr)
 
     def test_an_open_lap_read_back_from_metadata_holds_its_area_and_its_slot(self):
         epic = self.new_epic()
@@ -872,15 +875,15 @@ class MergeWorkerTests(SchedulerCase):
         self.assertEqual(("merge", 0, "0"), (metadata["lap.stage"], metadata["lap.tries"],
                                              str(metadata.get("lap.mergetries", 0))))
 
-    def test_a_manager_restarting_sends_a_lap_left_at_the_merge_stage_back_to_the_merge_worker(self):
+    def test_a_manager_restarting_gives_a_lap_left_at_the_merge_stage_a_new_lap_at_the_build_on_its_worktree(self):
         lap = self.conflicting_lap()
         self.build_done(lap.epic, lap.task)
 
         printed = self.next_printed(lap.epic)
 
         [action] = printed["actions"]
-        self.assertEqual(("merge", lap.task), (action["action"], action["task"]))
-        self.assertIn("card.txt", action["reason"])
+        self.assertEqual(("build", lap.task, 2), (action["action"], action["task"], action["lap"]))
+        self.assertEqual(str(lap.worktree), action["worktree"])
 
     def test_two_laps_that_touch_the_same_function_both_merge_the_second_after_a_merge_worker_reconciles_it(self):
         epic = self.new_epic()
@@ -1586,7 +1589,7 @@ class HumanLabelBrakeTests(SchedulerCase):
         self.assertEqual([], json.loads(restarted.stdout)["actions"])
         self.assertIn(lap.task, restarted.stderr)
 
-    def test_taking_the_human_label_off_a_task_lets_its_stopped_build_go_on_with_the_tries_it_had(self):
+    def test_taking_the_human_label_off_a_task_lets_its_stopped_build_start_again_as_a_new_lap_on_its_worktree(self):
         lap = self.open_one_lap()
         self.label(lap.task)
         self.report_printed(lap.epic, lap.task, "failed")
@@ -1594,8 +1597,8 @@ class HumanLabelBrakeTests(SchedulerCase):
 
         [action] = self.next_printed(lap.epic)["actions"]
 
-        self.assertEqual(("build", lap.task, 1), (action["action"], action["task"],
-                                                  self.metadata(lap.task)["lap.tries"]))
+        self.assertEqual(("build", lap.task, 2, str(lap.worktree)),
+                         (action["action"], action["task"], action["lap"], action["worktree"]))
 
     def test_a_build_that_is_done_when_the_human_label_goes_on_its_task_still_merges(self):
         lap = self.open_one_lap()
@@ -1950,8 +1953,9 @@ class FactoryRulesTests(SchedulerCase):
 
         self.assertEqual(1, second["lap_limit"])
         opened = {action["task"] for action in first["actions"]}
-        self.assertEqual(opened, {action["task"] for action in second["actions"]})
-        self.assertEqual(opened, {lap["task"] for lap in second["laps"]})
+        self.assertEqual(1, len(second["actions"]))
+        self.assertLessEqual({action["task"] for action in second["actions"]}, opened)
+        self.assertEqual({action["task"] for action in second["actions"]}, {lap["task"] for lap in second["laps"]})
 
     def test_a_lap_limit_that_is_not_below_the_repo_settings_is_refused_and_writes_nothing(self):
         epic = self.handed_off_epic(1)

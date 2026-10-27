@@ -78,7 +78,7 @@ _Avoid_: Template, profile, mode
 One task's trip through the factory, from the start of its build to its
 merge into the epic branch, retries included. It ends merged, which closes
 the task; parked, waiting on the human; blocked, waiting on another task in
-the epic; or interrupted, when the factory stopped under it. A task that
+the epic; or interrupted, when the factory stopped or paused under it. A task that
 did not merge gets a new lap that starts from the work left behind.
 _Avoid_: Run, attempt, iteration, loop
 
@@ -90,8 +90,10 @@ _Avoid_: Stuck, on hold, needs-owner, escalated
 
 **Paused**:
 Waiting on the clock, for a usage window's reset or the API's return,
-while the host still runs. Nothing new starts on what is paused, and the
-factory carries on by itself.
+while the host still runs. A usage limit, an outage, a billing error or an
+auth failure pauses the epic. Nothing new starts on what is paused, and
+the factory retries after a back-off of 5, 15 and 30 minutes, then every
+hour, and carries on by itself.
 _Avoid_: Held, throttled, sleeping
 
 **Stopped**:
@@ -123,9 +125,10 @@ One step of a lap or of a pass, such as the build or the review.
 _Avoid_: Step, phase, node, pass
 
 **Cut off**:
-Said of a stage whose worker ended because of a usage limit, an outage or
-a stop, not because of its own work. The stage reruns from its start, and
-the cutoff is not a try.
+Said of a stage whose worker ended because of an error or an interruption,
+not because of its own work. The stage reruns from its start, and the
+cutoff is not a try. A usage limit, an outage, a billing error or an auth
+failure pauses the epic instead, and counts no cutoff.
 _Avoid_: Failed, aborted, killed, crashed
 
 **Track**:
@@ -218,8 +221,10 @@ _Avoid_: Guess, decision, note
 **Notification**:
 A message telling the human that the factory waits on them: a task or
 the epic parked, only parked tasks left, the epic at the acceptance gate,
-or the factory stopped with work left. It points at a bead, and the bead
-carries the question; missing a notification loses nothing.
+the factory stopped with work left, the factory paused on a billing error,
+an auth failure or an outage past an hour, or the host asking for a
+permission while an epic runs. It points at a bead, and the bead carries the
+question; missing a notification loses nothing.
 _Avoid_: Alert, ping, push, notice
 
 **Page**:
@@ -304,6 +309,27 @@ _Avoid_: Refactor ratio, investment
 The harness session the human starts and works in. Planning runs in it,
 and after a handoff the factory's manager runs in it too.
 _Avoid_: Root session, driver, parent
+
+**Heartbeat**:
+A file in the jidoka home, one for each epic a manager runs. The manager's
+first call writes it, and the lap mod rewrites it every minute while the
+host lives. It holds the second of the last beat, so a heartbeat that stops
+getting younger shows a stopped factory. An epic handed off with no manager
+has none.
+_Avoid_: Pulse, ping, keep-alive
+
+**Watcher**:
+The background script the manager starts when nothing can run. It exits
+when a task is unparked, a task is added, a task merges or a pause is
+over, and the manager then goes on. After a failed turn, the lap mod wakes
+a host that sits idle with a timer and a prompt.
+_Avoid_: Poller, daemon, listener
+
+**Status script**:
+The script that shows, from any terminal and with no host, each epic the
+factory holds and each task's lap, stage, tries and time against its wall
+clock, with the age of the epic's heartbeat. It reads and changes nothing.
+_Avoid_: Dashboard, monitor
 
 **Manager**:
 The agent in the host that works an epic through its passes. It starts the

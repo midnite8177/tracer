@@ -162,6 +162,11 @@ class Play:
         self.show("show the epic and its tasks", epic, first, second)
         self.comments("read a task's comments", first)
         self.call("close a task", "jidoka", "close", first, "--reason", f"{TESTS_BASE}: merged into epic/take")
+        self.listed_beads(self.repo, "list the epics that carry a label", "--label", "factory", "--type", "epic",
+                          "--limit", "0")
+        self.call("label the closed task", "claude", "label", "add", first, "human")
+        self.listed_beads(self.repo, "list the tasks that carry a label, closed ones left out", "--label", "human",
+                          "--type", "task", "--limit", "0")
         self.call("mark the lap merged", "jidoka", "update", first, "--set-metadata", "lap.stage=merged")
         self.show("show a closed task and the task that waited on it", first, second)
         self.listed("list the children with a closed one", epic)
@@ -267,6 +272,12 @@ class FakeBdContractTests(unittest.TestCase):
                      "list every bead"):
             self.assert_same(step)
 
+    def test_list_with_a_label_and_a_type_prints_the_beads_not_closed_that_carry_the_label_and_have_the_type(self):
+        for step in ("list the epics that carry a label", "list the tasks that carry a label, closed ones left out"):
+            self.assert_same(step)
+        self.assertEqual(1, len(self.fake.calls["list the epics that carry a label"].printed))
+        self.assertEqual(1, len(self.fake.calls["list the tasks that carry a label, closed ones left out"].printed))
+
     def test_a_call_from_a_linked_worktree_reads_the_beads_of_the_main_checkout(self):
         self.assert_same("list the beads from a linked worktree")
         self.assertNotEqual([], self.fake.calls["list the beads from a linked worktree"].printed)
@@ -326,6 +337,12 @@ class FakeBdRefusalTests(unittest.TestCase):
 
         self.assertEqual(1, done.returncode)
         self.assertIn("list", done.stderr)
+
+    def test_a_list_by_label_without_a_type_fails(self):
+        done = self.bd("list", "--label", "factory", "--limit", "0", "--json")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("--label", done.stderr)
 
     def test_show_without_json_fails(self):
         done = self.bd("show", self.task)
