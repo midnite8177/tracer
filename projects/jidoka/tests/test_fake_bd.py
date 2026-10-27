@@ -135,6 +135,10 @@ class Play:
                              "--parent", epic)
         self.call("make a task wait on another", "claude", "dep", "add", second, "--blocked-by", first)
         self.listed("list the epic's children", epic)
+        found = self.create("create a task in the epic discovered from another", "found", "--title",
+                            "Fix the rounding", "--type=task", "--parent", epic, "--description",
+                            "Seen while reading the card", "--deps", f"discovered-from:{second}")
+        self.show("show a task discovered from another", found)
         self.call("hand off the tasks", "Jeff Contract", "update", first, "--set-metadata", "lap.track=simple",
                   "--set-metadata", "lap.area=till")
         self.call("record the epic branch", "Jeff Contract", "update", epic, "--set-metadata",
@@ -244,6 +248,13 @@ class FakeBdContractTests(unittest.TestCase):
     def test_create_takes_a_description_and_the_beads_the_new_one_waits_on(self):
         self.assert_same("create a task with a description that waits on an open and a closed bead")
         self.assert_same("show a task with a description and a claimed task")
+
+    def test_a_task_created_discovered_from_another_shows_the_link_and_waits_on_nothing(self):
+        self.assert_same("create a task in the epic discovered from another")
+        self.assert_same("show a task discovered from another")
+        self.assertEqual("discovered-from", next(link["dependency_type"] for link in
+                                                 self.fake.calls["show a task discovered from another"]
+                                                 .printed[0]["dependencies"] if link["id"] == "second"))
 
     def test_a_claim_takes_an_unclaimed_task_or_one_its_actor_holds_and_fails_on_another_actor_s(self):
         for step in ("claim a task", "claim a task its actor already holds", "claim a task another actor holds"):

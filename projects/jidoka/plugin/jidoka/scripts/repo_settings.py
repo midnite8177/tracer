@@ -48,6 +48,10 @@ It refuses while git tracks the main worktree's .beads/, naming the
 beads_stealth.py command that switches the workspace to stealth mode.
 
 `show` prints the stored settings, or exits 1 when the repo has none.
+
+The built-in list's additions are the commands a human chose to allow in every
+repo on this machine. They live in <jidoka-home>/built_in_commands.json, a JSON
+list of commands, and the lap mod allows each as it allows a worker command.
 """
 from __future__ import annotations
 
@@ -81,6 +85,7 @@ NO_TESTS = "an app with no test command has null for test, test_target and test_
 TEST_SCOPES = ["targeted", "full"]
 APP_KINDS = ["program", "library"]
 BEADS_WORKSPACE = ".beads"
+BUILT_IN_COMMANDS_FILE = "built_in_commands.json"
 SCRIPTS = Path(__file__).resolve().parent
 SWITCH_COMMAND = f'sh "{SCRIPTS.parent / "bin" / "jidoka-run"}" "{SCRIPTS / "beads_stealth.py"}"'
 
@@ -438,6 +443,45 @@ def show(home: Path, cwd: Path) -> str:
     if not settings:
         raise SettingsError(f"no settings for {main_tree} in {path.parent}. Run /jidoka:onboard to record them")
     return json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
+
+
+def built_in_commands(home: Path) -> list[str]:
+    """The commands the human added to the built-in list on this machine; none when the file is missing."""
+    path = home / BUILT_IN_COMMANDS_FILE
+    if not path.is_file():
+        return []
+    try:
+        commands = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise SettingsError(f"{path} is not valid JSON: {error}") from error
+    if not (isinstance(commands, list) and all(map(is_text, commands))):
+        raise SettingsError(f"{path} does not hold a list of commands")
+    return commands
+
+
+def add_built_in_command(home: Path, command: str) -> bool:
+    """Adds the command to the built-in list's additions; False when it is already there."""
+    held = built_in_commands(home)
+    if command in held:
+        return False
+    home.mkdir(parents=True, exist_ok=True)
+    (home / BUILT_IN_COMMANDS_FILE).write_text(json.dumps([*held, command], indent=2, ensure_ascii=False) + "\n",
+                                               encoding="utf-8", newline="\n")
+    return True
+
+
+def add_worker_command(home: Path, main_tree: Path, command: str) -> bool:
+    """Adds the command to the repo's worker_commands; False when it is already there."""
+    settings = load(settings_path(home, main_tree))
+    if not settings:
+        raise SettingsError(f"no settings for {main_tree} in {home / 'repos'}. Run /jidoka:onboard to record them")
+    held = settings.get("worker_commands")
+    if not isinstance(held, list):
+        raise SettingsError("the stored worker_commands is not a list")
+    if command in held:
+        return False
+    write(home, main_tree, json.dumps({"worker_commands": [*held, command]}))
+    return True
 
 
 def main(argv: list[str]) -> int:

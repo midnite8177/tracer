@@ -22,13 +22,15 @@ type Launched = { pluginRoot: string }
  * plugin's folder is read off the launcher's path.
  */
 function engineBeneath(on: On, settings: object | undefined): Launched {
-  return engineWith(on, settings, { places: {}, statFails: false, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+  return engineWith(on, settings, { places: {}, statFails: false, granted: [], spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
 }
 
 type World = {
   /** Every path exists and is its own real location, except a path here and what lies beneath it: it lands at the place named, or nowhere for null. */
   places: Record<string, string | null>
   statFails: boolean
+  /** The commands the launcher prints for `rules.py lap-commands` in the worktree: the epic's and the built-in list's additions. */
+  granted: string[]
   spawn: () => Promise<{ model: string; agentId: string } | { deny: string }>
 }
 
@@ -56,11 +58,17 @@ function engineWith(on: On, settings: object | undefined, world: World): Launche
       script === `${root}/scripts/repo_settings.py` &&
       mode === 'show' &&
       e.init?.cwd === WORKTREE
-    const printed = isShow && settings !== undefined
+    const isGranted =
+      shell === 'sh' &&
+      launcher.endsWith('/bin/jidoka-run') &&
+      script === `${root}/scripts/rules.py` &&
+      mode === 'lap-commands' &&
+      e.init?.cwd === WORKTREE
+    const printed = isGranted || (isShow && settings !== undefined)
     return {
       value: {
         exitCode: printed ? 0 : 1,
-        stdout: printed ? JSON.stringify(settings) : '',
+        stdout: !printed ? '' : JSON.stringify(isGranted ? world.granted : settings),
         stderr: printed ? '' : 'repo_settings: no settings',
         isStdoutTruncated: false,
         isStderrTruncated: false,
@@ -211,6 +219,15 @@ test('a command on the repo\'s list or an app\'s test command is allowed with an
   expect(await bash($, 'dotnet test App.slnx --filter "FullyQualifiedName~Lap"')).toBe('allow')
 })
 
+test('a command the epic or the built-in list adds is allowed, and the lap\'s other calls stay denied', async ($, on) => {
+  engineWith(on, SETTINGS, { ...NOTHING, granted: ['make lint'], spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'make lint --fix')).toBe('allow')
+  expect(await bash($, 'dotnet build App.slnx && make lint')).toBe('allow')
+  expect(await bash($, 'make deploy')).toBe('deny')
+})
+
 test('a list entry matches whole words only', async ($, on) => {
   engineBeneath(on, SETTINGS)
   await startLap($, WORKTREE)
@@ -277,10 +294,20 @@ test('the calls that only talk to the host are left to the host', async ($, on) 
   engineBeneath(on, SETTINGS)
   await startLap($, WORKTREE)
 
-  for (const tool of ['ToolSearch', 'SendMessage', 'ListAgents', 'AskUserQuestion', 'SubagentHandback']) {
+  for (const tool of ['ToolSearch', 'SendMessage', 'ListAgents', 'SubagentHandback']) {
     const verdict = await $.tool.check({ tool, input: {}, agentId: 'a1' })
     expect(verdict).toEqual(HOST_VERDICT)
   }
+})
+
+test('a lap worker never asks live, so its AskUserQuestion call is denied with the way to ask', async ($, on) => {
+  engineBeneath(on, SETTINGS)
+  await startLap($, WORKTREE)
+
+  const verdict = await $.tool.check({ tool: 'AskUserQuestion', input: {}, agentId: 'a1' })
+
+  expect(verdict.decision).toBe('deny')
+  expect(verdict.reason).toContain('question report')
 })
 
 test('a lap worker starts no workers', async ($, on) => {
@@ -409,7 +436,7 @@ test('a lap record of another shape denies the worker\'s calls instead of leavin
   expect(hostVerdict).toEqual(HOST_VERDICT)
 })
 
-const NOTHING: Pick<World, 'places' | 'statFails'> = { places: {}, statFails: false }
+const NOTHING: Pick<World, 'places' | 'statFails' | 'granted'> = { places: {}, statFails: false, granted: [] }
 
 function engineWithPlaces(on: On, places: World['places']): Launched {
   return engineWith(on, SETTINGS, { ...NOTHING, places, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })

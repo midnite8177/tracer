@@ -19,6 +19,9 @@ SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 
 RUN_TIMEOUT_SECONDS = 120
 JEFF = "Jeff Handoff"
+PRESETS = {"bug-epic": {"discovered_bugs_into_epic": True, "commits_on_main": "one"},
+           "improvement-epic": {"lap_test_scope": "full", "discovered_bugs_into_epic": False,
+                                "commits_on_main": "per_task"}}
 SEAMS = "## What\nTake a card.\n\n## Demo\nThe till takes a card.\n\n## Seams\nThe till's command line.\n"
 
 
@@ -181,6 +184,67 @@ class HandoffTakesAnEpicTests(HandoffCase):
         self.assertEqual(1, len(self.comments(epic)))
 
 
+class HandoffPresetTests(HandoffCase):
+    def rule_metadata(self, epic: str) -> dict:
+        return {key: value for key, value in (self.shown(epic).get("metadata") or {}).items()
+                if key.startswith("rules.")}
+
+    def test_taking_with_the_improvement_epic_preset_writes_its_rules_with_one_comment_each_before_the_label(self):
+        epic, _ = self.new_epic()
+        task = self.new_task_under(epic)
+
+        done = self.handoff("take", epic, "--area", f"{task}=till", "--preset", "improvement-epic")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({"rules.lap_test_scope": '"full"', "rules.discovered_bugs_into_epic": False,
+                          "rules.commits_on_main": '"per_task"'}, self.rule_metadata(epic))
+        texts = [comment["text"] for comment in self.comments(epic)]
+        rule_lines = [text for text in texts if text.startswith("Factory rules:")]
+        self.assertEqual(3, len(rule_lines))
+        self.assertTrue(all("\n" not in line for line in rule_lines))
+        self.assertIn("factory", self.shown(epic).get("labels", []))
+
+    def test_taking_with_the_bug_epic_preset_writes_the_bug_epic_rules(self):
+        epic, _ = self.new_epic()
+        task = self.new_task_under(epic)
+
+        done = self.handoff("take", epic, "--area", f"{task}=till", "--preset", "bug-epic")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({"rules.discovered_bugs_into_epic": True, "rules.commits_on_main": '"one"'},
+                         self.rule_metadata(epic))
+
+    def test_taking_without_a_preset_writes_no_rules(self):
+        epic, _ = self.new_epic()
+        task = self.new_task_under(epic)
+
+        done = self.handoff("take", epic, "--area", f"{task}=till")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({}, self.rule_metadata(epic))
+
+    def test_a_preset_outside_the_two_offered_is_a_usage_error_and_writes_nothing(self):
+        epic, name = self.new_epic()
+        task = self.new_task_under(epic)
+
+        done = self.handoff("take", epic, "--area", f"{task}=till", "--preset", "feature-epic")
+
+        self.assertEqual(2, done.returncode)
+        self.assert_nothing_written(epic, [task], name)
+
+    def test_a_rerun_after_a_failure_before_the_label_posts_no_second_comment_for_a_rule_it_already_wrote(self):
+        epic, _ = self.new_epic()
+        task = self.new_task_under(epic)
+        first = self.handoff("take", epic, "--area", f"{task}=till", "--preset", "bug-epic")
+        self.assertEqual(0, first.returncode, first.stderr)
+        fixture.run([self.bd, "label", "remove", epic, "factory"], self.repo)
+
+        done = self.handoff("take", epic, "--area", f"{task}=till", "--preset", "bug-epic")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(3, len(self.comments(epic)))
+
+
 class HandoffCheckTests(HandoffCase):
     def test_check_prints_the_epic_branch_and_each_task_with_its_seams_and_writes_nothing(self):
         epic, name = self.new_epic()
@@ -191,7 +255,8 @@ class HandoffCheckTests(HandoffCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual({"epic": epic, "title": f"Take card payments {self.count - 1}!", "branch": f"epic/{name}",
                           "tasks": [{"id": task, "title": f"Read the card {self.count}", "status": "open",
-                                     "seams": "The till's command line."}]},
+                                     "seams": "The till's command line."}],
+                          "presets": PRESETS},
                          json.loads(done.stdout))
         self.assert_nothing_written(epic, [task], name)
 

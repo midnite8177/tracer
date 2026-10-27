@@ -7,9 +7,11 @@ children that are neither closed nor epics.
 `check <epic>` makes the checks and writes nothing. It prints the epic, the
 name of its epic branch and its tasks as one JSON object, each task with
 its title, status and the text of its Seams section, from which the human
-and the skill agree an area for each task.
+and the skill agree an area for each task. It also prints `presets`, the
+factory rules of the bug-epic and improvement-epic presets, for the human to
+choose from.
 
-`take <epic> --area <task>=<area> ...` makes the same checks, and also
+`take <epic> --area <task>=<area> ... [--preset <preset>]` makes the same checks, and also
 refuses a task with no area and an --area that names a bead that is not one
 of the epic's tasks. Then it writes, with BEADS_ACTOR set to the repo's git
 user.name: `lap.track=simple` and `lap.area=<area>` in each task's metadata,
@@ -17,7 +19,9 @@ the epic branch's name as the epic's `factory.branch` metadata, the epic
 branch itself, cut from main's head, one comment on the epic that holds the
 task table, and last the factory label. An epic without the label has not
 been handed off, and a rerun of `take` finishes the job: it reuses the
-branch the epic records and posts no second table. It prints the epic, the
+branch the epic records and posts no second table. With --preset, rules.py's
+write sets the preset's factory rules just before the label, one comment for
+each setting that changes. It prints the epic, the
 branch, the commit the branch is at and the tasks as one JSON object. It
 starts nothing.
 
@@ -52,6 +56,7 @@ from pathlib import Path
 
 import holdouts
 import repo_settings
+import rules
 from bench import FACTORY_LABEL, MAIN_REF, slug
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, env_as_git_user, head_of, run
 
@@ -300,10 +305,11 @@ def check(bead: str, home: Path, main_tree: Path) -> dict:
     refuse(epic, problems_of(epic, branch_problems, home, main_tree))
     return {"epic": epic.id, "title": str(epic.shown.get("title") or ""), "branch": branch,
             "tasks": [{"id": task.id, "title": task.title, "status": task.status, "seams": task.seams}
-                      for task in epic.tasks]}
+                      for task in epic.tasks],
+            "presets": rules.PRESETS}
 
 
-def take(bead: str, given_areas: list[str], home: Path, main_tree: Path) -> dict:
+def take(bead: str, given_areas: list[str], preset: str | None, home: Path, main_tree: Path) -> dict:
     epic = epic_of(bead, main_tree, RERUN)
     branch, branch_problems = planned_branch(epic, main_tree)
     areas, area_problems = areas_of(given_areas, epic)
@@ -317,6 +323,9 @@ def take(bead: str, given_areas: list[str], home: Path, main_tree: Path) -> dict
         run(["git", "branch", branch, MAIN_REF], main_tree, None)
     if not has_table(epic, main_tree):
         run(["bd", "comment", epic.id, table(epic, branch, areas)], main_tree, env)
+    if preset is not None:
+        repo_limit = rules.repo_lap_limit(repo_settings.load(repo_settings.settings_path(home, main_tree)))
+        rules.write_settings(epic.id, rules.PRESETS[preset], repo_limit, main_tree)
     run(["bd", "label", "add", epic.id, FACTORY_LABEL], main_tree, env)
     return {"epic": epic.id, "branch": branch, "start": head_of(f"refs/heads/{branch}", main_tree),
             "tasks": [{"id": task.id, "title": task.title, "track": TRACK, "area": areas[task.id],
@@ -334,6 +343,8 @@ def main(argv: list[str]) -> int:
     taking = modes.add_parser("take", parents=[shared], help="make the checks and hand the epic to the factory")
     taking.add_argument("--area", action="append", default=[], metavar="TASK=AREA",
                         help="the area of one task; give one for every task")
+    taking.add_argument("--preset", choices=sorted(rules.PRESETS),
+                        help="the factory rules to give the epic; leave it out to give none")
     args = parser.parse_args(argv)
 
     try:
@@ -342,8 +353,9 @@ def main(argv: list[str]) -> int:
         if args.mode == "check":
             printed = check(args.epic, home, main_tree)
         else:
-            printed = take(args.epic, args.area, home, main_tree)
-    except (HandoffError, CommandError, repo_settings.SettingsError, holdouts.HoldoutsError, OSError) as error:
+            printed = take(args.epic, args.area, args.preset, home, main_tree)
+    except (HandoffError, CommandError, repo_settings.SettingsError, holdouts.HoldoutsError, rules.RulesError,
+            OSError) as error:
         print(f"handoff: {error}", file=sys.stderr)
         return 1
     print(json.dumps(printed))

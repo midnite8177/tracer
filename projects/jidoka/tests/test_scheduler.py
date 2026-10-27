@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,7 @@ PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 SCHEDULER = PLUGIN / "scripts" / "scheduler.py"
 HANDOFF = PLUGIN / "scripts" / "handoff.py"
+RULES = PLUGIN / "scripts" / "rules.py"
 SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 MERGE_GATE = PLUGIN / "scripts" / "merge_gate.py"
 
@@ -457,7 +459,7 @@ class SchedulerLapStateTests(SchedulerCase):
 
         printed = self.next_printed(epic)
 
-        self.assertEqual([{**{key: value for key, value in action.items() if key != "action"},
+        self.assertEqual([{**{key: value for key, value in action.items() if key not in ("action", "answer")},
                            "stage": "build", "tries": 0} for action in opened],
                          printed["laps"])
         self.assertNotIn("lap.stage", self.metadata(third))
@@ -718,21 +720,185 @@ class TargetedRunTests(SchedulerCase):
         self.assertEqual([], self.runs_of(lap.task))
         self.assertTrue(any('pass "test_card"' in text for text in self.texts(lap.task)))
 
-    def test_a_conflict_rebasing_the_lap_onto_the_epic_branch_parks_the_task_at_once_naming_the_files(self):
+
+class MergeWorkerTests(SchedulerCase):
+    def conflicting_lap(self) -> OpenLap:
+        """A lap whose card.txt conflicts with newer work already on the epic branch."""
         lap = self.open_one_lap()
         self.commit_in(lap.worktree, "card.txt", "the lap's card\n")
-        epic_head = self.commit_on_epic_branch(lap.epic_branch, "card.txt", "another lap's card\n")
+        self.commit_on_epic_branch(lap.epic_branch, "card.txt", "another lap's card\n")
+        return lap
+
+    def rebase_unfinished(self, worktree: Path, epic_branch: str) -> None:
+        """Starts the rebase a merge worker starts, and stops at the conflict."""
+        subprocess.run(["git", "rebase", epic_branch], cwd=worktree, capture_output=True, text=True)
+
+    def reconcile(self, worktree: Path, epic_branch: str, name: str, text: str) -> None:
+        """Does what a merge worker does: rebases onto the epic branch, resolves the conflict and finishes."""
+        self.rebase_unfinished(worktree, epic_branch)
+        (worktree / name).write_text(text, encoding="utf-8")
+        git(worktree, "add", name)
+        subprocess.run(["git", "rebase", "--continue"], cwd=worktree, capture_output=True, text=True,
+                       env={**os.environ, "GIT_EDITOR": "true"}, check=True)
+
+    def test_a_conflict_rebasing_the_lap_onto_the_epic_branch_calls_the_merge_worker_naming_the_files(self):
+        lap = self.conflicting_lap()
+        epic_head = git(self.repo, "rev-parse", lap.epic_branch)
+
+        printed = self.build_done(lap.epic, lap.task)
+
+        [action] = printed["actions"]
+        self.assertEqual(("merge", lap.task, str(lap.worktree), f"lap/{lap.task}"),
+                         (action["action"], action["task"], action["worktree"], action["branch"]))
+        self.assertIn("card.txt", action["reason"])
+        self.assertIn("conflicts", action["reason"])
+        self.assertEqual(lap.epic_branch, printed["branch"])
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("merge", 0), (metadata["lap.stage"], metadata["lap.tries"]))
+        self.assertEqual([], self.runs_of(lap.task))
+        self.assertEqual(f"lap/{lap.task}", git(lap.worktree, "branch", "--show-current"))
+        self.assertEqual(epic_head, git(self.repo, "rev-parse", lap.epic_branch))
+
+    def test_the_call_leaves_the_task_assigned_to_jidoka_and_posts_why_under_that_actor(self):
+        lap = self.conflicting_lap()
+
+        self.build_done(lap.epic, lap.task)
+
+        shown = self.shown(lap.task)
+        self.assertEqual(("in_progress", "jidoka"), (shown["status"], shown["assignee"]))
+        [called] = [comment for comment in self.comments(lap.task) if "Merge worker" in comment["text"]]
+        self.assertEqual("jidoka", called["author"])
+        self.assertIn("card.txt", called["text"])
+
+    def test_targeted_tests_that_break_once_newer_work_is_merged_in_call_the_merge_worker_and_count_no_build_try(
+            self):
+        lap = self.open_one_lap()
+        self.commit_in(lap.worktree, "card.txt", "built\n")
+        self.commit_on_epic_branch(lap.epic_branch, "other.txt", "other lap\n")
+        self.queue_exit_codes(lap.task, 1)
+
+        printed = self.build_done(lap.epic, lap.task)
+
+        [action] = printed["actions"]
+        self.assertEqual(("merge", lap.task), (action["action"], action["task"]))
+        self.assertIn("exit code 1", action["reason"])
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("merge", 0), (metadata["lap.stage"], metadata["lap.tries"]))
+
+    def test_a_reconciled_lap_passes_the_merge_gate_and_merges_as_one_commit_on_top_of_the_newer_work(self):
+        lap = self.conflicting_lap()
+        newer = git(self.repo, "rev-parse", lap.epic_branch)
+        self.build_done(lap.epic, lap.task)
+        self.reconcile(lap.worktree, lap.epic_branch, "card.txt", "both cards\n")
 
         printed = self.build_done(lap.epic, lap.task)
 
         self.assertEqual([], printed["actions"])
-        why = self.assert_parked(lap, 0)
-        self.assertIn("card.txt", why)
-        self.assertIn("rebasing", why)
-        self.assertIn("conflicts", why)
-        self.assertEqual([], self.runs_of(lap.task))
+        shown = self.shown(lap.task)
+        self.assertEqual(("closed", "merged"), (shown["status"], (shown.get("metadata") or {}).get("lap.stage")))
+        self.assertEqual(newer, git(self.repo, "rev-parse", f"{lap.epic_branch}~1"))
+        self.assertEqual("both cards", git(self.repo, "show", f"{lap.epic_branch}:card.txt"))
+        self.assertFalse(lap.worktree.exists())
+
+    def test_work_the_merge_worker_leaves_uncommitted_is_folded_into_the_lap_s_commit_before_the_gate(self):
+        lap = self.open_one_lap()
+        self.commit_in(lap.worktree, "card.txt", "built\n")
+        newer = self.commit_on_epic_branch(lap.epic_branch, "other.txt", "other lap\n")
+        self.queue_exit_codes(lap.task, 1)
+        self.build_done(lap.epic, lap.task)
+        self.leave_in(lap.worktree, "card.txt", "built and fixed\n")
+
+        self.build_done(lap.epic, lap.task)
+
+        self.assertEqual("closed", self.shown(lap.task)["status"])
+        self.assertEqual(newer, git(self.repo, "rev-parse", f"{lap.epic_branch}~1"))
+        self.assertEqual("built and fixed", git(self.repo, "show", f"{lap.epic_branch}:card.txt"))
+
+    def test_the_second_failed_merge_worker_try_parks_the_task_naming_the_merge_try_cap(self):
+        lap = self.conflicting_lap()
+        self.build_done(lap.epic, lap.task)
+
+        first = self.report_printed(lap.epic, lap.task, "failed")
+        second = self.report_printed(lap.epic, lap.task, "failed")
+
+        self.assertEqual([("merge", lap.task)], [(action["action"], action["task"]) for action in first["actions"]])
+        self.assertEqual([], second["actions"])
+        self.assertIn("the merge try cap of 2", self.assert_parked(lap, 0))
+
+    def test_a_merge_worker_that_leaves_the_rebase_unfinished_counts_a_try_and_the_worktree_is_back_on_the_lap_branch(
+            self):
+        lap = self.conflicting_lap()
+        self.build_done(lap.epic, lap.task)
+        self.rebase_unfinished(lap.worktree, lap.epic_branch)
+
+        printed = self.build_done(lap.epic, lap.task)
+
+        self.assertEqual(["merge"], [action["action"] for action in printed["actions"]])
+        self.assertEqual("1", str(self.metadata(lap.task)["lap.mergetries"]))
         self.assertEqual(f"lap/{lap.task}", git(lap.worktree, "branch", "--show-current"))
-        self.assertEqual(epic_head, git(self.repo, "rev-parse", lap.epic_branch))
+        self.assertTrue(any("left the rebase unfinished" in text for text in self.texts(lap.task)))
+
+    def test_a_merge_worker_that_reports_done_without_bringing_in_the_epic_branch_counts_a_try(self):
+        lap = self.conflicting_lap()
+        self.build_done(lap.epic, lap.task)
+
+        printed = self.build_done(lap.epic, lap.task)
+
+        self.assertEqual(["merge"], [action["action"] for action in printed["actions"]])
+        self.assertEqual("1", str(self.metadata(lap.task)["lap.mergetries"]))
+        self.assertTrue(any("does not hold" in text for text in self.texts(lap.task)))
+
+    def test_red_targeted_tests_after_the_merge_worker_count_a_merge_try_and_the_second_parks_the_task(self):
+        lap = self.conflicting_lap()
+        self.build_done(lap.epic, lap.task)
+        self.reconcile(lap.worktree, lap.epic_branch, "card.txt", "both cards\n")
+        self.queue_exit_codes(lap.task, 1, 1)
+
+        first = self.build_done(lap.epic, lap.task)
+        second = self.build_done(lap.epic, lap.task)
+
+        self.assertEqual(["merge"], [action["action"] for action in first["actions"]])
+        self.assertEqual([], second["actions"])
+        self.assertIn("the merge try cap of 2", self.assert_parked(lap, 0))
+
+    def test_a_cut_off_merge_worker_goes_back_to_the_merge_stage_and_counts_no_try(self):
+        lap = self.conflicting_lap()
+        self.build_done(lap.epic, lap.task)
+
+        printed = self.report_printed(lap.epic, lap.task, "cut off")
+
+        self.assertEqual(["merge"], [action["action"] for action in printed["actions"]])
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("merge", 0, "0"), (metadata["lap.stage"], metadata["lap.tries"],
+                                             str(metadata.get("lap.mergetries", 0))))
+
+    def test_a_manager_restarting_sends_a_lap_left_at_the_merge_stage_back_to_the_merge_worker(self):
+        lap = self.conflicting_lap()
+        self.build_done(lap.epic, lap.task)
+
+        printed = self.next_printed(lap.epic)
+
+        [action] = printed["actions"]
+        self.assertEqual(("merge", lap.task), (action["action"], action["task"]))
+        self.assertIn("card.txt", action["reason"])
+
+    def test_two_laps_that_touch_the_same_function_both_merge_the_second_after_a_merge_worker_reconciles_it(self):
+        epic = self.new_epic()
+        first, second = self.new_task_under(epic), self.new_task_under(epic)
+        branch = self.hand_off(epic, {first: "till", second: "receipts"})
+        worktrees = {action["task"]: Path(action["worktree"]) for action in self.next_printed(epic)["actions"]}
+        self.commit_in(worktrees[first], "card.py", "def total():\n    return 1\n")
+        self.commit_in(worktrees[second], "card.py", "def total():\n    return 2\n")
+
+        self.build_done(epic, first)
+        called = self.build_done(epic, second)
+        self.reconcile(worktrees[second], branch, "card.py", "def total():\n    return 1 + 2\n")
+        merged = self.build_done(epic, second)
+
+        self.assertEqual(["merge"], [action["action"] for action in called["actions"]])
+        self.assertEqual([], merged["actions"])
+        self.assertEqual(("closed", "closed"), (self.shown(first)["status"], self.shown(second)["status"]))
+        self.assertEqual("def total():\n    return 1 + 2", git(self.repo, "show", f"{branch}:card.py"))
 
 
 class MergedLapTests(SchedulerCase):
@@ -793,6 +959,708 @@ class ParkedLapTests(SchedulerCase):
         self.assertEqual([second], [open_lap["task"] for open_lap in printed["laps"]])
         self.assertEqual([second], [action["task"] for action in self.next_printed(epic)["actions"]])
         self.assertEqual("parked", self.metadata(first)["lap.stage"])
+
+
+class QuestionTests(SchedulerCase):
+    FOUND = "The till already rounds to five cents and the task does not say whether receipts should."
+    OPTIONS = [{"name": "round receipts too", "confidence": 60}, {"name": "print exact cents", "confidence": 35}]
+
+    def leave_question(self, lap: OpenLap, **changes: object) -> None:
+        report = {"found": self.FOUND, "options": self.OPTIONS, "recommended": "round receipts too", **changes}
+        self.leave_in(lap.worktree, ".scratch/question.json", json.dumps(report))
+
+    def test_a_question_report_parks_its_task_with_the_human_label_a_comment_and_the_options_in_metadata(self):
+        lap = self.open_one_lap()
+        self.leave_in(lap.worktree, "card.txt", "half built\n")
+        self.leave_question(lap)
+
+        printed = self.report_printed(lap.epic, lap.task, "question")
+
+        self.assertEqual(([], []), (printed["actions"], printed["laps"]))
+        self.assertEqual(("open", "", ["human"]), (self.shown(lap.task)["status"],
+                                                   self.shown(lap.task).get("assignee") or "",
+                                                   self.shown(lap.task).get("labels")))
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("parked", 0, "round receipts too"),
+                         (metadata["lap.stage"], metadata["lap.tries"], metadata["question.recommended"]))
+        self.assertEqual(self.OPTIONS, json.loads(metadata["question.options"]))
+        self.assertEqual("half built\n", (lap.worktree / "card.txt").read_text(encoding="utf-8"))
+        self.assertIn(f"lap/{lap.task}", git(self.repo, "branch", "--list"))
+        self.assertFalse((lap.worktree / ".scratch" / "question.json").exists())
+
+    def test_the_question_comment_states_what_was_found_every_option_with_its_confidence_and_the_recommendation(
+            self):
+        lap = self.open_one_lap()
+        self.leave_question(lap)
+
+        self.report_printed(lap.epic, lap.task, "question")
+
+        [question] = [comment for comment in self.comments(lap.task) if str(comment["text"]).startswith("Question: ")]
+        self.assertEqual("jidoka", question["author"])
+        text = str(question["text"])
+        self.assertIn(self.FOUND, text)
+        self.assertIn("- round receipts too (60%)", text)
+        self.assertIn("- print exact cents (35%)", text)
+        self.assertIn("Recommended: round receipts too (60%).", text)
+
+    def test_the_lap_that_asked_frees_its_slot_and_area_for_the_next_task_while_the_other_lap_keeps_running(self):
+        epic = self.new_epic()
+        asking, waiting, other = (self.new_task_under(epic, "--priority", str(number)) for number in (1, 2, 3))
+        self.hand_off(epic, {asking: "till", waiting: "till", other: "receipts"})
+        opened = {action["task"]: action for action in self.next_printed(epic)["actions"]}
+        self.assertEqual([asking, other], sorted(opened))
+        self.leave_in(Path(opened[asking]["worktree"]), ".scratch/question.json",
+                      json.dumps({"found": self.FOUND, "options": self.OPTIONS, "recommended": "print exact cents"}))
+
+        printed = self.report_printed(epic, asking, "question")
+
+        self.assertEqual([(waiting, opened[asking]["slot"])],
+                         [(action["task"], action["slot"]) for action in printed["actions"]])
+        self.assertEqual([(1, waiting), (2, other)], [(open_lap["slot"], open_lap["task"])
+                                                      for open_lap in printed["laps"]])
+        self.assertEqual("build", self.metadata(other)["lap.stage"])
+        self.assertEqual("parked", self.metadata(asking)["lap.stage"])
+
+    def test_a_missing_question_report_counts_a_try_and_sends_the_lap_back_to_the_build(self):
+        lap = self.open_one_lap()
+
+        printed = self.report_printed(lap.epic, lap.task, "question")
+
+        self.assertEqual([lap.task], [action["task"] for action in printed["actions"]])
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+        self.assertTrue(any("the question could not be posted" in text for text in self.texts(lap.task)))
+        self.assertNotIn("human", self.shown(lap.task).get("labels") or [])
+
+    def test_a_question_report_whose_recommendation_is_not_one_of_its_options_counts_a_try(self):
+        lap = self.open_one_lap()
+        self.leave_question(lap, recommended="something else")
+
+        self.report_printed(lap.epic, lap.task, "question")
+
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+        self.assertTrue(any("recommended must be the name of one option" in text for text in self.texts(lap.task)))
+
+    def test_an_option_without_a_confidence_in_percent_is_not_posted(self):
+        lap = self.open_one_lap()
+        self.leave_question(lap, options=[{"name": "round receipts too", "confidence": 160},
+                                          {"name": "print exact cents"}])
+
+        self.report_printed(lap.epic, lap.task, "question")
+
+        self.assertEqual("build", self.metadata(lap.task)["lap.stage"])
+        self.assertEqual([], [text for text in self.texts(lap.task) if text.startswith("Question: ")])
+
+    def human_comments(self, task: str, text: str) -> None:
+        fixture.run(["env", f"BEADS_ACTOR={JEFF}", self.bd, "comment", task, text], self.repo)
+
+    def take_the_human_label_off(self, task: str) -> None:
+        fixture.run([self.bd, "label", "remove", task, "human"], self.repo)
+
+    def ask_and_park(self) -> OpenLap:
+        lap = self.open_one_lap()
+        self.leave_question(lap)
+        self.report_printed(lap.epic, lap.task, "question")
+        return lap
+
+    def test_unparking_with_a_comment_since_the_question_starts_the_next_lap_carrying_the_comment_as_the_answer(
+            self):
+        lap = self.ask_and_park()
+        self.human_comments(lap.task, "Round receipts too, to the nearest five cents.")
+        self.take_the_human_label_off(lap.task)
+
+        printed = self.next_printed(lap.epic)
+
+        [action] = printed["actions"]
+        self.assertEqual((lap.task, {"source": "comment", "text": "Round receipts too, to the nearest five cents."}),
+                         (action["task"], action["answer"]))
+
+    def test_every_comment_since_the_question_is_part_of_the_answer_and_no_earlier_comment_is(self):
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: "till"})
+        self.human_comments(task, "Before the question.")
+        [action] = self.next_printed(epic)["actions"]
+        self.leave_question(OpenLap(epic, task, "", Path(action["worktree"])))
+        self.report_printed(epic, task, "question")
+        self.human_comments(task, "Print exact cents.")
+        self.human_comments(task, "And say so on the receipt.")
+        self.take_the_human_label_off(task)
+
+        [again] = self.next_printed(epic)["actions"]
+
+        self.assertEqual({"source": "comment", "text": "Print exact cents.\n\nAnd say so on the receipt."},
+                         again["answer"])
+
+    def test_unparking_with_no_comment_since_the_question_takes_the_recommendation(self):
+        lap = self.ask_and_park()
+        self.take_the_human_label_off(lap.task)
+
+        [action] = self.next_printed(lap.epic)["actions"]
+
+        self.assertEqual((lap.task, {"source": "recommendation", "text": "round receipts too"}),
+                         (action["task"], action["answer"]))
+
+    def test_unparking_a_permission_question_puts_the_denied_calls_pattern_on_the_list_the_answer_names(self):
+        lap = self.open_one_lap()
+        options = [{"name": name, "confidence": 30} for name in ("epic", "repo", "built-in")]
+        self.leave_question(lap, call="cd till && make lint --fix", pattern="make lint", options=options,
+                            recommended="epic")
+        self.report_printed(lap.epic, lap.task, "question")
+        self.human_comments(lap.task, "The epic's list.")
+        self.take_the_human_label_off(lap.task)
+
+        [action] = self.next_printed(lap.epic)["actions"]
+
+        self.assertEqual({"source": "comment", "text": "The epic's list."}, action["answer"])
+        done = subprocess.run([str(LAUNCHER), str(RULES), "show", lap.epic], capture_output=True, text=True,
+                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home),
+                              cwd=self.repo)
+        self.assertEqual(["make lint"], json.loads(done.stdout)["settings"]["extra_commands"])
+
+    def test_a_comment_that_asks_back_gets_a_reply_from_the_stage_which_parks_again_and_the_next_unpark_answers_the_reply(
+            self):
+        lap = self.ask_and_park()
+        self.human_comments(lap.task, "Why round at all?")
+        self.take_the_human_label_off(lap.task)
+        [asked_back] = self.next_printed(lap.epic)["actions"]
+        self.assertEqual({"source": "comment", "text": "Why round at all?"}, asked_back["answer"])
+        reply = "The till rounds to five cents because the coin tray holds no pennies."
+        self.leave_question(lap, found=reply, options=[{"name": "round receipts too", "confidence": 80},
+                                                      {"name": "print exact cents", "confidence": 15}])
+
+        parked = self.report_printed(lap.epic, lap.task, "question")
+
+        self.assertEqual(([], ["human"], "parked"),
+                         (parked["actions"], self.shown(lap.task).get("labels"), self.metadata(lap.task)["lap.stage"]))
+        questions = [text for text in self.texts(lap.task) if text.startswith("Question: ")]
+        self.assertEqual(2, len(questions))
+        self.assertIn(reply, questions[1])
+        self.take_the_human_label_off(lap.task)
+
+        [after_reply] = self.next_printed(lap.epic)["actions"]
+
+        self.assertEqual({"source": "recommendation", "text": "round receipts too"}, after_reply["answer"])
+
+    def test_the_next_lap_starts_in_the_same_worktree_on_the_same_branch_with_its_commits_and_uncommitted_work(
+            self):
+        lap = self.open_one_lap()
+        committed = self.commit_in(lap.worktree, "till.txt", "rounded\n")
+        self.leave_in(lap.worktree, "card.txt", "half built\n")
+        self.leave_question(lap)
+        self.report_printed(lap.epic, lap.task, "question")
+        self.take_the_human_label_off(lap.task)
+
+        [action] = self.next_printed(lap.epic)["actions"]
+
+        self.assertEqual((str(lap.worktree), f"lap/{lap.task}"), (action["worktree"], action["branch"]))
+        self.assertEqual(committed, git(lap.worktree, "rev-parse", "HEAD"))
+        self.assertEqual("half built\n", (lap.worktree / "card.txt").read_text(encoding="utf-8"))
+        self.assertEqual(("in_progress", "jidoka"), (self.shown(lap.task)["status"], self.shown(lap.task)["assignee"]))
+
+    def test_the_answer_stays_with_the_lap_through_a_failed_try_and_a_restart(self):
+        lap = self.ask_and_park()
+        self.human_comments(lap.task, "Round receipts too.")
+        self.take_the_human_label_off(lap.task)
+        self.next_printed(lap.epic)
+
+        [after_failure] = self.report_printed(lap.epic, lap.task, "failed")["actions"]
+        [after_restart] = self.next_printed(lap.epic)["actions"]
+
+        self.assertEqual({"source": "comment", "text": "Round receipts too."}, after_failure["answer"])
+        self.assertEqual(after_failure["answer"], after_restart["answer"])
+
+    def test_a_task_parked_by_its_tries_gets_no_answer_when_the_human_label_comes_off(self):
+        lap = self.open_one_lap()
+        for _ in range(3):
+            self.report_printed(lap.epic, lap.task, "failed")
+        self.human_comments(lap.task, "Try the other approach.")
+        self.take_the_human_label_off(lap.task)
+
+        [action] = self.next_printed(lap.epic)["actions"]
+
+        self.assertIsNone(action["answer"])
+
+    def test_a_lap_opened_after_three_failed_build_tries_is_lap_two_in_the_parked_laps_worktree_and_branch(self):
+        lap = self.open_one_lap()
+        committed = self.commit_in(lap.worktree, "till.txt", "rounded\n")
+        for _ in range(3):
+            self.report_printed(lap.epic, lap.task, "failed")
+        self.take_the_human_label_off(lap.task)
+
+        printed = self.next_printed(lap.epic)
+
+        [action] = printed["actions"]
+        self.assertEqual((lap.task, 2, str(lap.worktree), f"lap/{lap.task}"),
+                         (action["task"], action["lap"], action["worktree"], action["branch"]))
+        self.assertEqual([2], [open_lap["lap"] for open_lap in printed["laps"]])
+        self.assertEqual("2", str(self.metadata(lap.task)["lap.number"]))
+        self.assertEqual(committed, git(lap.worktree, "rev-parse", "HEAD"))
+
+    def test_a_lap_opened_after_the_human_label_came_off_starts_with_no_tries_so_one_failure_does_not_park_it(self):
+        lap = self.open_one_lap()
+        for _ in range(3):
+            self.report_printed(lap.epic, lap.task, "failed")
+        self.take_the_human_label_off(lap.task)
+
+        [opened] = self.next_printed(lap.epic)["laps"]
+        after_failure = self.report_printed(lap.epic, lap.task, "failed")
+
+        self.assertEqual((0, "build"), (opened["tries"], opened["stage"]))
+        self.assertEqual([(lap.task, 2, 1)], [(open_lap["task"], open_lap["lap"], open_lap["tries"])
+                                              for open_lap in after_failure["laps"]])
+
+    def test_each_unpark_gives_the_next_lap_number(self):
+        lap = self.open_one_lap()
+        for _ in range(2):
+            for _ in range(3):
+                self.report_printed(lap.epic, lap.task, "failed")
+            self.take_the_human_label_off(lap.task)
+            [action] = self.next_printed(lap.epic)["actions"]
+
+        self.assertEqual(3, action["lap"])
+
+    def test_a_lap_that_never_asked_a_question_carries_no_answer(self):
+        lap = self.open_one_lap()
+
+        [action] = self.next_printed(lap.epic)["actions"]
+
+        self.assertIsNone(action["answer"])
+
+
+class DiscoveredWorkTests(SchedulerCase):
+    def finding(self, title: str, placement: str) -> dict:
+        return {"title": title, "description": f"Seen while building the card: {title}", "placement": placement}
+
+    def leave_findings(self, lap: OpenLap, *findings: dict) -> None:
+        self.leave_in(lap.worktree, ".scratch/discovered.json", json.dumps(list(findings)))
+
+    def children_of(self, epic: str) -> dict[str, str]:
+        """The titles of the epic's children, each with its id."""
+        listed = json.loads(fixture.run([self.bd, "list", "--parent", epic, "--all", "--limit", "0", "--json"],
+                                        self.repo))
+        return {child["title"]: child["id"] for child in listed}
+
+    def bead_titled(self, title: str) -> str:
+        listed = json.loads(fixture.run([self.bd, "list", "--all", "--limit", "0", "--json"], self.repo))
+        [found] = [bead["id"] for bead in listed if bead["title"] == title]
+        return found
+
+    def links_of(self, bead: str) -> set[tuple[str, str]]:
+        return {(link["dependency_type"], link["id"]) for link in self.shown(bead).get("dependencies") or []}
+
+    def block_on(self, lap: OpenLap, title: str) -> tuple[str, dict]:
+        """Ends the lap blocked on a new task, and returns that task's id with what the report printed."""
+        self.leave_findings(lap, self.finding(title, "blocks"))
+        printed = self.report_printed(lap.epic, lap.task, "blocked")
+        return self.children_of(lap.epic)[title], printed
+
+    def test_a_finding_the_epic_cannot_be_accepted_without_is_filed_in_the_epic_linked_discovered_from_the_task(
+            self):
+        lap = self.open_one_lap()
+        self.commit_in(lap.worktree, "card.txt", "built\n")
+        self.leave_findings(lap, self.finding("Round the receipt total", "epic"))
+
+        printed = self.build_done(lap.epic, lap.task)
+
+        filed = self.children_of(lap.epic)["Round the receipt total"]
+        self.assertIn(("discovered-from", lap.task), self.links_of(filed))
+        metadata = self.metadata(filed)
+        self.assertEqual(("till", "simple"), (metadata["lap.area"], metadata["lap.track"]))
+        self.assertEqual("closed", self.shown(lap.task)["status"])
+        self.assertEqual([filed], [action["task"] for action in printed["actions"]])
+        self.assertFalse((lap.worktree / ".scratch" / "discovered.json").exists())
+
+    def test_a_finding_that_acceptance_does_not_need_is_filed_outside_the_epic_linked_discovered_from_the_task(
+            self):
+        lap = self.open_one_lap()
+        self.commit_in(lap.worktree, "card.txt", "built\n")
+        self.leave_findings(lap, self.finding("Sweep the till", "outside"))
+
+        self.build_done(lap.epic, lap.task)
+
+        outside = self.bead_titled("Sweep the till")
+        shown = self.shown(outside)
+        self.assertEqual((None, {("discovered-from", lap.task)}), (shown.get("parent"), self.links_of(outside)))
+        self.assertNotIn("Sweep the till", self.children_of(lap.epic))
+        self.assertNotIn("lap.area", self.metadata(outside))
+
+    def test_a_finding_that_blocks_the_task_on_a_build_reported_done_files_nothing_and_counts_a_try(self):
+        lap = self.open_one_lap()
+        self.commit_in(lap.worktree, "card.txt", "built\n")
+        self.leave_findings(lap, self.finding("Round the receipt total", "blocks"))
+
+        self.build_done(lap.epic, lap.task)
+
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+        self.assertEqual({lap.task}, set(self.children_of(lap.epic).values()))
+
+    def test_a_lap_that_needs_its_discovered_task_ends_blocked_with_no_human_label_and_waits_on_the_new_task(self):
+        lap = self.open_one_lap()
+        self.leave_in(lap.worktree, "card.txt", "half built\n")
+
+        new_task, printed = self.block_on(lap, "Round the receipt total")
+
+        shown = self.shown(lap.task)
+        self.assertEqual(("open", "", None), (shown["status"], shown.get("assignee") or "", shown.get("labels")))
+        self.assertEqual("blocked", shown["metadata"]["lap.stage"])
+        self.assertEqual({("blocks", new_task), ("parent-child", lap.epic)}, self.links_of(lap.task))
+        self.assertIn(("discovered-from", lap.task), self.links_of(new_task))
+        self.assertEqual("till", self.metadata(new_task)["lap.area"])
+        self.assertEqual("half built\n", (lap.worktree / "card.txt").read_text(encoding="utf-8"))
+        self.assertIn(f"lap/{lap.task}", git(self.repo, "branch", "--list"))
+        [blocked] = [comment for comment in self.comments(lap.task) if str(comment["text"]).startswith("Blocked: ")]
+        self.assertEqual("jidoka", blocked["author"])
+        self.assertIn(new_task, str(blocked["text"]))
+        self.assertEqual([new_task], [action["task"] for action in printed["actions"]])
+        self.assertEqual([new_task], [open_lap["task"] for open_lap in printed["laps"]])
+
+    def test_the_blocked_task_gets_its_next_lap_in_the_same_worktree_only_after_the_new_task_merges(self):
+        lap = self.open_one_lap()
+        built = self.commit_in(lap.worktree, "card.txt", "half built\n")
+        new_task, printed = self.block_on(lap, "Round the receipt total")
+        [new_action] = printed["actions"]
+        self.assertEqual([new_task], [open_lap["task"] for open_lap in self.next_printed(lap.epic)["laps"]])
+        self.commit_in(Path(new_action["worktree"]), "rounding.txt", "rounded\n")
+
+        merged = self.build_done(lap.epic, new_task)
+
+        [again] = merged["actions"]
+        self.assertEqual(("build", lap.task, lap.worktree), (again["action"], again["task"], Path(again["worktree"])))
+        self.assertIsNone(again["answer"])
+        self.assertEqual(built, git(lap.worktree, "rev-parse", "HEAD"))
+        self.assertEqual(("in_progress", "build"), (self.shown(lap.task)["status"],
+                                                    self.metadata(lap.task)["lap.stage"]))
+
+    def test_a_blocked_task_opens_no_lap_while_the_task_it_waits_on_is_open(self):
+        epic = self.new_epic()
+        task, other = self.new_task_under(epic, "--priority", "1"), self.new_task_under(epic, "--priority", "2")
+        self.hand_off(epic, {task: "till", other: "receipts"})
+        opened = {action["task"]: action for action in self.next_printed(epic)["actions"]}
+        lap = OpenLap(epic, task, "", Path(opened[task]["worktree"]))
+        new_task, _ = self.block_on(lap, "Round the receipt total")
+
+        printed = self.next_printed(epic)
+
+        self.assertEqual({new_task: "build", other: "build"},
+                         {open_lap["task"]: open_lap["stage"] for open_lap in printed["laps"]})
+        self.assertNotIn(task, [open_lap["task"] for open_lap in printed["laps"]])
+
+    def test_a_blocked_report_naming_no_blocking_finding_counts_a_try_and_files_nothing(self):
+        lap = self.open_one_lap()
+        self.leave_findings(lap, self.finding("Sweep the till", "outside"))
+
+        self.report_printed(lap.epic, lap.task, "blocked")
+
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+        self.assertTrue(any("placement is blocks" in text for text in self.texts(lap.task)))
+        self.assertEqual({lap.task}, set(self.children_of(lap.epic).values()))
+
+    def test_a_blocked_report_with_no_discovered_work_report_counts_a_try(self):
+        lap = self.open_one_lap()
+
+        self.report_printed(lap.epic, lap.task, "blocked")
+
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+
+    def test_a_finding_with_a_placement_outside_the_fixed_set_is_not_filed(self):
+        lap = self.open_one_lap()
+        self.leave_findings(lap, self.finding("Round the receipt total", "someday"))
+
+        self.report_printed(lap.epic, lap.task, "blocked")
+
+        self.assertEqual("build", self.metadata(lap.task)["lap.stage"])
+        self.assertEqual({lap.task}, set(self.children_of(lap.epic).values()))
+
+    def test_the_lap_after_a_block_carries_no_answer_from_a_question_the_human_answered_earlier(self):
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: "till"})
+        [action] = self.next_printed(epic)["actions"]
+        lap = OpenLap(epic, task, "", Path(action["worktree"]))
+        self.leave_in(lap.worktree, ".scratch/question.json", json.dumps(
+            {"found": "Which rounding?", "options": [{"name": "five cents", "confidence": 60},
+                                                      {"name": "exact", "confidence": 30}],
+             "recommended": "five cents"}))
+        self.report_printed(epic, task, "question")
+        fixture.run([self.bd, "label", "remove", task, "human"], self.repo)
+        self.next_printed(epic)
+        new_task, printed = self.block_on(lap, "Round the receipt total")
+        [new_action] = printed["actions"]
+        self.commit_in(Path(new_action["worktree"]), "rounding.txt", "rounded\n")
+
+        [again] = self.build_done(epic, new_task)["actions"]
+
+        self.assertEqual((task, None), (again["task"], again["answer"]))
+
+
+class TaskAddedToAHeldEpicTests(SchedulerCase):
+    def test_a_task_the_human_adds_to_a_held_epic_gets_a_lap_once_the_task_it_waits_on_merges(self):
+        epic = self.new_epic()
+        first = self.new_task_under(epic)
+        self.hand_off(epic, {first: "till"})
+        [action] = self.next_printed(epic)["actions"]
+        added = self.new_task_under(epic, "--deps", first)
+        fixture.run([self.bd, "update", added, "--set-metadata", "lap.area=receipts"], self.repo)
+        self.assertEqual([first], [open_lap["task"] for open_lap in self.next_printed(epic)["laps"]])
+        self.commit_in(Path(action["worktree"]), "card.txt", "built\n")
+
+        printed = self.build_done(epic, first)
+
+        self.assertEqual([("build", added)], [(opened["action"], opened["task"]) for opened in printed["actions"]])
+
+
+class CapTests(SchedulerCase):
+    def age_stage(self, task: str, seconds: int) -> None:
+        """Makes the task's stage look like it started the given seconds ago."""
+        fixture.run([self.bd, "update", task, "--set-metadata", f"lap.started={int(time.time()) - seconds}"],
+                    self.repo)
+
+    def test_the_third_failed_build_parks_the_task_with_a_comment_naming_the_try_cap(self):
+        lap = self.open_one_lap()
+
+        for _ in range(3):
+            self.report_printed(lap.epic, lap.task, "failed")
+
+        self.assertIn("the try cap of 3", self.assert_parked(lap, 3))
+
+    def test_the_second_send_back_from_the_checks_parks_the_task_with_a_comment_naming_the_send_back_cap(self):
+        lap = self.open_one_lap()
+
+        first = self.report_printed(lap.epic, lap.task, "send back")
+        second = self.report_printed(lap.epic, lap.task, "send back")
+
+        self.assertEqual([lap.task], [action["task"] for action in first["actions"]])
+        self.assertEqual(0, self.metadata(lap.task)["lap.tries"])
+        self.assertEqual([], second["actions"])
+        self.assertIn("the send-back cap of 2", self.assert_parked(lap, 0))
+
+    def test_a_send_back_does_not_count_as_a_failed_build_try(self):
+        lap = self.open_one_lap()
+        self.report_printed(lap.epic, lap.task, "send back")
+
+        self.report_printed(lap.epic, lap.task, "failed")
+        self.report_printed(lap.epic, lap.task, "failed")
+
+        self.assertEqual(("build", 2), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+
+    def test_the_third_cutoff_of_the_build_parks_the_task_with_a_comment_naming_the_cutoff_cap(self):
+        lap = self.open_one_lap()
+
+        first = self.report_printed(lap.epic, lap.task, "cut off")
+        second = self.report_printed(lap.epic, lap.task, "cut off")
+        third = self.report_printed(lap.epic, lap.task, "cut off")
+
+        self.assertEqual(([lap.task], [lap.task], []),
+                         tuple([action["task"] for action in printed["actions"]] for printed in (first, second, third)))
+        self.assertIn("the cutoff cap of 3", self.assert_parked(lap, 0))
+
+    def test_a_manager_restarting_is_the_humans_stop_and_counts_no_cutoff(self):
+        lap = self.open_one_lap()
+
+        for _ in range(4):
+            printed = self.next_printed(lap.epic)
+
+        self.assertEqual([lap.task], [action["task"] for action in printed["actions"]])
+        self.assertEqual("build", self.metadata(lap.task)["lap.stage"])
+
+    def test_a_build_reported_past_its_wall_clock_of_60_minutes_ends_cut_off_and_counts_no_try(self):
+        lap = self.open_one_lap()
+        self.commit_in(lap.worktree, "card.txt", "built\n")
+        self.age_stage(lap.task, 61 * 60)
+
+        printed = self.build_done(lap.epic, lap.task)
+
+        self.assertEqual([lap.task], [action["task"] for action in printed["actions"]])
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("build", 0), (metadata["lap.stage"], metadata["lap.tries"]))
+        self.assertEqual("in_progress", self.shown(lap.task)["status"])
+        self.assertTrue(any("wall clock of 60 minutes" in text for text in self.texts(lap.task)))
+
+    def test_the_rerun_after_a_wall_clock_cutoff_gets_a_fresh_wall_clock(self):
+        lap = self.open_one_lap()
+        self.age_stage(lap.task, 61 * 60)
+        self.report_printed(lap.epic, lap.task, "failed")
+
+        printed = self.report_printed(lap.epic, lap.task, "failed")
+
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+        self.assertEqual([lap.task], [action["task"] for action in printed["actions"]])
+
+    def test_a_build_reported_inside_its_wall_clock_is_taken_as_reported(self):
+        lap = self.open_one_lap()
+        self.age_stage(lap.task, 59 * 60)
+
+        self.report_printed(lap.epic, lap.task, "failed")
+
+        self.assertEqual(1, self.metadata(lap.task)["lap.tries"])
+
+    def test_a_task_that_parks_leaves_the_other_laps_running(self):
+        epic = self.new_epic()
+        first, second = self.new_task_under(epic), self.new_task_under(epic)
+        self.hand_off(epic, {first: "till", second: "receipts"})
+        [first_action, second_action] = self.next_printed(epic)["actions"]
+        self.commit_in(Path(second_action["worktree"]), "card.txt", "built\n")
+
+        for _ in range(3):
+            parked = self.report_printed(epic, first, "failed")
+        merged = self.build_done(epic, second)
+
+        self.assertEqual([second], [open_lap["task"] for open_lap in parked["laps"]])
+        self.assertEqual(("parked", "closed"), (self.metadata(first)["lap.stage"], self.shown(second)["status"]))
+        self.assertEqual([], merged["laps"])
+
+
+class BrakeTests(SchedulerCase):
+    def fail_three_times(self, epic: str, task: str) -> dict:
+        for _ in range(3):
+            printed = self.report_printed(epic, task, "failed")
+        return printed
+
+    def epic_of_five_tasks(self) -> tuple[str, list[str]]:
+        epic = self.new_epic()
+        tasks = [self.new_task_under(epic) for _ in range(5)]
+        self.hand_off(epic, {task: f"area-{number}" for number, task in enumerate(tasks)})
+        self.next_printed(epic)
+        return epic, tasks
+
+    def test_three_laps_in_a_row_parked_at_the_build_stop_new_laps_until_a_fix_task_is_filed(self):
+        epic, [first, second, third, fourth, fifth] = self.epic_of_five_tasks()
+        self.fail_three_times(epic, first)
+        self.fail_three_times(epic, second)
+
+        braked = self.fail_three_times(epic, third)
+
+        self.assertEqual({"stage": "build", "laps": 3}, braked["brake"])
+        self.assertEqual(([], [fourth]), (braked["actions"], [open_lap["task"] for open_lap in braked["laps"]]))
+        self.assertNotIn("lap.stage", self.metadata(fifth))
+        still_braked = self.next_moves(epic)
+        self.assertEqual(0, still_braked.returncode, still_braked.stderr)
+        self.assertEqual([fourth], [action["task"] for action in json.loads(still_braked.stdout)["actions"]])
+        self.assertIn("no new lap opens until a fix task is filed", still_braked.stderr)
+
+        fix = self.new_task_under(epic)
+        fixture.run([self.bd, "update", fix, "--set-metadata", "lap.area=fix"], self.repo)
+        lifted = self.next_printed(epic)
+
+        self.assertIsNone(lifted["brake"])
+        self.assertEqual([fourth, fifth], [action["task"] for action in lifted["actions"]][:2])
+
+    def test_a_merge_between_the_parked_laps_keeps_the_brake_off(self):
+        epic, [first, second, third, fourth, fifth] = self.epic_of_five_tasks()
+        self.fail_three_times(epic, first)
+        self.fail_three_times(epic, second)
+        third_lap = next(open_lap for open_lap in self.next_printed(epic)["laps"] if open_lap["task"] == third)
+        self.commit_in(Path(third_lap["worktree"]), "card.txt", "built\n")
+        self.build_done(epic, third)
+
+        printed = self.fail_three_times(epic, fourth)
+
+        self.assertIsNone(printed["brake"])
+        self.assertEqual([fifth], [open_lap["task"] for open_lap in printed["laps"]])
+
+
+class HumanLabelBrakeTests(SchedulerCase):
+    def label(self, bead: str) -> None:
+        fixture.run([self.bd, "label", "add", bead, "human"], self.repo)
+
+    def unlabel(self, bead: str) -> None:
+        fixture.run([self.bd, "label", "remove", bead, "human"], self.repo)
+
+    def test_a_human_label_put_on_a_task_with_a_running_build_stops_the_build_that_a_failed_try_would_start(self):
+        lap = self.open_one_lap()
+        self.label(lap.task)
+
+        printed = self.report_printed(lap.epic, lap.task, "failed")
+
+        self.assertEqual([], printed["actions"])
+        self.assertEqual([("build", 1)], [(open_lap["stage"], open_lap["tries"]) for open_lap in printed["laps"]])
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+
+    def test_a_manager_restarting_starts_no_stage_on_a_task_labeled_human(self):
+        lap = self.open_one_lap()
+        self.label(lap.task)
+
+        restarted = self.next_moves(lap.epic)
+
+        self.assertEqual(0, restarted.returncode, restarted.stderr)
+        self.assertEqual([], json.loads(restarted.stdout)["actions"])
+        self.assertIn(lap.task, restarted.stderr)
+
+    def test_taking_the_human_label_off_a_task_lets_its_stopped_build_go_on_with_the_tries_it_had(self):
+        lap = self.open_one_lap()
+        self.label(lap.task)
+        self.report_printed(lap.epic, lap.task, "failed")
+        self.unlabel(lap.task)
+
+        [action] = self.next_printed(lap.epic)["actions"]
+
+        self.assertEqual(("build", lap.task, 1), (action["action"], action["task"],
+                                                  self.metadata(lap.task)["lap.tries"]))
+
+    def test_a_build_that_is_done_when_the_human_label_goes_on_its_task_still_merges(self):
+        lap = self.open_one_lap()
+        self.commit_in(lap.worktree, "card.txt", "built\n")
+        self.label(lap.task)
+
+        self.build_done(lap.epic, lap.task)
+
+        self.assertEqual("closed", self.shown(lap.task)["status"])
+
+    def test_a_human_label_on_the_epic_opens_no_lap_for_any_ready_task(self):
+        epic = self.new_epic()
+        first, second = self.new_task_under(epic), self.new_task_under(epic)
+        self.hand_off(epic, {first: "till", second: "receipts"})
+        self.label(epic)
+
+        printed = self.next_printed(epic)
+
+        self.assertEqual(([], []), (printed["actions"], printed["laps"]))
+        for task in (first, second):
+            self.assertNotIn("lap.stage", self.metadata(task))
+            self.assertEqual("open", self.shown(task)["status"])
+
+    def test_a_human_label_on_the_epic_stops_the_build_that_a_failed_try_would_start_on_every_running_lap(self):
+        epic = self.new_epic()
+        first, second = self.new_task_under(epic), self.new_task_under(epic)
+        self.hand_off(epic, {first: "till", second: "receipts"})
+        self.next_printed(epic)
+        self.label(epic)
+
+        printed = self.report_printed(epic, first, "failed")
+
+        self.assertEqual([], printed["actions"])
+        self.assertEqual({first, second}, {open_lap["task"] for open_lap in printed["laps"]})
+
+    def test_taking_the_human_label_off_the_epic_lets_the_factory_open_the_laps_it_held_back(self):
+        epic = self.new_epic()
+        first, second = self.new_task_under(epic), self.new_task_under(epic)
+        self.hand_off(epic, {first: "till", second: "receipts"})
+        self.label(epic)
+        self.next_printed(epic)
+        self.unlabel(epic)
+
+        printed = self.next_printed(epic)
+
+        self.assertEqual([first, second], [action["task"] for action in printed["actions"]])
+
+    def test_a_running_stage_finishes_when_the_epic_is_parked_and_the_laps_resume_when_the_label_comes_off(self):
+        epic = self.new_epic()
+        first, second = self.new_task_under(epic), self.new_task_under(epic)
+        fixture.run([self.bd, "dep", "add", second, "--blocked-by", first], self.repo)
+        self.hand_off(epic, {first: "till", second: "receipts"})
+        [action] = self.next_printed(epic)["actions"]
+        self.commit_in(Path(action["worktree"]), "card.txt", "built\n")
+        self.label(epic)
+
+        parked = self.build_done(epic, first)
+
+        self.assertEqual(("closed", [], []), (self.shown(first)["status"], parked["actions"], parked["laps"]))
+        self.assertNotIn("lap.stage", self.metadata(second))
+
+        self.unlabel(epic)
+        [resumed] = self.next_printed(epic)["actions"]
+
+        self.assertEqual(("build", second), (resumed["action"], resumed["task"]))
 
 
 class MergeGateRefusalTests(SchedulerCase):
@@ -1030,6 +1898,155 @@ class SchedulerRefusalTests(SchedulerCase):
         done = self.launch(SCHEDULER, "next")
 
         self.assertEqual(2, done.returncode)
+
+
+class FactoryRulesTests(SchedulerCase):
+    def rules(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run([str(LAUNCHER), str(RULES), *args], input=stdin, capture_output=True, text=True,
+                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home),
+                              cwd=self.repo)
+
+    def rules_set(self, epic: str, *settings: str) -> dict:
+        done = self.rules("set", epic, *settings)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def rule_comments(self, epic: str) -> list[dict]:
+        return [comment for comment in self.comments(epic) if str(comment["text"]).startswith("Factory rules:")]
+
+    def handed_off_epic(self, areas: int) -> str:
+        epic = self.new_epic()
+        tasks = [self.new_task_under(epic) for _ in range(areas)]
+        self.hand_off(epic, {task: f"area-{index}" for index, task in enumerate(tasks)})
+        return epic
+
+    def test_lowering_the_lap_limit_posts_one_line_under_the_git_user_and_the_scheduler_opens_no_more_laps(self):
+        epic = self.handed_off_epic(3)
+
+        self.rules_set(epic, "lap_limit=1")
+        printed = self.next_printed(epic)
+
+        [comment] = self.rule_comments(epic)
+        self.assertEqual(JEFF, comment["author"])
+        self.assertEqual("Factory rules: lap_limit set to 1.", comment["text"])
+        self.assertEqual(1, printed["lap_limit"])
+        self.assertEqual(1, len(printed["actions"]))
+        self.assertEqual(1, len(printed["laps"]))
+
+    def test_without_a_rule_the_scheduler_opens_laps_up_to_the_repo_settings_lap_limit(self):
+        epic = self.handed_off_epic(3)
+
+        printed = self.next_printed(epic)
+
+        self.assertEqual((LAP_LIMIT, LAP_LIMIT), (printed["lap_limit"], len(printed["actions"])))
+
+    def test_the_scheduler_reads_the_rules_again_on_every_call(self):
+        epic = self.handed_off_epic(3)
+        first = self.next_printed(epic)
+        self.assertEqual(LAP_LIMIT, first["lap_limit"])
+
+        self.rules_set(epic, "lap_limit=1")
+        second = self.next_printed(epic)
+
+        self.assertEqual(1, second["lap_limit"])
+        opened = {action["task"] for action in first["actions"]}
+        self.assertEqual(opened, {action["task"] for action in second["actions"]})
+        self.assertEqual(opened, {lap["task"] for lap in second["laps"]})
+
+    def test_a_lap_limit_that_is_not_below_the_repo_settings_is_refused_and_writes_nothing(self):
+        epic = self.handed_off_epic(1)
+
+        for higher in (LAP_LIMIT, LAP_LIMIT + 1):
+            done = self.rules("set", epic, f"lap_limit={higher}")
+
+            self.assertEqual(1, done.returncode)
+            self.assertIn(f"lap_limit must be below the repo's {LAP_LIMIT}", done.stderr)
+        self.assertEqual([], self.rule_comments(epic))
+        self.assertNotIn("rules.lap_limit", self.metadata(epic))
+
+    def test_a_refusal_names_every_bad_setting_and_writes_none_of_them(self):
+        epic = self.handed_off_epic(1)
+
+        done = self.rules("set", epic, "passes=0", "budget=cheap", "colour=red", "lap_limit=1")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("passes must be a whole number above zero", done.stderr)
+        self.assertIn("budget must be a number of dollars above zero", done.stderr)
+        self.assertIn("colour is not a setting", done.stderr)
+        self.assertEqual([], self.rule_comments(epic))
+        self.assertNotIn("rules.lap_limit", self.metadata(epic))
+
+    def test_every_setting_is_stored_and_shown_with_one_comment_each(self):
+        epic = self.handed_off_epic(1)
+        wanted = {"lap_test_scope": "full", "lap_limit": 1, "wall_clocks": {"build": 30}, "passes": 2,
+                  "discovered_bugs_into_epic": True, "extra_commands": ["make lint"],
+                  "tier_routes": {"deep": "opus-high"}, "stage_tiers": {"build": "deep"}, "budget": 12.5,
+                  "reserves": {"home": 0.2}, "commits_on_main": "per_task"}
+
+        self.rules_set(epic, *(f"{name}={json.dumps(value)}" for name, value in wanted.items()))
+
+        shown = json.loads(self.rules("show", epic).stdout)
+        self.assertEqual(wanted, shown["settings"])
+        self.assertEqual(len(wanted), len(self.rule_comments(epic)))
+        self.assertTrue(all("\n" not in comment["text"] for comment in self.rule_comments(epic)))
+
+    def test_a_bare_word_is_taken_as_text_and_a_change_names_the_value_it_replaced(self):
+        epic = self.handed_off_epic(1)
+
+        self.rules_set(epic, "lap_test_scope=full")
+        self.rules_set(epic, "lap_test_scope=targeted")
+
+        self.assertEqual(['Factory rules: lap_test_scope set to "full".',
+                          'Factory rules: lap_test_scope set to "targeted", was "full".'],
+                         [comment["text"] for comment in self.rule_comments(epic)])
+
+    def test_a_setting_already_at_its_value_posts_nothing(self):
+        epic = self.handed_off_epic(1)
+        self.rules_set(epic, "passes=2")
+
+        printed = self.rules_set(epic, "passes=2")
+
+        self.assertEqual({}, printed["changed"])
+        self.assertEqual(1, len(self.rule_comments(epic)))
+
+    def test_guidance_is_stored_whole_and_its_comment_gives_its_size_not_its_text(self):
+        epic = self.handed_off_epic(1)
+        text = "Prefer small functions.\nName a test for its behavior.\n"
+
+        done = self.rules("guidance", epic, stdin=text)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(text.strip(), json.loads(self.rules("show", epic).stdout)["guidance"])
+        self.assertEqual(["Factory rules: guidance set, 2 lines."],
+                         [comment["text"] for comment in self.rule_comments(epic)])
+
+    def test_a_preset_sets_what_it_holds_and_the_improvement_epic_preset_runs_the_full_suite_in_a_lap(self):
+        epic = self.handed_off_epic(1)
+
+        self.rules_set(epic, "lap_limit=1")
+        done = self.rules("preset", epic, "improvement-epic")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        settings = json.loads(done.stdout)["settings"]
+        self.assertEqual({"lap_limit": 1, "lap_test_scope": "full", "discovered_bugs_into_epic": False,
+                          "commits_on_main": "per_task"}, settings)
+
+    def test_rules_on_a_task_are_refused(self):
+        task = self.new_task_under(self.handed_off_epic(1))
+
+        done = self.rules("set", task, "passes=2")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(f"{task} is a task, not an epic", done.stderr)
+
+    def test_the_scheduler_refuses_an_epic_whose_stored_rules_cannot_be_read(self):
+        epic = self.handed_off_epic(1)
+        fixture.run([self.bd, "update", epic, "--set-metadata", "rules.lap_limit=0"], self.repo)
+
+        done = self.next_moves(epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("lap_limit holds 0, where it needs a whole number above zero", done.stderr)
 
 
 if __name__ == "__main__":

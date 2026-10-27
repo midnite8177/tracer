@@ -9,7 +9,8 @@ function worktreeOf(prompt: string): string | undefined {
 }
 
 const DRIVE = /^[A-Za-z]:/
-const HOST_ONLY = new Set(['ToolSearch', 'SendMessage', 'ListAgents', 'AskUserQuestion', 'SubagentHandback'])
+const HOST_ONLY = new Set(['ToolSearch', 'SendMessage', 'ListAgents', 'SubagentHandback'])
+const ASKS_LIVE = 'AskUserQuestion'
 const STARTS_WORKERS = new Set(['Agent', 'Workflow'])
 const FILE_PATH_FIELD: ReadonlyMap<string, string> = new Map([
   ['Write', 'file_path'],
@@ -171,7 +172,7 @@ function textsOf(value: unknown): string[] {
  * settings that jidoka's own script shows for the worktree; none when the
  * script cannot show them.
  */
-async function listedCommands($: EngineInterface, worktree: string): Promise<string[]> {
+async function repoCommands($: EngineInterface, worktree: string): Promise<string[]> {
   const root = $.plugin.root
   const argv = ['sh', `${root}/bin/jidoka-run`, `${root}/scripts/repo_settings.py`, 'show']
   try {
@@ -186,6 +187,26 @@ async function listedCommands($: EngineInterface, worktree: string): Promise<str
   } catch {
     return []
   }
+}
+
+/**
+ * The commands the built-in list's additions and the lap's epic allow, from
+ * jidoka's own script run in the worktree; none when the script cannot print
+ * them.
+ */
+async function grantedCommands($: EngineInterface, worktree: string): Promise<string[]> {
+  const root = $.plugin.root
+  const argv = ['sh', `${root}/bin/jidoka-run`, `${root}/scripts/rules.py`, 'lap-commands']
+  try {
+    const shown = await $.process.run(argv, { cwd: worktree })
+    return shown.exitCode === 0 ? textsOf(JSON.parse(shown.stdout)) : []
+  } catch {
+    return []
+  }
+}
+
+async function listedCommands($: EngineInterface, worktree: string): Promise<string[]> {
+  return [...(await repoCommands($, worktree)), ...(await grantedCommands($, worktree))]
 }
 
 /**
@@ -268,6 +289,14 @@ export const register: Register = on => {
     }
     const lap = await lapOf($, e.agentId)
     if (lap === undefined || HOST_ONLY.has(e.tool)) return next(e)
+    if (e.tool === ASKS_LIVE) {
+      return {
+        decision: 'deny',
+        reason:
+          'jidoka: a lap worker never asks live. End the stage with a question report in the scratch folder ' +
+          'and the outcome question.',
+      }
+    }
     if (STARTS_WORKERS.has(e.tool)) {
       return { decision: 'deny', reason: `jidoka: a lap worker starts no workers, so its ${e.tool} call is denied.` }
     }

@@ -14,7 +14,7 @@ read beads:
   ready --json
   blocked --json
   create --title <title> [--type <type>] [--parent <id>] [--labels <label,...>] [--priority <n>]
-         [--description <text>] [--deps <id,...>] --json
+         [--description <text>] [--deps <id|discovered-from:id>,...] --json
   update <id> [--claim] [--status <status>] [--assignee <name>] [--add-label <label>]
          [--set-metadata <key>=<value>]...
   label add|remove <id> <label>
@@ -33,8 +33,9 @@ read. A field with no value is left out, as bd leaves it out: no assignee,
 no description, no labels, no metadata. Labels come sorted. A metadata
 value that reads as a JSON number, true, false or null is stored as that,
 and anything else as the text given, as bd stores it. A task's id is its
-parent's id and a number. Each id --deps names is a bead the new one
-waits on, as bd reads a bare id there. A bead is ready when it is open and
+parent's id and a number. Each bare id --deps names is a bead the new one
+waits on, as bd reads a bare id there, and each discovered-from:<id> is a
+link that waits on nothing. A bead is ready when it is open and
 waits on no bead that is still open, and blocked when it is not closed and
 waits on one; blocked prints the ids of the beads not yet closed that it
 waits on. A claim sets the assignee to the actor and the status to
@@ -67,6 +68,7 @@ DEFAULT_PRIORITY = 2
 STATUSES = {"open", "in_progress", "blocked", "deferred", "closed"}
 BLOCKS = "blocks"
 PARENT_CHILD = "parent-child"
+DISCOVERED_FROM = "discovered-from"
 CLOSED = "closed"
 PRIME_TEXT = "# Beads Workflow Context\n\nThe fake bd stands in for bd prime here.\n"
 
@@ -199,6 +201,7 @@ def plain(bead: dict) -> dict:
 def shown(store: dict, bead: dict) -> dict:
     """The bead as bd show prints it: its own fields, and each bead it waits on or sits under with the link's type."""
     links = [(target, BLOCKS) for target in bead["blocked_by"]]
+    links.extend((target, DISCOVERED_FROM) for target in bead.get("discovered_from", []))
     if bead.get("parent"):
         links.append((bead["parent"], PARENT_CHILD))
     printed = plain(bead)
@@ -294,17 +297,21 @@ def create(store: dict, flags: Flags) -> bool:
         bead_id = f"{parent}.{under['children']}"
     priority = flags.one("--priority")
     labels = flags.one("--labels")
-    blockers = [blocker for blocker in (flags.one("--deps") or "").split(",") if blocker]
-    for blocker in blockers:
-        if ":" in blocker:
-            raise Refused(f"the fake bd takes --deps only as bead ids, not {blocker!r}")
-        bead_in(store, blocker)
+    blockers, origins = [], []
+    for dep_spec in (flags.one("--deps") or "").split(","):
+        kind, has_kind, target = dep_spec.rpartition(":")
+        if not target:
+            continue
+        if has_kind and kind != DISCOVERED_FROM:
+            raise Refused(f"the fake bd takes --deps only as bead ids or {DISCOVERED_FROM}:<id>, not {dep_spec!r}")
+        bead_in(store, target)
+        (origins if has_kind else blockers).append(target)
     bead = {"id": bead_id, "title": title, "status": "open",
             "priority": int(priority) if priority is not None else DEFAULT_PRIORITY,
             "issue_type": flags.one("--type") or DEFAULT_TYPE, "assignee": "", "close_reason": "",
             "description": flags.one("--description") or "",
             "metadata": {}, "labels": [label for label in (labels or "").split(",") if label],
-            "parent": parent or "", "blocked_by": blockers, "children": 0}
+            "parent": parent or "", "blocked_by": blockers, "discovered_from": origins, "children": 0}
     store["beads"][bead_id] = bead
     print(json.dumps(plain(bead), indent=2))
     return True

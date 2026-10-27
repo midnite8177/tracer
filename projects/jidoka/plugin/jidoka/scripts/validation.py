@@ -39,6 +39,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import park
 import private_docs
 import targeted_tests
 from bench import WORKTREE_FOLDER, hide_worktrees
@@ -50,7 +51,7 @@ from repo_settings import full_suite_command
 
 GATE_STATE_KEY = "gate.state"
 WAITING = "waiting"
-HUMAN_LABEL = "human"
+HUMAN_LABEL = park.HUMAN_LABEL
 GATE_COMMENT_HEADING = "Acceptance gate:"
 WORKTREE_PREFIX = "validation-"
 MAIN_BRANCH = "main"

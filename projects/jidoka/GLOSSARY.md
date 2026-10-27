@@ -67,6 +67,13 @@ settings' lap limit and can only go lower. Guidance is prose that every
 worker follows and that the Spec check holds each diff to.
 _Avoid_: Epic config, run settings, policy, ruleset
 
+**Preset**:
+A named set of factory rules that handoff offers as a starting point: the
+bug-epic preset for an epic that fixes bugs, and the improvement-epic
+preset for an improvement epic. Only the rules script writes the rules a
+preset holds, and each change posts a one-line comment on the epic.
+_Avoid_: Template, profile, mode
+
 **Lap**:
 One task's trip through the factory, from the start of its build to its
 merge into the epic branch, retries included. It ends merged, which closes
@@ -181,16 +188,25 @@ _Avoid_: Merge (a lap merges into the epic branch), ship, release, integrate
 
 **Discovered work**:
 A problem a lap or a pass finds outside the task or diff it is working
-on. It is filed as a bead, inside the epic when the epic cannot be
-accepted without it, and outside the epic otherwise.
+on. It is filed as a bead linked discovered-from to the task it was found
+in, inside the epic when the epic cannot be accepted without it, and
+outside the epic otherwise. A worker never files it: its stage ends with a
+discovered-work report in its scratch folder, and a script files it. A lap
+that cannot finish without its discovered task ends blocked, and the task
+waits on the new one.
 _Avoid_: Side quest, follow-up, tech debt
 
 ### Asking the human
 
 **Question**:
 A worker's request for a decision from the human, which parks its task or
-its epic. It says what the worker found, the options, and the one it
-recommends; unparking without an answer takes the recommendation.
+its epic. It says what the worker found, the options, each with the
+worker's confidence in percent that it is the right answer, and the one it
+recommends; unparking without an answer takes the recommendation. A worker
+never asks live: its stage ends with a question report in its scratch
+folder, and a script posts it on the task. A worker makes the choice as an
+assumption instead when the bead, the epic, the glossary or an ADR already
+settles it, or when its recommendation reaches 90% and is cheap to reverse.
 _Avoid_: Escalation, prompt, ask, blocker
 
 **Assumption**:
@@ -309,9 +325,30 @@ _Avoid_: Result, status, verdict
 One failed go at a lap's stage, which counts toward the stage's cap. A
 failed build, red targeted tests, a filter the targeted tests refuse and
 a lap with no commit the epic branch lacks are each a try of the build,
-and the third parks the task. A cutoff is not a try, nor is the epic
-branch moving under the merge gate.
+and the third parks the task. A merge worker that fails, leaves its
+rebase unfinished, leaves the lap without the epic branch's head or leaves
+tests red is a try of the merge, and the second parks the task. A cutoff is
+not a try, nor is the epic branch moving under the merge gate, nor is
+newer work that calls the merge worker.
 _Avoid_: Attempt, retry, strike
+
+**Cap**:
+A limit on one lap that parks its task and never stops the factory: three
+tries of the build, two tries of the merge worker, two send-backs from the
+checks together, and three cutoffs of one stage, apart from the human's own
+stop. A stage past its
+wall clock, 60 minutes for the build and 30 for any other stage, ends cut
+off.
+_Avoid_: Budget (that is dollars), limit, quota, timeout
+
+**Brake**:
+The stop on new laps that three laps in a row, parked at the same stage
+with no merge between, put on an epic. The laps already open run on. It
+lifts when the manager files a fix task in the epic. The human's own brake
+is the `human` label: on a task it stops new stages on that task, on the
+epic it stops new stages on every task, the running stages finish, and
+taking the label off lets the factory go on.
+_Avoid_: Circuit breaker, halt, freeze
 
 **Worker**:
 An agent the manager starts to run one stage, in the host's own harness
@@ -370,13 +407,22 @@ _Avoid_: Temp folder, tmp, workspace
 **Lap mod**:
 The hooks module in jidoka's plugin that decides every lap worker's tool
 call ahead of the host's rules, mode and prompt, so no lap waits on a
-permission prompt. It allows a call on the built-in list or the repo's
-list, refuses a write outside the lap's worktree, whether by its path or
+permission prompt. It allows a call on the built-in list, the repo's
+list or the lap's epic's factory rules, refuses a write outside the lap's worktree, whether by its path or
 through a symlink, and denies the rest with a reason. It decides a worker's
 first call too, before the worker's agent id is known. The built-in list holds every call the tool marks read-only, a
-write inside the worktree, and each app's test command. The repo's list
-is the repo settings' worker commands.
+write inside the worktree, and each app's test command, and the commands a
+human added to it for every repo on the machine. The repo's list is the
+repo settings' worker commands.
 _Avoid_: Permission hook, guard, sandbox, allowlist
+
+**Permission question**:
+A question about a call the lap mod denied, when the worker has no other
+way round it. It names the denied call and a pattern, the command prefix
+that would allow it, and its options are the three lists: the epic's
+factory rules, the repo's list and the built-in list. The answer names one
+list, the pattern goes onto it, and the next lap's mod allows the call.
+_Avoid_: Permission prompt, approval request
 
 ### Repos
 

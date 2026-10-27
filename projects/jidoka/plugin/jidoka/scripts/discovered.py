@@ -1,0 +1,130 @@
+"""Files the work a lap discovers, and blocks a lap's task on the discovered task it cannot finish without.
+
+The scheduler imports it; no command line runs it. A worker never files a
+bead. A stage that found work ends with a discovered-work report, the JSON
+file `discovered.json` in the lap's scratch folder: a list of findings, each
+with
+  title        the new bead's title.
+  description  what was seen and where.
+  placement    where it goes: `blocks`, `epic` or `outside`.
+`blocks` is work inside the epic that the lap's task cannot finish without.
+`epic` is work inside the epic that acceptance would reject the epic without.
+`outside` is everything else, and the new bead has no parent.
+
+Every bead filed is linked discovered-from to the lap's task. A bead inside
+the epic gets the lap's area and the simple track, so it is a task the
+factory takes once it is ready. A task that cannot finish waits on each
+`blocks` task and ends its lap blocked: stage `blocked`, status open, no
+assignee and no `human` label, so it is ready again, with a new lap on its
+kept worktree and branch, once every task it waits on is closed.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+from commands import env_as_factory, run
+
+DISCOVERED_REPORT = "discovered.json"
+BLOCKED = "blocked"
+BLOCKED_PREFIX = "Blocked: "
+DISCOVERED_FROM = "discovered-from"
+BLOCKS = "blocks"
+EPIC = "epic"
+OUTSIDE = "outside"
+PLACEMENTS = (BLOCKS, EPIC, OUTSIDE)
+TRACK = "simple"
+
+
+class DiscoveryError(Exception):
+    """A reason a discovered-work report cannot be filed, worded for the worker that writes the next one."""
+
+
+@dataclass(frozen=True)
+class Finding:
+    """One piece of discovered work, and where it goes."""
+    title: str
+    description: str
+    placement: str
+
+
+@dataclass(frozen=True)
+class Filed:
+    """A finding and the id of the bead it became."""
+    bead: str
+    finding: Finding
+
+
+def text_of(value: object, what: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise DiscoveryError(f"{what} must be a non-empty string")
+    return value.strip()
+
+
+def finding_of(value: object) -> Finding:
+    if not isinstance(value, dict):
+        raise DiscoveryError("each finding must be an object with a title, a description and a placement")
+    placement = value.get("placement")
+    if placement not in PLACEMENTS:
+        raise DiscoveryError(f"the placement of a finding must be one of {', '.join(PLACEMENTS)}, not {placement!r}")
+    return Finding(text_of(value.get("title"), "the title of a finding"),
+                   text_of(value.get("description"), "the description of a finding"), placement)
+
+
+def read_findings(scratch: Path) -> list[Finding]:
+    """The findings in the lap's scratch folder; none when the lap left no report, and DiscoveryError when it is unusable."""
+    path = scratch / DISCOVERED_REPORT
+    if not path.exists():
+        return []
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise DiscoveryError(f"the discovered-work report {path} cannot be read: {error}") from error
+    except ValueError as error:
+        raise DiscoveryError(f"the discovered-work report {path} is not JSON: {error}") from error
+    if not isinstance(report, list):
+        raise DiscoveryError(f"the discovered-work report {path} must be a JSON list of findings")
+    return [finding_of(item) for item in report]
+
+
+def blockers_in(findings: list[Finding]) -> list[Finding]:
+    return [finding for finding in findings if finding.placement == BLOCKS]
+
+
+def file_finding(finding: Finding, task: str, area: str, epic: str, main_tree: Path) -> Filed:
+    """Creates the bead for one finding, linked discovered-from to the task; inside the epic it also gets the area."""
+    env = env_as_factory()
+    inside = finding.placement != OUTSIDE
+    parent = ["--parent", epic] if inside else []
+    created = run(["bd", "create", "--title", finding.title, "--description", finding.description, "--type=task",
+                   *parent, "--deps", f"{DISCOVERED_FROM}:{task}", "--json"], main_tree, env)
+    try:
+        bead = str(json.loads(created)["id"])
+    except (ValueError, KeyError, TypeError) as error:
+        raise DiscoveryError(f"bd create did not print the new bead's id: {created.strip()[:200]!r}") from error
+    if inside:
+        run(["bd", "update", bead, "--set-metadata", f"lap.area={area}", "--set-metadata", f"lap.track={TRACK}"],
+            main_tree, env)
+    return Filed(bead, finding)
+
+
+def file_findings(findings: list[Finding], task: str, area: str, epic: str, main_tree: Path) -> list[Filed]:
+    return [file_finding(finding, task, area, epic, main_tree) for finding in findings]
+
+
+def clear_report(scratch: Path) -> None:
+    (scratch / DISCOVERED_REPORT).unlink(missing_ok=True)
+
+
+def block(task: str, tries: int, blockers: list[Filed], worktree: Path, branch: str, main_tree: Path) -> None:
+    """Makes the task wait on each blocker and ends its lap blocked, under the actor jidoka."""
+    env = env_as_factory()
+    for filed in blockers:
+        run(["bd", "dep", "add", task, "--blocked-by", filed.bead], main_tree, env)
+    waiting = "; ".join(f"{filed.bead} ({filed.finding.title})" for filed in blockers)
+    run(["bd", "comment", task, f"{BLOCKED_PREFIX}the task cannot finish without {waiting}. The worktree {worktree} "
+                                f"and the branch {branch} keep the work. The task gets a new lap once "
+                                f"{'it' if len(blockers) == 1 else 'they'} merge."], main_tree, env)
+    run(["bd", "update", task, "--status=open", "--assignee=", "--set-metadata", f"lap.stage={BLOCKED}",
+         "--set-metadata", f"lap.tries={tries}"], main_tree, env)

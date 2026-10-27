@@ -36,10 +36,13 @@ between events: no plans, no narration, no summary of a worker's reply, no
 echo of a script's output. The events and their lines:
 
 - a lap's build started: `<task> build started: lap <lap>, slot <slot>, <tier> tier on <model>`
-- a worker ended: `<task> build ended: <outcome>`, with the worker's `why`
-  after a colon when it failed
+- a lap's merge worker started: `<task> merge started: lap <lap>, slot <slot>, <tier> tier on <model>`
+- a worker ended: `<task> build ended: <outcome>` or
+  `<task> merge ended: <outcome>`, with the worker's `why` after a colon
+  when it failed
 - a lap merged: `<task> merged into <epic branch>`
 - a lap parked: `<task> parked: <why>`
+- a lap blocked: `<task> blocked: <why>`
 - nothing left to run: `<epic-id>: nothing left to run`
 
 A refusal is not an event. Show the script's message verbatim and stop.
@@ -53,6 +56,10 @@ track.
 | Stage | Track | Tier |
 |---|---|---|
 | build | simple | standard |
+| merge | simple | deep |
+
+The merge stage runs only when newer work on the epic branch conflicts with
+a lap or breaks its tests; the scheduler calls it, never the manager.
 
 Run `bench route <tier>` once for each tier you use. It prints the route
 as JSON with `harness`, `model`, `version` and `effort`. When the harness
@@ -71,7 +78,7 @@ stop.
    lacks jidoka, or says to start a new session. Show it verbatim and
    stop. Exit 0 prints one line; show it.
 2. **Route and settings.** Run `bench route standard --jidoka-home ...`,
-   then `repo settings show`. Keep each app's `name`, `test` and
+   then `bench route deep --jidoka-home ...`, then `repo settings show`. Keep each app's `name`, `test` and
    `test_target` for the workers' prompts.
 3. **Next.** Run `scheduler next <epic-id> --jidoka-home ...`. Exit 1 means
    it refused and wrote nothing; stderr lists every reason. Show it and
@@ -89,6 +96,15 @@ stop.
    `worktree`; the lap mod knows a lap worker by that line alone, runs it
    in that worktree, and decides its every tool call. Then give it:
    - the task as `bd show` printed it;
+   - when the action's `answer` is not null, the task was parked on a
+     question and the human has answered it. Give the worker the answer's
+     `text` and `source`: a `comment` is the human's own words, and a
+     `recommendation` is the option the earlier worker recommended, taken
+     because no comment came. The worker builds on the worktree as it
+     stands, with its commits, and takes the answer as the decision. When a
+     comment asks something back instead of deciding, the worker answers it
+     in the `found` of a new question report and ends with the question
+     outcome, so the task parks again;
    - the paths of `<skill folder>/../tdd/SKILL.md` and
      `<skill folder>/../unslop/SKILL.md`, absolute, to read before
      writing code, and the repo's house rules by path;
@@ -98,39 +114,101 @@ stop.
      scratch folder, the action's `scratch`. Do not commit; the scheduler
      commits what the build leaves in the worktree. Run no `bd` command
      that changes anything. Ask no questions, because no person reads
-     them. Start no workers. Run only the test files the diff reaches,
+     them, and AskUserQuestion is denied. Start no workers. Run only the test files the diff reaches,
      with an app's `test` command followed by its `test_target` with a
      filter in the placeholder, and never an app's `test` command alone.
      An app with no test command has no tests to run. When the lap mod
-     denies a call, find another way, or end failed and name the call;
+     denies a call, find another way, or end with the question outcome
+     and a permission question that names the call, as below;
    - this ending: the reply ends with one fenced `json` block, either
      `{"outcome": "done", "app": "<app>", "filter": "<filter>"}`, naming
      the app and the filter that run the build's targeted tests. The
      filter is only the text that fills the `test_target`'s placeholder:
      for `-k <name>` it is `test_validation`, never `-k test_validation`.
      Or
-     `{"outcome": "failed", "why": "<one line>"}`.
+     `{"outcome": "failed", "why": "<one line>"}`. Or
+     `{"outcome": "question"}`, after writing the question report to
+     `question.json` in the scratch folder. The report is a JSON object
+     with `found`, what the worker found; `options`, two or more, each
+     `{"name": "<option>", "confidence": <percent>}`, the worker's
+     confidence in whole percent that it is the right answer; and
+     `recommended`, the name of the one option it recommends. A worker
+     asks only when the bead, the epic, the glossary and the ADRs do not
+     settle the choice, and its recommendation is below 90% or costly to
+     reverse. Otherwise it makes the choice, says so in its reply as an
+     assumption, and goes on: a question that only confirms the design
+     parks a task for nothing.
+
+     A permission question is the question about a denied call that has no
+     other way round. Its report adds `call`, the denied call as the
+     denial printed it, and `pattern`, the command prefix that would allow
+     it: one simple command whose words appear in `call`. Its `options`
+     are exactly `epic` (the epic's factory rules), `repo` (the repo's
+     list) and `built-in` (the built-in list, for every repo on the
+     machine), each with its confidence. The human's answer names one
+     list, and the scheduler puts the pattern on it before the next lap,
+     so the next lap's mod allows the call. When the answer arrives for
+     a call the worker asked about, the worker runs it.
+
+     A worker that finds work outside its task never files a bead. It
+     lists each finding in `discovered.json` in the scratch folder, a JSON
+     list of objects with `title`, `description` and `placement`.
+     `placement` is `epic` when acceptance would reject the epic without
+     the work, and `outside` otherwise; work that is only nice to have is
+     no finding. A worker that cannot finish its task without the work lists
+     it with `placement` `blocks`, and ends with
+     `{"outcome": "blocked"}` instead of `done`. A done build with a finding
+     whose placement is `blocks` is a try.
 
    Write the event line for the started build, with the route's model or
    `the host's model`.
+
+   An action whose `action` is `merge` starts a merge worker instead, on the
+   route of the deep tier. Its prompt is built as above, with the same first
+   line, the task, the paths, the apps and the limits, except for these:
+   - the action's `reason` and the epic branch, the top-level `branch`, in
+     place of an answer;
+   - its job: newer work on the epic branch conflicts with the lap or broke
+     its tests. In the worktree, it runs `git rebase <epic branch>`,
+     resolves every conflict so that both laps' intent holds, runs
+     `git rebase --continue` until the rebase is finished, and fixes what
+     the merge broke. It leaves the worktree on the lap branch, never in the
+     middle of a rebase, and it commits nothing more: the scheduler folds
+     its fixes into the lap's commit. When a rebase is already in progress,
+     it runs `git rebase --abort` first;
+   - the same ending: `done` with the app and the filter that run the
+     tests the merge touches, or `failed` with its `why`.
+
+   Write the event line for the started merge worker.
 5. **Report.** Wait for the workers' notifications, and do nothing in
    between. Report each worker as it ends, one report at a time, with
    `scheduler report <epic-id> <task> <outcome> --jidoka-home ...`:
    - its reply ends with a done block that names an app and a filter:
      `done --app <app> --filter "<filter>"`;
+   - its reply ends with a question block: `question`;
+   - its reply ends with a blocked block: `blocked`;
    - its reply ends with a failed block, or holds no block you can read:
      `failed`;
    - it stopped before it replied, on an error, an interruption, a usage
      limit or an outage: `"cut off"`.
 
-   Write the worker's event line first. A report on done commits the
-   build's work and runs the targeted tests and the merge gate, so it can
-   take minutes. Exit 1 means it refused; show stderr and stop. Exit 0
+   A merge worker's reply is reported the same way. Write the worker's
+   event line first. A report on done commits the build's work and runs the
+   targeted tests and the merge gate, so it can take minutes. Exit 1 means it refused; show stderr and stop. Exit 0
    prints the same JSON as `next`. When the reported task is in neither
    `actions` nor `laps`, run `bd show <task>`: a closed task merged, and
    an open one with the `human` label parked, and its last comment that
-   starts with `Parked:` says why. Write that event line. Then start a
+   starts with `Parked:` or `Question:` says why. An open one with no
+   `human` label ended blocked, and its last comment, which starts with
+   `Blocked:`, names the task it waits on. Write that event line, as
+   `<task> blocked: <why>` for a blocked task. Then start a
    build worker for each action, as in step 4; an action for the task you
-   reported means its lap went back to the build. When `actions` is empty
-   and no worker of yours is running, go to step 6.
+   reported means its lap went back to the build or to the merge worker. When `brake` is not
+   null, three laps in a row parked at one stage with no merge between and
+   the scheduler opens no new lap. Show its stderr line. The manager then
+   files one task in the epic with `bd create --parent <epic-id>`, titled
+   for the stage that keeps failing, and gives it an area with
+   `bd update <task> --set-metadata lap.area=<area>`; it is the one
+   `bd` write the manager makes. The next scheduler call lifts the brake.
+   When `actions` is empty and no worker of yours is running, go to step 6.
 6. **End.** Write `<epic-id>: nothing left to run` and stop.
