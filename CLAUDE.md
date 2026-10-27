@@ -20,6 +20,13 @@ Each project README holds its own commands.
 - jidoka-ui: [projects/jidoka-ui/README.md](projects/jidoka-ui/README.md)
 - jidoka: [projects/jidoka/README.md](projects/jidoka/README.md)
 
+A jidoka test that needs beads uses the fake bd: `add_fake_beads` in
+`projects/jidoka/tests/jidoka_fixture.py`, with its folder first on the
+PATH of every script the test runs, as `test_scheduler.py` does. Each real
+`bd` call takes a second or more. Only the tests the jidoka README names
+run real `bd`. When a script makes a call the fake does not answer, add the
+call to `tests/fake_bd.py` and compare it in `tests/test_fake_bd.py`.
+
 ## Conventions
 
 The code keeps these rules. Keep them in new code.
