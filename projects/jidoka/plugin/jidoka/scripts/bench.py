@@ -79,7 +79,7 @@ class Bead:
 
 @dataclass(frozen=True)
 class Workspace:
-    """The branch and worktree of one bead's bench work, and the main sha the branch was cut from."""
+    """The branch and worktree of one bead's work, and the sha the branch was cut from."""
     branch: str
     worktree: Path
     start: str

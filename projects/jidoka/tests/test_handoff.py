@@ -271,6 +271,16 @@ class HandoffRefusalTests(HandoffCase):
                       "of it, or make it a task", done.stderr)
         self.assert_nothing_written(epic, [task], name)
 
+    def test_refuses_a_task_and_says_to_hand_off_the_epic_that_holds_it(self):
+        epic, name = self.new_epic()
+        task = self.new_task_under(epic)
+
+        done = self.handoff("take", task, "--area", f"{task}=till")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(f"{task} is a task, not an epic. Hand off the epic that holds it", done.stderr)
+        self.assert_nothing_written(epic, [task], name)
+
     def test_refuses_an_epic_with_no_tasks(self):
         epic, name = self.new_epic()
 
@@ -288,7 +298,8 @@ class HandoffRefusalTests(HandoffCase):
         done = self.handoff_in(bare_home, "take", epic, "--area", f"{task}=till")
 
         self.assertEqual(1, done.returncode)
-        self.assertIn("the repo has no repo settings on this machine. Run /jidoka:onboard", done.stderr)
+        self.assertIn("the repo has no repo settings on this machine. Run /jidoka:onboard, then hand the epic off",
+                      done.stderr)
         self.assert_nothing_written(epic, [task], name)
 
     def test_refuses_while_an_app_has_no_test_command_and_says_how_to_record_one(self):

@@ -329,6 +329,24 @@ The part of the codebase a task is expected to touch. Handoff names one
 for each task, and two laps in the same area never run at the same time.
 _Avoid_: Zone, lane, component, scope
 
+**Lap limit**:
+The most laps of one epic that run at the same time. The repo settings
+hold it, and an epic's factory rules can only set it lower.
+_Avoid_: Concurrency, parallelism, max workers
+
+**Slot**:
+A number from 1 up that a lap holds while it is open. A new lap takes the
+lowest one that no other open lap of the epic holds. The repo settings'
+slot use says what a lap does with it, such as pick a port, so two laps
+side by side never clash.
+_Avoid_: Port, seat, index
+
+**Scratch folder**:
+The `.scratch` folder at the root of a lap's worktree, where the lap's
+workers keep files that are not part of the work. The repo's git exclude
+file hides it from every git status.
+_Avoid_: Temp folder, tmp, workspace
+
 ### Repos
 
 **Onboarding**:

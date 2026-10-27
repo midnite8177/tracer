@@ -71,6 +71,17 @@ class HandoffError(Exception):
 
 
 @dataclass(frozen=True)
+class Rerun:
+    """How a script that makes the shared checks words its advice to run it again: on the epic that holds a
+    task, and after onboarding. Each script passes its own, so a refusal names the script the reader ran."""
+    on_the_holding_epic: str
+    after_onboarding: str
+
+
+RERUN = Rerun(on_the_holding_epic="Hand off the epic that holds it", after_onboarding="hand the epic off")
+
+
+@dataclass(frozen=True)
 class Task:
     """One of the epic's tasks, with the text of its Seams section, or an empty string when it has none."""
     id: str
@@ -120,13 +131,13 @@ def seams_of(description: str) -> str:
     return found.group(1).strip() if found else ""
 
 
-def epic_of(bead: str, main_tree: Path) -> Epic:
+def epic_of(bead: str, main_tree: Path, rerun: Rerun) -> Epic:
     shown = bd_show(bead, main_tree)
     if shown is None:
         raise HandoffError(f"bd show printed nothing usable for {bead}")
     if shown.get("issue_type") != EPIC_TYPE:
-        raise HandoffError(f"{bead} is a {shown.get('issue_type') or 'bead'}, not an epic. Hand off the epic "
-                           "that holds it")
+        raise HandoffError(f"{bead} is a {shown.get('issue_type') or 'bead'}, not an epic. "
+                           f"{rerun.on_the_holding_epic}")
     children = tuple(shown_beads(child_ids(bead, main_tree), main_tree))
     tasks = tuple(Task(str(child["id"]), str(child.get("title") or ""), str(child.get("status") or ""),
                        seams_of(str(child.get("description") or "")))
@@ -171,18 +182,20 @@ def waiting_problems(epic: Epic) -> list[str]:
     return problems
 
 
-def form_problems(epic: Epic) -> list[str]:
-    problems = [f"{epic.id} holds {child['id']}, which is an epic. An epic holds only tasks: move {child['id']} "
-                "out of it, or make it a task" for child in epic.children if child.get("issue_type") == EPIC_TYPE]
-    if not epic.tasks:
-        problems.append(f"{epic.id} holds no open tasks. Add its tasks with bd create --parent {epic.id}, then "
-                        "hand it off")
-    return problems
+def nested_epic_problems(epic: Epic) -> list[str]:
+    return [f"{epic.id} holds {child['id']}, which is an epic. An epic holds only tasks: move {child['id']} "
+            "out of it, or make it a task" for child in epic.children if child.get("issue_type") == EPIC_TYPE]
 
 
-def settings_problems(settings: dict) -> list[str]:
+def no_task_problems(epic: Epic) -> list[str]:
+    if epic.tasks:
+        return []
+    return [f"{epic.id} holds no open tasks. Add its tasks with bd create --parent {epic.id}, then hand it off"]
+
+
+def settings_problems(settings: dict, rerun: Rerun) -> list[str]:
     if not settings:
-        return [f"the repo has no repo settings on this machine. Run {ONBOARD}, then hand the epic off"]
+        return [f"the repo has no repo settings on this machine. Run {ONBOARD}, then {rerun.after_onboarding}"]
     untested, full_suite = settings.get("untested_apps"), settings.get("full_suite")
     if not (isinstance(untested, list) and isinstance(full_suite, list)):
         return [f"the repo settings lack untested_apps or full_suite. Run {ONBOARD} again to record them"]
@@ -214,20 +227,24 @@ def way_in_problems(settings: dict, epic_holdouts: list[holdouts.Holdout]) -> li
     return problems
 
 
-def problems_of(epic: Epic, branch_problems: list[str], home: Path, main_tree: Path) -> list[str]:
-    """Every reason the epic cannot go to the factory, in the order of the checks."""
-    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+def problems_while_held(epic: Epic, settings: dict, rerun: Rerun) -> list[str]:
+    """The checks that hold for as long as the factory holds the epic."""
     try:
         epic_holdouts = holdouts.of_epic(epic.shown)
         unreadable = []
     except holdouts.HoldoutsError as error:
         epic_holdouts, unreadable = [], [f"{error}. Write the epic's holdouts again"]
-    problems = [*waiting_problems(epic), *form_problems(epic), *settings_problems(settings),
-                *unreadable, *holdout_problems(epic, epic_holdouts)]
+    return [*waiting_problems(epic), *nested_epic_problems(epic), *settings_problems(settings, rerun),
+            *unreadable, *holdout_problems(epic, epic_holdouts), *way_in_problems(settings, epic_holdouts)]
+
+
+def problems_of(epic: Epic, branch_problems: list[str], home: Path, main_tree: Path) -> list[str]:
+    """Every reason the epic cannot go to the factory, in the order of the checks."""
+    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    problems = [*problems_while_held(epic, settings, RERUN), *no_task_problems(epic)]
     if FACTORY_LABEL in (epic.shown.get("labels") or []):
         problems.append(f"{epic.id} already carries the {FACTORY_LABEL} label, so the factory holds it. Start "
                         f"it with /jidoka:factory {epic.id}")
-    problems += way_in_problems(settings, epic_holdouts)
     if head_of(MAIN_REF, main_tree) is None:
         problems.append("the repo has no main branch to cut the epic branch from")
     return problems + branch_problems
@@ -278,7 +295,7 @@ def has_table(epic: Epic, main_tree: Path) -> bool:
 
 
 def check(bead: str, home: Path, main_tree: Path) -> dict:
-    epic = epic_of(bead, main_tree)
+    epic = epic_of(bead, main_tree, RERUN)
     branch, branch_problems = planned_branch(epic, main_tree)
     refuse(epic, problems_of(epic, branch_problems, home, main_tree))
     return {"epic": epic.id, "title": str(epic.shown.get("title") or ""), "branch": branch,
@@ -287,7 +304,7 @@ def check(bead: str, home: Path, main_tree: Path) -> dict:
 
 
 def take(bead: str, given_areas: list[str], home: Path, main_tree: Path) -> dict:
-    epic = epic_of(bead, main_tree)
+    epic = epic_of(bead, main_tree, RERUN)
     branch, branch_problems = planned_branch(epic, main_tree)
     areas, area_problems = areas_of(given_areas, epic)
     refuse(epic, problems_of(epic, branch_problems, home, main_tree) + area_problems)
