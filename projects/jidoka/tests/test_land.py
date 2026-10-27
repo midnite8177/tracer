@@ -59,7 +59,7 @@ if args[:1] == [{subcommand!r}]:
         sys.exit(0)
     print("the wrapper refuses this call", file=sys.stderr)
     sys.exit(1)
-sys.exit(subprocess.run([{real!r}, *args]).returncode)
+sys.exit(subprocess.run([{bd!r}, *args]).returncode)
 """
 
 
@@ -85,7 +85,8 @@ def first_line_within(stream, seconds: float) -> str | None:
 
 
 class LandingCase(unittest.TestCase):
-    """The shop repo, its repo settings and the helpers of the landing tests; each subclass sets up its own."""
+    """The shop repo, its repo settings, the fake bd first on the landing script's PATH, and the helpers of the landing
+    tests; each subclass sets up its own."""
 
     @classmethod
     def setUpClass(cls):
@@ -109,8 +110,8 @@ class LandingCase(unittest.TestCase):
         (cls.repo / "README.md").write_text("shop\n", encoding="utf-8")
         fixture.git_commit_all(cls.repo, "Start")
         git(cls.repo, "branch", "-M", "main")
-        cls.bd = fixture.real_tool("bd")
-        fixture.add_stealth_beads(cls.repo)
+        cls.bin = cls.root / "bin"
+        cls.bd = str(fixture.add_fake_beads(cls.repo, cls.bin))
         cls.write_settings()
         cls.count = 0
 
@@ -178,7 +179,7 @@ class LandingCase(unittest.TestCase):
         return Bead(bead_id, branch, worktree, marker)
 
     def put_bd_in_front(self, subcommand: str, garbage: bool) -> None:
-        """Puts a bd first on the PATH that passes every call to the real bd except the subcommand named.
+        """Puts a bd first on the PATH that passes every call to the fake bd except the subcommand named.
 
         That one call prints garbage when garbage is true and fails otherwise.
         """
@@ -186,11 +187,11 @@ class LandingCase(unittest.TestCase):
         folder.mkdir()
         wrapper = folder / "bd"
         fixture.write_executable(wrapper, f"#!{sys.executable}\n" +
-                                 BD_WRAPPER.format(subcommand=subcommand, garbage=garbage, real=self.bd))
+                                 BD_WRAPPER.format(subcommand=subcommand, garbage=garbage, bd=self.bd))
         self.bd_in_front = folder
 
     def start_land(self, bead: Bead, message: str) -> subprocess.Popen:
-        path = os.environ["PATH"]
+        path = fixture.path_with(self.bin)
         if self.bd_in_front is not None:
             path = str(self.bd_in_front) + os.pathsep + path
         env = {**os.environ, "JIDOKA_HOME": str(self.jidoka_home), "PATH": path}

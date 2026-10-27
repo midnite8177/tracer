@@ -25,7 +25,8 @@ def git(repo: Path, *args: str) -> str:
 
 
 class BenchCase(unittest.TestCase):
-    """The shop repo and the helpers of the bench script tests; each subclass sets up its own."""
+    """The shop repo, the fake bd first on the bench script's PATH, and the helpers of the bench script tests; each
+    subclass sets up its own."""
 
     @classmethod
     def setUpClass(cls):
@@ -41,8 +42,8 @@ class BenchCase(unittest.TestCase):
         (cls.repo / "README.md").write_text("shop\n", encoding="utf-8")
         fixture.git_commit_all(cls.repo, "Start")
         git(cls.repo, "branch", "-M", "main")
-        cls.bd = fixture.real_tool("bd")
-        fixture.add_stealth_beads(cls.repo)
+        cls.bin = cls.root / "bin"
+        cls.bd = str(fixture.add_fake_beads(cls.repo, cls.bin))
         cls.count = 0
 
     @classmethod
@@ -62,7 +63,8 @@ class BenchCase(unittest.TestCase):
         return created["id"]
 
     def caller_env(self) -> dict[str, str]:
-        return {**os.environ, "JIDOKA_HOME": str(self.home), "BEADS_ACTOR": "claude"}
+        return {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
+                "BEADS_ACTOR": "claude"}
 
     def bench(self, env: dict[str, str], *args: str) -> subprocess.CompletedProcess:
         return subprocess.run([str(LAUNCHER), str(BENCH), *args], capture_output=True, text=True,

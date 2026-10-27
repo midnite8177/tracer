@@ -16,10 +16,13 @@ RUN_TIMEOUT_SECONDS = 120
 SHOWN_FIELDS = ("id", "title", "status", "priority", "issue_type", "assignee", "labels", "metadata", "parent",
                 "close_reason", "description")
 LINK_FIELDS = ("id", "title", "status", "dependency_type")
+LISTED_FIELDS = ("id", "title", "status", "priority", "issue_type", "assignee", "labels", "parent", "description")
 COMMENT_FIELDS = ("text", "author")
+NOTE = "## What\nPrint the note.\n\n## Seams\nThe till's command line."
 TESTS_BASE = "4e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d5"
 TESTS_COMMAND = '"/usr/bin/python3" "/tmp/runner.py" "/tmp/runs" -k test_card'
 MISSING = "nope-1"
+FAILING_STEPS = {"show a bead that does not exist", "claim a task another actor holds"}
 
 
 @dataclass(frozen=True)
@@ -36,17 +39,26 @@ def committed_repo(repo: Path) -> None:
     fixture.git_commit_all(repo, "Start")
 
 
+def linked_worktree(repo: Path) -> Path:
+    """A worktree of the repo beside it, which holds no .beads of its own."""
+    worktree = repo.with_name(f"{repo.name}-side")
+    fixture.run(["git", "worktree", "add", "-q", "-b", "side", str(worktree)], repo)
+    return worktree
+
+
 def kept(item: dict, fields: tuple) -> dict:
     return {key: item[key] for key in fields if key in item}
 
 
 class Play:
-    """Runs the bd commands that scheduler.py, handoff.py, targeted_tests.py and merge_gate.py call, in one repo,
-    and keeps each output with its bead ids replaced by the role of the bead, so two bds' plays compare."""
+    """Runs the bd commands that jidoka's scripts and the tests of those scripts call, in one repo and in a linked
+    worktree of it, and keeps each output with its bead ids replaced by the role of the bead, so two bds' plays
+    compare."""
 
-    def __init__(self, bd: str, repo: Path):
+    def __init__(self, bd: str, repo: Path, worktree: Path):
         self.bd = bd
         self.repo = repo
+        self.worktree = worktree
         self.roles: dict[str, str] = {}
         self.calls: dict[str, Call] = {}
 
@@ -60,11 +72,14 @@ class Play:
         return value
 
     def call(self, step: str, actor: str | None, *args: str) -> subprocess.CompletedProcess:
+        return self.call_in(self.repo, step, actor, *args)
+
+    def call_in(self, cwd: Path, step: str, actor: str | None, *args: str) -> subprocess.CompletedProcess:
         env = {key: value for key, value in os.environ.items() if key != "BEADS_ACTOR"}
         if actor is not None:
             env["BEADS_ACTOR"] = actor
         done = subprocess.run([self.bd, *args], capture_output=True, text=True, encoding="utf-8", env=env,
-                              cwd=self.repo, timeout=RUN_TIMEOUT_SECONDS)
+                              cwd=cwd, timeout=RUN_TIMEOUT_SECONDS)
         self.calls[step] = Call(done.returncode, None)
         return done
 
@@ -86,6 +101,26 @@ class Play:
     def listed(self, step: str, parent: str) -> None:
         done = self.call(step, "claude", "list", "--parent", parent, "--all", "--limit", "0", "--json")
         self.calls[step] = Call(done.returncode, self.named(sorted(item["id"] for item in json.loads(done.stdout))))
+
+    def listed_beads(self, cwd: Path, step: str, *flags: str) -> None:
+        done = self.call_in(cwd, step, "claude", "list", *flags, "--json")
+        self.calls[step] = Call(done.returncode, sorted((self.named(kept(bead, LISTED_FIELDS))
+                                                         for bead in json.loads(done.stdout)),
+                                                        key=lambda bead: bead["id"]))
+
+    def ready(self, step: str) -> None:
+        done = self.call(step, "claude", "ready", "--json")
+        self.calls[step] = Call(done.returncode, self.named(sorted(bead["id"] for bead in json.loads(done.stdout))))
+
+    def blocked(self, step: str) -> None:
+        done = self.call(step, "claude", "blocked", "--json")
+        self.calls[step] = Call(done.returncode,
+                                sorted(([self.named(bead["id"]), sorted(self.named(bead["blocked_by"]))]
+                                        for bead in json.loads(done.stdout))))
+
+    def primed(self, step: str) -> None:
+        done = self.call(step, "claude", "prime")
+        self.calls[step] = Call(done.returncode, {"printed text": bool(done.stdout.strip())})
 
     def comments(self, step: str, bead: str) -> None:
         done = self.call(step, "claude", "comments", bead, "--json")
@@ -127,12 +162,29 @@ class Play:
         self.show("show a closed task and the task that waited on it", first, second)
         self.listed("list the children with a closed one", epic)
         self.show("show a bead that does not exist", MISSING)
+        note = self.create("create a task with a description that waits on an open and a closed bead", "note",
+                           "--title", "Print the note", "--type=task", "--description", NOTE,
+                           f"--deps={second},{first}")
+        loose = self.create("create a task outside the epic", "loose", "--title", "Sweep the floor",
+                            "--type=task")
+        self.call("claim a task", "Jeff Contract", "update", loose, "--claim")
+        self.call("claim a task its actor already holds", "Jeff Contract", "update", loose, "--claim")
+        self.call("claim a task another actor holds", "claude", "update", loose, "--claim")
+        self.show("show a task with a description and a claimed task", note, loose)
+        self.listed_beads(self.repo, "list the open beads", "--status=open")
+        self.listed_beads(self.repo, "list the beads in progress", "--status=in_progress")
+        self.listed_beads(self.repo, "list the beads that are not closed")
+        self.listed_beads(self.repo, "list every bead", "--all", "--limit", "0")
+        self.listed_beads(self.worktree, "list the beads from a linked worktree")
+        self.ready("list the ready beads")
+        self.blocked("list the blocked beads")
+        self.primed("prime a session")
         return self
 
 
 class FakeBdContractTests(unittest.TestCase):
-    """The commands the scheduler, the targeted tests and the merge gate call, run once against real bd in a stealth
-    beads workspace and once against the fake bd, so the fake those scripts' tests use cannot drift from bd."""
+    """The commands jidoka's scripts and their tests call, run once against real bd in a stealth beads workspace and
+    once against the fake bd, so the fake those scripts' tests use cannot drift from bd."""
 
     @classmethod
     def setUpClass(cls):
@@ -143,8 +195,8 @@ class FakeBdContractTests(unittest.TestCase):
         fixture.add_stealth_beads(real_repo)
         committed_repo(fake_repo)
         fake = fixture.add_fake_beads(fake_repo, root / "bin")
-        cls.real = Play(fixture.real_tool("bd"), real_repo).run()
-        cls.fake = Play(str(fake), fake_repo).run()
+        cls.real = Play(fixture.real_tool("bd"), real_repo, linked_worktree(real_repo)).run()
+        cls.fake = Play(str(fake), fake_repo, linked_worktree(fake_repo)).run()
 
     @classmethod
     def tearDownClass(cls):
@@ -158,11 +210,11 @@ class FakeBdContractTests(unittest.TestCase):
 
     def test_every_write_the_scripts_make_succeeds_on_both(self):
         self.assertEqual({step: call.returncode for step, call in self.real.calls.items() if call.printed is None
-                          and step != "show a bead that does not exist"},
+                          and step not in FAILING_STEPS},
                          {step: call.returncode for step, call in self.fake.calls.items() if call.printed is None
-                          and step != "show a bead that does not exist"})
+                          and step not in FAILING_STEPS})
         self.assertEqual({0}, {call.returncode for step, call in self.fake.calls.items()
-                               if step != "show a bead that does not exist"})
+                               if step not in FAILING_STEPS})
 
     def test_create_prints_the_new_bead_s_id(self):
         for step in ("create an epic", "create a task with a label and a priority", "create a task"):
@@ -171,7 +223,7 @@ class FakeBdContractTests(unittest.TestCase):
     def test_a_task_s_id_is_its_epic_s_id_and_a_number(self):
         def children(play: Play) -> list[str]:
             [epic] = [bead for bead, role in play.roles.items() if role == "epic"]
-            return sorted(bead.removeprefix(epic) for bead, role in play.roles.items() if role != "epic")
+            return sorted(bead.removeprefix(epic) for bead, role in play.roles.items() if role in ("first", "second"))
 
         self.assertEqual(children(self.real), children(self.fake))
 
@@ -188,6 +240,35 @@ class FakeBdContractTests(unittest.TestCase):
     def test_comments_print_each_comment_s_text_and_author(self):
         self.assert_same("read an epic with no comments")
         self.assert_same("read a task's comments")
+
+    def test_create_takes_a_description_and_the_beads_the_new_one_waits_on(self):
+        self.assert_same("create a task with a description that waits on an open and a closed bead")
+        self.assert_same("show a task with a description and a claimed task")
+
+    def test_a_claim_takes_an_unclaimed_task_or_one_its_actor_holds_and_fails_on_another_actor_s(self):
+        for step in ("claim a task", "claim a task its actor already holds", "claim a task another actor holds"):
+            self.assert_same(step)
+        self.assertNotEqual(0, self.fake.calls["claim a task another actor holds"].returncode)
+        self.assert_same("show a task with a description and a claimed task")
+
+    def test_list_without_a_parent_prints_the_beads_of_the_status_asked_or_else_every_bead_not_closed(self):
+        for step in ("list the open beads", "list the beads in progress", "list the beads that are not closed",
+                     "list every bead"):
+            self.assert_same(step)
+
+    def test_a_call_from_a_linked_worktree_reads_the_beads_of_the_main_checkout(self):
+        self.assert_same("list the beads from a linked worktree")
+        self.assertNotEqual([], self.fake.calls["list the beads from a linked worktree"].printed)
+
+    def test_ready_prints_the_open_beads_that_wait_on_no_open_bead(self):
+        self.assert_same("list the ready beads")
+
+    def test_blocked_prints_each_bead_that_waits_on_an_open_bead_with_the_open_beads_it_waits_on(self):
+        self.assert_same("list the blocked beads")
+
+    def test_prime_prints_text_and_succeeds(self):
+        self.assert_same("prime a session")
+        self.assertEqual(Call(0, {"printed text": True}), self.fake.calls["prime a session"])
 
     def test_show_of_a_bead_that_does_not_exist_fails(self):
         self.assertNotEqual(0, self.real.calls["show a bead that does not exist"].returncode)
@@ -216,17 +297,24 @@ class FakeBdRefusalTests(unittest.TestCase):
                               timeout=RUN_TIMEOUT_SECONDS)
 
     def test_a_subcommand_the_scripts_do_not_call_fails_naming_it(self):
-        done = self.bd("ready", "--json")
+        done = self.bd("delete", self.task, "--json")
 
         self.assertEqual(1, done.returncode)
-        self.assertIn("ready", done.stderr)
+        self.assertIn("delete", done.stderr)
+        self.assertEqual(0, self.bd("show", self.task, "--json").returncode)
 
     def test_a_flag_the_scripts_do_not_pass_fails_naming_it(self):
-        done = self.bd("update", self.task, "--claim")
+        done = self.bd("update", self.task, "--assignee", "Jeff Contract", "--notes", "Seen at the till.")
 
         self.assertEqual(1, done.returncode)
-        self.assertIn("--claim", done.stderr)
+        self.assertIn("--notes", done.stderr)
         self.assertNotIn("assignee", json.loads(self.bd("show", self.task, "--json").stdout)[0])
+
+    def test_a_list_in_a_form_the_scripts_do_not_use_fails(self):
+        done = self.bd("list", "--status=open", "--all", "--json")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("list", done.stderr)
 
     def test_show_without_json_fails(self):
         done = self.bd("show", self.task)

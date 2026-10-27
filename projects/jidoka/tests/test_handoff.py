@@ -32,7 +32,8 @@ def shop_app() -> dict:
 
 
 class HandoffCase(unittest.TestCase):
-    """The shop repo, onboarded in one jidoka home, and the helpers of the handoff script tests."""
+    """The shop repo, onboarded in one jidoka home, with the fake bd first on its scripts' PATH, and the helpers of
+    the handoff script tests."""
 
     @classmethod
     def setUpClass(cls):
@@ -44,8 +45,8 @@ class HandoffCase(unittest.TestCase):
         (cls.repo / "README.md").write_text("shop\n", encoding="utf-8")
         fixture.git_commit_all(cls.repo, "Start")
         git(cls.repo, "branch", "-M", "main")
-        cls.bd = fixture.real_tool("bd")
-        fixture.add_stealth_beads(cls.repo)
+        cls.bin = cls.root / "bin"
+        cls.bd = str(fixture.add_fake_beads(cls.repo, cls.bin))
         cls.count = 0
         cls.home = cls.new_home("jidoka-home")
         cls.write_settings(cls.home, [shop_app()])
@@ -84,7 +85,7 @@ class HandoffCase(unittest.TestCase):
         return self.create(f"Read the card {self.count}", "--type=task", "--parent", epic, "--description", SEAMS)
 
     def caller_env(self, home: Path) -> dict[str, str]:
-        return {**os.environ, "JIDOKA_HOME": str(home), "BEADS_ACTOR": "claude", "BD_DISABLE_EVENT_FLUSH": "1"}
+        return {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home), "BEADS_ACTOR": "claude"}
 
     def handoff(self, *args: str) -> subprocess.CompletedProcess:
         return self.handoff_in(self.home, *args)

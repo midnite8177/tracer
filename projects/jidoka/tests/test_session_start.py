@@ -1,5 +1,4 @@
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -35,6 +34,9 @@ def init_committed_repo(repo: Path) -> None:
 
 
 class SessionStartTests(unittest.TestCase):
+    """A beads repo with the fake bd first on the hook's PATH, its linked worktree beside it, and the repos and
+    folders that hold no beads."""
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -44,9 +46,10 @@ class SessionStartTests(unittest.TestCase):
         (cls.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
 
         cls.beads_repo = root / "shop"
-        cls.bd = fixture.real_tool("bd")
         init_committed_repo(cls.beads_repo)
-        fixture.add_stealth_beads(cls.beads_repo)
+        cls.bin = root / "bin"
+        cls.bd = str(fixture.add_fake_beads(cls.beads_repo, cls.bin))
+        cls.path = fixture.path_with(cls.bin)
         (cls.beads_repo / "src" / "deep").mkdir(parents=True)
 
         cls.worktree = root / "shop-feature"
@@ -77,7 +80,7 @@ class SessionStartTests(unittest.TestCase):
 
     def session(self, cwd: Path) -> subprocess.CompletedProcess:
         event = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd)}
-        return self.start(json.dumps(event), self.not_a_repo, os.environ["PATH"])
+        return self.start(json.dumps(event), self.not_a_repo, self.path)
 
     def printed_paths(self, stdout: str) -> dict:
         paths = {}
@@ -168,8 +171,8 @@ class SessionStartTests(unittest.TestCase):
         self.assertEqual("", done.stdout)
 
     def test_empty_input_falls_back_to_the_process_folder(self):
-        in_beads = self.start("", self.beads_repo, os.environ["PATH"])
-        elsewhere = self.start("", self.plain_repo, os.environ["PATH"])
+        in_beads = self.start("", self.beads_repo, self.path)
+        elsewhere = self.start("", self.plain_repo, self.path)
 
         self.assertEqual(0, in_beads.returncode, in_beads.stderr)
         self.assertIn("Planning, Factory, Acceptance and Bench", in_beads.stdout)
@@ -177,7 +180,7 @@ class SessionStartTests(unittest.TestCase):
         self.assertEqual("", elsewhere.stdout)
 
     def test_input_that_is_not_json_falls_back_to_the_process_folder(self):
-        done = self.start("{not json", self.beads_repo, os.environ["PATH"])
+        done = self.start("{not json", self.beads_repo, self.path)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn("Planning, Factory, Acceptance and Bench", done.stdout)
@@ -185,7 +188,7 @@ class SessionStartTests(unittest.TestCase):
     def test_input_whose_folder_is_missing_or_not_a_string_falls_back_to_the_process_folder(self):
         for stdin in ('{"cwd": 7}', '{"cwd": "/no/such/folder"}', "[1, 2]", '{"source": "startup"}'):
             with self.subTest(stdin=stdin):
-                done = self.start(stdin, self.beads_repo, os.environ["PATH"])
+                done = self.start(stdin, self.beads_repo, self.path)
 
                 self.assertEqual(0, done.returncode, done.stderr)
                 self.assertIn("Planning, Factory, Acceptance and Bench", done.stdout)

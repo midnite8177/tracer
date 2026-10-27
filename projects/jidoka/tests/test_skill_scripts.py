@@ -30,7 +30,8 @@ DOMAIN_DOC_BYTES = 5120
 
 
 class SkillScriptCase(unittest.TestCase):
-    """Runs each script a skill carries the way the skill names it: sh, the launcher, then the script, from inside the repo."""
+    """Runs each script a skill carries the way the skill names it: sh, the launcher, then the script, from inside the repo,
+    with the fake bd first on the PATH."""
 
     @classmethod
     def setUpClass(cls):
@@ -44,8 +45,8 @@ class SkillScriptCase(unittest.TestCase):
         fixture.init_repo(cls.repo)
         (cls.repo / "CLAUDE.md").write_text("x" * (CLAUDE_MD_BYTES - 1) + "\n", encoding="utf-8")
         fixture.git_commit_all(cls.repo, "Start")
-        cls.bd = fixture.real_tool("bd")
-        fixture.add_stealth_beads(cls.repo)
+        cls.bin = cls.root / "bin"
+        cls.bd = str(fixture.add_fake_beads(cls.repo, cls.bin))
 
     @classmethod
     def tearDownClass(cls):
@@ -58,8 +59,7 @@ class SkillScriptCase(unittest.TestCase):
         return json.loads(created)["id"]
 
     def run_script(self, script: Path, args: list, home: str, cwd: Path) -> subprocess.CompletedProcess:
-        # bd writes its event queue under HOME after it exits unless told not to, which races the removal of a temporary HOME.
-        env = {**os.environ, "JIDOKA_HOME": str(self.home), "HOME": home, "BD_DISABLE_EVENT_FLUSH": "1"}
+        env = {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home), "HOME": home}
         return subprocess.run(["sh", str(LAUNCHER), str(script), *args], capture_output=True, text=True,
                               encoding="utf-8", env=env, cwd=cwd)
 
@@ -106,6 +106,14 @@ class ShopIssuesTests(SkillScriptCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"next: look at the blocker first ({self.greeting})", done.stdout)
 
+    def test_issues_reports_no_failed_bd_call_on_the_board_a_bead_page_or_a_search(self):
+        for args in [[], [self.greeting], [self.goodbye], ["greeting"]]:
+            with self.subTest(args=args):
+                done = self.run_script(ISSUES, args, os.environ["HOME"], self.repo)
+
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assertEqual("", done.stderr)
+
     def test_issues_never_points_a_ready_unplanned_or_blocked_bead_at_a_tracer_command(self):
         for args in [[], [self.greeting], [self.farewell], [self.goodbye]]:
             with self.subTest(args=args):
@@ -121,7 +129,7 @@ class AtlasIssuesTests(SkillScriptCase):
         super().setUpClass()
         cls.atlas = cls.root / "atlas"
         fixture.init_repo(cls.atlas)
-        fixture.add_stealth_beads(cls.atlas)
+        fixture.add_fake_beads(cls.atlas, cls.bin)
         cls.map = cls.create_bead(cls.atlas, "Take payments", MAP, ["--type=epic", "--labels=wayfinder:map"])
         cls.question = cls.create_bead(cls.atlas, "Pick a payment provider", QUESTION,
                                        ["--type=task", f"--parent={cls.map}", "--labels=wayfinder:research"])
@@ -255,6 +263,15 @@ class ContextFromAnInstalledPluginInARepoWithoutOneTests(SkillScriptCase):
         self.assertEqual(1, len(hook), done.stdout)
         self.assertGreater(float(hook[0].split()[0]), 0, done.stdout)
         self.assertNotIn("tracer", done.stdout.lower())
+
+    def test_context_measures_the_output_of_bd_prime_in_the_startup_section(self):
+        done = self.run_context(self.empty_home, self.repo)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        rows = self.section(done.stdout, "Loads every session, before you type anything")
+        prime = [row for row in rows if row.endswith("bd prime (SessionStart hook output)")]
+        self.assertEqual(1, len(prime), done.stdout)
+        self.assertRegex(prime[0], r"≈\s*[1-9][\d,]* tok", done.stdout)
 
     def test_context_names_no_tracer_command_or_folder(self):
         done = self.run_context(self.empty_home, self.repo)

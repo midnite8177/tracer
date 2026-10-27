@@ -6,7 +6,7 @@ bin folder that becomes the whole PATH, so a test decides which tools exist.
 The claude and codex stand-ins append one JSON line per call to a log file.
 
 A fake beads workspace is a store of fake_bd.py, the bd stand-in that the
-scheduler, targeted tests and merge gate tests put first on the PATH,
+tests of the scripts that read and write beads put first on the PATH,
 because every call of real bd opens its database and takes a second or more.
 
 A stealth beads workspace is a copy of one that bd init made in a template

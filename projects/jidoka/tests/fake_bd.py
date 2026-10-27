@@ -5,34 +5,50 @@ second or more, and a scheduler test makes a couple of dozen calls. This
 fake answers in the time Python takes to start.
 
 It speaks only the calls that scheduler.py, handoff.py, holdouts.py,
-targeted_tests.py and merge_gate.py make, and the ones their tests make to
-set up and read beads:
+targeted_tests.py, merge_gate.py, bench.py, land.py and the issues and
+context skills' scripts make, and the ones their tests make to set up and
+read beads:
   show <id>... --json
-  list --parent <id> --all --limit 0 --json
-  create --title <title> [--type <type>] [--parent <id>] [--labels <label,...>] [--priority <n>] --json
-  update <id> [--status <status>] [--assignee <name>] [--add-label <label>] [--set-metadata <key>=<value>]...
+  list [--parent <id>] --all --limit 0 --json
+  list [--status <status>] --json
+  ready --json
+  blocked --json
+  create --title <title> [--type <type>] [--parent <id>] [--labels <label,...>] [--priority <n>]
+         [--description <text>] [--deps <id,...>] --json
+  update <id> [--claim] [--status <status>] [--assignee <name>] [--add-label <label>]
+         [--set-metadata <key>=<value>]...
   label add|remove <id> <label>
   comment <id> <text>
   comments <id> --json
   close <id> --reason <text>
   dep add <id> --blocked-by <id>
+  prime
 A flag takes its value as --flag=value or as --flag value, as bd's does.
-Any other subcommand or flag exits 1 naming it on stderr, so a script that
-starts making a new call fails its tests until the fake learns it, and
-test_fake_bd.py checks the fake's answer against real bd's.
+Any other subcommand, flag or form of list exits 1 naming it on stderr, so
+a script that starts making a new call fails its tests until the fake
+learns it, and test_fake_bd.py checks the fake's answer against real bd's.
 
 What it prints keeps the shape of bd 1.2's output in the fields the scripts
 read. A field with no value is left out, as bd leaves it out: no assignee,
-no labels, no metadata. Labels come sorted. A metadata
+no description, no labels, no metadata. Labels come sorted. A metadata
 value that reads as a JSON number, true, false or null is stored as that,
 and anything else as the text given, as bd stores it. A task's id is its
-parent's id and a number. A comment's author is BEADS_ACTOR, or else the
-repo's git user.name.
+parent's id and a number. Each id --deps names is a bead the new one
+waits on, as bd reads a bare id there. A bead is ready when it is open and
+waits on no bead that is still open, and blocked when it is not closed and
+waits on one; blocked prints the ids of the beads not yet closed that it
+waits on. A claim sets the assignee to the actor and the status to
+in_progress, and fails when another actor is the assignee. The actor, who
+also writes each comment, is BEADS_ACTOR, or else the repo's git user.name.
+prime prints a fixed text in place of bd's workflow notes. A list without
+--limit 0 prints every match, where bd stops at 50; no test makes that many.
 
 The store is <repo>/.beads/fake-bd.json, found from the working folder
-upward, so the main checkout and any worktree under it share it. Each call
-reads it whole and replaces it whole; the scripts and their tests call bd
-one call at a time, so no call holds a lock.
+upward, so the main checkout and any worktree under it share it, or else
+in the folder that holds the repo's common git folder, so a linked
+worktree elsewhere shares it too, as bd finds its database. Each call reads
+it whole and replaces it whole; the scripts and their tests call bd one
+call at a time, so no call holds a lock.
 """
 from __future__ import annotations
 
@@ -51,6 +67,8 @@ DEFAULT_PRIORITY = 2
 STATUSES = {"open", "in_progress", "blocked", "deferred", "closed"}
 BLOCKS = "blocks"
 PARENT_CHILD = "parent-child"
+CLOSED = "closed"
+PRIME_TEXT = "# Beads Workflow Context\n\nThe fake bd stands in for bd prime here.\n"
 
 
 class Refused(Exception):
@@ -75,11 +93,23 @@ def new_store(path: Path, prefix: str) -> None:
     path.write_text(json.dumps({"prefix": prefix, "next": 1, "beads": {}, "comments": []}), encoding="utf-8")
 
 
+def main_checkout(cwd: Path) -> Path | None:
+    """The folder that holds the repo's common git folder, which is the main checkout seen from a linked worktree."""
+    done = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=cwd,
+                          capture_output=True, text=True, encoding="utf-8")
+    if done.returncode != 0:
+        return None
+    return Path(done.stdout.strip()).parent
+
+
 def store_path(cwd: Path) -> Path:
     for folder in (cwd, *cwd.parents):
         if (folder / STORE).is_file():
             return folder / STORE
-    raise Refused(f"no fake beads store {STORE} in {cwd} or a folder above it")
+    main = main_checkout(cwd)
+    if main is not None and (main / STORE).is_file():
+        return main / STORE
+    raise Refused(f"no fake beads store {STORE} in {cwd}, a folder above it or its repo's main checkout")
 
 
 def save(path: Path, store: dict) -> None:
@@ -154,7 +184,7 @@ def typed(value: str) -> object:
 def plain(bead: dict) -> dict:
     """The bead's own fields as bd prints them, leaving out each one that holds nothing."""
     printed = {key: bead[key] for key in ("id", "title", "status", "priority", "issue_type")}
-    for key in ("assignee", "close_reason"):
+    for key in ("assignee", "close_reason", "description"):
         if bead.get(key):
             printed[key] = bead[key]
     if bead["metadata"]:
@@ -195,13 +225,56 @@ def show(store: dict, flags: Flags) -> bool:
     return True
 
 
-def list_children(store: dict, flags: Flags) -> bool:
+def open_blockers(store: dict, bead: dict) -> list[str]:
+    return sorted(blocker for blocker in bead["blocked_by"] if store["beads"][blocker]["status"] != CLOSED)
+
+
+def list_beads(store: dict, flags: Flags) -> bool:
     need_json("list", flags)
     need_positionals("list", flags, 0)
-    parent = flags.one("--parent")
-    if parent is None or "--all" not in flags.switches or flags.one("--limit") != "0":
-        raise Refused("the fake bd answers bd list only as list --parent <id> --all --limit 0 --json")
-    print(json.dumps([plain(bead) for bead in store["beads"].values() if bead.get("parent") == parent], indent=2))
+    parent, status = flags.one("--parent"), flags.one("--status")
+    every = "--all" in flags.switches
+    if every or parent is not None or "--limit" in flags.values:
+        if not every or flags.one("--limit") != "0" or status is not None:
+            raise Refused("the fake bd answers bd list only as list [--parent <id>] --all --limit 0 --json "
+                          "or list [--status <status>] --json")
+    elif status is not None and status not in STATUSES:
+        raise Refused(f"bd list --status takes one of {sorted(STATUSES)}, not {status!r}")
+
+    def listed(bead: dict) -> bool:
+        if parent is not None:
+            return bead.get("parent") == parent
+        if status is not None:
+            return bead["status"] == status
+        return every or bead["status"] != CLOSED
+
+    print(json.dumps([plain(bead) for bead in store["beads"].values() if listed(bead)], indent=2))
+    return True
+
+
+def ready(store: dict, flags: Flags) -> bool:
+    need_json("ready", flags)
+    need_positionals("ready", flags, 0)
+    print(json.dumps([plain(bead) for bead in store["beads"].values()
+                      if bead["status"] == "open" and not open_blockers(store, bead)], indent=2))
+    return True
+
+
+def blocked(store: dict, flags: Flags) -> bool:
+    need_json("blocked", flags)
+    need_positionals("blocked", flags, 0)
+    waiting = []
+    for bead in store["beads"].values():
+        blockers = open_blockers(store, bead)
+        if bead["status"] != CLOSED and blockers:
+            waiting.append({**plain(bead), "blocked_by_count": len(blockers), "blocked_by": blockers})
+    print(json.dumps(waiting, indent=2))
+    return True
+
+
+def prime(flags: Flags) -> bool:
+    need_positionals("prime", flags, 0)
+    print(PRIME_TEXT, end="")
     return True
 
 
@@ -221,11 +294,17 @@ def create(store: dict, flags: Flags) -> bool:
         bead_id = f"{parent}.{under['children']}"
     priority = flags.one("--priority")
     labels = flags.one("--labels")
+    blockers = [blocker for blocker in (flags.one("--deps") or "").split(",") if blocker]
+    for blocker in blockers:
+        if ":" in blocker:
+            raise Refused(f"the fake bd takes --deps only as bead ids, not {blocker!r}")
+        bead_in(store, blocker)
     bead = {"id": bead_id, "title": title, "status": "open",
             "priority": int(priority) if priority is not None else DEFAULT_PRIORITY,
             "issue_type": flags.one("--type") or DEFAULT_TYPE, "assignee": "", "close_reason": "",
+            "description": flags.one("--description") or "",
             "metadata": {}, "labels": [label for label in (labels or "").split(",") if label],
-            "parent": parent or "", "blocked_by": [], "children": 0}
+            "parent": parent or "", "blocked_by": blockers, "children": 0}
     store["beads"][bead_id] = bead
     print(json.dumps(plain(bead), indent=2))
     return True
@@ -236,9 +315,16 @@ def add_label(bead: dict, label: str) -> None:
         bead["labels"].append(label)
 
 
-def update(store: dict, flags: Flags) -> bool:
+def update(store: dict, flags: Flags, cwd: Path) -> bool:
     need_positionals("update", flags, 1)
     bead = bead_in(store, flags.positionals[0])
+    if "--claim" in flags.switches:
+        claimer = actor(cwd)
+        if bead["assignee"] and bead["assignee"] != claimer:
+            print(f"Error claiming {bead['id']}: issue already claimed by {bead['assignee']}", file=sys.stderr)
+            return False
+        bead["assignee"] = claimer
+        bead["status"] = "in_progress"
     status = flags.one("--status")
     if status is not None:
         if status not in STATUSES:
@@ -291,7 +377,7 @@ def comments(store: dict, flags: Flags) -> bool:
 def close(store: dict, flags: Flags) -> bool:
     need_positionals("close", flags, 1)
     bead = bead_in(store, flags.positionals[0])
-    bead["status"] = "closed"
+    bead["status"] = CLOSED
     bead["close_reason"] = flags.one("--reason") or ""
     return True
 
@@ -319,14 +405,21 @@ def answer(argv: list[str], cwd: Path) -> bool:
     if command == "show":
         return show(store, parse(command, args, set(), {"--json"}))
     if command == "list":
-        return list_children(store, parse(command, args, {"--parent", "--limit"}, {"--all", "--json"}))
+        return list_beads(store, parse(command, args, {"--parent", "--limit", "--status"}, {"--all", "--json"}))
+    if command == "ready":
+        return ready(store, parse(command, args, set(), {"--json"}))
+    if command == "blocked":
+        return blocked(store, parse(command, args, set(), {"--json"}))
     if command == "comments":
         return comments(store, parse(command, args, set(), {"--json"}))
+    if command == "prime":
+        return prime(parse(command, args, set(), set()))
     writes = {
         "create": lambda: create(store, parse(command, args, {"--title", "--type", "--parent", "--labels",
-                                                              "--priority"}, {"--json"})),
+                                                              "--priority", "--description", "--deps"},
+                                              {"--json"})),
         "update": lambda: update(store, parse(command, args, {"--status", "--assignee", "--add-label",
-                                                              "--set-metadata"}, set())),
+                                                              "--set-metadata"}, {"--claim"}), cwd),
         "label": lambda: label(store, parse(command, args, set(), set())),
         "comment": lambda: comment(store, parse(command, args, set(), set()), cwd),
         "close": lambda: close(store, parse(command, args, {"--reason"}, set())),

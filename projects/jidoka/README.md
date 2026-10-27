@@ -36,16 +36,17 @@ folder and set `CODEX_HOME` to another.
 
 The tests run each script as a process against a temporary git repo that
 holds copies of the scripts and the plugin folder, a temporary jidoka home,
-and a real stealth beads workspace. The scheduler, targeted tests and merge
-gate tests use a fake `bd` instead, `tests/fake_bd.py`, first on the PATH.
-It keeps its beads in a JSON file in the repo's `.beads/`, because each
-call of real bd opens its database and takes a second or more. The fake
-answers only the calls those scripts and their tests make, and fails on
-any other. `tests/test_fake_bd.py` runs those calls against real bd and
-the fake and compares what they print. The `claude` and `codex` they find
-are small fakes that record their arguments. The fake `codex` also keeps its
-marketplaces in a file, and refuses to add one it already has from a
-different source, as Codex does. The Python version check is
+and a fake `bd`, `tests/fake_bd.py`, first on the PATH. The fake keeps its
+beads in a JSON file in the repo's `.beads/`, because each call of real bd
+opens its database and takes a second or more. It answers only the calls
+the scripts and their tests make, and fails on any other.
+`tests/test_fake_bd.py` runs those calls against real bd and the fake and
+compares what they print. Real bd still runs where a test needs what it
+writes: the stealth script's tests, the installer's stealth workspace test
+and the onboarding test that switches a repo to stealth. The `claude` and
+`codex` they find are small fakes that record their arguments. The fake
+`codex` also keeps its marketplaces in a file, and refuses to add one it
+already has from a different source, as Codex does. The Python version check is
 the one test that calls a function, because no process can run under an
 older Python.
 
@@ -84,19 +85,19 @@ the same tests one at a time, and makes the workspace once in its process.
 | `tests/test_release.py` | The release tests, at the process seam |
 | `tests/test_launcher.py` | The launcher tests, run as a process |
 | `tests/test_lap_mod.py` | Runs the real `claude plugin test` on a copy of the plugin, so the suite covers the lap mod's own tests |
-| `tests/test_session_start.py` | The SessionStart hook tests, run as a process through the launcher against a stealth beads repo and its worktree |
-| `tests/test_land.py` | The landing tests, run as a process through the launcher against a stealth beads repo, its worktrees, repo settings in a temporary jidoka home, and full suite commands that record the arguments they get and exit with the code the test sets |
+| `tests/test_session_start.py` | The SessionStart hook tests, run as a process through the launcher against a repo with the fake bd's beads and its worktree |
+| `tests/test_land.py` | The landing tests, run as a process through the launcher against a repo with the fake bd's beads, its worktrees, repo settings in a temporary jidoka home, and full suite commands that record the arguments they get and exit with the code the test sets |
 | `tests/test_targeted_tests.py` | The targeted tests script's tests, run as a process through the launcher against a repo with the fake bd's beads, its worktrees, repo settings in a temporary jidoka home, and a test command whose exit code and output the test sets |
-| `tests/test_bench.py` | The bench script's tests, run as a process through the launcher against a stealth beads repo, its worktrees and a temporary jidoka home |
-| `tests/test_handoff.py` | The handoff and holdouts scripts' tests, run as a process through the launcher against a stealth beads repo, repo settings in temporary jidoka homes, real bd and real git |
+| `tests/test_bench.py` | The bench script's tests, run as a process through the launcher against a repo with the fake bd's beads, its worktrees and a temporary jidoka home |
+| `tests/test_handoff.py` | The handoff and holdouts scripts' tests, run as a process through the launcher against a repo with the fake bd's beads, repo settings in temporary jidoka homes, the fake bd and real git |
 | `tests/test_scheduler.py` | The scheduler and merge gate tests, run as a process through the launcher against a repo with the fake bd's beads and epics handed off through `handoff.py`, repo settings in a temporary jidoka home, a test command whose exit code the test sets, the fake bd and real git. Two tests play the manager through a two-task epic, one with builds that commit and one with builds that leave their work uncommitted |
 | `tests/test_factory.py` | The factory check's tests, run as a process through the launcher of a copy of the plugin, with a fake `claude` on the PATH that prints the plugin list the test picks |
-| `tests/test_onboard.py` | The repo settings and onboarding line tests, run as processes through the launcher against stealth and committed beads repos, a worktree and a temporary jidoka home |
+| `tests/test_onboard.py` | The repo settings and onboarding line tests, run as processes through the launcher against repos with the fake bd's beads, committed beads repos, a worktree and a temporary jidoka home. The switch of a committed beads repo to stealth runs real bd |
 | `tests/test_beads_stealth.py` | The stealth script's tests, run as a process through the launcher against repos with no beads, committed beads, what plain bd init commits, stealth beads, a worktree and a clone, real bd and a temporary jidoka home |
-| `tests/test_skill_scripts.py` | The tests of the scripts the skills carry, run as processes through the launcher from inside a stealth beads repo |
+| `tests/test_skill_scripts.py` | The tests of the scripts the skills carry, run as processes through the launcher from inside a repo with the fake bd's beads |
 | `tests/jidoka_fixture.py` | Builds the temporary checkout and the fake `claude` and `codex` and the `bd` stub the installer tests run against, and gives a test repo a stealth beads workspace copied from the one bd init made for the run, or that workspace committed to git, or a copy of what plain bd init committed in a repo of its own, or an empty store of the fake bd with the fake in a bin folder |
-| `tests/fake_bd.py` | The fake `bd`: it answers `show`, `list`, `create`, `update`, `label`, `comment`, `comments`, `close` and `dep add` in the forms the scheduler, handoff, holdouts, targeted tests and merge gate scripts and their tests call them, from a JSON store it finds from the working folder upward, and exits 1 naming any other subcommand or flag |
-| `tests/test_fake_bd.py` | The fake bd's contract tests: the same calls run against real bd in a stealth beads workspace and against the fake, comparing the fields the scripts read, with bead ids replaced by each bead's role, and the fake's refusals |
+| `tests/fake_bd.py` | The fake `bd`: it answers `show`, `list`, `ready`, `blocked`, `create`, `update`, `label`, `comment`, `comments`, `close`, `dep add` and `prime` in the forms jidoka's scripts, the issues and context skills' scripts, and their tests call them, from a JSON store it finds from the working folder upward or in the main checkout of a linked worktree, and exits 1 naming any other subcommand or flag |
+| `tests/test_fake_bd.py` | The fake bd's contract tests: the same calls run against real bd in a stealth beads workspace and against the fake, from the main checkout and from a linked worktree, comparing the fields the scripts read, with bead ids replaced by each bead's role, and the fake's refusals |
 | `tests/test_jidoka_fixture.py` | The test of the copied stealth beads workspace, against real bd |
 | `tests/run_suite.py` | Runs the test classes in parallel worker processes, takes unittest's `-k`, and prints and exits as unittest does |
 | `tests/test_run_suite.py` | The suite runner tests, run as a process over throwaway test modules |

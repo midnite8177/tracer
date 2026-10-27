@@ -104,20 +104,25 @@ def init_committed_repo(repo: Path) -> None:
 
 
 class OnboardingTests(unittest.TestCase):
+    """Beads repos with the fake bd's store and the fake first on the scripts' PATH, a worktree of one, a repo with no
+    beads, and a jidoka home of each test's own. A repo whose beads git tracks holds a copy of the workspace real bd
+    init made, and the switch to stealth runs real bd."""
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.tmp.name).resolve()
+        cls.bin = cls.root / "bin"
 
         cls.repo = cls.root / "shop"
         init_committed_repo(cls.repo)
-        fixture.add_stealth_beads(cls.repo)
+        fixture.add_fake_beads(cls.repo, cls.bin)
         cls.worktree = cls.root / "shop-feature"
         fixture.run(["git", "worktree", "add", "-q", "-b", "feature", str(cls.worktree)], cls.repo)
 
         cls.other_repo = cls.root / "kiosk"
         init_committed_repo(cls.other_repo)
-        fixture.add_stealth_beads(cls.other_repo)
+        fixture.add_fake_beads(cls.other_repo, cls.bin)
 
         cls.plain_repo = cls.root / "plain"
         init_committed_repo(cls.plain_repo)
@@ -138,7 +143,7 @@ class OnboardingTests(unittest.TestCase):
                 local.unlink()
 
     def env(self) -> dict:
-        return {"PATH": os.environ["PATH"], "JIDOKA_HOME": str(self.home), "HOME": str(self.home)}
+        return {"PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home), "HOME": str(self.home)}
 
     def settings_script(self, cwd: Path, args: list, stdin: str) -> subprocess.CompletedProcess:
         return subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), *args], input=stdin, capture_output=True,
@@ -540,7 +545,7 @@ class OnboardingTests(unittest.TestCase):
     def test_writes_settings_once_the_switch_has_untracked_the_beads(self):
         repo = self.committed_beads_repo()
         switched = subprocess.run([str(LAUNCHER), str(STEALTH_SCRIPT)], capture_output=True, text=True,
-                                  encoding="utf-8", env=self.env(), cwd=repo)
+                                  encoding="utf-8", env={**self.env(), "PATH": os.environ["PATH"]}, cwd=repo)
 
         done = self.write(repo, tracer_settings())
 
@@ -551,7 +556,7 @@ class OnboardingTests(unittest.TestCase):
     def repo_with_untracked_glossary_and_adrs(self) -> Path:
         repo = self.root / f"atlas-{self.count}"
         init_committed_repo(repo)
-        fixture.add_stealth_beads(repo)
+        fixture.add_fake_beads(repo, self.bin)
         (repo / "GLOSSARY.md").write_text("# atlas\n", encoding="utf-8")
         (repo / "docs" / "adr").mkdir(parents=True)
         (repo / "docs" / "adr" / "0001-start.md").write_text("# 0001\n", encoding="utf-8")
@@ -588,7 +593,7 @@ class OnboardingTests(unittest.TestCase):
     def test_private_hides_an_adr_folder_and_a_glossary_written_after_the_choice(self):
         repo = self.root / f"atlas-{self.count}"
         init_committed_repo(repo)
-        fixture.add_stealth_beads(repo)
+        fixture.add_fake_beads(repo, self.bin)
 
         done = self.write(repo, {**tracer_settings(), "glossary_and_adrs": "private"})
         (repo / "GLOSSARY.md").write_text("# atlas\n", encoding="utf-8")
