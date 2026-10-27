@@ -17,7 +17,7 @@ read beads:
   create --title <title> [--type <type>] [--parent <id>] [--labels <label,...>] [--priority <n>]
          [--description <text>] [--deps <id|discovered-from:id>,...] --json
   update <id> [--claim] [--status <status>] [--assignee <name>] [--add-label <label>]
-         [--set-metadata <key>=<value>]...
+         [--set-metadata <key>=<value>]... [--unset-metadata <key>]...
   label add|remove <id> <label>
   comment <id> <text>
   comments <id> --json
@@ -358,6 +358,8 @@ def update(store: dict, flags: Flags, cwd: Path) -> bool:
         if not has_value or not key:
             raise Refused(f"bd update --set-metadata takes key=value, not {pair!r}")
         bead["metadata"][key] = typed(value)
+    for key in flags.values.get("--unset-metadata", []):
+        bead["metadata"].pop(key, None)
     return True
 
 
@@ -438,7 +440,8 @@ def answer(argv: list[str], cwd: Path) -> bool:
                                                               "--priority", "--description", "--deps"},
                                               {"--json"})),
         "update": lambda: update(store, parse(command, args, {"--status", "--assignee", "--add-label",
-                                                              "--set-metadata"}, {"--claim"}), cwd),
+                                                              "--set-metadata", "--unset-metadata"},
+                                              {"--claim"}), cwd),
         "label": lambda: label(store, parse(command, args, set(), set())),
         "comment": lambda: comment(store, parse(command, args, set(), set()), cwd),
         "close": lambda: close(store, parse(command, args, {"--reason"}, set())),

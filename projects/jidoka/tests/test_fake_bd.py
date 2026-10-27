@@ -180,6 +180,10 @@ class Play:
         self.call("claim a task its actor already holds", "Jeff Contract", "update", loose, "--claim")
         self.call("claim a task another actor holds", "claude", "update", loose, "--claim")
         self.show("show a task with a description and a claimed task", note, loose)
+        self.call("set two metadata keys", "Jeff Contract", "update", loose, "--set-metadata", "holdouts=abc",
+                  "--set-metadata", "kept=1")
+        self.call("unset a metadata key", "Jeff Contract", "update", loose, "--unset-metadata", "holdouts")
+        self.show("show a bead whose metadata key was unset", loose)
         self.listed_beads(self.repo, "list the open beads", "--status=open")
         self.listed_beads(self.repo, "list the beads in progress", "--status=in_progress")
         self.listed_beads(self.repo, "list the beads that are not closed")
@@ -238,6 +242,11 @@ class FakeBdContractTests(unittest.TestCase):
 
     def test_show_prints_the_fields_the_scripts_read_metadata_typed_as_bd_types_it(self):
         self.assert_same("show the epic and its tasks")
+
+    def test_a_metadata_key_that_was_unset_is_gone_and_the_others_stay(self):
+        self.assert_same("show a bead whose metadata key was unset")
+        [shown] = self.fake.calls["show a bead whose metadata key was unset"].printed
+        self.assertEqual({"kept": 1}, shown["metadata"])
 
     def test_a_closed_task_shows_its_close_reason_and_the_task_that_waited_on_it_sees_it_closed(self):
         self.assert_same("show a closed task and the task that waited on it")

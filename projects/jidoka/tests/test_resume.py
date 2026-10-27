@@ -22,6 +22,8 @@ SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 HOOK = PLUGIN / "hooks" / "session_start.py"
 
 RUN_TIMEOUT_SECONDS = 120
+OUT_OF_SCOPE = "## Out of Scope\nRefunds."
+ONE_SEAM = "## Seams\nThe card reader, run as a process."
 HUMAN = "Pat Human"
 LAP_LIMIT = 2
 STALE_SECONDS = 600
@@ -48,9 +50,9 @@ class ResumeCase(unittest.TestCase):
         self.home.mkdir()
         (self.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
         self.write_settings()
-        self.epic = self.create("Take card payments", "--type=epic")
+        self.epic = self.create("Take card payments", "--type=epic", "--description", OUT_OF_SCOPE)
         self.tasks = [self.create(f"Read the card {number}", "--type=task", "--parent", self.epic,
-                                  "--priority", str(number + 1))
+                                  "--description", ONE_SEAM, "--priority", str(number + 1))
                       for number in range(3)]
         done = self.script(HANDOFF, "take", self.epic,
                            *(f"--area={task}={area}" for task, area in zip(self.tasks, ("till", "receipts", "shelf"))))

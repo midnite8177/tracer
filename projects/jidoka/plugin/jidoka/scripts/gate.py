@@ -20,7 +20,8 @@ and running it again once the edits are gone goes on. It fast-forwards
 local main with git merge --ff-only. It never pushes.
 
 Then, as the git user, it records gate.decision=merge and gate.landed=<sha>
-on the epic, closes the epic with the commit in the reason, removes the
+on the epic, closes the epic with the commit in the reason, retires the
+epic's holdouts by removing their metadata key, removes the
 factory and human labels, removes the worktrees and branches of the epic's
 laps and the epic branch. Each step runs on its own, so one failure stops no
 other. The epic branch stays while the epic is open. A rerun on an epic
@@ -51,6 +52,7 @@ from bench import FACTORY_LABEL, MAIN_REF, WORKTREE_FOLDER, hide_worktrees
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, env_as_git_user, head_of, run,
                       worktree_list)
 from handoff import BRANCH_KEY, CLOSED, HandoffError, child_ids, shown_beads
+from holdouts import HOLDOUTS_KEY
 from land import (FULL_SUITE_FAILED_EXIT_CODE, PARTLY_LANDED_EXIT_CODE, WAITING_ON_EDITS_EXIT_CODE, FullSuiteFailed,
                   LandingError, LandingSettings, WaitingOnEdits, acquire_lock, attempt, landing_settings,
                   main_checkout, merge_lock, print_hand_run, refuse_bad_message, refuse_overlapping_edits,
@@ -222,6 +224,9 @@ def close_out(epic: Epic, message: str, sha: str, main_tree: Path) -> Landed:
                           "--set-metadata", f"{LANDED_KEY}={sha}"], main_tree, env, failed)
     closed = epic.closed or attempt("bd close", ["bd", "close", epic.id, "--reason", f"{sha}: {subject(message)}"],
                                     main_tree, env, failed)
+    if HOLDOUTS_KEY in epic.metadata:
+        attempt("retire the holdouts", ["bd", "update", epic.id, "--unset-metadata", HOLDOUTS_KEY], main_tree, env,
+                failed)
     for label in (FACTORY_LABEL, HUMAN_LABEL):
         if label in epic.labels:
             attempt(f"bd label remove {label}", ["bd", "label", "remove", epic.id, label], main_tree, env, failed)

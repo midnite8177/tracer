@@ -1,3 +1,5 @@
+import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -8,6 +10,10 @@ sys.path.insert(0, str(HERE))
 import jidoka_fixture as fixture  # noqa: E402
 import test_scheduler  # noqa: E402
 
+HOLDOUTS = test_scheduler.PLUGIN / "scripts" / "holdouts.py"
+SCENARIO = "Run `till total` with items 3.50 and 4.25, then read the line the till prints."
+SECOND_SCENARIO = "Run `till receipt` after one sale, then open the receipt it writes."
+WHAT_A_USER_SAW = "The till printed a total of 7.7 where the user's items add up to 7.75."
 SKIP_HAND_RUN = "--skip-window"
 HAND_RUN_COMMAND = "dotnet test --filter FullyQualifiedName~Window"
 HAND_RUN_REASON = "they take keyboard focus"
@@ -181,6 +187,199 @@ class ValidationFailsTests(ValidationCase):
         self.assertIn("human", self.shown(epic)["labels"])
         self.assertEqual("repaired", git(self.repo, "show", f"{branch}:repair.txt"))
         self.assertEqual(1, len(self.gate_comments(epic)))
+
+
+class ValidationHoldoutsCase(ValidationCase):
+    def finish_epic_with_holdouts(self, scenarios: list[str]) -> tuple[str, str, dict]:
+        """An epic with one task and one holdout for each scenario; returns the epic, the task and the printed moves
+        of the build's report, which ends with the holdouts action."""
+        epic, task, _ = self.finish_epic_but_for_the_last_report()
+        written = subprocess.run([str(test_scheduler.LAUNCHER), str(HOLDOUTS), "write", epic],
+                                 input=json.dumps([{"app": "shop", "tasks": [task], "scenario": each}
+                                                   for each in scenarios]),
+                                 capture_output=True, text=True, encoding="utf-8", env=self.caller_env(self.home),
+                                 cwd=self.repo)
+        self.assertEqual(0, written.returncode, written.stderr)
+        return epic, task, self.build_done(epic, task)
+
+    def write_report(self, action: dict, entries: list[dict]) -> None:
+        Path(action["report"]).write_text(json.dumps(entries), encoding="utf-8")
+
+    def report_holdouts(self, epic: str) -> subprocess.CompletedProcess:
+        return self.launch(test_scheduler.SCHEDULER, "report-holdouts", epic)
+
+    def holdouts_action_of(self, printed: dict) -> dict:
+        [action] = [each for each in printed["actions"] if each["action"] == "holdouts"]
+        return action
+
+
+class ValidationHoldoutsTests(ValidationHoldoutsCase):
+    def test_a_green_suite_keeps_an_epic_with_holdouts_from_the_gate_until_they_are_run(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO, SECOND_SCENARIO])
+
+        action = self.holdouts_action_of(printed)
+        shown = self.shown(epic)
+        self.assertEqual(("pending", 2, epic), (printed["validation"]["result"], action["holdouts"], action["epic"]))
+        self.assertNotIn("human", shown.get("labels") or [])
+        self.assertNotIn("gate.state", shown.get("metadata") or {})
+        self.assertEqual([], self.gate_comments(epic))
+        self.assertEqual(self.metadata(epic)["validation.head"], action["head"])
+        self.assertTrue(Path(action["worktree"]).is_dir())
+
+    def test_the_worktree_of_the_holdouts_run_holds_the_epic_branch_head_and_hides_its_scratch_folder(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO])
+
+        action = self.holdouts_action_of(printed)
+
+        worktree = Path(action["worktree"])
+        self.assertEqual(action["head"], git(worktree, "rev-parse", "HEAD"))
+        self.assertTrue((worktree / "till.txt").is_file())
+        self.assertTrue(Path(action["scratch"]).is_dir())
+        self.assertEqual("", git(worktree, "status", "--porcelain", "--untracked-files=all"))
+
+    def test_an_epic_with_no_holdouts_goes_to_the_gate_with_no_holdouts_action(self):
+        epic, task, _ = self.finish_epic_but_for_the_last_report()
+
+        printed = self.build_done(epic, task)
+
+        self.assertEqual(([], "pass"), (printed["actions"], printed["validation"]["result"]))
+
+    def test_every_holdout_green_puts_the_epic_at_the_gate_and_removes_the_worktree(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO, SECOND_SCENARIO])
+        action = self.holdouts_action_of(printed)
+        self.write_report(action, [{"holdout": 1, "verdict": "pass", "saw": ""},
+                                   {"holdout": 2, "verdict": "pass", "saw": ""}])
+
+        done = self.report_holdouts(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        shown = self.shown(epic)
+        self.assertEqual(("pass", []), (json.loads(done.stdout)["validation"]["result"],
+                                        json.loads(done.stdout)["actions"]))
+        self.assertIn("human", shown["labels"])
+        self.assertEqual(("waiting", "pass"), (shown["metadata"].get("gate.state"),
+                                               shown["metadata"].get("validation.result")))
+        self.assertNotIn("validation.holdouts", shown["metadata"])
+        self.assertEqual(1, len(self.gate_comments(epic)))
+        self.assertFalse(Path(action["worktree"]).exists())
+
+    def test_a_red_holdout_files_a_task_of_what_a_user_saw_and_no_steps_and_opens_its_lap(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO, SECOND_SCENARIO])
+        self.write_report(self.holdouts_action_of(printed),
+                          [{"holdout": 1, "verdict": "pass", "saw": ""},
+                           {"holdout": 2, "verdict": "fail", "saw": WHAT_A_USER_SAW}])
+
+        done = self.report_holdouts(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        moved = json.loads(done.stdout)
+        [action] = moved["actions"]
+        filed = self.shown(action["task"])
+        self.assertEqual(("fail", action["task"]), (moved["validation"]["result"], moved["validation"]["filed"]))
+        self.assertEqual(epic, filed["parent"])
+        self.assertIn(WHAT_A_USER_SAW, filed["description"])
+        for hidden in (SCENARIO, SECOND_SCENARIO, "Run `till total`"):
+            self.assertNotIn(hidden, filed["description"] + filed["title"])
+        self.assertEqual(("build", "shop", "in_progress"),
+                         (self.metadata(action["task"]).get("lap.stage"), action["area"], filed["status"]))
+
+    def test_a_red_holdout_keeps_the_epic_from_the_gate_and_records_the_failure(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO])
+        self.write_report(self.holdouts_action_of(printed), [{"holdout": 1, "verdict": "fail",
+                                                              "saw": WHAT_A_USER_SAW}])
+
+        self.report_holdouts(epic)
+
+        shown = self.shown(epic)
+        self.assertNotIn("human", shown.get("labels") or [])
+        self.assertNotIn("gate.state", shown["metadata"])
+        self.assertEqual("fail", shown["metadata"]["validation.result"])
+        self.assertNotIn("validation.holdouts", shown["metadata"])
+        self.assertEqual([], self.gate_comments(epic))
+
+    def test_one_task_is_filed_for_each_red_holdout(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO, SECOND_SCENARIO])
+        self.write_report(self.holdouts_action_of(printed),
+                          [{"holdout": 1, "verdict": "fail", "saw": WHAT_A_USER_SAW},
+                           {"holdout": 2, "verdict": "fail", "saw": "The receipt was blank."}])
+
+        moved = json.loads(self.report_holdouts(epic).stdout)
+
+        self.assertEqual(2, len(moved["validation"]["filed_all"]))
+        self.assertEqual([epic, epic], [self.shown(task)["parent"] for task in moved["validation"]["filed_all"]])
+        self.assertEqual([moved["validation"]["filed"]], [each["task"] for each in moved["actions"]])
+
+    def test_a_report_that_quotes_a_scenario_is_refused_and_writes_nothing(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO])
+        self.write_report(self.holdouts_action_of(printed), [{"holdout": 1, "verdict": "fail",
+                                                              "saw": f"It broke. {SCENARIO}"}])
+
+        done = self.report_holdouts(epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("never the steps", done.stderr)
+        self.assertEqual("pending", self.metadata(epic)["validation.result"])
+        self.assertEqual([], [text for text in self.texts(epic) if text.startswith("Holdouts:")])
+        self.assertEqual([], [text for text in self.texts(epic) if "Fix what a user" in text])
+
+    def test_a_report_that_leaves_a_holdout_out_is_refused_and_the_epic_stays_pending(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO, SECOND_SCENARIO])
+        self.write_report(self.holdouts_action_of(printed), [{"holdout": 1, "verdict": "pass", "saw": ""}])
+
+        done = self.report_holdouts(epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("holdout 2 of 2", done.stderr)
+        self.assertEqual("pending", self.metadata(epic)["validation.result"])
+        self.assertNotIn("human", self.shown(epic).get("labels") or [])
+
+    def test_a_missing_report_is_refused_and_the_next_call_starts_the_holdouts_run_again(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO])
+        first = self.holdouts_action_of(printed)
+
+        done = self.report_holdouts(epic)
+        again = self.holdouts_action_of(self.next_printed(epic))
+
+        self.assertEqual(1, done.returncode)
+        self.assertEqual((first["head"], first["worktree"]), (again["head"], again["worktree"]))
+        self.assertEqual(1, len(self.validation_runs_of(epic)))
+
+    def test_a_report_for_an_epic_that_waits_on_no_holdouts_is_refused(self):
+        epic, task, _ = self.finish_epic_but_for_the_last_report()
+        self.build_done(epic, task)
+
+        done = self.report_holdouts(epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("waits on no run of its holdouts", done.stderr)
+
+    def test_the_next_pass_runs_the_holdouts_again_once_the_filed_task_merges(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO])
+        self.write_report(self.holdouts_action_of(printed), [{"holdout": 1, "verdict": "fail",
+                                                              "saw": WHAT_A_USER_SAW}])
+        [lap] = json.loads(self.report_holdouts(epic).stdout)["actions"]
+        self.leave_in(Path(lap["worktree"]), "repair.txt", "repaired\n")
+
+        moved = self.build_done(epic, lap["task"])
+
+        again = self.holdouts_action_of(moved)
+        self.assertEqual("pending", moved["validation"]["result"])
+        self.assertEqual(2, len(self.validation_runs_of(epic)))
+        self.assertTrue((Path(again["worktree"]) / "repair.txt").is_file())
+
+    def test_a_red_suite_runs_no_holdouts(self):
+        epic, task, _ = self.finish_epic_but_for_the_last_report()
+        subprocess.run([str(test_scheduler.LAUNCHER), str(HOLDOUTS), "write", epic],
+                       input=json.dumps([{"app": "shop", "tasks": [task], "scenario": SCENARIO}]),
+                       capture_output=True, text=True, encoding="utf-8", env=self.caller_env(self.home),
+                       cwd=self.repo, check=True)
+        self.queue_validation_exit_codes(epic, 1)
+
+        printed = self.build_done(epic, task)
+
+        self.assertEqual("fail", printed["validation"]["result"])
+        self.assertEqual(["build"], [each["action"] for each in printed["actions"]])
+        self.assertFalse((self.repo / ".worktrees" / f"validation-{epic}").exists())
 
 
 class ValidationMergeConflictTests(ValidationCase):

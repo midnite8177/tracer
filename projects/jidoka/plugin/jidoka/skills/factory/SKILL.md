@@ -36,11 +36,14 @@ The manager writes exactly one line in this session per event, and nothing
 between events: no plans, no narration, no summary of a worker's reply, no
 echo of a script's output. The events and their lines:
 
+- a lap's research brief started: `<task> research started: lap <lap>, slot <slot>, <tier> tier on <model>`
 - a lap's build started: `<task> build started: lap <lap>, slot <slot>, <tier> tier on <model>`
+- a lap's app check started: `<task> app-check started: lap <lap>, slot <slot>, <tier> tier on <model>`
+- a lap's Spec check started: `<task> spec-check started: lap <lap>, slot <slot>, <tier> tier on <model>`
 - a lap's merge worker started: `<task> merge started: lap <lap>, slot <slot>, <tier> tier on <model>`
-- a worker ended: `<task> build ended: <outcome>` or
-  `<task> merge ended: <outcome>`, with the worker's `why` after a colon
-  when it failed
+- a worker ended: `<task> <stage> ended: <outcome>`, with `research`,
+  `build`, `app-check`, `spec-check` or `merge` for the stage, and the worker's `why`
+  after a colon when it failed
 - a lap merged: `<task> merged into <epic branch>`
 - a lap parked: `<task> parked: <why>`
 - a lap blocked: `<task> blocked: <why>`
@@ -52,17 +55,22 @@ A refusal is not an event. Show the script's message verbatim and stop.
 
 ## Stages and tiers
 
-Each stage runs in one worker on a tier. The factory runs only the simple
-track's build for now, and every task handoff takes is on the simple
-track.
+Each stage runs in one worker on a tier. Handoff puts every task on the
+simple track, and a task whose `lap.track` metadata is `full` runs the full
+track's stages, which the scheduler calls for in order.
 
 | Stage | Track | Tier |
 |---|---|---|
+| research | full | light |
 | build | simple | standard |
-| merge | simple | deep |
+| build | full | deep |
+| app-check | full | standard |
+| spec-check | full | standard |
+| merge | simple or full | deep |
 
 The merge stage runs only when newer work on the epic branch conflicts with
-a lap or breaks its tests; the scheduler calls it, never the manager.
+a lap or breaks its tests; the scheduler calls it, never the manager. A
+build action's `track` says which tier its build runs on.
 
 Run `bench route <tier>` once for each tier you use. It prints the route
 as JSON with `harness`, `model`, `version` and `effort`. When the harness
@@ -82,7 +90,8 @@ stop.
    stop. Exit 0 prints one line; show it.
 2. **Route and settings.** Run `bench route standard --jidoka-home ...`,
    then `bench route deep --jidoka-home ...`, then `repo settings show`. Keep each app's `name`, `test` and
-   `test_target` for the workers' prompts.
+   `test_target` for the workers' prompts. Run `bench route light` too the
+   first time an action's `track` is `full`.
 3. **Next.** Run `scheduler next <epic-id> --jidoka-home ...`. Exit 1 means
    it refused and wrote nothing; stderr lists every reason. Show it and
    stop. A refusal because the epic already has a manager means its
@@ -101,7 +110,18 @@ stop.
    `jidoka lap worktree: <worktree>`, with the action's absolute
    `worktree`; the lap mod knows a lap worker by that line alone, runs it
    in that worktree, and decides its every tool call. Then give it:
-   - the task as `bd show` printed it;
+   - the task as `bd show` printed it, with its `research brief:` comment
+     for a build on the full track;
+   - when the action's `findings` is not null, a Spec check sent the diff
+     back. Give the worker each finding's `kind` (`missing` work the task
+     asks for, or `extra` work it does not), `file`, `line`, `bead` and
+     `note`. The worker fixes the diff in the worktree as it stands, with
+     its commits, and ends as any build does;
+   - when the action's `app_check` is not null, the app check saw the app
+     fail a holdout. Give the worker each entry's `holdout` (its id),
+     `verdict` and `saw`, what a user saw, and nothing more: no step, and no
+     scenario, because you hold none. The worker fixes the app so that a user
+     no longer sees it, and ends as any build does;
    - when the action's `answer` is not null, the task was parked on a
      question and the human has answered it. Give the worker the answer's
      `text` and `source`: a `comment` is the human's own words, and a
@@ -186,11 +206,71 @@ stop.
      tests the merge touches, or `failed` with its `why`.
 
    Write the event line for the started merge worker.
+
+   An action whose `action` is `research` starts a research worker on the
+   route of the light tier. Its prompt is built as above, with the same first
+   line, the task, the paths of the glossary and the house rules, and the
+   limits, except for these:
+   - its job: write the research brief. It reads the repo and changes
+     nothing in the worktree. It writes the brief, under 2,500 words, to
+     `research-brief.md` in the scratch folder, with these sections: `Files
+     to change`, `Seam`, `Pattern to copy`, `Tests to model on`, `Gotchas`,
+     `Open questions`. The scheduler posts it on the task;
+   - its ending: `{"outcome": "done"}` with no app and no filter, or
+     `failed` with its `why`.
+
+   Write the event line for the started research worker.
+
+   An action whose `action` is `spec-check` starts a Spec check worker on the
+   route of the standard tier, in the worktree. Its prompt is built as above,
+   with the same first line, the task, the paths of the repo's house rules,
+   and the limits, except for these:
+   - its job: read `<skill folder>/../spec-check/SKILL.md` and follow it
+     with the arguments `<task> <epic branch>`, the top-level `branch`. The
+     targeted tests have rebased the lap onto the epic branch, so the
+     three-dot diff from it holds the task's work alone. It changes no file
+     but its outcome block;
+   - its ending: it writes the outcome block, the JSON object the skill
+     ends its reply with, to `spec-check.json` in the scratch folder, and
+     ends its reply with that same block. A `pass` needs no file.
+
+   Write the event line for the started Spec check worker.
+
+   An action whose `action` is `app-check` starts an app check worker with the
+   Agent tool, in the background, with `subagent_type` `jidoka:app-check`, on
+   the route of the standard tier. It is not a lap worker, so its prompt has no
+   `jidoka lap worktree:` line, as with the validation worker. Its prompt holds
+   the action's `epic` (the top-level `epic`), `task`, `worktree`, `slot` and
+   `report`, each app's `name`, `build`, `run` and `way_in` from
+   `repo settings show`, the repo settings' `slot_use`, and the absolute path
+   of the holdouts script, `<plugin folder>/scripts/holdouts.py`, to run through
+   the launcher as `holdouts.py read <epic> --task <task>`. It holds no
+   holdout, you read none and never print one. The lap's slot is the worker's
+   own: it picks the port or folder `slot_use` names from it, so that no other
+   app check shares it. Write the event line for the started app check worker.
+
+   An action whose `action` is `holdouts` has no task: the epic's full suite
+   is green and its holdouts have not run. Start one worker with the Agent
+   tool, in the background, with `subagent_type` `jidoka:validation`, on the
+   standard tier's route. Its prompt holds the action's `epic`, `worktree`
+   and `report`, each app's `name`, `build`, `run` and `way_in` from
+   `repo settings show`, and the absolute path of the holdouts script,
+   `<plugin folder>/scripts/holdouts.py`, to run through the launcher. It
+   holds no task, and you read no holdout and never print one. Write the
+   event line `<epic-id> holdouts started: <holdouts> holdouts on <head>`.
 5. **Report.** Wait for the workers' notifications, and do nothing in
    between. Report each worker as it ends, one report at a time, with
    `scheduler report <epic-id> <task> <outcome> --jidoka-home ...`:
-   - its reply ends with a done block that names an app and a filter:
-     `done --app <app> --filter "<filter>"`;
+   - a build or merge worker's reply ends with a done block that names an
+     app and a filter: `done --app <app> --filter "<filter>"`;
+   - a research worker's reply ends with a done block with no app and no
+     filter: `done`;
+   - an app check worker's reply ends with a done block with no app and no
+     filter: `done`. The scheduler reads its report and decides, so a red
+     holdout is no outcome you name;
+   - a Spec check worker's reply ends with its outcome block, whose
+     `outcome` is `pass`, `send back` or `cannot judge`: report that
+     outcome, `pass`, `"send back"` or `"cannot judge"`. Never `done`;
    - its reply ends with a question block: `question`;
    - its reply ends with a blocked block: `blocked`;
    - its reply ends with a failed block, or holds no block you can read:
@@ -204,6 +284,16 @@ stop.
      and an outage past an hour;
    - it stopped before it replied on any other error or an interruption:
      `"cut off"`.
+
+   A validation worker's reply that ends with `{"outcome": "done"}` is
+   reported with `scheduler report-holdouts <epic-id> --jidoka-home ...`,
+   which prints the same JSON as `next`: every holdout green puts the epic at
+   the acceptance gate, and a red one files tasks whose laps are in
+   `actions`. Write `<epic-id> holdouts ended: <validation.result>`. Exit 1
+   means the report was refused; show stderr and stop, and the next
+   `scheduler next` starts the worker again. A validation worker that fails
+   or is cut off is not reported: write `<epic-id> holdouts ended: failed`
+   and stop.
 
    A merge worker's reply is reported the same way. Write the worker's
    event line first. A report on done commits the build's work and runs the

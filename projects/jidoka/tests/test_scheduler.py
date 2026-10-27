@@ -24,6 +24,8 @@ SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 MERGE_GATE = PLUGIN / "scripts" / "merge_gate.py"
 
 RUN_TIMEOUT_SECONDS = 120
+OUT_OF_SCOPE = "## Out of Scope\nRefunds."
+ONE_SEAM = "## Seams\nThe card reader, run as a process."
 JEFF = "Jeff Scheduler"
 LAP_LIMIT = 2
 ACCEPTANCE = "specs/acceptance"
@@ -109,11 +111,12 @@ class SchedulerCase(unittest.TestCase):
 
     def new_epic(self) -> str:
         type(self).count += 1
-        return self.create(f"Take card payments {self.count}", "--type=epic")
+        return self.create(f"Take card payments {self.count}", "--type=epic", "--description", OUT_OF_SCOPE)
 
     def new_task_under(self, epic: str, *flags: str) -> str:
         type(self).count += 1
-        return self.create(f"Read the card {self.count}", "--type=task", "--parent", epic, *flags)
+        return self.create(f"Read the card {self.count}", "--type=task", "--parent", epic,
+                           "--description", ONE_SEAM, *flags)
 
     def new_home(self, name: str) -> Path:
         """A jidoka home that knows the Python and holds no repo settings."""
@@ -461,7 +464,7 @@ class SchedulerLapStateTests(SchedulerCase):
 
         printed = self.next_printed(epic)
 
-        self.assertEqual([{**{key: value for key, value in action.items() if key not in ("action", "answer")},
+        self.assertEqual([{**{key: value for key, value in action.items() if key not in ("action", "answer", "findings", "app_check")},
                            "lap": 2, "stage": "build", "tries": 0} for action in opened],
                          printed["laps"])
         self.assertNotIn("lap.stage", self.metadata(third))
@@ -2051,6 +2054,546 @@ class FactoryRulesTests(SchedulerCase):
 
         self.assertEqual(1, done.returncode)
         self.assertIn("lap_limit holds 0, where it needs a whole number above zero", done.stderr)
+
+
+class FullTrackCase(SchedulerCase):
+    """The helpers of the tests of a full-track lap."""
+    BRIEF = "Files to change: card.txt\nSeam: the card reader\n"
+
+    def open_full_lap(self) -> OpenLap:
+        """An epic handed off with one task on the full track, and the research action its lap opened with."""
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        branch = self.hand_off(epic, {task: "till"})
+        fixture.run([self.bd, "update", task, "--set-metadata", "lap.track=full"], self.repo)
+        [action] = self.next_printed(epic)["actions"]
+        self.assertEqual("research", action["action"])
+        return OpenLap(epic, task, branch, Path(action["worktree"]))
+
+    def finish_research(self, lap: OpenLap) -> dict:
+        (lap.worktree / ".scratch" / "research-brief.md").write_text(self.BRIEF, encoding="utf-8")
+        return self.report_printed(lap.epic, lap.task, "done")
+
+    def finish_build(self, lap: OpenLap, text: str = "built\n") -> dict:
+        self.leave_in(lap.worktree, "card.txt", text)
+        return self.build_done(lap.epic, lap.task)
+
+    def write_outcome_block(self, lap: OpenLap, block: dict) -> None:
+        (lap.worktree / ".scratch" / "spec-check.json").write_text(json.dumps(block), encoding="utf-8")
+
+    def send_back_block(self, note: str) -> dict:
+        return {"outcome": "send back", "findings": [{"kind": "extra", "file": "card.txt", "line": 1,
+                                                       "bead": "none", "note": note}]}
+
+    def pass_the_spec_check(self, lap: OpenLap) -> dict:
+        return self.report_printed(lap.epic, lap.task, "pass")
+
+    def stages_of(self, printed: dict) -> list[str]:
+        return [action["action"] for action in printed["actions"]]
+
+
+class FullTrackLapTests(FullTrackCase):
+    def test_a_full_track_lap_runs_research_build_targeted_tests_and_spec_check_in_order_before_it_merges(self):
+        lap = self.open_full_lap()
+
+        after_research = self.finish_research(lap)
+        runs_after_research = self.runs_of(lap.task)
+        after_build = self.finish_build(lap)
+        runs_before_the_check = self.runs_of(lap.task)
+        after_check = self.pass_the_spec_check(lap)
+
+        self.assertEqual((["build"], ["spec-check"], []),
+                         (self.stages_of(after_research), self.stages_of(after_build), self.stages_of(after_check)))
+        self.assertEqual(([], ["-k test_card"]), (runs_after_research, runs_before_the_check))
+        self.assertEqual(["-k test_card"], self.runs_of(lap.task))
+        self.assertEqual("closed", self.shown(lap.task)["status"])
+        self.assertEqual(["card.txt"], self.files_of(lap.epic_branch))
+
+    def test_the_research_brief_is_posted_on_the_task_as_a_research_brief_comment_by_jidoka(self):
+        lap = self.open_full_lap()
+
+        self.finish_research(lap)
+
+        [brief] = [comment for comment in self.comments(lap.task) if str(comment["text"]).startswith("research brief: ")]
+        self.assertEqual(("jidoka", f"research brief: {self.BRIEF.strip()}"), (brief["author"], brief["text"]))
+        self.assertEqual("build", self.metadata(lap.task)["lap.stage"])
+        self.assertFalse((lap.worktree / ".scratch" / "research-brief.md").exists())
+
+    def test_the_spec_check_comes_after_the_targeted_tests_and_before_the_merge_gate(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+
+        after_build = self.finish_build(lap)
+
+        self.assertEqual("spec-check", self.metadata(lap.task)["lap.stage"])
+        self.assertEqual("in_progress", self.shown(lap.task)["status"])
+        self.assertEqual("spec-check", after_build["laps"][0]["stage"])
+        self.assertNotIn(lap.epic_branch, git(self.repo, "branch", "--contains", f"lap/{lap.task}"))
+
+    def test_a_send_back_returns_the_findings_to_a_new_build_that_runs_the_checks_again(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+        self.finish_build(lap)
+        self.write_outcome_block(lap, self.send_back_block("adds a flag the task does not ask for"))
+
+        sent_back = self.report_printed(lap.epic, lap.task, "send back")
+
+        [action] = sent_back["actions"]
+        self.assertEqual("build", action["action"])
+        self.assertEqual([{"kind": "extra", "file": "card.txt", "line": 1, "bead": "none",
+                           "note": "adds a flag the task does not ask for"}], action["findings"])
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("build", 0, 1), (metadata["lap.stage"], metadata["lap.tries"], metadata["lap.sendbacks"]))
+        self.assertTrue(any("adds a flag the task does not ask for" in text for text in self.texts(lap.task)))
+        self.assertFalse((lap.worktree / ".scratch" / "spec-check.json").exists())
+
+        rebuilt = self.finish_build(lap, "rebuilt\n")
+        merged = self.pass_the_spec_check(lap)
+
+        self.assertEqual((["spec-check"], []), (self.stages_of(rebuilt), self.stages_of(merged)))
+        self.assertIsNone(rebuilt["actions"][0]["findings"])
+        self.assertEqual(["-k test_card", "-k test_card"], self.runs_of(lap.task))
+        self.assertEqual("closed", self.shown(lap.task)["status"])
+
+    def test_two_send_backs_from_the_spec_check_park_the_task_naming_the_send_back_cap(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+        self.finish_build(lap)
+        self.write_outcome_block(lap, self.send_back_block("first finding"))
+        self.report_printed(lap.epic, lap.task, "send back")
+        self.finish_build(lap, "rebuilt\n")
+        self.write_outcome_block(lap, self.send_back_block("second finding"))
+
+        parked = self.report_printed(lap.epic, lap.task, "send back")
+
+        self.assertEqual([], parked["actions"])
+        why = self.assert_parked(lap, 0)
+        self.assertIn("the send-back cap of 2", why)
+        self.assertIn("second finding", why)
+
+    def test_a_send_back_from_the_spec_check_and_one_from_another_check_together_park_the_task(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+        self.report_printed(lap.epic, lap.task, "send back")
+        self.finish_build(lap)
+        self.write_outcome_block(lap, self.send_back_block("an extra"))
+
+        self.report_printed(lap.epic, lap.task, "send back")
+
+        self.assertIn("the send-back cap of 2", self.assert_parked(lap, 0))
+
+    def test_a_send_back_with_no_usable_outcome_block_counts_a_try_of_the_spec_check(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+        self.finish_build(lap)
+
+        retried = self.report_printed(lap.epic, lap.task, "send back")
+
+        self.assertEqual(["spec-check"], self.stages_of(retried))
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("spec-check", 1, 0), (metadata["lap.stage"], metadata["lap.tries"],
+                                                 metadata.get("lap.sendbacks", 0)))
+        self.assertTrue(any(text.startswith("Spec check try 1 of 3 failed") for text in self.texts(lap.task)))
+
+    def test_a_spec_check_that_cannot_judge_parks_the_task_with_its_reason_and_counts_no_try(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+        self.finish_build(lap)
+        self.write_outcome_block(lap, {"outcome": "cannot judge", "reason": "the bead has no description"})
+
+        parked = self.report_printed(lap.epic, lap.task, "cannot judge")
+
+        self.assertEqual([], parked["actions"])
+        self.assertIn("the bead has no description", self.assert_parked(lap, 0))
+        self.assertEqual("open", self.shown(lap.task)["status"])
+
+    def test_a_lap_whose_task_already_holds_a_research_brief_starts_at_the_build(self):
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: "till"})
+        fixture.run([self.bd, "update", task, "--set-metadata", "lap.track=full"], self.repo)
+        fixture.run([self.bd, "comment", task, "research brief: Files to change: card.txt"], self.repo)
+
+        [action] = self.next_printed(epic)["actions"]
+
+        self.assertEqual("build", action["action"])
+
+    def test_a_research_stage_that_leaves_no_brief_counts_a_try_and_runs_the_research_again(self):
+        lap = self.open_full_lap()
+
+        retried = self.report_printed(lap.epic, lap.task, "done")
+
+        self.assertEqual(["research"], self.stages_of(retried))
+        self.assertEqual(("research", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+        self.assertTrue(any(text.startswith("Research try 1 of 3 failed") for text in self.texts(lap.task)))
+
+    def test_a_spec_check_passed_after_the_epic_branch_moved_runs_the_targeted_tests_again_before_the_merge(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+        self.finish_build(lap)
+        moved = self.commit_on_epic_branch(lap.epic_branch, "other.txt", "other lap\n")
+
+        merged = self.pass_the_spec_check(lap)
+
+        self.assertEqual([], self.stages_of(merged))
+        self.assertEqual(["-k test_card", "-k test_card"], self.runs_of(lap.task))
+        self.assertEqual(moved, git(self.repo, "rev-parse", f"{lap.epic_branch}~1"))
+        self.assertEqual("closed", self.shown(lap.task)["status"])
+
+    def test_red_targeted_tests_send_a_full_track_build_back_without_a_spec_check(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+        self.queue_exit_codes(lap.task, 1)
+
+        retried = self.finish_build(lap)
+
+        self.assertEqual(["build"], self.stages_of(retried))
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+
+    def test_a_simple_track_lap_starts_at_the_build_and_merges_with_no_spec_check(self):
+        lap = self.open_one_lap()
+        self.leave_in(lap.worktree, "card.txt", "built\n")
+
+        merged = self.build_done(lap.epic, lap.task)
+
+        self.assertEqual([], self.stages_of(merged))
+        self.assertEqual("closed", self.shown(lap.task)["status"])
+
+    def test_a_spec_check_outcome_reported_at_the_build_is_refused_and_nothing_is_written(self):
+        lap = self.open_one_lap()
+
+        refused = self.report(lap.epic, lap.task, "pass")
+
+        self.assertEqual(1, refused.returncode)
+        self.assertIn("pass is an outcome of the Spec check", refused.stderr)
+        self.assertEqual(("build", 0), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+
+    def test_done_reported_at_the_spec_check_is_refused_and_the_lap_stays_there(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+        self.finish_build(lap)
+
+        refused = self.report(lap.epic, lap.task, "done", "--app", "shop", "--filter", "test_card")
+
+        self.assertEqual(1, refused.returncode)
+        self.assertIn("ends pass, send back or cannot judge", refused.stderr)
+        self.assertEqual("spec-check", self.metadata(lap.task)["lap.stage"])
+
+    def test_a_cut_off_spec_check_goes_back_to_the_spec_check_and_counts_no_try(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+        self.finish_build(lap)
+
+        again = self.report_printed(lap.epic, lap.task, "cut off")
+
+        self.assertEqual(["spec-check"], self.stages_of(again))
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("spec-check", 0, 1), (metadata["lap.stage"], metadata["lap.tries"],
+                                                 metadata["lap.cutoffs.spec-check"]))
+
+
+class AppCheckTests(FullTrackCase):
+    """The app check of a full-track lap, which runs after the targeted tests when a holdout names the task."""
+    UNRELATED = "A shopper pays 9.00 with an expired card and sees Card expired."
+    FIRST = "A shopper pays 2.00 and receipt 2 prints."
+    SECOND = "A shopper pays 3.00 twice and sees one receipt."
+    SAW = "The till printed no receipt after a payment of 2.00, where receipt 2 should have printed."
+
+    def write_holdouts(self, epic: str, holdouts: list[dict]) -> None:
+        done = subprocess.run([str(LAUNCHER), str(PLUGIN / "scripts" / "holdouts.py"), "write", epic],
+                              input=json.dumps(holdouts), capture_output=True, text=True, encoding="utf-8",
+                              timeout=RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home), cwd=self.repo)
+        if done.returncode != 0:
+            raise fixture.FixtureError(f"holdouts.py write failed: {done.stderr}")
+
+    def open_full_lap_under_holdouts(self) -> OpenLap:
+        """A full-track task and a second task in its area, with three holdouts: the first names only the second
+        task, the others name the first. The lap has finished its research."""
+        epic = self.new_epic()
+        task = self.new_task_under(epic, "--priority", "1")
+        other = self.new_task_under(epic, "--priority", "2")
+        branch = self.hand_off(epic, {task: "till", other: "till"})
+        fixture.run([self.bd, "update", task, "--set-metadata", "lap.track=full"], self.repo)
+        self.write_holdouts(epic, [{"app": "shop", "tasks": [other], "scenario": self.UNRELATED},
+                                   {"app": "shop", "tasks": [task], "scenario": self.FIRST},
+                                   {"app": "shop", "tasks": [task, other], "scenario": self.SECOND}])
+        [action] = self.next_printed(epic)["actions"]
+        lap = OpenLap(epic, task, branch, Path(action["worktree"]))
+        self.finish_research(lap)
+        return lap
+
+    def write_report(self, lap: OpenLap, entries: list[dict]) -> None:
+        (lap.worktree / ".scratch" / "app-check.json").write_text(json.dumps(entries), encoding="utf-8")
+
+    def green_report(self) -> list[dict]:
+        return [{"holdout": 2, "verdict": "pass", "saw": ""}, {"holdout": 3, "verdict": "pass", "saw": ""}]
+
+    def red_report(self) -> list[dict]:
+        return [{"holdout": 2, "verdict": "fail", "saw": self.SAW, "steps": self.FIRST},
+                {"holdout": 3, "verdict": "pass", "saw": ""}]
+
+    def test_the_app_check_runs_after_the_targeted_tests_and_before_the_spec_check_and_the_merge_gate(self):
+        lap = self.open_full_lap_under_holdouts()
+
+        after_build = self.finish_build(lap)
+        self.write_report(lap, self.green_report())
+        after_app_check = self.report_printed(lap.epic, lap.task, "done")
+
+        self.assertEqual((["app-check"], ["spec-check"]),
+                         (self.stages_of(after_build), self.stages_of(after_app_check)))
+        self.assertEqual(["-k test_card"], self.runs_of(lap.task))
+        self.assertEqual("spec-check", self.metadata(lap.task)["lap.stage"])
+        self.assertNotIn(lap.epic_branch, git(self.repo, "branch", "--contains", f"lap/{lap.task}"))
+        self.assertFalse((lap.worktree / ".scratch" / "app-check.json").exists())
+
+    def test_the_app_check_action_names_the_lap_s_slot_and_worktree_and_the_report_it_writes(self):
+        lap = self.open_full_lap_under_holdouts()
+
+        [action] = self.finish_build(lap)["actions"]
+
+        self.assertEqual("app-check", action["action"])
+        self.assertEqual((lap.task, str(lap.worktree), str(lap.worktree / ".scratch" / "app-check.json")),
+                         (action["task"], action["worktree"], action["report"]))
+        self.assertEqual(str(self.metadata(lap.task)["lap.slot"]), str(action["slot"]))
+        self.assertNotIn(self.FIRST, json.dumps(action))
+
+    def test_a_full_track_lap_that_no_holdout_names_goes_from_the_targeted_tests_to_the_spec_check(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+
+        after_build = self.finish_build(lap)
+
+        self.assertEqual(["spec-check"], self.stages_of(after_build))
+
+    def test_a_report_that_gives_a_verdict_to_a_holdout_that_names_another_task_counts_a_try_of_the_app_check(self):
+        lap = self.open_full_lap_under_holdouts()
+        self.finish_build(lap)
+        self.write_report(lap, [{"holdout": 1, "verdict": "pass", "saw": ""}, *self.green_report()])
+
+        retried = self.report_printed(lap.epic, lap.task, "done")
+
+        self.assertEqual(["app-check"], self.stages_of(retried))
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("app-check", 1), (metadata["lap.stage"], metadata["lap.tries"]))
+        self.assertTrue(any(text.startswith("App check try 1 of 3 failed") for text in self.texts(lap.task)))
+
+    def test_a_failed_holdout_comes_back_to_the_builder_as_its_id_the_verdict_and_what_a_user_saw_and_no_steps(self):
+        lap = self.open_full_lap_under_holdouts()
+        self.finish_build(lap)
+        self.write_report(lap, self.red_report())
+
+        sent_back = self.report_printed(lap.epic, lap.task, "done")
+
+        [action] = sent_back["actions"]
+        self.assertEqual("build", action["action"])
+        self.assertEqual([{"holdout": 2, "verdict": "fail", "saw": self.SAW}], action["app_check"])
+        self.assertIsNone(action["findings"])
+        everything_the_builder_reads = json.dumps(action) + "\n".join(self.texts(lap.task))
+        self.assertIn(self.SAW, "\n".join(self.texts(lap.task)))
+        for scenario in (self.UNRELATED, self.FIRST, self.SECOND):
+            self.assertNotIn(scenario, everything_the_builder_reads)
+        self.assertNotIn(self.FIRST, json.dumps(self.metadata(lap.task)))
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("build", 0, 1), (metadata["lap.stage"], metadata["lap.tries"], metadata["lap.sendbacks"]))
+        self.assertFalse((lap.worktree / ".scratch" / "app-check.json").exists())
+
+    def test_the_rebuilt_lap_runs_the_app_check_again_with_no_findings_and_then_the_spec_check(self):
+        lap = self.open_full_lap_under_holdouts()
+        self.finish_build(lap)
+        self.write_report(lap, self.red_report())
+        self.report_printed(lap.epic, lap.task, "done")
+
+        rebuilt = self.finish_build(lap, "rebuilt\n")
+        self.write_report(lap, self.green_report())
+        checked = self.report_printed(lap.epic, lap.task, "done")
+
+        self.assertEqual((["app-check"], ["spec-check"]), (self.stages_of(rebuilt), self.stages_of(checked)))
+        self.assertIsNone(rebuilt["actions"][0]["app_check"])
+        self.assertEqual(["-k test_card", "-k test_card"], self.runs_of(lap.task))
+
+    def test_a_send_back_from_the_app_check_and_one_from_the_spec_check_together_park_the_task(self):
+        lap = self.open_full_lap_under_holdouts()
+        self.finish_build(lap)
+        self.write_report(lap, self.red_report())
+        self.report_printed(lap.epic, lap.task, "done")
+        self.finish_build(lap, "rebuilt\n")
+        self.write_report(lap, self.green_report())
+        self.report_printed(lap.epic, lap.task, "done")
+        self.write_outcome_block(lap, self.send_back_block("an extra"))
+
+        parked = self.report_printed(lap.epic, lap.task, "send back")
+
+        self.assertNotIn(lap.task, [action["task"] for action in parked["actions"]])
+        self.assertIn("the send-back cap of 2", self.assert_parked(lap, 0))
+
+    def test_two_app_check_send_backs_park_the_task_naming_the_failed_holdout_and_not_its_steps(self):
+        lap = self.open_full_lap_under_holdouts()
+        self.finish_build(lap)
+        self.write_report(lap, self.red_report())
+        self.report_printed(lap.epic, lap.task, "done")
+        self.finish_build(lap, "rebuilt\n")
+        self.write_report(lap, self.red_report())
+
+        parked = self.report_printed(lap.epic, lap.task, "done")
+
+        self.assertNotIn(lap.task, [action["task"] for action in parked["actions"]])
+        why = self.assert_parked(lap, 0)
+        self.assertIn("the send-back cap of 2", why)
+        self.assertIn(self.SAW, why)
+        self.assertNotIn(self.FIRST, why)
+
+    def test_a_report_whose_saw_quotes_a_scenario_counts_a_try_and_reaches_no_builder(self):
+        lap = self.open_full_lap_under_holdouts()
+        self.finish_build(lap)
+        self.write_report(lap, [{"holdout": 2, "verdict": "fail", "saw": f"Steps: {self.FIRST}"},
+                                {"holdout": 3, "verdict": "pass", "saw": ""}])
+
+        retried = self.report_printed(lap.epic, lap.task, "done")
+
+        self.assertEqual(["app-check"], self.stages_of(retried))
+        self.assertEqual(1, int(self.metadata(lap.task)["lap.tries"]))
+        self.assertNotIn(self.FIRST, "\n".join(self.texts(lap.task)))
+        self.assertFalse(self.metadata(lap.task).get("lap.appfindings"))
+
+    def test_an_app_check_that_leaves_no_report_counts_a_try_of_the_app_check(self):
+        lap = self.open_full_lap_under_holdouts()
+        self.finish_build(lap)
+
+        retried = self.report_printed(lap.epic, lap.task, "done")
+
+        self.assertEqual(["app-check"], self.stages_of(retried))
+        self.assertTrue(any(text.startswith("App check try 1 of 3 failed") for text in self.texts(lap.task)))
+
+    def test_done_with_an_app_and_a_filter_is_refused_at_the_app_check_and_the_lap_stays_there(self):
+        lap = self.open_full_lap_under_holdouts()
+        self.finish_build(lap)
+
+        refused = self.report(lap.epic, lap.task, "done", "--app", "shop", "--filter", "test_card")
+
+        self.assertEqual(1, refused.returncode)
+        self.assertIn("--app and --filter go only with done at the build or the merge", refused.stderr)
+        self.assertEqual("app-check", self.metadata(lap.task)["lap.stage"])
+
+    def test_a_cut_off_app_check_goes_back_to_the_app_check_and_counts_no_try(self):
+        lap = self.open_full_lap_under_holdouts()
+        self.finish_build(lap)
+
+        again = self.report_printed(lap.epic, lap.task, "cut off")
+
+        self.assertEqual(["app-check"], self.stages_of(again))
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("app-check", 0, 1), (metadata["lap.stage"], metadata["lap.tries"],
+                                                metadata["lap.cutoffs.app-check"]))
+
+    def test_two_app_checks_never_share_a_slot(self):
+        epic = self.new_epic()
+        first, second = self.new_task_under(epic), self.new_task_under(epic)
+        self.hand_off(epic, {first: "till", second: "receipts"})
+        for task in (first, second):
+            fixture.run([self.bd, "update", task, "--set-metadata", "lap.track=full"], self.repo)
+        self.write_holdouts(epic, [{"app": "shop", "tasks": [first, second], "scenario": self.FIRST}])
+        laps = {action["task"]: OpenLap(epic, action["task"], "", Path(action["worktree"]))
+                for action in self.next_printed(epic)["actions"]}
+        for lap in laps.values():
+            self.finish_research(lap)
+
+        self.finish_build(laps[first])
+        printed = self.finish_build(laps[second])
+
+        checking = [lap for lap in printed["laps"] if lap["stage"] == "app-check"]
+        self.assertEqual({first, second}, {lap["task"] for lap in checking})
+        self.assertEqual(2, len({lap["slot"] for lap in checking}))
+        [action] = [action for action in printed["actions"] if action["task"] == second]
+        self.assertEqual(("app-check", next(lap["slot"] for lap in checking if lap["task"] == second)),
+                         (action["action"], action["slot"]))
+
+
+class TrackMoveTests(FullTrackCase):
+    def red_build(self, lap: OpenLap, codes: list[int]) -> dict:
+        self.queue_exit_codes(lap.task, *codes)
+        self.leave_in(lap.worktree, "card.txt", "built\n")
+        return self.build_done(lap.epic, lap.task)
+
+    def moves_of(self, task: str) -> list[dict]:
+        return [comment for comment in self.comments(task) if comment["text"].startswith("Moved to the full track")]
+
+    def test_a_simple_task_whose_targeted_tests_fail_twice_gets_its_next_build_on_the_full_track_with_a_comment(self):
+        lap = self.open_one_lap()
+
+        first = self.red_build(lap, [1, 1])
+        second = self.build_done(lap.epic, lap.task)
+
+        self.assertEqual(("build", "simple"), (first["actions"][0]["action"], first["actions"][0]["track"]))
+        self.assertEqual(("build", "full"), (second["actions"][0]["action"], second["actions"][0]["track"]))
+        self.assertEqual("full", self.metadata(lap.task)["lap.track"])
+        [moved] = self.moves_of(lap.task)
+        self.assertEqual("jidoka", moved["author"])
+        self.assertIn("the targeted tests failed twice", moved["text"])
+        self.assertIn("exit code 1", moved["text"])
+
+    def test_the_build_after_the_move_goes_through_the_spec_check_before_it_merges(self):
+        lap = self.open_one_lap()
+        self.red_build(lap, [1, 1, 0])
+        self.build_done(lap.epic, lap.task)
+
+        passed = self.build_done(lap.epic, lap.task)
+
+        self.assertEqual(["spec-check"], self.stages_of(passed))
+        self.assertEqual("in_progress", self.shown(lap.task)["status"])
+
+    def test_one_failed_targeted_run_leaves_a_simple_task_on_the_simple_track(self):
+        lap = self.open_one_lap()
+
+        printed = self.red_build(lap, [1])
+
+        self.assertEqual("simple", printed["actions"][0]["track"])
+        self.assertNotEqual("full", self.metadata(lap.task).get("lap.track"))
+        self.assertEqual([], self.moves_of(lap.task))
+
+    def test_failed_builds_and_cutoffs_do_not_move_a_simple_task(self):
+        lap = self.open_one_lap()
+
+        self.report_printed(lap.epic, lap.task, "failed")
+        self.report_printed(lap.epic, lap.task, "cut off")
+        printed = self.report_printed(lap.epic, lap.task, "failed")
+
+        self.assertEqual("simple", printed["actions"][0]["track"])
+        self.assertNotEqual("full", self.metadata(lap.task).get("lap.track"))
+        self.assertEqual([], self.moves_of(lap.task))
+
+    def test_red_targeted_runs_that_newer_work_on_the_epic_branch_causes_do_not_move_a_simple_task(self):
+        lap = self.open_one_lap()
+        self.commit_in(lap.worktree, "card.txt", "built\n")
+        self.commit_on_epic_branch(lap.epic_branch, "other.txt", "other lap\n")
+        self.queue_exit_codes(lap.task, 1, 1)
+
+        self.build_done(lap.epic, lap.task)
+
+        self.assertEqual("merge", self.metadata(lap.task)["lap.stage"])
+        self.assertEqual([], self.moves_of(lap.task))
+        self.assertNotEqual("full", self.metadata(lap.task).get("lap.track"))
+
+    def test_a_full_task_whose_targeted_tests_fail_twice_stays_full_and_gets_no_move_comment(self):
+        lap = self.open_full_lap()
+        self.finish_research(lap)
+        self.queue_exit_codes(lap.task, 1, 1)
+
+        self.finish_build(lap)
+        self.build_done(lap.epic, lap.task)
+
+        self.assertEqual("full", self.metadata(lap.task)["lap.track"])
+        self.assertEqual([], self.moves_of(lap.task))
+
+    def test_a_moved_task_stays_on_the_full_track_through_to_its_merge(self):
+        lap = self.open_one_lap()
+        self.red_build(lap, [1, 1, 0])
+        self.build_done(lap.epic, lap.task)
+        self.build_done(lap.epic, lap.task)
+
+        merged = self.report_printed(lap.epic, lap.task, "pass")
+
+        self.assertEqual([], merged["actions"])
+        self.assertEqual(("closed", "full"), (self.shown(lap.task)["status"], self.metadata(lap.task)["lap.track"]))
 
 
 if __name__ == "__main__":

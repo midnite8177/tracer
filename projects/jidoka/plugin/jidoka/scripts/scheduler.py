@@ -110,10 +110,64 @@ makes the checks below first:
              instead. A `done` report files the findings placed `epic` and
              `outside` before it commits, and a `blocks` finding on a `done`
              is a try.
+A task whose `lap.track` metadata is `full` has a lap with more stages,
+in this order: the research brief (`research`, on the light tier), the build
+(on the deep tier), the targeted tests, the app check (`app-check`, on the
+standard tier, only when a holdout names the task), the Spec check
+(`spec-check`, on the standard tier), then the merge gate. Its lap starts at
+the research, unless the task already holds a `research brief:` comment, and
+any other task starts at the build.
+  research   `done` takes no --app and --filter. The worker left the brief in
+             `research-brief.md` in the lap's scratch folder, and the
+             scheduler posts it on the task as a `research brief:` comment
+             and sends the lap to the build. A missing or empty brief is a
+             try of the research.
+  build      a `done` records the app and the filter on the task, then runs
+             the targeted tests as above. A pass sends the lap, with a
+             comment, to the app check when a holdout names the task, and
+             else to the Spec check, instead of the merge gate.
+  app-check  the worker reads the holdouts that name the task through
+             `holdouts.py read <epic> --task <task>`, runs the app on the
+             lap's slot and tests it from outside, before it reads the diff.
+             It leaves `app-check.json` in the scratch folder, as
+             app_check.py describes, and its report is `done`, with no
+             --app and no --filter. Every holdout green sends the lap to the
+             Spec check. A red one sends the lap back to the build with no
+             try: the action of that build carries `app_check`, a list of
+             {holdout, verdict, saw} for each failed holdout and never a
+             step, and the task gets the same words as a comment. It counts
+             with the Spec check's send-backs, so the second send-back of the
+             lap, from both checks together, parks the task. A report that
+             is missing or unusable is a try of the app check. A lap holds
+             its slot for as long as it is open, so two app checks never run
+             on one slot.
+  spec-check the worker left its outcome block, as the spec-check skill
+             defines it, in `spec-check.json` in the scratch folder, and the
+             report names its outcome:
+             pass          the lap goes to the merge gate with the targeted
+                           run it holds; the tests run again only when the
+                           epic branch moved since, and the lap goes back to
+                           the build when they then fail.
+             send back     the block's findings are posted on the task and
+                           kept in its `lap.findings` metadata, and the lap
+                           goes back to the build, whose action carries them
+                           as `findings`, a list of {kind, file, line, bead,
+                           note}, until a build is done. It is no try; the
+                           second send-back of the lap parks the task. A
+                           block that is missing or unusable is a try of the
+                           Spec check.
+             cannot judge  the task parks with the block's reason, and no
+                           try is counted.
+             Any `done` there is refused.
 A failed build, a red targeted run, a filter the targeted tests refuse or
 that runs no tests, and a lap the merge gate finds with no commit the epic
 branch lacks are each a try: the lap's `lap.tries` goes up by one, a comment
 says why, and the lap goes back to the build. The third try parks the task.
+The second red targeted run of a simple lap's own build, counted in the
+task's `lap.testfailures`, also sets `lap.track` to `full` and posts a comment
+that begins `Moved to the full track` and names the evidence. The lap stays at
+the build, and its next build runs the full track's later stages. No other
+cause moves a task, and a full task never moves back.
 Every cap that parks a task names itself in the comment: the try cap, the
 send-back cap, the cutoff cap or the merge try cap. A refusal of the merge
 gate parks the task too, naming its check. A parked task frees its slot and
@@ -163,15 +217,28 @@ runs validation, validation.py, before anything else. Green leaves the epic
 at the acceptance gate, with the human label, gate.state waiting and a gate
 comment. Red files a task in the epic, and this call opens its lap with the
 others. A merge of main that conflicts stops the call with the files named.
+An epic that holds holdouts is not at the gate when its suite is green: its
+result is pending, and `actions` ends with a holdouts action, as validation.py
+describes, which every call repeats until the report is taken, so a manager
+that restarts starts the worker again.
+
+`report-holdouts <epic>` takes the validation worker's report, which is the
+worker's job done and no outcome of a lap. Every holdout green puts the epic at
+the gate. Each red holdout files one task in the epic, with what a user saw and
+never the holdout's steps, and this call opens its lap with the others, so the
+epic goes into another pass. A report that is missing, unusable or quotes a
+scenario refuses the call and writes nothing, and the next `next` starts the
+worker again. A worker that ends failed or cut off is not reported.
 
 Each call prints one JSON object:
   epic       the epic's id.
   branch     the epic branch.
   lap_limit  the lap limit this call applied: the repo settings' lap limit,
              or the epic's factory rule when that is lower.
-  validation null, or when this call ran validation, its result (pass or
-             fail), head (the commit validated), tests, skipped, seconds
-             and filed (the id of the task a red run filed, or null).
+  validation null, or when this call ran validation, its result (pass,
+             fail or pending), head (the commit validated), tests, skipped,
+             seconds, filed (the id of the first task a red run filed, or
+             null) and filed_all (every id it filed).
   brake      null, or when the brake is on, {"stage", "laps"}.
   no_area    the ids of the open tasks that have no `lap.area`, such as one
              added after handoff. No lap opens for them. Each is also named
@@ -181,10 +248,15 @@ Each call prints one JSON object:
   paused     null, or while the epic's pause waits, {"cause", "since", "until", "retries", "wait_seconds"}.
   watch      true when the epic has an open task and is not at the acceptance gate, so a manager with nothing
              running waits with watch.py instead of ending.
-  actions    the lap a report sent back to the build or to the merge worker,
-             then the laps this call opened, each with action ("build" or
-             "merge"), task, title, area, lap (its number), slot, branch,
-             worktree, scratch and answer, and for a merge its reason.
+  actions    the lap a report sent back to a worker or on to the next one,
+             then the laps this call opened, then the holdouts run when
+             the epic waits on one, each lap with action ("research",
+             "build", "app-check", "spec-check" or "merge"), task, title,
+             area, lap (its number), slot, branch, worktree, scratch, track
+             ("simple" or "full"), answer, findings (null unless a Spec
+             check sent the diff back) and app_check (null unless the app
+             check did), for a merge its reason, and for an app check the
+             path of its report.
              An empty list when nothing goes back, and no task is ready or
              none fits. The answer is null unless the task's last park was
              a question. Then it is {"source": "comment", "text"} holding
@@ -231,6 +303,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import app_check
 import caps
 import clock
 import discovered
@@ -245,18 +318,34 @@ import private_docs
 import repo_settings
 import resume
 import rules
+import spec_check
 import targeted_tests
 import validation
 from bench import FACTORY_LABEL, WORKTREE_FOLDER, BenchError, Workspace, hide_worktrees, make_worktree
 from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, CommandError, capture, env_as_factory, head_of, \
     run
-from handoff import BLOCKING, BRANCH_KEY, CLOSED, ONBOARD, Epic, HandoffError, Rerun, epic_of, recorded_branch, \
-    problems_while_held
+from handoff import BLOCKING, BRANCH_KEY, CLOSED, ONBOARD, TRACK, Epic, HandoffError, Rerun, epic_of, \
+    recorded_branch, problems_while_held
 
 HUMAN_LABEL = park.HUMAN_LABEL
+RESEARCH = "research"
 BUILD = "build"
+APP_CHECK = "app-check"
+SPEC_CHECK = "spec-check"
 MERGE = "merge"
-WORKER_STAGES = (BUILD, MERGE)
+WORKER_STAGES = (RESEARCH, BUILD, APP_CHECK, SPEC_CHECK, MERGE)
+STAGE_WORDS = {SPEC_CHECK: "Spec check", APP_CHECK: "app check"}
+FULL_TRACK = "full"
+TRACK_KEY = "lap.track"
+APP_KEY = "lap.app"
+FILTER_KEY = "lap.filter"
+SPEC_PASSED_KEY = "lap.speccheck"
+FINDINGS_KEY = "lap.findings"
+APP_FINDINGS_KEY = "lap.appfindings"
+TEST_FAILURES_KEY = "lap.testfailures"
+TEST_FAILURES_TO_MOVE = 2
+RESEARCH_BRIEF = "research-brief.md"
+BRIEF_PREFIX = "research brief: "
 PARKED = park.PARKED
 BLOCKED = discovered.BLOCKED
 INTERRUPTED = "interrupted"
@@ -268,7 +357,9 @@ CUT_OFF = "cut off"
 QUESTION = "question"
 SEND_BACK = "send back"
 BLOCKED_OUTCOME = "blocked"
-OUTCOMES = [DONE, FAILED, CUT_OFF, QUESTION, SEND_BACK, BLOCKED_OUTCOME]
+PASS = spec_check.PASS
+CANNOT_JUDGE = spec_check.CANNOT_JUDGE
+OUTCOMES = [DONE, FAILED, CUT_OFF, QUESTION, SEND_BACK, BLOCKED_OUTCOME, PASS, CANNOT_JUDGE]
 FIRST_LAP = 1
 FIRST_SLOT = 1
 NO_TRIES = 0
@@ -305,6 +396,13 @@ class Lap:
     merge_tries: int
     merge_why: str
     merge_base: str
+    track: str
+    app: str
+    test_filter: str
+    spec_passed: bool
+    findings: str
+    app_findings: str
+    test_failures: int
 
     @property
     def scratch(self) -> Path:
@@ -312,7 +410,8 @@ class Lap:
 
     def fields(self) -> dict:
         return {"task": self.task, "title": self.title, "area": self.area, "lap": self.number, "slot": self.slot,
-                "branch": self.branch, "worktree": str(self.worktree), "scratch": str(self.scratch)}
+                "branch": self.branch, "worktree": str(self.worktree), "scratch": str(self.scratch),
+                "track": self.track}
 
 
 def metadata_of(bead: dict) -> dict:
@@ -339,6 +438,21 @@ def started_of(metadata: dict) -> int | None:
         return None
 
 
+def track_of(metadata: dict) -> str:
+    return FULL_TRACK if metadata.get(TRACK_KEY) == FULL_TRACK else TRACK
+
+
+def findings_text(metadata: dict, key: str) -> str:
+    """The findings a check sent back, as the metadata holds them under the key, or an empty string."""
+    stored = metadata.get(key)
+    return json.dumps(stored) if isinstance(stored, list) else str(stored or "")
+
+
+def words(stage: str) -> str:
+    """The stage as a sentence names it: the Spec check is a glossary term, the others are plain."""
+    return STAGE_WORDS.get(stage, stage)
+
+
 def open_lap(task: dict) -> Lap | None:
     metadata = metadata_of(task)
     if not metadata.get("lap.stage") or metadata["lap.stage"] in RESTING_STAGES:
@@ -352,7 +466,11 @@ def open_lap(task: dict) -> Lap | None:
                send_backs=caps.count_in(metadata, caps.SEND_BACKS_KEY),
                merge_tries=caps.count_in(metadata, caps.MERGE_TRIES_KEY),
                merge_why=str(metadata.get(caps.MERGE_WHY_KEY) or ""),
-               merge_base=str(metadata.get(caps.MERGE_BASE_KEY) or ""))
+               merge_base=str(metadata.get(caps.MERGE_BASE_KEY) or ""), track=track_of(metadata),
+               app=str(metadata.get(APP_KEY) or ""), test_filter=str(metadata.get(FILTER_KEY) or ""),
+               spec_passed=metadata.get(SPEC_PASSED_KEY) == PASS, findings=findings_text(metadata, FINDINGS_KEY),
+               app_findings=findings_text(metadata, APP_FINDINGS_KEY),
+               test_failures=caps.count_in(metadata, TEST_FAILURES_KEY))
 
 
 def waits_on_open_bead(task: dict) -> bool:
@@ -400,7 +518,8 @@ def scheduler_problems(epic: Epic, settings: dict, main_tree: Path) -> list[str]
 def is_finished(epic: Epic) -> bool:
     """Every task of the epic is closed, and the epic waits on neither the human nor the acceptance gate."""
     return (bool(epic.children) and not epic.tasks and validation.HUMAN_LABEL not in (epic.shown.get("labels") or [])
-            and validation.GATE_STATE_KEY not in metadata_of(epic.shown))
+            and validation.GATE_STATE_KEY not in metadata_of(epic.shown)
+            and not validation.awaits_holdouts(epic.shown))
 
 
 def has_work_to_wait_for(epic: Epic) -> bool:
@@ -416,6 +535,14 @@ def next_lap_number(task: dict) -> int:
     return FIRST_LAP if previous is None else whole_number(previous) + 1
 
 
+def first_stage(task: str, track: str, main_tree: Path) -> str:
+    """The stage a new lap starts at: the research brief on the full track while the task has none, else the build."""
+    if track == FULL_TRACK and not any(str(comment.get("text") or "").startswith(BRIEF_PREFIX)
+                                       for comment in park.posted_comments(task, main_tree)):
+        return RESEARCH
+    return BUILD
+
+
 def planned_laps(ready: list[dict], held: list[Lap], limit: int, now: int, main_tree: Path) -> list[Lap]:
     """The laps that fit beside the open ones: within the limit, one per area, each on the lowest free slot."""
     areas = {lap.area for lap in held}
@@ -429,11 +556,16 @@ def planned_laps(ready: list[dict], held: list[Lap], limit: int, now: int, main_
             continue
         slot = next(number for number in itertools.count(FIRST_SLOT) if number not in slots)
         task_id = str(task["id"])
+        track = track_of(metadata_of(task))
         planned.append(Lap(task=task_id, title=str(task.get("title") or ""), area=area, number=next_lap_number(task),
                            slot=slot, branch=f"{LAP_BRANCH_PREFIX}{task_id}",
-                           worktree=main_tree / WORKTREE_FOLDER / f"{LAP_FOLDER_PREFIX}{task_id}", stage=BUILD,
-                           tries=NO_TRIES, started=now, cutoffs=caps.NONE_YET, send_backs=caps.NONE_YET,
-                           merge_tries=caps.NONE_YET, merge_why="", merge_base=""))
+                           worktree=main_tree / WORKTREE_FOLDER / f"{LAP_FOLDER_PREFIX}{task_id}",
+                           stage=first_stage(task_id, track, main_tree), tries=NO_TRIES, started=now,
+                           cutoffs=caps.NONE_YET, send_backs=caps.NONE_YET, merge_tries=caps.NONE_YET,
+                           merge_why="", merge_base="", track=track, app="", test_filter="", spec_passed=False,
+                           findings=findings_text(metadata_of(task), FINDINGS_KEY),
+                           app_findings=findings_text(metadata_of(task), APP_FINDINGS_KEY),
+                           test_failures=caps.NONE_YET))
         areas.add(area)
         slots.add(slot)
     return planned
@@ -456,7 +588,15 @@ def record(lap: Lap, main_tree: Path) -> None:
          "--set-metadata", f"{caps.STARTED_KEY}={lap.started}",
          "--set-metadata", f"{caps.cutoffs_key(lap.stage)}={lap.cutoffs}",
          "--set-metadata", f"{caps.SEND_BACKS_KEY}={lap.send_backs}",
-         "--set-metadata", f"{caps.MERGE_TRIES_KEY}={lap.merge_tries}"], main_tree, env_as_factory())
+         "--set-metadata", f"{caps.MERGE_TRIES_KEY}={lap.merge_tries}",
+         "--set-metadata", f"{TEST_FAILURES_KEY}={lap.test_failures}", *fresh_checks(lap)], main_tree,
+        env_as_factory())
+
+
+def fresh_checks(lap: Lap) -> list[str]:
+    """The metadata argument that gives a full-track lap no Spec check result from an earlier lap. Findings stay,
+    because the build the lap starts is the one that answers them."""
+    return ["--set-metadata", f"{SPEC_PASSED_KEY}="] if lap.track == FULL_TRACK else []
 
 
 def restart_clock(lap: Lap, now: int, main_tree: Path) -> None:
@@ -492,9 +632,16 @@ def answer_fields(lap: Lap, metadata: dict, epic: str, home: Path, main_tree: Pa
 
 
 def action_of(lap: Lap, answer: dict | None) -> dict:
-    """The action that starts the lap's worker: a build, or a merge worker with the reason it was called."""
-    reason = {"reason": lap.merge_why} if lap.stage == MERGE else {}
-    return {"action": lap.stage, **lap.fields(), **reason, "answer": answer}
+    """The action that starts the lap's worker: a build, a merge worker with the reason it was called, or an app check
+    with the path of the report it writes."""
+    extra = {}
+    if lap.stage == MERGE:
+        extra = {"reason": lap.merge_why}
+    elif lap.stage == APP_CHECK:
+        extra = {"report": str(lap.scratch / app_check.APP_CHECK_REPORT)}
+    return {"action": lap.stage, **lap.fields(), **extra, "answer": answer,
+            "findings": spec_check.from_stored(lap.findings) or None,
+            "app_check": spec_check.from_stored(lap.app_findings) or None}
 
 
 def refuse_second_manager(epic: str, home: Path) -> None:
@@ -570,9 +717,13 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
         resumed = resume_laps(epic, home, main_tree)
         epic = checked_epic(bead, settings, main_tree)
     validated = None
+    holdouts_run = None
     if is_finished(epic):
         validated = validation.validate(epic.id, recorded_branch(epic), settings, home, main_tree)
+        holdouts_run = validated.waiting
         epic = checked_epic(bead, settings, main_tree)
+    elif validation.awaits_holdouts(epic.shown):
+        holdouts_run = validation.holdouts_to_run(epic.id, epic.shown, home, main_tree)
     tasks = tasks_of(epic)
     held = [lap for lap in map(open_lap, tasks) if lap is not None]
     if restarting:
@@ -631,7 +782,7 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
             "paused": waiting.fields(now) if waiting is not None else None,
             "watch": has_work_to_wait_for(epic),
             "actions": [action_of(lap, answer_fields(lap, metadata[lap.task], epic.id, home, main_tree))
-                        for lap in rebuilds + planned],
+                        for lap in rebuilds + planned] + ([holdouts_run.fields()] if holdouts_run is not None else []),
             "laps": [{**lap.fields(), "stage": lap.stage, "tries": lap.tries}
                      for lap in sorted(held + planned, key=lambda lap: lap.slot)]}
 
@@ -643,18 +794,27 @@ def working_lap(epic: Epic, task_id: str) -> Lap:
             if lap is None:
                 raise SchedulerError(f"{task_id} has no open lap, so it takes no outcome, and nothing was written")
             if lap.stage not in WORKER_STAGES:
-                raise SchedulerError(f"the lap of {task_id} is at the stage {lap.stage}, not {BUILD} or {MERGE}, so "
-                                     "it takes no worker outcome, and nothing was written")
+                raise SchedulerError(f"the lap of {task_id} is at the stage {lap.stage}, not one of "
+                                     f"{', '.join(WORKER_STAGES)}, so it takes no worker outcome, and nothing was "
+                                     "written")
             return lap
     raise SchedulerError(f"{task_id} is not an open task of {epic.id}, and nothing was written")
 
 
-def refuse_arguments(outcome: str, app: str | None, test_filter: str | None, cause: str | None) -> None:
-    if outcome == DONE and not (app and test_filter):
+def refuse_arguments(outcome: str, app: str | None, test_filter: str | None, cause: str | None, stage: str) -> None:
+    if outcome == DONE and stage == SPEC_CHECK:
+        raise SchedulerError(f"the {words(SPEC_CHECK)} ends {PASS}, {SEND_BACK} or {CANNOT_JUDGE}, never {DONE}, "
+                             "and nothing was written")
+    if outcome in (PASS, CANNOT_JUDGE) and stage != SPEC_CHECK:
+        raise SchedulerError(f"{outcome} is an outcome of the {words(SPEC_CHECK)}, and the lap is at the {stage}, "
+                             "so nothing was written")
+    names_tests = outcome == DONE and stage in (BUILD, MERGE)
+    if names_tests and not (app and test_filter):
         raise SchedulerError(f"{DONE} needs --app and --filter, the app and the filter the builder named, and "
                              "nothing was written")
-    if outcome != DONE and (app is not None or test_filter is not None):
-        raise SchedulerError(f"--app and --filter go only with {DONE}, and nothing was written")
+    if not names_tests and (app is not None or test_filter is not None):
+        raise SchedulerError(f"--app and --filter go only with {DONE} at the {BUILD} or the {MERGE}, and nothing was "
+                             "written")
     if cause is not None and outcome != CUT_OFF:
         raise SchedulerError(f"--cause goes only with {CUT_OFF}, and nothing was written")
 
@@ -717,16 +877,20 @@ def file_discovered_work(lap: Lap, epic: str, main_tree: Path) -> str | None:
 
 
 def count_try(lap: Lap, epic: str, why: str, main_tree: Path) -> list[Lap]:
-    """Counts a failed try. The third parks the task; an earlier one sends the lap back to the build."""
+    """Counts a failed try of the lap's stage. The third parks the task; an earlier one sends the lap back to the
+    stage."""
     tries = lap.tries + 1
+    name = words(lap.stage)
     if tries >= caps.TRY_CAP:
-        park_lap(lap, epic, tries, f"the try cap of {caps.TRY_CAP} is reached: build try {tries} of {caps.TRY_CAP} "
+        park_lap(lap, epic, tries, f"the try cap of {caps.TRY_CAP} is reached: {name} try {tries} of {caps.TRY_CAP} "
                                    f"failed: {why}", main_tree)
         return []
     env = env_as_factory()
     run(["bd", "comment", lap.task,
-         f"Build try {tries} of {caps.TRY_CAP} failed: {why}. The lap goes back to the build."], main_tree, env)
-    run(["bd", "update", lap.task, "--set-metadata", f"lap.tries={tries}"], main_tree, env)
+         f"{name[:1].upper()}{name[1:]} try {tries} of {caps.TRY_CAP} failed: {why}. The lap goes back to the "
+         f"{name}."], main_tree, env)
+    run(["bd", "update", lap.task, "--set-metadata", f"lap.tries={tries}", "--set-metadata",
+         f"lap.stage={lap.stage}"], main_tree, env)
     return [dataclasses.replace(lap, tries=tries)]
 
 
@@ -746,19 +910,132 @@ def cut_off(lap: Lap, epic: str, why: str, main_tree: Path) -> list[Lap]:
     return [dataclasses.replace(lap, cutoffs=cutoffs)]
 
 
-def send_back(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
-    """Counts a send-back from the checks. The cap's last one parks the task; an earlier one reruns the build."""
+def send_back(lap: Lap, epic: str, findings: list[spec_check.Finding], failed_holdouts: list[app_check.Verdict],
+              main_tree: Path) -> list[Lap]:
+    """Counts a send-back from the checks. The cap's last one parks the task; an earlier one reruns the build.
+
+    A Spec check's findings, and the holdouts the app check saw fail, go on the task as a comment and in its
+    metadata, where the next build reads them. A failed holdout is kept as its number, its verdict and what a user
+    saw, never its steps.
+    """
     send_backs = lap.send_backs + 1
     if send_backs >= caps.SEND_BACK_CAP:
         park_lap(lap, epic, lap.tries, f"the send-back cap of {caps.SEND_BACK_CAP} is reached: the checks sent the "
-                                       f"diff back {send_backs} of {caps.SEND_BACK_CAP} times", main_tree)
+                                       f"diff back {send_backs} of {caps.SEND_BACK_CAP} times"
+                                       + findings_in_words(findings, failed_holdouts), main_tree)
         return []
+    stage = BUILD if lap.stage in (SPEC_CHECK, APP_CHECK) else lap.stage
+    spec_json = spec_check.as_json(findings) if findings else ""
+    app_json = app_check.as_json(failed_holdouts) if failed_holdouts else ""
     env = env_as_factory()
     run(["bd", "comment", lap.task, f"The checks sent the diff back, send-back {send_backs} of "
-                                    f"{caps.SEND_BACK_CAP}. The lap goes back to the {lap.stage} and no try is "
-                                    "counted."], main_tree, env)
-    run(["bd", "update", lap.task, "--set-metadata", f"{caps.SEND_BACKS_KEY}={send_backs}"], main_tree, env)
-    return [dataclasses.replace(lap, send_backs=send_backs)]
+                                    f"{caps.SEND_BACK_CAP}. The lap goes back to the {stage} and no try is "
+                                    f"counted.{findings_in_words(findings, failed_holdouts)}"], main_tree, env)
+    run(["bd", "update", lap.task, "--set-metadata", f"{caps.SEND_BACKS_KEY}={send_backs}",
+         "--set-metadata", f"lap.stage={stage}", "--set-metadata", f"{SPEC_PASSED_KEY}=",
+         "--set-metadata", f"{FINDINGS_KEY}={spec_json}", "--set-metadata", f"{APP_FINDINGS_KEY}={app_json}"],
+        main_tree, env)
+    return [dataclasses.replace(lap, stage=stage, send_backs=send_backs, spec_passed=False, findings=spec_json,
+                                app_findings=app_json)]
+
+
+def findings_in_words(findings: list[spec_check.Finding], failed_holdouts: list[app_check.Verdict]) -> str:
+    spec = f"\nThe {words(SPEC_CHECK)}'s findings:\n{spec_check.describe(findings)}" if findings else ""
+    app = f"\nThe {words(APP_CHECK)}'s findings:\n{app_check.describe(failed_holdouts)}" if failed_holdouts else ""
+    return f"{spec}{app}"
+
+
+def spec_check_sent_back(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
+    """Takes the Spec check's send back: its findings go to a new build. A block that is missing or unusable counts a
+    try of the Spec check."""
+    try:
+        findings = spec_check.read_findings(lap.scratch)
+    except spec_check.SpecCheckError as error:
+        return count_try(lap, epic, f"the outcome block cannot be used: {error}", main_tree)
+    spec_check.clear_report(lap.scratch)
+    return send_back(lap, epic, findings, [], main_tree)
+
+
+def spec_check_cannot_judge(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
+    """Takes the Spec check's cannot judge: the task parks with its reason, and no try is counted."""
+    try:
+        reason = spec_check.read_reason(lap.scratch)
+    except spec_check.SpecCheckError as error:
+        reason = f"it gave no usable reason ({error})"
+    spec_check.clear_report(lap.scratch)
+    park_lap(lap, epic, lap.tries, f"the {words(SPEC_CHECK)} cannot judge the diff: {reason}", main_tree)
+    return []
+
+
+def enter_stage(lap: Lap, stage: str, main_tree: Path) -> Lap:
+    """Moves the lap to the stage and returns it; the stage's own cutoffs start at none for the lap's records."""
+    run(["bd", "update", lap.task, "--set-metadata", f"lap.stage={stage}"], main_tree, env_as_factory())
+    return dataclasses.replace(lap, stage=stage, cutoffs=caps.NONE_YET)
+
+
+def research_done(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
+    """Posts the research brief the worker left in the scratch folder on the task and sends the lap to the build. A
+    missing or empty brief counts a try of the research."""
+    path = lap.scratch / RESEARCH_BRIEF
+    try:
+        brief = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        brief = ""
+    if not brief:
+        return count_try(lap, epic, f"the research brief {path} is missing or empty", main_tree)
+    run(["bd", "comment", lap.task, f"{BRIEF_PREFIX}{brief}"], main_tree, env_as_factory())
+    path.unlink(missing_ok=True)
+    return [enter_stage(lap, BUILD, main_tree)]
+
+
+def start_spec_check(lap: Lap, main_tree: Path) -> list[Lap]:
+    """Sends a full-track lap whose targeted tests passed to the Spec check, before the merge gate."""
+    run(["bd", "comment", lap.task, f"The targeted tests passed. The lap goes to the {words(SPEC_CHECK)}, before "
+                                    "the merge gate."], main_tree, env_as_factory())
+    return [enter_stage(lap, SPEC_CHECK, main_tree)]
+
+
+def start_checks(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
+    """Sends a full-track lap whose targeted tests passed to its first check: the app check when a holdout names its
+    task, else the Spec check."""
+    if not holdouts.numbered_naming(lap.task, holdouts.read(epic, main_tree)):
+        return start_spec_check(lap, main_tree)
+    run(["bd", "comment", lap.task, f"The targeted tests passed. The lap goes to the {words(APP_CHECK)}, then to "
+                                    f"the {words(SPEC_CHECK)}, before the merge gate."], main_tree, env_as_factory())
+    return [enter_stage(lap, APP_CHECK, main_tree)]
+
+
+def app_check_done(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
+    """Takes the app check's report: every holdout that names the task green sends the lap on to the Spec check, and
+    a red one sends the diff back to the build with the holdout's number, its verdict and what a user saw. A report
+    that is missing or unusable counts a try of the app check."""
+    every_holdout = holdouts.read(epic, main_tree)
+    try:
+        verdicts = app_check.read_verdicts(lap.scratch, lap.task, every_holdout)
+    except app_check.AppCheckError as error:
+        return count_try(lap, epic, f"the report cannot be used: {error}", main_tree)
+    app_check.clear_report(lap.scratch)
+    failed = [verdict for verdict in verdicts if not verdict.passed]
+    if failed:
+        return send_back(lap, epic, [], failed, main_tree)
+    return start_spec_check(lap, main_tree)
+
+
+def spec_check_passed(lap: Lap, epic: str, epic_branch: str, settings: dict, home: Path, main_tree: Path) -> list[Lap]:
+    """Takes the Spec check's pass: the lap goes to the merge gate with the targeted run it already has.
+
+    The tests run again only when the epic branch moved since that run. The lap returns to the build when they then
+    fail, so the build's try count and its stage are what a red run counts against.
+    """
+    building = dataclasses.replace(lap, stage=BUILD, spec_passed=True)
+    if not (lap.app and lap.test_filter):
+        return count_try(building, epic, "the lap records no app and filter for its targeted tests", main_tree)
+    run(["bd", "comment", lap.task, f"The {words(SPEC_CHECK)} passed: the diff does what the task says, and nothing "
+                                    "more."], main_tree, env_as_factory())
+    run(["bd", "update", lap.task, "--set-metadata", f"{SPEC_PASSED_KEY}={PASS}"], main_tree, env_as_factory())
+    spec_check.clear_report(lap.scratch)
+    return through_the_gate(building, epic, lap.app, lap.test_filter, epic_branch, settings, home, main_tree,
+                            tested_already=True)
 
 
 def stage_work(lap: Lap) -> bool:
@@ -850,7 +1127,7 @@ def reconciled(lap: Lap, epic: str, app: str, test_filter: str, epic_branch: str
         return count_merge_try(lap, epic, f"the lap does not hold {epic_branch} at {lap.merge_base}, so the merge "
                                           "worker reconciled nothing", main_tree)
     commit_reconciliation(lap, epic_branch)
-    return through_the_gate(lap, epic, app, test_filter, epic_branch, settings, home, main_tree)
+    return through_the_gate(lap, epic, app, test_filter, epic_branch, settings, home, main_tree, tested_already=False)
 
 
 def count_stage_try(lap: Lap, epic: str, why: str, main_tree: Path) -> list[Lap]:
@@ -860,40 +1137,66 @@ def count_stage_try(lap: Lap, epic: str, why: str, main_tree: Path) -> list[Lap]
     return count_try(lap, epic, why, main_tree)
 
 
+def count_red_tests(lap: Lap, epic: str, why: str, main_tree: Path) -> list[Lap]:
+    """Counts a red targeted run of the lap's own build as a try. The second one in a simple lap moves the task to
+    the full track, with a comment that names the evidence; a task on the full track never moves back, and nothing
+    else moves a task."""
+    if lap.stage != BUILD or lap.track == FULL_TRACK:
+        return count_stage_try(lap, epic, why, main_tree)
+    failures = lap.test_failures + 1
+    env = env_as_factory()
+    run(["bd", "update", lap.task, "--set-metadata", f"{TEST_FAILURES_KEY}={failures}"], main_tree, env)
+    lap = dataclasses.replace(lap, test_failures=failures)
+    if failures >= TEST_FAILURES_TO_MOVE:
+        run(["bd", "comment", lap.task, f"Moved to the full track: the targeted tests failed twice in this simple "
+                                        f"lap, the last time because {why}."], main_tree, env)
+        run(["bd", "update", lap.task, "--set-metadata", f"{TRACK_KEY}={FULL_TRACK}"], main_tree, env)
+        lap = dataclasses.replace(lap, track=FULL_TRACK)
+    return count_try(lap, epic, why, main_tree)
+
+
 def through_the_gate(lap: Lap, epic: str, app: str, test_filter: str, epic_branch: str, settings: dict, home: Path,
-                     main_tree: Path) -> list[Lap]:
+                     main_tree: Path, tested_already: bool) -> list[Lap]:
     """Runs the targeted tests and, when they pass, the merge gate; returns the lap when it goes back to a worker.
+
+    A full-track lap whose tests pass goes to the Spec check first, unless it has passed it. A lap that has passed
+    it, with tested_already, goes to the gate with the targeted run it holds, and runs the tests again only when the
+    epic branch moved since.
 
     A conflict rebasing onto newer work on the epic branch, or tests that fail once that work is in, call the
     merge worker and count no try.
     """
+    run_tests = not tested_already
     while True:
         newer_work = brings_newer_work(lap, epic_branch, main_tree)
-        try:
-            with contextlib.redirect_stdout(sys.stderr):
-                tested = targeted_tests.targeted_tests(lap.task, lap.worktree, epic_branch,
-                                                       targeted_tests.Integration.REBASE, app, test_filter, home,
-                                                       env_as_factory())
-        except targeted_tests.MergeConflict as conflict:
-            return call_merge_worker(lap, epic_branch,
-                                     f"rebasing the lap onto {epic_branch} conflicts in {', '.join(conflict.files)}",
-                                     main_tree)
-        except targeted_tests.FilterRefused as refused:
-            return count_stage_try(lap, epic, f"the filter needs fixing: {refused}", main_tree)
-        except targeted_tests.TestRunError as error:
-            raise SchedulerError(f"the targeted tests of {lap.task} did not run: {error}") from error
-        if not tested.passed:
-            why = f"the targeted tests failed with exit code {tested.exit_code}"
-            if newer_work:
-                return call_merge_worker(lap, epic_branch, f"{why} once newer work on {epic_branch} was merged in",
-                                         main_tree)
-            return count_stage_try(lap, epic, why, main_tree)
+        if run_tests:
+            try:
+                with contextlib.redirect_stdout(sys.stderr):
+                    tested = targeted_tests.targeted_tests(lap.task, lap.worktree, epic_branch,
+                                                           targeted_tests.Integration.REBASE, app, test_filter, home,
+                                                           env_as_factory())
+            except targeted_tests.MergeConflict as conflict:
+                return call_merge_worker(lap, epic_branch, f"rebasing the lap onto {epic_branch} conflicts in "
+                                                           f"{', '.join(conflict.files)}", main_tree)
+            except targeted_tests.FilterRefused as refused:
+                return count_stage_try(lap, epic, f"the filter needs fixing: {refused}", main_tree)
+            except targeted_tests.TestRunError as error:
+                raise SchedulerError(f"the targeted tests of {lap.task} did not run: {error}") from error
+            if not tested.passed:
+                why = f"the targeted tests failed with exit code {tested.exit_code}"
+                if newer_work:
+                    return call_merge_worker(lap, epic_branch,
+                                             f"{why} once newer work on {epic_branch} was merged in", main_tree)
+                return count_red_tests(lap, epic, why, main_tree)
+            if lap.track == FULL_TRACK and not lap.spec_passed:
+                return start_checks(lap, epic, main_tree)
         try:
             with contextlib.redirect_stdout(sys.stderr):
                 merged = merge_gate.merge(merge_gate.LapToMerge(lap.task, lap.branch, lap.worktree, epic_branch),
                                           settings, home, main_tree)
         except merge_gate.EpicBranchMoved as moved:
             print(f"scheduler: {moved}, so the targeted tests run again", file=sys.stderr)
+            run_tests = True
             continue
         except merge_gate.EmptyLap as empty:
             return count_stage_try(lap, epic, str(empty), main_tree)
@@ -937,7 +1240,7 @@ def report(bead: str, task_id: str, outcome: str, app: str | None, test_filter: 
     settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
     epic = checked_epic(bead, settings, main_tree)
     lap = working_lap(epic, task_id)
-    refuse_arguments(outcome, app, test_filter, cause)
+    refuse_arguments(outcome, app, test_filter, cause, lap.stage)
     if cause is not None:
         pause_on_trouble(lap, epic, cause, main_tree)
         return next_moves(bead, home, main_tree, [], False)
@@ -957,22 +1260,59 @@ def report(bead: str, task_id: str, outcome: str, app: str | None, test_filter: 
         rebuilds = count_stage_try(lap, epic.id, f"the {lap.stage} worker reported that the {lap.stage} failed", main_tree)
     elif outcome == QUESTION:
         rebuilds = ask(lap, epic.id, main_tree)
+    elif outcome == SEND_BACK and lap.stage == SPEC_CHECK:
+        rebuilds = spec_check_sent_back(lap, epic.id, main_tree)
     elif outcome == SEND_BACK:
-        rebuilds = send_back(lap, epic.id, main_tree)
+        rebuilds = send_back(lap, epic.id, [], [], main_tree)
     elif outcome == BLOCKED_OUTCOME:
         rebuilds = block(lap, epic.id, main_tree)
+    elif outcome == PASS:
+        rebuilds = spec_check_passed(lap, epic.id, recorded_branch(epic), settings, home, main_tree)
+    elif outcome == CANNOT_JUDGE:
+        rebuilds = spec_check_cannot_judge(lap, epic.id, main_tree)
+    elif lap.stage == RESEARCH:
+        rebuilds = research_done(lap, epic.id, main_tree)
+    elif lap.stage == APP_CHECK:
+        rebuilds = app_check_done(lap, epic.id, main_tree)
     elif lap.stage == MERGE:
         rebuilds = reconciled(lap, epic.id, str(app), str(test_filter), recorded_branch(epic), settings, home,
                               main_tree)
     else:
-        unfiled = file_discovered_work(lap, epic.id, main_tree)
-        if unfiled is not None:
-            rebuilds = count_try(lap, epic.id, unfiled, main_tree)
-        else:
-            commit_build(lap)
-            rebuilds = through_the_gate(lap, epic.id, str(app), str(test_filter), recorded_branch(epic), settings,
-                                        home, main_tree)
+        rebuilds = build_done(lap, epic.id, str(app), str(test_filter), recorded_branch(epic), settings, home,
+                              main_tree)
     return next_moves(bead, home, main_tree, rebuilds, False)
+
+
+def report_holdouts(bead: str, home: Path, main_tree: Path) -> dict:
+    """Takes the validation worker's report on the epic's holdouts, then does what `carry-on` does.
+
+    A red holdout files a task in the epic, and this call opens its lap with the others.
+    """
+    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    epic = checked_epic(bead, settings, main_tree)
+    settled = validation.settle_holdouts(epic.id, recorded_branch(epic), settings, home, main_tree)
+    printed = next_moves(bead, home, main_tree, [], False)
+    printed["validation"] = settled.fields()
+    return printed
+
+
+def build_done(lap: Lap, epic: str, app: str, test_filter: str, epic_branch: str, settings: dict, home: Path,
+               main_tree: Path) -> list[Lap]:
+    """Takes a finished build: files its discovered work, commits what it left, and sends the lap through the
+    targeted tests. A full-track lap records the app and the filter for the merge gate it reaches after the Spec check,
+    and starts with no Spec check result, because the build changed the diff."""
+    unfiled = file_discovered_work(lap, epic, main_tree)
+    if unfiled is not None:
+        return count_try(lap, epic, unfiled, main_tree)
+    commit_build(lap)
+    if lap.track == FULL_TRACK:
+        run(["bd", "update", lap.task, "--set-metadata", f"{APP_KEY}={app}",
+             "--set-metadata", f"{FILTER_KEY}={test_filter}", "--set-metadata", f"{SPEC_PASSED_KEY}=",
+             "--set-metadata", f"{FINDINGS_KEY}=", "--set-metadata", f"{APP_FINDINGS_KEY}="], main_tree,
+            env_as_factory())
+        lap = dataclasses.replace(lap, app=app, test_filter=test_filter, spec_passed=False, findings="",
+                                  app_findings="")
+    return through_the_gate(lap, epic, app, test_filter, epic_branch, settings, home, main_tree, tested_already=False)
 
 
 def interrupt_lap(lap: Lap, because: str, afterwards: str, main_tree: Path) -> None:
@@ -1039,6 +1379,8 @@ def main(argv: list[str]) -> int:
                                                     "host, and send the stopped notification")
     modes.add_parser("carry-on", parents=[shared], help="print the next moves when the pause is over, a task was "
                                                         "unparked or added, or a lap merged, with no restart")
+    modes.add_parser("report-holdouts", parents=[shared], help="take the validation worker's report on the epic's "
+                                                               "holdouts, and print the next moves")
     reporting = modes.add_parser("report", parents=[shared], help="take how a lap's build ended, and print the "
                                                                   "next moves")
     reporting.add_argument("task")
@@ -1055,6 +1397,8 @@ def main(argv: list[str]) -> int:
             printed = next_moves(args.epic, home, main_tree, [], True)
         elif args.mode == "carry-on":
             printed = next_moves(args.epic, home, main_tree, [], False)
+        elif args.mode == "report-holdouts":
+            printed = report_holdouts(args.epic, home, main_tree)
         elif args.mode == "stop":
             printed = stop(args.epic, home, main_tree)
         else:

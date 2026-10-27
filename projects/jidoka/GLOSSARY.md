@@ -133,12 +133,25 @@ _Avoid_: Failed, aborted, killed, crashed
 
 **Track**:
 How much of a lap a task goes through: the simple track or the full
-track. The pass's stages are the same for every task.
+track. The simple track is the build, the targeted tests and the merge
+gate. The full track adds a research brief before the build, and between
+the targeted tests and the merge gate an app check, when a holdout names
+the task, then a Spec check. The pass's stages are
+the same for every task. Handoff proposes a track for each task by a rule
+a script checks, and the human confirms or flips it. A task is simple when
+no holdout names it, its Seams line names one seam, and it adds no public
+type or public API change; any other task is full. A simple task moves to
+the full track only on evidence from its own lap, the targeted tests failing
+twice, and the move is recorded in a comment with that evidence. A full task
+never moves back.
 _Avoid_: Route, path, class, weight, complexity
 
 **App check**:
 The lap stage in which an agent tests the running app from outside, against
-the holdouts that name the task, before it reads the diff.
+the holdouts that name the task, before it reads the diff. It runs the app
+on the lap's slot and reads no other holdout. A builder whose lap fails
+here learns the holdout's id, the verdict and what a user saw, never the
+holdout's steps.
 _Avoid_: QA, black-box test, validation
 
 **Spec check**:
@@ -344,7 +357,10 @@ _Avoid_: Orchestrator, dispatcher, engine, conductor
 **Outcome**:
 How a worker's stage ended, as the manager reports it to the scheduler,
 from a fixed set. A build ends done, failed or cut off. Done names the
-app and the filter of the build's targeted tests.
+app and the filter of the build's targeted tests. A research brief ends
+done with the brief in the scratch folder, an app check ends done with its
+report in the scratch folder, and a Spec check ends pass,
+send back with its findings, or cannot judge.
 _Avoid_: Result, status, verdict
 
 **Try**:
@@ -421,7 +437,7 @@ _Avoid_: Concurrency, parallelism, max workers
 A number from 1 up that a lap holds while it is open. A new lap takes the
 lowest one that no other open lap of the epic holds. The repo settings'
 slot use says what a lap does with it, such as pick a port, so two laps
-side by side never clash.
+side by side never clash, and so two app checks never share one.
 _Avoid_: Port, seat, index
 
 **Scratch folder**:

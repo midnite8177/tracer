@@ -1,0 +1,5 @@
+interface:
+  display_name: "Holdouts"
+  short_description: "Draft an epic's holdouts from its spec and store the approved ones"
+policy:
+  allow_implicit_invocation: false

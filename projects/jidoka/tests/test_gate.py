@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 import unittest
@@ -11,6 +12,7 @@ import test_scheduler  # noqa: E402
 import test_validation  # noqa: E402
 
 GATE = test_scheduler.PLUGIN / "scripts" / "gate.py"
+HOLDOUTS = test_scheduler.PLUGIN / "scripts" / "holdouts.py"
 MESSAGE = "Take card payments at the till\n\nThe till reads the card and charges it once."
 WAITING_ON_EDITS_EXIT_CODE = 3
 FULL_SUITE_FAILED_EXIT_CODE = 5
@@ -75,6 +77,25 @@ class MergeLandsTheEpicTests(GateCase):
         self.assertEqual(work, git(self.repo, "rev-parse", f"{landed}^{{tree}}"))
         self.assertEqual("built", (self.repo / self.work_file(task)).read_text(encoding="utf-8").strip())
         self.assertEqual("", git(self.repo, "status", "--porcelain", "--untracked-files=all"))
+
+    def test_merge_retires_the_epic_s_holdouts_and_keeps_its_other_metadata(self):
+        epic, task, branch = self.epic_at_the_gate()
+        written = subprocess.run([str(test_scheduler.LAUNCHER), str(HOLDOUTS), "write", epic],
+                                 input=json.dumps([{"app": "shop", "tasks": [task], "scenario": "Pay 5.00."}]),
+                                 capture_output=True, text=True, encoding="utf-8",
+                                 timeout=test_scheduler.RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home),
+                                 cwd=self.repo)
+        self.assertEqual(0, written.returncode, written.stderr)
+        self.assertIn("holdouts", self.metadata(epic))
+
+        done = self.merge(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("closed", self.shown(epic)["status"])
+        self.assertNotIn("holdouts", self.metadata(epic))
+        self.assertEqual(branch, self.metadata(epic)["factory.branch"])
+        read = self.launch(HOLDOUTS, "read", epic)
+        self.assertEqual([], json.loads(read.stdout))
 
     def test_merge_never_pushes(self):
         epic, _, _ = self.epic_at_the_gate()

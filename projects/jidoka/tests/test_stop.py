@@ -20,6 +20,8 @@ HANDOFF = PLUGIN / "scripts" / "handoff.py"
 SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 
 RUN_TIMEOUT_SECONDS = 120
+OUT_OF_SCOPE = "## Out of Scope\nRefunds."
+ONE_SEAM = "## Seams\nThe card reader, run as a process."
 HUMAN = "Pat Human"
 LAP_LIMIT = 2
 
@@ -49,8 +51,9 @@ class StopCase(unittest.TestCase):
         keys = {"user_key": USER_KEY, "app_token": APP_TOKEN, "ui_url": UI_URL, "api_url": self.pushover.url}
         (self.home / "pushover.json").write_text(json.dumps(keys), encoding="utf-8")
         self.write_settings()
-        self.epic = self.create("Take card payments", "--type=epic")
-        self.tasks = [self.create(f"Read the card {number}", "--type=task", "--parent", self.epic)
+        self.epic = self.create("Take card payments", "--type=epic", "--description", OUT_OF_SCOPE)
+        self.tasks = [self.create(f"Read the card {number}", "--type=task", "--parent", self.epic,
+                                  "--description", ONE_SEAM)
                       for number in range(3)]
         self.hand_off(dict(zip(self.tasks, ("till", "receipts", "shelf"))))
 
