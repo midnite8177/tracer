@@ -347,6 +347,16 @@ workers keep files that are not part of the work. The repo's git exclude
 file hides it from every git status.
 _Avoid_: Temp folder, tmp, workspace
 
+**Lap mod**:
+The hooks module in jidoka's plugin that decides every lap worker's tool
+call ahead of the host's rules, mode and prompt, so no lap waits on a
+permission prompt. It allows a call on the built-in list or the repo's
+list, refuses a write outside the lap's worktree, and denies the rest with
+a reason. The built-in list holds every call the tool marks read-only, a
+write inside the worktree, and each app's test command. The repo's list
+is the repo settings' worker commands.
+_Avoid_: Permission hook, guard, sandbox, allowlist
+
 ### Repos
 
 **Onboarding**:

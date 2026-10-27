@@ -1,4 +1,7 @@
 {
+  "modules": [
+    "./lap_mod.ts"
+  ],
   "hooks": {
     "SessionStart": [
       {
