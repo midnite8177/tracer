@@ -58,8 +58,17 @@ message, which says to run the installer, and go to step 11 with
    `GLOSSARY.md` path, and this return shape, under 2,500 words:
    `Files to change`, `Seam`, `Pattern to copy`, `Tests to model on`,
    `Gotchas`, `Open questions`. Check a few of the paths it names. Post
-   it with `bd comment <bead-id> "research brief: ..."`. Ask the human
-   every open question now.
+   it with `bd comment <bead-id> "research brief: ..."`. Then sort its
+   open questions. A question is noise to the human when the bead, its
+   epic, the glossary or an ADR already settles it, or when you would
+   recommend one answer with 90% confidence or more and it is cheap to
+   reverse. A question means to the human that the design is wrong, so
+   settle noise yourself: post each answer with `bd comment <bead-id>
+   "assumption: ..."` and do not ask. Ask only when the answer changes the
+   Demo line, crosses the epic's Out of Scope, is costly to undo, or no
+   answer reaches 90%. Ask those at once. Each says what was found and
+   why the design does not settle it, gives every option your confidence
+   in percent that it is the right one, and recommends one.
 3. **Pick the track.** The bead is on the simple track when it has no
    holdouts, its Seams line names one seam, and it adds no public type and
    changes no behavior a holdout or a user would see. A bead that changes
@@ -67,8 +76,8 @@ message, which says to run the installer, and go to step 11 with
    track. Tell the human which, and why in one line.
 4. **Build, standard tier for the simple track, deep for the full.** Start
    one worker that can write and run commands, in the worktree. Give it
-   the bead, the research brief, the human's answers, the paths of
-   `<skill folder>/../tdd/SKILL.md` and `<skill folder>/../unslop/SKILL.md`
+   the bead, the research brief, the assumptions, the human's answers,
+   the paths of `<skill folder>/../tdd/SKILL.md` and `<skill folder>/../unslop/SKILL.md`
    to read before writing code, the repo's house rules by path, each
    app's `name`, `test` and `test_target` from `repo settings show`, and
    these limits: build exactly what the bead says; do not commit; change
