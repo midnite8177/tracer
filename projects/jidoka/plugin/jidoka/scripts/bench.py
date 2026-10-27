@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 from dataclasses import dataclass
@@ -49,7 +48,7 @@ from pathlib import Path
 import git_exclude
 import private_docs
 import repo_settings
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, head_of, run, worktree_list
+from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, env_as_git_user, head_of, run, worktree_list
 
 MAIN_REF = "refs/heads/main"
 WORKTREE_FOLDER = ".worktrees"
@@ -115,15 +114,6 @@ def bead_of(bead: str, main_tree: Path) -> Bead:
                 recorded_branch=str(metadata.get("bench.branch") or ""),
                 recorded_worktree=str(metadata.get("bench.worktree") or ""),
                 recorded_start=str(metadata.get("bench.start") or ""))
-
-
-def env_as_git_user(main_tree: Path) -> dict[str, str]:
-    """The environment bd runs in, with BEADS_ACTOR set to the repo's git user.name."""
-    name = capture(["git", "config", "user.name"], main_tree, None).stdout.strip()
-    if not name:
-        raise BenchError(f"git config user.name is not set in {main_tree}, and the bench claims beads "
-                         "under that name. Set it with git config user.name \"<your name>\"")
-    return {**os.environ, "BEADS_ACTOR": name}
 
 
 def exists(ref: str, main_tree: Path) -> bool:

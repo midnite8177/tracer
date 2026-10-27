@@ -119,8 +119,10 @@ The settings:
   `"library"`), `way_in` (how a person or a program reaches it, or `null`),
   `build`, `run` (commands, or `null`), `test` (the app's own test command),
   `test_full` (the arguments the full suite adds to `test`, or `null`),
-  `test_target` (how to run one test) and `hand_run` (the app's hand-run
-  tests, a list that is empty when it has none).
+  `test_target` (how to run one test), `hand_run` (the app's hand-run
+  tests, a list that is empty when it has none) and `acceptance` (the
+  folder of its acceptance specs, relative to the repo root, or `null`; an
+  app that leaves it out has none).
 - An app with no tests, such as an editor with no test project, has `null`
   for `test`, `test_target` and `test_full`, and `[]` for `hand_run`.
   Landing says it has no tests and runs the other apps' full suites.
@@ -154,9 +156,9 @@ A person never reads `null`. When you offer a null value as a choice or show
 one, label it by what it means: `slot_use` "No slot use: app checks take
 turns", `way_in` "No way in recorded", `build` "No build step", `run` "No run
 command", `test` "No test command", `test_full` "No extra arguments: the
-full suite is the test command". An app with "No test command" shows no
-`test_target` or `test_full` of its own. The word `null` appears only in the
-JSON you pass to `write`.
+full suite is the test command", `acceptance` "No acceptance specs". An
+app with "No test command" shows no `test_target` or `test_full` of its
+own. The word `null` appears only in the JSON you pass to `write`.
 
 The script derives the repo's build from every app's `build`, and the full
 suite from every app's `test` followed by its `test_full`, leaving out the

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Handoff"
+  short_description: "Check an epic's form and give it to the factory"
+policy:
+  allow_implicit_invocation: false

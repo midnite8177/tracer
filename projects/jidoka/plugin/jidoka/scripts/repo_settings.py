@@ -18,6 +18,8 @@ when that is not null, and its targeted command is its test followed by its
 test_target. An app with no test command has null for test, test_target and
 test_full, and [] for hand_run; the script refuses any other mix, and
 refuses settings in which no app has a test command or no app has a build.
+An app's "acceptance" is the folder of its acceptance specs, relative to the
+repo root, or null when it has none; an app that leaves the key out has none.
 The script appends nothing to a command, so the person onboarding writes
 each hand-run group's exclusion into both commands, and the script refuses
 a group whose exclusion either command lacks.
@@ -72,7 +74,7 @@ RULE_CONFLICTS = "rule_conflicts"
 DEFAULTS = {**DOCS_DEFAULTS, RULE_CONFLICTS: []}
 DERIVED_KEYS = ["build", "full_suite", "hand_run", "untested_apps"]
 MOVED_LINES = "moved_lines"
-APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_full", "test_target", "hand_run"]
+APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_full", "test_target", "hand_run", "acceptance"]
 HAND_RUN_KEYS = ["name", "exclusion", "command", "reason"]
 RULE_CONFLICT_KEYS = ["repo_rule", "written_in", "overrules"]
 NO_TESTS = "an app with no test command has null for test, test_target and test_full, and [] for hand_run"
@@ -211,6 +213,8 @@ def app_problems(index: int, app: object) -> list[str]:
             problems.append(f"{label} has no {key}; use null when it has none")
         elif not text_or_null(app[key]):
             problems.append(f"{label} has a {key} that is neither a command nor null")
+    if not (app.get("acceptance") is None or is_repo_path(app["acceptance"])):
+        problems.append(f"{label} has an acceptance that is neither a folder inside the repo nor null")
     command_problems = test_command_problems(label, app)
     problems += command_problems
     if "hand_run" not in app:

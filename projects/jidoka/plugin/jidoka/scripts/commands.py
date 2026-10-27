@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,15 @@ def run(args: list[str], cwd: Path, env: dict[str, str] | None) -> str:
         detail = done.stderr.strip() or done.stdout.strip()
         raise CommandError(f"{' '.join(args[:3])} failed: {detail}")
     return done.stdout
+
+
+def env_as_git_user(main_tree: Path) -> dict[str, str]:
+    """The environment bd runs in, with BEADS_ACTOR set to the repo's git user.name."""
+    name = capture(["git", "config", "user.name"], main_tree, None).stdout.strip()
+    if not name:
+        raise CommandError(f"git config user.name is not set in {main_tree}, and jidoka writes to the beads "
+                           "under that name. Set it with git config user.name \"<your name>\"")
+    return {**os.environ, "BEADS_ACTOR": name}
 
 
 def head_of(ref: str, cwd: Path) -> str | None:

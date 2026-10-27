@@ -383,6 +383,31 @@ class OnboardingTests(unittest.TestCase):
                 self.assertIn(key, done.stderr)
                 self.assertEqual([], self.stored_files())
 
+    def test_stores_an_apps_acceptance_folder_and_takes_an_app_that_leaves_it_out_as_having_none(self):
+        settings = tracer_settings()
+        settings["apps"][0]["acceptance"] = "projects/tracer-ui/acceptance"
+        settings["apps"][1]["acceptance"] = None
+
+        done = self.write(self.repo, settings)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        apps = json.loads(self.show(self.repo).stdout)["apps"]
+        self.assertEqual(["projects/tracer-ui/acceptance", None, None],
+                         [app.get("acceptance") for app in apps])
+
+    def test_refuses_an_acceptance_that_is_not_a_folder_inside_the_repo(self):
+        for value in ("/srv/acceptance", "../acceptance", " ", 3):
+            with self.subTest(value=value):
+                settings = tracer_settings()
+                settings["apps"][0]["acceptance"] = value
+
+                done = self.write(self.repo, settings)
+
+                self.assertEqual(1, done.returncode)
+                self.assertIn("'tracer-ui' has an acceptance that is neither a folder inside the repo nor null",
+                              done.stderr)
+                self.assertEqual([], self.stored_files())
+
     def test_settings_written_from_the_main_worktree_are_found_from_a_linked_worktree(self):
         self.write(self.repo, tracer_settings())
 

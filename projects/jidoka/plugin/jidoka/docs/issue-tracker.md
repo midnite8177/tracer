@@ -57,6 +57,7 @@ planning.
 
 - `human`: a question on this bead is waiting on the human.
 - `bench`: the bead waits for bench work, built with the human answering on the spot. The factory does not take it.
+- `factory`: the epic has been handed off, and the factory holds it. `/jidoka:handoff` adds it. Bench work refuses the epic's tasks.
 - `wayfinder:map`, `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, `wayfinder:task`: see Wayfinding operations.
 - Triage roles: see Triage labels.
 
