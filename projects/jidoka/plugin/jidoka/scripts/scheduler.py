@@ -27,7 +27,12 @@ and branch it finds.
 the build of the task's open lap ended, one outcome of a fixed set, and
 makes the checks below first:
   done       the build finished, with the app and the filter the builder
-             named. The scheduler runs that app's targeted tests with that
+             named. The scheduler first stages everything the build left
+             in the lap's worktree, apart from the scratch folder, and
+             commits it as one commit whose message is the task's title,
+             under the repo's git user. A build that left no changes makes
+             no commit. Then the scheduler runs that app's targeted tests
+             with that
              filter, through targeted_tests.py, on the lap's head merged
              with the epic branch, and again after a fresh merge when the
              epic branch moved during the run. A pass goes to the merge gate,
@@ -100,7 +105,8 @@ import merge_gate
 import repo_settings
 import targeted_tests
 from bench import FACTORY_LABEL, WORKTREE_FOLDER, BenchError, Workspace, hide_worktrees, make_worktree
-from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, CommandError, env_as_factory, head_of, run
+from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, CommandError, capture, env_as_factory, head_of, \
+    run
 from handoff import BLOCKING, BRANCH_KEY, CLOSED, ONBOARD, Epic, HandoffError, Rerun, epic_of, recorded_branch, \
     problems_while_held
 
@@ -118,6 +124,8 @@ NO_TRIES = 0
 LAP_BRANCH_PREFIX = "lap/"
 LAP_FOLDER_PREFIX = "lap-"
 SCRATCH_FOLDER = ".scratch"
+NOTHING_STAGED = 0
+CHANGES_STAGED = 1
 HANDOFF = "/jidoka:handoff"
 RERUN = Rerun(on_the_holding_epic="Run the scheduler on the epic that holds it",
               after_onboarding="run the scheduler again")
@@ -327,6 +335,19 @@ def count_try(lap: Lap, why: str, main_tree: Path) -> list[Lap]:
     return [dataclasses.replace(lap, tries=tries)]
 
 
+def commit_build(lap: Lap) -> None:
+    """Commits what the build left in the lap's worktree, outside the scratch folder, under the task's title."""
+    env = env_as_factory()
+    run(["git", "add", "--all"], lap.worktree, env)
+    run(["git", "reset", "--quiet", "--", SCRATCH_FOLDER], lap.worktree, env)
+    staged = capture(["git", "diff", "--cached", "--quiet"], lap.worktree, env)
+    if staged.returncode == NOTHING_STAGED:
+        return
+    if staged.returncode != CHANGES_STAGED:
+        raise CommandError(f"git diff --cached failed in {lap.worktree}: {staged.stderr.strip()}")
+    run(["git", "commit", "--quiet", "--message", lap.title], lap.worktree, env)
+
+
 def through_the_gate(lap: Lap, app: str, test_filter: str, epic_branch: str, settings: dict, home: Path,
                      main_tree: Path) -> list[Lap]:
     """Runs the targeted tests and, when they pass, the merge gate; returns the lap when it goes back to the build."""
@@ -374,6 +395,7 @@ def report(bead: str, task_id: str, outcome: str, app: str | None, test_filter: 
     elif outcome == FAILED:
         rebuilds = count_try(lap, "the build worker reported that the build failed", main_tree)
     else:
+        commit_build(lap)
         rebuilds = through_the_gate(lap, str(app), str(test_filter), recorded_branch(epic), settings, home,
                                     main_tree)
     return next_moves(bead, home, main_tree, rebuilds)

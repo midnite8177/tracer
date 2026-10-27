@@ -169,6 +169,15 @@ class SchedulerCase(unittest.TestCase):
         fixture.git_commit_all(worktree, f"Add {name}")
         return git(worktree, "rev-parse", "HEAD")
 
+    def leave_in(self, worktree: Path, name: str, text: str) -> None:
+        """Writes one file in the worktree and commits nothing, as a build worker does."""
+        path = worktree / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def files_of(self, commit: str) -> list[str]:
+        return sorted(git(self.repo, "show", "--format=", "--name-only", commit).splitlines())
+
     def queue_exit_codes(self, task: str, *codes: int) -> None:
         (self.runs / f"exit-codes-lap-{task}").write_text("\n".join(str(code) for code in codes), encoding="utf-8")
 
@@ -402,6 +411,83 @@ class ManagerDrivesAnEpicTests(SchedulerCase):
         self.assertTrue(all(self.is_on(commit, branch) for commit in built.values()))
         self.assertEqual(["-k test_card"], self.runs_of(first))
         self.assertEqual(["-k test_card"], self.runs_of(second))
+
+    def test_the_manager_drives_a_two_task_epic_whose_builds_leave_their_work_uncommitted_until_both_merge(self):
+        epic = self.new_epic()
+        first, second = self.new_task_under(epic), self.new_task_under(epic)
+        branch = self.hand_off(epic, {first: "till", second: "receipts"})
+        for action in self.next_printed(epic)["actions"]:
+            self.leave_in(Path(action["worktree"]), f"{action['task']}.txt", "built\n")
+
+        self.build_done(epic, first)
+        after_second = self.build_done(epic, second)
+
+        self.assertEqual(([], []), (after_second["actions"], after_second["laps"]))
+        self.assertEqual(("closed", "closed"), (self.shown(first)["status"], self.shown(second)["status"]))
+        self.assertEqual(("built", "built"), (git(self.repo, "show", f"{branch}:{first}.txt"),
+                                              git(self.repo, "show", f"{branch}:{second}.txt")))
+
+
+class BuildCommitTests(SchedulerCase):
+    def test_a_done_build_s_uncommitted_work_merges_as_one_commit_named_by_the_task_title_under_the_git_user(self):
+        lap = self.open_one_lap()
+        epic_head = git(self.repo, "rev-parse", lap.epic_branch)
+        self.leave_in(lap.worktree, "card.txt", "built\n")
+        self.leave_in(lap.worktree, "reader/card.py", "print('card')\n")
+
+        self.build_done(lap.epic, lap.task)
+
+        title = self.shown(lap.task)["title"]
+        self.assertEqual("closed", self.shown(lap.task)["status"])
+        self.assertEqual(epic_head, git(self.repo, "rev-parse", f"{lap.epic_branch}~1"))
+        self.assertEqual(f"{title}\n{JEFF}", git(self.repo, "log", "-1", "--format=%s%n%an", lap.epic_branch))
+        self.assertEqual(["card.txt", "reader/card.py"], self.files_of(lap.epic_branch))
+
+    def test_the_scratch_folder_stays_out_of_the_commit_of_the_build_s_work(self):
+        lap = self.open_one_lap()
+        self.leave_in(lap.worktree, "card.txt", "built\n")
+        self.leave_in(lap.worktree, ".scratch/notes.txt", "the build's notes\n")
+
+        self.build_done(lap.epic, lap.task)
+
+        self.assertEqual("closed", self.shown(lap.task)["status"])
+        self.assertEqual(["card.txt"], self.files_of(lap.epic_branch))
+
+    def test_the_scratch_folder_stays_out_of_the_commit_even_when_the_exclude_file_no_longer_hides_it(self):
+        lap = self.open_one_lap()
+        exclude = self.repo / ".git" / "info" / "exclude"
+        kept = exclude.read_text(encoding="utf-8")
+        self.addCleanup(lambda: exclude.write_text(kept, encoding="utf-8"))
+        exclude.write_text("".join(line for line in kept.splitlines(keepends=True) if ".scratch" not in line),
+                           encoding="utf-8")
+        self.leave_in(lap.worktree, "card.txt", "built\n")
+        self.leave_in(lap.worktree, ".scratch/notes.txt", "the build's notes\n")
+
+        self.build_done(lap.epic, lap.task)
+
+        self.assertEqual("closed", self.shown(lap.task)["status"])
+        self.assertEqual(["card.txt"], self.files_of(lap.epic_branch))
+
+    def test_a_done_build_that_left_only_scratch_files_makes_no_commit_and_counts_an_empty_lap_try(self):
+        lap = self.open_one_lap()
+        epic_head = git(self.repo, "rev-parse", lap.epic_branch)
+        self.leave_in(lap.worktree, ".scratch/notes.txt", "the build's notes\n")
+
+        printed = self.build_done(lap.epic, lap.task)
+
+        self.assertEqual([(lap.task, 1)], [(open_lap["task"], open_lap["tries"]) for open_lap in printed["laps"]])
+        self.assertIn(f"Build try 1 of 3 failed: no commits on the lap that {lap.epic_branch} lacks. The lap goes "
+                      "back to the build.", self.texts(lap.task))
+        self.assertEqual(epic_head, git(lap.worktree, "rev-parse", "HEAD"))
+        self.assertEqual(epic_head, git(self.repo, "rev-parse", lap.epic_branch))
+
+    def test_a_build_that_committed_its_own_work_and_left_a_clean_tree_gets_no_second_commit(self):
+        lap = self.open_one_lap()
+        built = self.commit_in(lap.worktree, "card.txt", "built\n")
+
+        self.build_done(lap.epic, lap.task)
+
+        self.assertEqual(built, git(self.repo, "rev-parse", lap.epic_branch))
 
 
 class BuildOutcomeTests(SchedulerCase):

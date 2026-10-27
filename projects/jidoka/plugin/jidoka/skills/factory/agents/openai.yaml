@@ -1,0 +1,5 @@
+interface:
+  display_name: "Factory"
+  short_description: "Run a handed-off epic's laps as its manager"
+policy:
+  allow_implicit_invocation: false
