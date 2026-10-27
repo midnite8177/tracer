@@ -9,7 +9,7 @@ function worktreeOf(prompt: string): string | undefined {
 }
 
 const DRIVE = /^[A-Za-z]:/
-const HOST_ONLY = new Set(['ToolSearch', 'SendMessage', 'ListAgents', 'AskUserQuestion'])
+const HOST_ONLY = new Set(['ToolSearch', 'SendMessage', 'ListAgents', 'AskUserQuestion', 'SubagentHandback'])
 const STARTS_WORKERS = new Set(['Agent', 'Workflow'])
 const FILE_PATH_FIELD: ReadonlyMap<string, string> = new Map([
   ['Write', 'file_path'],

@@ -256,7 +256,7 @@ test('the calls that only talk to the host are left to the host', async ($, on) 
   engineBeneath(on, SETTINGS)
   await startLap($, WORKTREE)
 
-  for (const tool of ['ToolSearch', 'SendMessage', 'ListAgents', 'AskUserQuestion']) {
+  for (const tool of ['ToolSearch', 'SendMessage', 'ListAgents', 'AskUserQuestion', 'SubagentHandback']) {
     const verdict = await $.tool.check({ tool, input: {}, agentId: 'a1' })
     expect(verdict).toEqual(HOST_VERDICT)
   }
