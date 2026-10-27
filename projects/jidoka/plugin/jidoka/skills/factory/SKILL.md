@@ -76,8 +76,10 @@ stop.
 3. **Next.** Run `scheduler next <epic-id> --jidoka-home ...`. Exit 1 means
    it refused and wrote nothing; stderr lists every reason. Show it and
    stop. Exit 0 prints JSON with `epic`, `branch` (the epic branch),
-   `lap_limit`, `actions` and `laps`. Start a build worker for each action,
-   as in step 4. When `actions` is empty and no worker of yours is
+   `lap_limit`, `actions` and `laps`. A lap an earlier session left at the
+   build with no worker is already cut off: the scheduler lists it first in
+   `actions`, with its tries unchanged. Start a build worker for each
+   action, as in step 4. When `actions` is empty and no worker of yours is
    running, go to step 6.
 4. **Start a build worker.** For each action, read the task with
    `bd show <task>`. Start one worker with the Agent tool, in the
@@ -128,6 +130,4 @@ stop.
    build worker for each action, as in step 4; an action for the task you
    reported means its lap went back to the build. When `actions` is empty
    and no worker of yours is running, go to step 6.
-6. **End.** Write `<epic-id>: nothing left to run` and stop. A lap that
-   `laps` still lists at the build, with no worker of yours on it, was
-   left by an earlier session; name each one in that line.
+6. **End.** Write `<epic-id>: nothing left to run` and stop.

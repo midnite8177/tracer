@@ -371,8 +371,9 @@ _Avoid_: Temp folder, tmp, workspace
 The hooks module in jidoka's plugin that decides every lap worker's tool
 call ahead of the host's rules, mode and prompt, so no lap waits on a
 permission prompt. It allows a call on the built-in list or the repo's
-list, refuses a write outside the lap's worktree, and denies the rest with
-a reason. The built-in list holds every call the tool marks read-only, a
+list, refuses a write outside the lap's worktree, whether by its path or
+through a symlink, and denies the rest with a reason. It decides a worker's
+first call too, before the worker's agent id is known. The built-in list holds every call the tool marks read-only, a
 write inside the worktree, and each app's test command. The repo's list
 is the repo settings' worker commands.
 _Avoid_: Permission hook, guard, sandbox, allowlist

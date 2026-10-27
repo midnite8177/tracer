@@ -84,10 +84,14 @@ class SchedulerCase(unittest.TestCase):
         runner = cls.root / "runner.py"
         runner.write_text(TEST_COMMAND_THAT_LOGS_ITS_ARGUMENTS_AND_EXITS_WITH_THE_QUEUED_CODE, encoding="utf-8")
         cls.test_command = f'"{sys.executable}" "{runner}" "{cls.runs}"'
+        cls.write_settings({})
+
+    @classmethod
+    def write_settings(cls, extra: dict) -> None:
         settings = {"lap_test_scope": "targeted", "worker_commands": [], "slot_use": None, "lap_limit": LAP_LIMIT,
                     "apps": [{"name": "shop", "kind": "program", "way_in": "its command line", "build": "make",
                               "run": None, "test": cls.test_command, "test_target": "-k <name>",
-                              "test_full": None, "hand_run": [], "acceptance": ACCEPTANCE}]}
+                              "test_full": None, "hand_run": [], "acceptance": ACCEPTANCE}], **extra}
         done = subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), "write"], input=json.dumps(settings),
                               capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
                               env={**os.environ, "JIDOKA_HOME": str(cls.home)}, cwd=cls.repo)
@@ -293,6 +297,51 @@ class SchedulerReadyTaskTests(SchedulerCase):
         self.assertNotIn("lap.stage", self.metadata(task))
 
 
+class SchedulerTaskWithNoAreaTests(SchedulerCase):
+    def test_a_task_added_after_handoff_is_named_with_the_command_that_gives_it_an_area_and_opens_no_lap(self):
+        epic = self.new_epic()
+        handed_off = self.new_task_under(epic)
+        self.hand_off(epic, {handed_off: "till"})
+        added = self.new_task_under(epic)
+
+        done = self.next_moves(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn(f"{added} has no area, so no lap opens for it. Run bd update {added} "
+                      "--set-metadata lap.area=<area>", done.stderr)
+        printed = json.loads(done.stdout)
+        self.assertEqual([added], printed["no_area"])
+        self.assertEqual([handed_off], [action["task"] for action in printed["actions"]])
+        self.assertNotIn("lap.stage", self.metadata(added))
+
+    def test_a_task_that_was_given_an_area_after_handoff_opens_its_lap(self):
+        epic = self.new_epic()
+        handed_off = self.new_task_under(epic)
+        self.hand_off(epic, {handed_off: "till"})
+        added = self.new_task_under(epic)
+        fixture.run([self.bd, "update", added, "--set-metadata", "lap.area=receipts"], self.repo)
+
+        done = self.next_moves(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("has no area", done.stderr)
+        printed = json.loads(done.stdout)
+        self.assertEqual([], printed["no_area"])
+        self.assertEqual([handed_off, added], [action["task"] for action in printed["actions"]])
+
+    def test_a_task_with_no_area_that_waits_on_the_human_is_not_named(self):
+        epic = self.new_epic()
+        handed_off = self.new_task_under(epic)
+        self.hand_off(epic, {handed_off: "till"})
+        self.new_task_under(epic, "--labels", "human")
+
+        done = self.next_moves(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("has no area", done.stderr)
+        self.assertEqual([], json.loads(done.stdout)["no_area"])
+
+
 class SchedulerOrderTests(SchedulerCase):
     def test_ready_tasks_are_taken_in_priority_order(self):
         epic = self.new_epic()
@@ -362,8 +411,45 @@ class SchedulerWorkspaceTests(SchedulerCase):
         self.assertEqual(str(worktree), self.metadata(task).get("lap.workspace"))
 
 
+class SchedulerPrivateDocsTests(SchedulerCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        (cls.repo / "GLOSSARY.md").write_text("# shop\n", encoding="utf-8")
+        (cls.repo / "docs" / "adr").mkdir(parents=True)
+        (cls.repo / "docs" / "adr" / "0001-start.md").write_text("# 0001\n", encoding="utf-8")
+        cls.write_settings({"glossary_and_adrs": "private"})
+
+    def test_a_lap_worktree_in_a_private_repo_links_to_the_main_checkouts_glossary_and_adrs_and_stays_clean(self):
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: "till"})
+
+        worktree = Path(self.next_printed(epic)["actions"][0]["worktree"])
+
+        self.assertEqual(self.repo / "GLOSSARY.md", (worktree / "GLOSSARY.md").readlink())
+        self.assertEqual(self.repo / "docs" / "adr", (worktree / "docs" / "adr").readlink())
+        self.assertEqual("# 0001\n", (worktree / "docs" / "adr" / "0001-start.md").read_text(encoding="utf-8"))
+        self.assertEqual("", git(worktree, "status", "--porcelain", "--untracked-files=all"))
+
+    def test_a_lap_worktree_that_holds_its_own_glossary_stops_the_scheduler_before_it_claims_the_task(self):
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        branch = self.hand_off(epic, {task: "till"})
+        worktree = self.repo / ".worktrees" / f"lap-{task}"
+        git(self.repo, "worktree", "add", "-q", "-b", f"lap/{task}", str(worktree), branch)
+        (worktree / "GLOSSARY.md").write_text("# the worktree's own\n", encoding="utf-8")
+
+        done = self.next_moves(epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(str(worktree / "GLOSSARY.md"), done.stderr)
+        self.assertEqual(("open", ""), (self.shown(task)["status"], self.shown(task).get("assignee") or ""))
+        self.assertNotIn("lap.stage", self.metadata(task))
+
+
 class SchedulerLapStateTests(SchedulerCase):
-    def test_a_second_call_opens_nothing_new_and_lists_the_open_laps(self):
+    def test_a_second_call_opens_no_new_lap_and_lists_the_open_laps(self):
         epic = self.new_epic()
         first, second, third = (self.new_task_under(epic) for _ in range(3))
         self.hand_off(epic, {first: "till", second: "receipts", third: "shelf"})
@@ -371,11 +457,41 @@ class SchedulerLapStateTests(SchedulerCase):
 
         printed = self.next_printed(epic)
 
-        self.assertEqual([], printed["actions"])
         self.assertEqual([{**{key: value for key, value in action.items() if key != "action"},
                            "stage": "build", "tries": 0} for action in opened],
                          printed["laps"])
         self.assertNotIn("lap.stage", self.metadata(third))
+
+    def test_a_lap_left_at_the_build_with_no_worker_goes_back_to_the_build_when_next_runs_again(self):
+        lap = self.open_one_lap()
+
+        done = self.next_moves(lap.epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([("build", lap.task, str(lap.worktree))],
+                         [(action["action"], action["task"], action["worktree"])
+                          for action in json.loads(done.stdout)["actions"]])
+        self.assertIn(f"{lap.task} was cut off", done.stderr)
+
+    def test_a_lap_left_at_the_build_keeps_its_tries_when_next_runs_again(self):
+        lap = self.open_one_lap()
+        self.report_printed(lap.epic, lap.task, "failed")
+
+        printed = self.next_printed(lap.epic)
+
+        self.assertEqual([lap.task], [action["task"] for action in printed["actions"]])
+        self.assertEqual([("build", 1)], [(open_lap["stage"], open_lap["tries"]) for open_lap in printed["laps"]])
+        self.assertEqual(1, self.metadata(lap.task)["lap.tries"])
+
+    def test_a_lap_that_next_opens_in_the_same_call_is_not_reported_cut_off(self):
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: "till"})
+
+        done = self.next_moves(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("cut off", done.stderr)
 
     def test_an_open_lap_read_back_from_metadata_holds_its_area_and_its_slot(self):
         epic = self.new_epic()
@@ -389,7 +505,9 @@ class SchedulerLapStateTests(SchedulerCase):
 
         printed = self.next_printed(epic)
 
-        self.assertEqual([(other_area, 2)], [(action["task"], action["slot"]) for action in printed["actions"]])
+        self.assertEqual([(first, 1), (other_area, 2)],
+                         [(action["task"], action["slot"]) for action in printed["actions"]])
+        self.assertEqual([first, other_area], [open_lap["task"] for open_lap in printed["laps"]])
 
 
 class ManagerDrivesAnEpicTests(SchedulerCase):
@@ -409,7 +527,8 @@ class ManagerDrivesAnEpicTests(SchedulerCase):
         self.assertEqual(([], [second]), (after_first["actions"], [lap["task"] for lap in after_first["laps"]]))
         self.assertEqual(([], []), (after_second["actions"], after_second["laps"]))
         self.assertEqual(("closed", "closed"), (self.shown(first)["status"], self.shown(second)["status"]))
-        self.assertTrue(all(self.is_on(commit, branch) for commit in built.values()))
+        self.assertEqual([f"Add {first}.txt", f"Add {second}.txt"],
+                         git(self.repo, "log", "--reverse", "--format=%s", f"{branch}~2..{branch}").splitlines())
         self.assertEqual(["-k test_card"], self.runs_of(first))
         self.assertEqual(["-k test_card"], self.runs_of(second))
 
@@ -427,6 +546,24 @@ class ManagerDrivesAnEpicTests(SchedulerCase):
         self.assertEqual(("closed", "closed"), (self.shown(first)["status"], self.shown(second)["status"]))
         self.assertEqual(("built", "built"), (git(self.repo, "show", f"{branch}:{first}.txt"),
                                               git(self.repo, "show", f"{branch}:{second}.txt")))
+
+
+class LinearEpicBranchTests(SchedulerCase):
+    def test_two_laps_merged_one_after_the_other_leave_the_epic_branch_linear_with_one_commit_per_task(self):
+        epic = self.new_epic()
+        first, second = self.new_task_under(epic), self.new_task_under(epic)
+        branch = self.hand_off(epic, {first: "till", second: "receipts"})
+        started = git(self.repo, "rev-parse", branch)
+        for action in self.next_printed(epic)["actions"]:
+            self.commit_in(Path(action["worktree"]), f"{action['task']}.txt", "built\n")
+
+        self.build_done(epic, first)
+        self.build_done(epic, second)
+
+        self.assertEqual("", git(self.repo, "rev-list", "--merges", f"{started}..{branch}"))
+        self.assertEqual(started, git(self.repo, "rev-parse", f"{branch}~2"))
+        self.assertEqual([f"Add {first}.txt", f"Add {second}.txt"],
+                         git(self.repo, "log", "--reverse", "--format=%s", f"{started}..{branch}").splitlines())
 
 
 class BuildCommitTests(SchedulerCase):
@@ -543,15 +680,15 @@ class BuildOutcomeTests(SchedulerCase):
 
 
 class TargetedRunTests(SchedulerCase):
-    def test_the_targeted_tests_run_on_the_lap_head_merged_with_the_epic_branch(self):
+    def test_the_targeted_tests_run_on_the_lap_head_rebased_onto_the_epic_branch(self):
         lap = self.open_one_lap()
-        built = self.commit_in(lap.worktree, "card.txt", "built\n")
+        self.commit_in(lap.worktree, "card.txt", "built\n")
         moved = self.commit_on_epic_branch(lap.epic_branch, "other.txt", "other lap\n")
 
         self.build_done(lap.epic, lap.task)
 
         self.assertEqual(["-k test_card"], self.runs_of(lap.task))
-        self.assertEqual(f"{built} {moved}", git(self.repo, "log", "-1", "--format=%P", lap.epic_branch))
+        self.assertEqual(moved, git(self.repo, "rev-parse", f"{lap.epic_branch}~1"))
         self.assertEqual(moved, self.metadata(lap.task)["tests.base"])
 
     def test_red_targeted_tests_send_the_lap_back_to_the_build_and_count_a_try_recorded_by_jidoka(self):
@@ -569,7 +706,7 @@ class TargetedRunTests(SchedulerCase):
         self.assertEqual(before, git(self.repo, "rev-parse", lap.epic_branch))
         [tested] = [comment for comment in self.comments(lap.task) if "Targeted tests failed" in comment["text"]]
         self.assertEqual("jidoka", tested["author"])
-        self.assertIn(f"merged with {lap.epic_branch}", tested["text"])
+        self.assertIn(f"rebased onto {lap.epic_branch}", tested["text"])
 
     def test_a_filter_that_repeats_the_test_target_counts_a_try_and_runs_nothing(self):
         lap = self.open_one_lap()
@@ -581,7 +718,7 @@ class TargetedRunTests(SchedulerCase):
         self.assertEqual([], self.runs_of(lap.task))
         self.assertTrue(any('pass "test_card"' in text for text in self.texts(lap.task)))
 
-    def test_a_conflict_merging_the_epic_branch_into_the_lap_parks_the_task_at_once_naming_the_files(self):
+    def test_a_conflict_rebasing_the_lap_onto_the_epic_branch_parks_the_task_at_once_naming_the_files(self):
         lap = self.open_one_lap()
         self.commit_in(lap.worktree, "card.txt", "the lap's card\n")
         epic_head = self.commit_on_epic_branch(lap.epic_branch, "card.txt", "another lap's card\n")
@@ -591,8 +728,10 @@ class TargetedRunTests(SchedulerCase):
         self.assertEqual([], printed["actions"])
         why = self.assert_parked(lap, 0)
         self.assertIn("card.txt", why)
+        self.assertIn("rebasing", why)
         self.assertIn("conflicts", why)
         self.assertEqual([], self.runs_of(lap.task))
+        self.assertEqual(f"lap/{lap.task}", git(lap.worktree, "branch", "--show-current"))
         self.assertEqual(epic_head, git(self.repo, "rev-parse", lap.epic_branch))
 
 
@@ -652,7 +791,7 @@ class ParkedLapTests(SchedulerCase):
         self.assertEqual([(second, action["slot"])],
                          [(opened["task"], opened["slot"]) for opened in printed["actions"]])
         self.assertEqual([second], [open_lap["task"] for open_lap in printed["laps"]])
-        self.assertEqual([], self.next_printed(epic)["actions"])
+        self.assertEqual([second], [action["task"] for action in self.next_printed(epic)["actions"]])
         self.assertEqual("parked", self.metadata(first)["lap.stage"])
 
 
@@ -751,7 +890,7 @@ class EpicBranchMovesBeforeTheGateTests(SchedulerCase):
     def test_when_the_epic_branch_moves_while_the_gate_waits_on_the_lock_the_tests_run_again_and_the_lap_merges(
             self):
         lap = self.open_one_lap()
-        built = self.commit_in(lap.worktree, "card.txt", "built\n")
+        self.commit_in(lap.worktree, "card.txt", "built\n")
         lock = self.home / "locks" / "merge.lock"
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.write_text("424242\n", encoding="utf-8")
@@ -777,7 +916,7 @@ class EpicBranchMovesBeforeTheGateTests(SchedulerCase):
         self.assertEqual(0, process.returncode)
         self.assertEqual([], json.loads(out)["actions"])
         self.assertEqual(["-k test_card", "-k test_card"], self.runs_of(lap.task))
-        self.assertEqual(f"{built} {moved}", git(self.repo, "log", "-1", "--format=%P", lap.epic_branch))
+        self.assertEqual(moved, git(self.repo, "rev-parse", f"{lap.epic_branch}~1"))
         self.assertEqual("closed", self.shown(lap.task)["status"])
         self.assertEqual(0, self.metadata(lap.task)["lap.tries"])
 

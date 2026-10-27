@@ -176,10 +176,10 @@ class TargetedTestsCase(unittest.TestCase):
         return self.targeted_tests_on(bead, app, test_filter, home, "main")
 
     def targeted_tests_on(self, bead: Bead, app: str, test_filter: str, home: Path,
-                          base: str) -> subprocess.CompletedProcess:
+                          base: str, *flags: str) -> subprocess.CompletedProcess:
         return subprocess.run([str(LAUNCHER), str(TARGETED_TESTS), "--bead", bead.id,
                                "--worktree", str(bead.worktree), "--base", base, "--app", app,
-                               "--filter", test_filter, "--jidoka-home", str(home)],
+                               "--filter", test_filter, "--jidoka-home", str(home), *flags],
                               capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home)},
                               cwd=self.root)
@@ -280,6 +280,36 @@ class BaseBranchTests(TargetedTestsCase):
         self.assertEqual(main_before, self.main_head())
         [comment] = self.comments(bead)
         self.assertIn(f"merged with {base} at {base_head}", comment)
+
+    def test_with_rebase_the_worktree_is_rebased_onto_the_base_branch_and_the_comment_says_so(self):
+        bead = self.new_bead()
+        (self.repo / f"other-{self.count}.txt").write_text("other work\n", encoding="utf-8")
+        fixture.git_commit_all(self.repo, "Add other work")
+
+        done = self.targeted_tests_on(bead, "shop", "test_greeting", self.home, "main", "--rebase")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(self.main_head(), git(bead.worktree, "rev-parse", "HEAD~1"))
+        self.assertEqual(self.main_head(), self.metadata(bead)["tests.base"])
+        [comment] = self.comments(bead)
+        self.assertIn(f"rebased onto main at {self.main_head()}", comment)
+
+    def test_a_conflict_rebasing_stops_the_run_names_the_file_and_leaves_the_worktree_as_it_was(self):
+        bead = self.new_bead()
+        (self.repo / f"greeting-{self.count}.txt").write_text("a different hello\n", encoding="utf-8")
+        fixture.git_commit_all(self.repo, "Add a different greeting")
+        branch_head = git(bead.worktree, "rev-parse", "HEAD")
+
+        done = self.targeted_tests_on(bead, "shop", "test_greeting", self.home, "main", "--rebase")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("rebasing main conflicts", done.stderr)
+        self.assertIn(f"greeting-{self.count}.txt", done.stderr)
+        self.assertEqual([], self.runs_of(bead))
+        self.assertEqual({}, self.metadata(bead))
+        self.assertEqual(branch_head, git(bead.worktree, "rev-parse", "HEAD"))
+        self.assertEqual(f"bead-{self.count}", git(bead.worktree, "branch", "--show-current"))
+        self.assertEqual("", git(bead.worktree, "status", "--porcelain"))
 
     def test_a_base_branch_that_does_not_exist_is_refused_and_nothing_runs(self):
         bead = self.new_bead()

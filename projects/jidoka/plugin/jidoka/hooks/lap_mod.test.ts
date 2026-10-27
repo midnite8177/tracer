@@ -22,8 +22,29 @@ type Launched = { pluginRoot: string }
  * plugin's folder is read off the launcher's path.
  */
 function engineBeneath(on: On, settings: object | undefined): Launched {
+  return engineWith(on, settings, { places: {}, statFails: false, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+}
+
+type World = {
+  /** Every path exists and is its own real location, except a path here and what lies beneath it: it lands at the place named, or nowhere for null. */
+  places: Record<string, string | null>
+  statFails: boolean
+  spawn: () => Promise<{ model: string; agentId: string } | { deny: string }>
+}
+
+function engineWith(on: On, settings: object | undefined, world: World): Launched {
   const launched: Launched = { pluginRoot: '' }
-  on('agent.spawn', () => ({ model: 'sonnet', agentId: 'a1' }))
+  const { places } = world
+  on('fs.stat', (_, e) => {
+    if (world.statFails) throw new Error('stat failed')
+    const at = Object.keys(places)
+      .filter(place => e.path === place || e.path.startsWith(`${place}/`))
+      .sort((a, b) => b.length - a.length)[0]
+    const target = at === undefined ? e.path : places[at]
+    const real = at === undefined || typeof target !== 'string' ? target : `${target}${e.path.slice(at.length)}`
+    return { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false, realPath: real ?? undefined } }
+  })
+  on('agent.spawn', () => world.spawn())
   on('tool.check', () => HOST_VERDICT)
   on('process.run', (_, e) => {
     const [shell, launcher = '', script = '', mode] = e.argv
@@ -386,4 +407,119 @@ test('a lap record of another shape denies the worker\'s calls instead of leavin
 
   expect(verdict).toEqual({ decision: 'deny', reason: 'jidoka: the lap mod failed while deciding Bash, so it is denied.' })
   expect(hostVerdict).toEqual(HOST_VERDICT)
+})
+
+const NOTHING: Pick<World, 'places' | 'statFails'> = { places: {}, statFails: false }
+
+function engineWithPlaces(on: On, places: World['places']): Launched {
+  return engineWith(on, SETTINGS, { ...NOTHING, places, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+}
+
+/**
+ * The decision on an off-list Bash call that agent `agentId` makes while the
+ * spawn of `prompt` is still under way, before the engine has answered it.
+ */
+async function decisionWhileSpawning($: Engine, on: On, prompt: string, agentId: string): Promise<string> {
+  let release = (): void => {}
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let reach = (): void => {}
+  const underWay = new Promise<void>(resolve => {
+    reach = resolve
+  })
+  engineWith(on, SETTINGS, {
+    ...NOTHING,
+    spawn: async () => {
+      reach()
+      await held
+      return { model: 'sonnet', agentId }
+    },
+  })
+
+  const spawning = $.agent.spawn({ prompt })
+  await underWay
+  const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'curl https://example.com' }, agentId })
+  release()
+  await spawning
+  return verdict.decision
+}
+
+test('a lap worker\'s first call, made before its spawn has resolved, is decided by the lap mod', async ($, on) => {
+  const decision = await decisionWhileSpawning($, on, `jidoka lap worktree: ${WORKTREE}\nBuild the task.`, 'a1')
+
+  expect(decision).toBe('deny')
+})
+
+test('a spawn that is not a lap leaves the first call of an unrecorded agent to the host', async ($, on) => {
+  const decision = await decisionWhileSpawning($, on, 'Research the task.', 'a2')
+
+  expect(decision).toBe('ask')
+})
+
+test('a lap worker that never started leaves no claim on the next unrecorded agent', async ($, on) => {
+  engineWith(on, SETTINGS, { ...NOTHING, spawn: () => Promise.resolve({ deny: 'the engine refused' }) })
+  await startLap($, WORKTREE)
+
+  const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'curl https://example.com' }, agentId: 'a2' })
+
+  expect(verdict).toEqual(HOST_VERDICT)
+})
+
+test('a write through a symlink inside the worktree that points outside it is denied', async ($, on) => {
+  engineWithPlaces(on, { [`${WORKTREE}/escape`]: '/repo/secrets' })
+  await startLap($, WORKTREE)
+
+  const throughLink = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/escape/new.txt`, content: '' }, agentId: 'a1' })
+  const ordinary = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/src/new.txt`, content: '' }, agentId: 'a1' })
+
+  expect(throughLink.decision).toBe('deny')
+  expect(throughLink.reason).toContain(`${WORKTREE}/escape/new.txt`)
+  expect(ordinary.decision).toBe('allow')
+})
+
+test('a write to a symlinked file that points outside the worktree is denied', async ($, on) => {
+  engineWithPlaces(on, { [`${WORKTREE}/config.toml`]: '/repo/config.toml' })
+  await startLap($, WORKTREE)
+
+  const verdict = await $.tool.check({
+    tool: 'Edit',
+    input: { file_path: `${WORKTREE}/config.toml`, old_string: 'a', new_string: 'b' },
+    agentId: 'a1',
+  })
+
+  expect(verdict.decision).toBe('deny')
+})
+
+test('a worktree that is itself reached through a symlink still takes writes inside it', async ($, on) => {
+  engineWithPlaces(on, { [WORKTREE]: '/volume/lap-t1' })
+  await startLap($, WORKTREE)
+
+  const verdict = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/src/a.py`, content: '' }, agentId: 'a1' })
+
+  expect(verdict.decision).toBe('allow')
+})
+
+test('a write to a file in folders not made yet is placed by the nearest folder that exists', async ($, on) => {
+  engineWithPlaces(on, {
+    [`${WORKTREE}/fresh`]: null,
+    [`${WORKTREE}/escape`]: '/repo/secrets',
+    [`${WORKTREE}/escape/fresh`]: null,
+  })
+  await startLap($, WORKTREE)
+
+  const inside = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/fresh/deep/a.py`, content: '' }, agentId: 'a1' })
+  const outside = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/escape/fresh/a.py`, content: '' }, agentId: 'a1' })
+
+  expect(inside.decision).toBe('allow')
+  expect(outside.decision).toBe('deny')
+})
+
+test('a write whose location cannot be resolved is denied', async ($, on) => {
+  engineWith(on, SETTINGS, { ...NOTHING, statFails: true, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+  await startLap($, WORKTREE)
+
+  const verdict = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/src/a.py`, content: '' }, agentId: 'a1' })
+
+  expect(verdict.decision).toBe('deny')
 })

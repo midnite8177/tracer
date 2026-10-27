@@ -48,6 +48,43 @@ function isInside(path: string, worktree: string): boolean {
   return file === root || file.startsWith(root.endsWith('/') ? root : `${root}/`)
 }
 
+/**
+ * Where `path` really lands, in the form `resolved` gives: the nearest part of
+ * it that exists is resolved through its links and the rest is placed beneath
+ * that, so a file or folder not made yet sits where its parent is. Undefined
+ * where nothing of the path can be resolved, or where a link on it leads
+ * nowhere, because a write would then land wherever the link points.
+ */
+async function realLocation($: EngineInterface, path: string, base: string): Promise<string | undefined> {
+  const lexical = resolved(path, base)
+  if (lexical === undefined) return undefined
+  const parts = lexical.split('/')
+  for (let cut = parts.length; cut > 0; cut--) {
+    const head = parts.slice(0, cut).join('/')
+    const isRoot = head === '' || (DRIVE.test(head) && !head.includes('/'))
+    const spot = isRoot ? `${head}/` : head
+    const real = await $.fs.stat(spot, { resolve: true }).then(
+      stat => stat.realPath,
+      () => undefined,
+    )
+    if (real !== undefined) return resolved(`${real}/${parts.slice(cut).join('/')}`, '/')
+    const link = await $.fs.stat(spot).then(
+      stat => stat.isLink,
+      () => false,
+    )
+    if (link) return undefined
+  }
+  return undefined
+}
+
+/** True when `path` really lands inside the worktree, whatever links lie on the way. */
+async function isReallyInside($: EngineInterface, path: string, worktree: string): Promise<boolean> {
+  const root = await realLocation($, worktree, '/')
+  const file = await realLocation($, path, worktree)
+  if (root === undefined || file === undefined) return false
+  return file === root || file.startsWith(root.endsWith('/') ? root : `${root}/`)
+}
+
 function filePathOf(field: string, input: unknown): string | undefined {
   if (typeof input !== 'object' || input === null) return undefined
   const path = (input as Record<string, unknown>)[field]
@@ -185,6 +222,23 @@ function offTheLists(call: string): { decision: 'deny'; reason: string } {
   }
 }
 
+const STARTING = { plugin: 'jidoka', key: 'starting', id: 'lap' } as const
+
+/**
+ * The lap a worker belongs to. A worker's agent id is known only once its
+ * spawn has resolved, but its loop can call a tool before that, so an agent
+ * with no record takes the lap that is starting, if one is, and keeps it.
+ */
+async function lapOf($: EngineInterface, agentId: string): Promise<LapWorker | undefined> {
+  const { value: lap } = await $.state.get({ plugin: 'jidoka', key: 'laps', id: agentId })
+  if (lap !== undefined) return lap
+  const { value: starting } = await $.state.get(STARTING)
+  if (starting?.lap == null) return undefined
+  await $.state.set({ plugin: 'jidoka', key: 'laps', id: agentId }, starting.lap)
+  await $.state.set(STARTING, { lap: null })
+  return starting.lap
+}
+
 export const register: Register = on => {
   on('agent.spawn', async ($, e, next) => {
     const worktree = worktreeOf(e.prompt)
@@ -192,13 +246,15 @@ export const register: Register = on => {
     if (!isAbsolute(worktree)) {
       return { deny: `jidoka: the lap worktree ${worktree} is not an absolute path, so no lap worker started.` }
     }
-    const commands = await listedCommands($, worktree)
-    const started = await next({ ...e, cwd: worktree })
-    if (started.agentId !== undefined) {
-      const lap: LapWorker = { worktree, commands }
-      await $.state.set({ plugin: 'jidoka', key: 'laps', id: started.agentId }, lap)
+    const lap: LapWorker = { worktree, commands: await listedCommands($, worktree) }
+    await $.state.set(STARTING, { lap })
+    try {
+      const started = await next({ ...e, cwd: worktree })
+      if (started.agentId !== undefined) await $.state.set({ plugin: 'jidoka', key: 'laps', id: started.agentId }, lap)
+      return started
+    } finally {
+      await $.state.set(STARTING, { lap: null })
     }
-    return started
   }).catch(($, e, next) =>
     next.called || worktreeOf(e.prompt) === undefined
       ? next(e)
@@ -210,7 +266,7 @@ export const register: Register = on => {
       const isJidokaScript = e.tool === 'Bash' && runsJidokaScripts(commandOf(e.input), $.plugin.root)
       return isJidokaScript ? { decision: 'allow' } : next(e)
     }
-    const { value: lap } = await $.state.get({ plugin: 'jidoka', key: 'laps', id: e.agentId })
+    const lap = await lapOf($, e.agentId)
     if (lap === undefined || HOST_ONLY.has(e.tool)) return next(e)
     if (STARTS_WORKERS.has(e.tool)) {
       return { decision: 'deny', reason: `jidoka: a lap worker starts no workers, so its ${e.tool} call is denied.` }
@@ -219,7 +275,7 @@ export const register: Register = on => {
     if (pathField !== undefined) {
       const path = filePathOf(pathField, e.input)
       if (path === undefined) return { decision: 'deny', reason: `jidoka: ${e.tool} names no ${pathField}.` }
-      return isInside(path, lap.worktree)
+      return (await isReallyInside($, path, lap.worktree))
         ? { decision: 'allow' }
         : { decision: 'deny', reason: `jidoka: ${e.tool} of ${path} is outside the lap's worktree ${lap.worktree}.` }
     }
