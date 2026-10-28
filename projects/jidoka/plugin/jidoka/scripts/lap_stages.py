@@ -15,6 +15,8 @@ The outcomes of a worker's stage, for a task on the simple track, whose lap star
              the epic branch moved during the run. A pass goes to the merge gate, merge_gate.py. When the gate finds
              the epic branch moved since the run, the tests run again, and that is not a try. A `done` also files the
              discovered work placed `epic` and `outside` before it commits, and a `blocks` finding on a `done` is a
+             try. It posts the assumptions and public API changes in the `build-notes.json` the build left in the
+             scratch folder on the task before it commits, as build_notes.py describes, and an unusable report is a
              try.
   failed     the worker failed. `--why` carries the worker's own reason into the try's comment and the park's.
   cut off    the worker ended for a reason outside its work; the lap goes back to the stage, and that is not a try.
@@ -76,6 +78,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import app_check
+import build_notes
 import caps
 import discovered
 import holdouts
@@ -135,10 +138,12 @@ def interrupt_for_stop(lap: Lap, main_tree: Path) -> None:
     interrupt_lap(lap, f"the factory stopped during the {lap.stage}", "the factory starts again", main_tree)
 
 
-def ask(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
-    """Parks the task on the question the worker left; a report that cannot be posted counts a try."""
+def ask(lap: Lap, epic: str, home: Path, main_tree: Path) -> list[Lap]:
+    """Parks the task on the question the worker left, with its page written in the jidoka home; a report that cannot
+    be posted counts a try."""
     try:
-        park.park_on_question(lap.task, lap.tries, lap.scratch, lap.worktree, lap.branch, main_tree)
+        park.park_on_question(park.AskingLap(lap.task, lap.tries, lap.scratch, lap.worktree, lap.branch), home,
+                              main_tree)
     except park.QuestionError as error:
         return count_try(lap, epic, f"the question could not be posted: {error}", main_tree)
     return []
@@ -541,6 +546,10 @@ def build_done(lap: Lap, context: GateContext) -> list[Lap]:
     unfiled = file_discovered_work(lap, context.epic, context.main_tree)
     if unfiled is not None:
         return count_try(lap, context.epic, unfiled, context.main_tree)
+    try:
+        build_notes.post_notes(lap.task, lap.scratch, context.main_tree)
+    except build_notes.NotesError as error:
+        return count_try(lap, context.epic, f"the build notes could not be posted: {error}", context.main_tree)
     commit_build(lap)
     if lap.track == FULL_TRACK:
         lap, arguments = lap_record.recording_findings(lap, "", "")

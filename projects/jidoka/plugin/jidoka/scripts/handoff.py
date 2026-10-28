@@ -28,12 +28,16 @@ track of one task. Then it writes, with BEADS_ACTOR set to the repo's git
 user.name: `lap.track` and `lap.area=<area>` in each task's metadata,
 the epic branch's name as the epic's `factory.branch` metadata, the epic
 branch itself, cut from main's head, one comment on the epic that holds the
-task table, and last the factory label. An epic without the label has not
-been handed off, and a rerun of `take` finishes the job: it reuses the
-branch the epic records and posts no second table. With --preset, rules.py's
+task table and links the handoff page, and last the factory label. An epic
+without the label has not been handed off, and a rerun of `take` finishes the
+job: it reuses the branch the epic records and posts no second table. Before
+it writes anything to a bead, handoff_page.py writes the page,
+`<jidoka-home>/pages/<repo>/handoff-<epic>.html`, with the task table and the
+epic's factory rules, preset included. A rerun replaces the page, and a page
+that cannot be written refuses the handoff. With --preset, rules.py's
 write sets the preset's factory rules just before the label, one comment for
 each setting that changes. It prints the epic, the
-branch, the commit the branch is at and the tasks as one JSON object. It
+branch, the commit the branch is at, the page's path and the tasks as one JSON object. It
 starts nothing.
 
 The checks, each refusal saying what to do, all reported at once:
@@ -66,6 +70,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import handoff_page
 import holdouts
 import lap_record
 import repo_settings
@@ -255,12 +260,38 @@ def cell(text: str) -> str:
     return " ".join(text.split()).replace("|", "\\|")
 
 
-def table(epic: Epic, branch: str, areas: dict[str, str], tracks: dict[str, Proposal],
-          held: dict[str, int]) -> str:
-    rows = [f"| {cell(f'{task.id} {task.title}')} | {tracks[task.id].track} | {cell(tracks[task.id].why)} | "
-            f"{cell(areas[task.id])} | {held.get(task.id, 0)} | {task.status} |" for task in epic.tasks]
-    return "\n".join([f"{TABLE_HEADING} the factory takes {epic.id} on the epic branch {branch}.", "",
-                      "| Task | Track | Why | Area | Holdouts | State |", "|---|---|---|---|---|---|", *rows])
+def table(page: handoff_page.HandoffPage, page_file: Path) -> str:
+    """The comment that holds the page's task rows as a plain-text table, and links the page."""
+    rows = [f"| {cell(f'{row.task} {row.title}')} | {row.track} | {cell(row.why)} | {cell(row.area)} | "
+            f"{row.holdouts} | {row.state} |" for row in page.rows]
+    return "\n".join([f"{TABLE_HEADING} the factory takes {page.epic} on the epic branch {page.branch}.", "",
+                      "| Task | Track | Why | Area | Holdouts | State |", "|---|---|---|---|---|---|", *rows, "",
+                      f"Page: {page_file.as_uri()}"])
+
+
+def planned_rules(epic: Epic, preset: str | None) -> rules.Rules:
+    """The epic's factory rules once the handoff has written the preset over the ones it holds."""
+    held = rules.of_epic(epic.shown)
+    if preset is None:
+        return held
+    chosen = rules.PRESETS[preset]
+    return rules.Rules({**held.settings, **chosen.settings}, chosen.guidance or held.guidance)
+
+
+def page_of(epic: Epic, branch: str, areas: dict[str, str], tracks: dict[str, Proposal], held: dict[str, int],
+            planned: rules.Rules) -> handoff_page.HandoffPage:
+    rows = tuple(handoff_page.Row(task.id, task.title, tracks[task.id].track, tracks[task.id].why, areas[task.id],
+                                  held.get(task.id, 0), task.status) for task in epic.tasks)
+    settings = tuple((name, rules.encode(value)) for name, value in sorted(planned.settings.items()))
+    return handoff_page.HandoffPage(epic.id, str(epic.shown.get("title") or ""), branch, rows, settings,
+                                    planned.guidance)
+
+
+def write_page(page: handoff_page.HandoffPage, home: Path, main_tree: Path) -> Path:
+    try:
+        return handoff_page.write(page, home, main_tree)
+    except OSError as error:
+        raise HandoffError(f"the handoff page could not be written, and nothing else was: {error}") from error
 
 
 def has_table(epic: Epic, main_tree: Path) -> bool:
@@ -289,23 +320,24 @@ def take(bead: str, given_areas: list[str], given_tracks: list[str], preset: str
     areas, area_problems = areas_of(given_areas, epic)
     tracks, track_problems = tracks_of(given_tracks, epic, proposals_of(epic))
     refuse(epic, problems_of(epic, branch_problems, home, main_tree) + area_problems + track_problems)
+    content = page_of(epic, branch, areas, tracks, holdout_counts(epic), planned_rules(epic, preset))
+    page = write_page(content, home, main_tree)
     env = env_as_git_user(main_tree)
     for task in epic.tasks:
         run(["bd", "update", task.id, *lap_record.assigning(tracks[task.id].track, areas[task.id])], main_tree, env)
     run(["bd", "update", epic.id, "--set-metadata", f"{BRANCH_KEY}={branch}"], main_tree, env)
     if branch_head(branch, main_tree) is None:
         run(["git", "branch", branch, MAIN_REF], main_tree, None)
-    held = holdout_counts(epic)
     if not has_table(epic, main_tree):
-        run(["bd", "comment", epic.id, table(epic, branch, areas, tracks, held)], main_tree, env)
+        run(["bd", "comment", epic.id, table(content, page)], main_tree, env)
     if preset is not None:
         repo_limit = rules.repo_lap_limit(repo_settings.load(repo_settings.settings_path(home, main_tree)))
         rules.write_preset(epic.id, preset, repo_limit, main_tree)
     run(["bd", "label", "add", epic.id, FACTORY_LABEL], main_tree, env)
     return {"epic": epic.id, "branch": branch, "start": branch_head(branch, main_tree),
-            "tasks": [{"id": task.id, "title": task.title, "track": tracks[task.id].track,
-                       "why": tracks[task.id].why, "area": areas[task.id], "holdouts": held.get(task.id, 0),
-                       "status": task.status} for task in epic.tasks]}
+            "page": str(page),
+            "tasks": [{"id": row.task, "title": row.title, "track": row.track, "why": row.why, "area": row.area,
+                       "holdouts": row.holdouts, "status": row.state} for row in content.rows]}
 
 
 def main(argv: list[str]) -> int:

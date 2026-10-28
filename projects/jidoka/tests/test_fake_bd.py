@@ -100,7 +100,7 @@ class Play:
 
     def listed(self, step: str, parent: str) -> None:
         done = self.call(step, "claude", "list", "--parent", parent, "--all", "--limit", "0", "--json")
-        self.calls[step] = Call(done.returncode, self.named(sorted(item["id"] for item in json.loads(done.stdout))))
+        self.calls[step] = Call(done.returncode, sorted(self.named([item["id"] for item in json.loads(done.stdout)])))
 
     def listed_beads(self, cwd: Path, step: str, *flags: str) -> None:
         done = self.call_in(cwd, step, "claude", "list", *flags, "--json")
@@ -110,7 +110,7 @@ class Play:
 
     def ready(self, step: str) -> None:
         done = self.call(step, "claude", "ready", "--json")
-        self.calls[step] = Call(done.returncode, self.named(sorted(bead["id"] for bead in json.loads(done.stdout))))
+        self.calls[step] = Call(done.returncode, sorted(self.named([bead["id"] for bead in json.loads(done.stdout)])))
 
     def blocked(self, step: str) -> None:
         done = self.call(step, "claude", "blocked", "--json")
@@ -188,6 +188,10 @@ class Play:
                   "--set-metadata", "kept=1")
         self.call("unset a metadata key", "Jeff Contract", "update", loose, "--unset-metadata", "holdouts")
         self.show("show a bead whose metadata key was unset", loose)
+        other = self.create("create a second epic", "other", "--title", "Print the receipts", "--type=epic")
+        self.call("move a task to another epic", "Jeff Contract", "update", loose, f"--parent={other}")
+        self.show("show a moved task and its new epic", loose, other)
+        self.listed("list the second epic's children", other)
         self.listed_beads(self.repo, "list the open beads", "--status=open")
         self.listed_beads(self.repo, "list the beads in progress", "--status=in_progress")
         self.listed_beads(self.repo, "list the beads that are not closed")
@@ -286,6 +290,11 @@ class FakeBdContractTests(unittest.TestCase):
             self.assert_same(step)
         self.assertNotEqual(0, self.fake.calls["claim a task another actor holds"].returncode)
         self.assert_same("show a task with a description and a claimed task")
+
+    def test_a_task_moved_to_another_epic_keeps_its_id_and_sits_under_the_new_epic(self):
+        self.assert_same("show a moved task and its new epic")
+        self.assert_same("list the second epic's children")
+        self.assertEqual(["loose"], self.fake.calls["list the second epic's children"].printed)
 
     def test_list_without_a_parent_prints_the_beads_of_the_status_asked_or_else_every_bead_not_closed(self):
         for step in ("list the open beads", "list the beads in progress", "list the beads that are not closed",

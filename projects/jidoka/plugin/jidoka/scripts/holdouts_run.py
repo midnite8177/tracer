@@ -29,8 +29,9 @@ import validation
 from commands import (HUMAN_LABEL, NONE_YET, SCRATCH_FOLDER, env_as_factory, metadata_of, read_bead, run, set_metadata,
                       unset_metadata)
 from epic_reader import VALIDATED_HEAD_KEY, validated_head
-from epic_task import file_task
+from epic_task import NewTask, file_task
 from epics import HOLDOUTS_PENDING_KEY, awaits_holdouts
+from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, count_of, park_epic, worktree_at
 from report_text import shortened_title
 from validation import FAIL, PASS, RESULT_KEY, RUNS_KEY, ValidationError
@@ -134,8 +135,8 @@ def file_holdout_failure(epic: str, verdict: Verdict, settings: dict, main_tree:
     app = verdict.holdout.app
     way_in = next((str(each.get("way_in")) for each in settings.get("apps") or []
                    if isinstance(each, dict) and each.get("name") == app and each.get("way_in")), "its way in")
-    return file_task(epic, holdout_title(app, verdict.saw), holdout_description(app, way_in, verdict.saw), app,
-                     None, main_tree)
+    task = NewTask(holdout_title(app, verdict.saw), holdout_description(app, way_in, verdict.saw), app, SIMPLE_TRACK)
+    return file_task(epic, task, None, env_as_factory(), main_tree)
 
 
 def count_failed_run(epic: str, ended: str, why: str, main_tree: Path) -> bool:

@@ -12,10 +12,16 @@ report, the JSON file `question.json` in the lap's scratch folder:
   options      two or more, each with a `name` and a `confidence`, the whole
                number of percent, from 0 to 100, that it is the right answer.
   recommended  the `name` of the one option the worker recommends.
-Posting the question comments on the task what was found, every option with
-its confidence, and the recommendation, and sets the task's metadata
-`question.options` to the options as JSON and `question.recommended` to the
-recommended name. The report file is removed once posted.
+Three keys are optional, and the page and the comment show them when present:
+  shown        what the app shows the user today.
+  why          a list of short steps that explain why, in order.
+  next         on an option, what happens next if the human picks it.
+Posting the question writes its page (question_page.py) in the jidoka home,
+then comments on the task what was found, the optional words, every option with
+its confidence, the recommendation and the page's link, and sets the task's
+metadata `question.options` to the options as JSON and `question.recommended` to
+the recommended name. The comment holds the whole question without the page.
+The report file is removed once posted.
 
 The human answers by taking the `human` label off. answer_of gives the answer
 to the lap that follows: the comments posted since the question, or the
@@ -58,6 +64,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import lap_record
+import question_page
 import repo_settings
 import rules
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, HUMAN_LABEL, CommandError, bd_comments, env_as_factory,
@@ -89,9 +96,11 @@ class QuestionError(Exception):
 
 @dataclass(frozen=True)
 class Option:
-    """One answer a question offers, and the worker's confidence in percent that it is the right one."""
+    """One answer a question offers, the worker's confidence in percent that it is the right one and what happens
+    next if the human picks it ("" when the worker gave none)."""
     name: str
     confidence: int
+    next_step: str
 
 
 @dataclass(frozen=True)
@@ -105,9 +114,12 @@ class Denial:
 class Question:
     """What a worker found, the options it offers and the name of the one it recommends.
 
-    A permission question also holds the denial it is about.
+    `shown` is what the app shows and `why` the steps that explain it, "" and empty when the worker gave none. A
+    permission question also holds the denial it is about.
     """
     found: str
+    shown: str
+    why: tuple[str, ...]
     options: tuple[Option, ...]
     recommended: str
     denial: Denial | None
@@ -131,7 +143,23 @@ def option_of(value: object) -> Option:
             or not LEAST_CONFIDENCE <= confidence <= MOST_CONFIDENCE):
         raise QuestionError(f"the confidence of an option must be a whole number of percent from "
                             f"{LEAST_CONFIDENCE} to {MOST_CONFIDENCE}, not {confidence!r}")
-    return Option(text_of(value.get("name"), "the name of an option"), confidence)
+    return Option(text_of(value.get("name"), "the name of an option"), confidence,
+                  optional_text(value, "next", "next of an option"))
+
+
+def optional_text(report: dict, key: str, what: str) -> str:
+    """The text under the key, or "" when the report has no such key."""
+    return text_of(report[key], what) if key in report else ""
+
+
+def steps_of(report: dict) -> tuple[str, ...]:
+    """The steps under `why`, or none when the report has no such key."""
+    if "why" not in report:
+        return ()
+    steps = report["why"]
+    if not isinstance(steps, list) or not steps or not all(isinstance(step, str) and step.strip() for step in steps):
+        raise QuestionError("why must be a list of non-empty strings")
+    return tuple(step.strip() for step in steps)
 
 
 def words_of(command: str, what: str) -> list[str]:
@@ -174,7 +202,8 @@ def read_question(scratch: Path) -> Question:
     recommended = text_of(report.get("recommended"), "recommended")
     if recommended not in names:
         raise QuestionError(f"recommended must be the name of one option: {', '.join(names)}")
-    return Question(text_of(report.get("found"), "found"), options, recommended, denial_of(report, names))
+    return Question(text_of(report.get("found"), "found"), optional_text(report, "shown", "shown"), steps_of(report),
+                    options, recommended, denial_of(report, names))
 
 
 def denial_paragraph(denial: Denial) -> str:
@@ -185,13 +214,22 @@ def denial_paragraph(denial: Denial) -> str:
             f"- {BUILT_IN_LIST}: the built-in list, so every lap in every repo on this machine may run it\n\n")
 
 
-def question_comment(question: Question, worktree: Path, branch: str) -> str:
-    options = "\n".join(f"- {option.name} ({option.confidence}%)" for option in question.options)
-    recommendation = question.recommendation
+def option_line(option: Option) -> str:
+    line = f"- {option.name} ({option.confidence}%)"
+    return f"{line}: {option.next_step}" if option.next_step else line
+
+
+def question_comment(question: Question, page: Path, worktree: Path, branch: str) -> str:
+    """The whole question in plain text; the page adds pictures and no fact."""
     denial = denial_paragraph(question.denial) if question.denial is not None else ""
-    return (f"{QUESTION_PREFIX}{question.found}\n\n{denial}"
+    shown = f"What the app shows: {question.shown}\n\n" if question.shown else ""
+    why = f"Why: {' -> '.join(question.why)}\n\n" if question.why else ""
+    options = "\n".join(option_line(option) for option in question.options)
+    recommendation = question.recommendation
+    return (f"{QUESTION_PREFIX}{question.found}\n\n{shown}{why}{denial}"
             f"Options, each with the worker's confidence in percent that it is the right answer:\n{options}\n\n"
             f"Recommended: {recommendation.name} ({recommendation.confidence}%).\n\n"
+            f"Page: {page.as_uri()}\n\n"
             f"The worktree {worktree} and the branch {branch} keep the work. Take the {HUMAN_LABEL} label off to "
             "give the task a new lap.")
 
@@ -274,15 +312,40 @@ def park(task: str, tries: int, comment: str, metadata: list[tuple[str, str]], m
          *set_metadata(*metadata)], main_tree, env)
 
 
-def park_on_question(task: str, tries: int, scratch: Path, worktree: Path, branch: str, main_tree: Path) -> None:
-    """Posts the lap's question report on its task and parks the task; raises QuestionError for a bad report."""
-    question = read_question(scratch)
+def write_page(task: str, question: Question, home: Path, main_tree: Path) -> Path:
+    """Writes the question's page; raises QuestionError when the file cannot be written."""
+    title = str(read_bead(task, main_tree).get("title") or task)
+    cards = tuple(question_page.Card(option.name, option.confidence, option.next_step,
+                                     option.name == question.recommended) for option in question.options)
+    page = question_page.QuestionPage(task, title, question.found, question.shown, question.why, cards)
+    try:
+        return question_page.write(page, home, main_tree)
+    except OSError as error:
+        raise QuestionError(f"the question page could not be written: {error}") from error
+
+
+@dataclass(frozen=True)
+class AskingLap:
+    """The part of a lap that a question needs: the task, the tries it has used, its scratch folder that holds the
+    question report, and the worktree and branch that keep its work."""
+    task: str
+    tries: int
+    scratch: Path
+    worktree: Path
+    branch: str
+
+
+def park_on_question(lap: AskingLap, home: Path, main_tree: Path) -> None:
+    """Writes the lap's question page, posts its question report on the task and parks the task; raises
+    QuestionError for a bad report or a page that cannot be written."""
+    question = read_question(lap.scratch)
+    page = write_page(lap.task, question, home, main_tree)
     options = json.dumps([{"name": option.name, "confidence": option.confidence} for option in question.options])
     denial = question.denial or Denial("", "")
-    park(task, tries, question_comment(question, worktree, branch),
+    park(lap.task, lap.tries, question_comment(question, page, lap.worktree, lap.branch),
          [(OPTIONS_KEY, options), (RECOMMENDED_KEY, question.recommended), (CALL_KEY, denial.call),
           (PATTERN_KEY, denial.pattern)], main_tree)
-    (scratch / QUESTION_REPORT).unlink(missing_ok=True)
+    (lap.scratch / QUESTION_REPORT).unlink(missing_ok=True)
 
 
 def denial_in(metadata: dict) -> Denial | None:
@@ -345,6 +408,7 @@ def main(argv: list[str]) -> int:
     asking.add_argument("--worktree", required=True, type=Path)
     asking.add_argument("--branch", required=True)
     asking.add_argument("--tries", required=True, type=int)
+    asking.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     answering = modes.add_parser("answer", help="add the answered permission question's pattern to the list it names")
     answering.add_argument("task")
     answering.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
@@ -353,7 +417,8 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         if args.mode == "question":
-            park_on_question(args.task, args.tries, args.scratch, args.worktree, args.branch, main_tree)
+            asked = AskingLap(args.task, args.tries, args.scratch, args.worktree, args.branch)
+            park_on_question(asked, repo_settings.jidoka_home(args.jidoka_home), main_tree)
             printed = {"task": args.task, "parked": True}
         else:
             allowed = answered_permission(args.task, repo_settings.jidoka_home(args.jidoka_home), main_tree)

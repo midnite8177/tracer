@@ -16,7 +16,7 @@ read beads:
   blocked --json
   create --title <title> [--type <type>] [--parent <id>] [--labels <label,...>] [--priority <n>]
          [--description <text>] [--deps <id|discovered-from:id>,...] --json
-  update <id> [--claim] [--status <status>] [--assignee <name>] [--add-label <label>]
+  update <id> [--claim] [--status <status>] [--assignee <name>] [--parent <id>] [--add-label <label>]
          [--set-metadata <key>=<value>]... [--unset-metadata <key>]...
   label add|remove <id> <label>
   comment <id> <text>
@@ -353,6 +353,10 @@ def update(store: dict, flags: Flags, cwd: Path) -> bool:
     assignee = flags.one("--assignee")
     if assignee is not None:
         bead["assignee"] = assignee
+    parent = flags.one("--parent")
+    if parent is not None:
+        bead_in(store, parent)
+        bead["parent"] = parent
     for label in flags.values.get("--add-label", []):
         add_label(bead, label)
     for pair in flags.values.get("--set-metadata", []):
@@ -441,7 +445,7 @@ def answer(argv: list[str], cwd: Path) -> bool:
         "create": lambda: create(store, parse(command, args, {"--title", "--type", "--parent", "--labels",
                                                               "--priority", "--description", "--deps"},
                                               {"--json"})),
-        "update": lambda: update(store, parse(command, args, {"--status", "--assignee", "--add-label",
+        "update": lambda: update(store, parse(command, args, {"--status", "--assignee", "--parent", "--add-label",
                                                               "--set-metadata", "--unset-metadata"},
                                               {"--claim"}), cwd),
         "label": lambda: label(store, parse(command, args, set(), set())),

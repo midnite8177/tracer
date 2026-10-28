@@ -1084,6 +1084,21 @@ class QuestionTests(SchedulerCase):
         self.assertIn("- print exact cents (35%)", text)
         self.assertIn("Recommended: round receipts too (60%).", text)
 
+    def test_the_question_a_lap_asks_gets_a_page_in_the_jidoka_home_that_its_comment_links(self):
+        lap = self.open_one_lap()
+        self.leave_question(lap)
+
+        self.report_printed(lap.epic, lap.task, "question")
+
+        [page] = (self.home / "pages").rglob(f"question-{lap.task}.html")
+        html = page.read_text(encoding="utf-8")
+        self.assertIn(self.FOUND, html)
+        self.assertEqual(2, html.count('<article class="option'))
+        self.assertEqual(1, html.count('data-jidoka-slot="answer-panel"'))
+        [question] = [comment for comment in self.comments(lap.task) if str(comment["text"]).startswith("Question: ")]
+        self.assertIn(f"Page: {page.as_uri()}", str(question["text"]))
+        self.assertEqual("", git(self.repo, "status", "--porcelain", "--", ".", ":!.worktrees"))
+
     def test_the_lap_that_asked_frees_its_slot_and_area_for_the_next_task_while_the_other_lap_keeps_running(self):
         epic = self.new_epic()
         asking, waiting, other = (self.new_task_under(epic, "--priority", str(number)) for number in (1, 2, 3))
@@ -1306,6 +1321,49 @@ class QuestionTests(SchedulerCase):
         [action] = self.next_printed(lap.epic)["actions"]
 
         self.assertIsNone(action["answer"])
+
+
+class BuildNotesTests(SchedulerCase):
+    def leave_notes(self, lap: OpenLap, notes: object) -> None:
+        self.leave_in(lap.worktree, ".scratch/build-notes.json", json.dumps(notes))
+
+    def texts_of(self, task: str) -> list[str]:
+        return [str(comment["text"]) for comment in self.comments(task)]
+
+    def test_a_done_build_posts_each_assumption_and_public_api_change_as_a_comment_by_jidoka(self):
+        lap = self.open_one_lap()
+        self.commit_in(lap.worktree, "card.txt", "built\n")
+        self.leave_notes(lap, {"assumptions": ["A card number is 16 digits", "Amounts stay in cents"],
+                               "public_api_changes": ["Card.read takes a Reader as its second argument"]})
+
+        self.build_done(lap.epic, lap.task)
+
+        posted = [comment for comment in self.comments(lap.task)
+                  if str(comment["text"]).startswith(("assumption:", "public API change:"))]
+        self.assertEqual(["assumption: A card number is 16 digits", "assumption: Amounts stay in cents",
+                          "public API change: Card.read takes a Reader as its second argument"],
+                         [comment["text"] for comment in posted])
+        self.assertEqual({"jidoka"}, {comment["author"] for comment in posted})
+        self.assertFalse((lap.worktree / ".scratch" / "build-notes.json").exists())
+
+    def test_a_notes_report_that_cannot_be_used_counts_a_try_and_posts_nothing(self):
+        lap = self.open_one_lap()
+        self.commit_in(lap.worktree, "card.txt", "built\n")
+        self.leave_notes(lap, {"assumptions": ["A card number is 16 digits", ""]})
+
+        self.build_done(lap.epic, lap.task)
+
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+        self.assertEqual([], [text for text in self.texts_of(lap.task) if text.startswith("assumption:")])
+        self.assertTrue(any("build-notes.json" in text for text in self.texts_of(lap.task)))
+
+    def test_a_build_that_does_not_end_done_posts_no_note(self):
+        lap = self.open_one_lap()
+        self.leave_notes(lap, {"assumptions": ["A card number is 16 digits"]})
+
+        self.report_printed(lap.epic, lap.task, "failed", "--why", "the reader is missing")
+
+        self.assertEqual([], [text for text in self.texts_of(lap.task) if text.startswith("assumption:")])
 
 
 class DiscoveredWorkTests(SchedulerCase):

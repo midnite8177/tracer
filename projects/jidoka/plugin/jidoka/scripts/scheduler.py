@@ -79,7 +79,8 @@ left on the epic branch, prints the stage's fields under its key, and does what 
   validation    validation.py: runs once the stages above owe nothing. An epic that holds holdouts ends with a
                 holdouts action until holdouts_run.py takes `report-holdouts <epic> [--ended failed|cut-off]
                 [--why <why>]`.
-pass_ledger.py holds the cap on passes, and gate.py the acceptance gate. A report that is missing or unusable refuses
+pass_ledger.py holds the cap on passes, and gate.py the acceptance gate. An epic at the gate whose human label came off
+with no decision is parked again, as gate_guard.py says. A report that is missing or unusable refuses
 the call and writes nothing. A stage that files tasks in the epic has this call open their laps.
 
 Each call prints one JSON object:
@@ -158,6 +159,7 @@ from pathlib import Path
 import app_check
 import caps
 import clock
+import gate_guard
 import git_exclude
 import heartbeat
 import holdouts
@@ -430,6 +432,9 @@ def settle_epic(epic: Epic, settings: dict, home: Path, main_tree: Path) -> Pass
     """Settles the epic's own state: the pass it owes, the pass cap, and the holdouts it waits on. The epic is read
     again after each step that writes on it."""
     ran = pass_stages.PassRun([], None, None)
+    if gate_guard.is_unlabeled_at_the_gate(epic.shown):
+        gate_guard.park_again(epic.id, main_tree)
+        epic = checked_epic(epic.id, settings, main_tree)
     if is_finished(epic):
         ran = pass_stages.run_pass(epic, settings, home, main_tree)
         if ran.validated is not None:
@@ -597,7 +602,7 @@ ENDINGS: dict[tuple[str, str | None], Ending] = {
     (FAILED, ANY_STAGE): Ending(False, lambda lap, reported, context: lap_stages.count_try(
         lap, context.epic, reported.failed_why, context.main_tree)),
     (QUESTION, ANY_STAGE): Ending(False, lambda lap, reported, context: lap_stages.ask(
-        lap, context.epic, context.main_tree)),
+        lap, context.epic, context.home, context.main_tree)),
     (SEND_BACK, SPEC_CHECK): Ending(False, lambda lap, reported, context: lap_stages.spec_check_sent_back(
         lap, context.epic, context.main_tree)),
     (SEND_BACK, ANY_STAGE): Ending(False, lambda lap, reported, context: lap_stages.send_back(

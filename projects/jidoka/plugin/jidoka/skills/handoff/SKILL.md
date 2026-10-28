@@ -73,8 +73,10 @@ The skill folder is the directory that holds this SKILL.md. Pass
    that is not a task of the epic, and a track that is not `simple` or
    `full`, and writes nothing when it refuses. Show the message and stop.
    On a pass it records each task's track and area, cuts the epic branch from main,
-   posts the table on the epic, sets the preset's rules with one comment
-   for each, and adds the `factory` label last. Exit 1
+   writes the handoff page (`page` in its output) with the table and the
+   rules, posts the table on the epic with a link to the page, sets the
+   preset's rules with one comment for each, and adds the `factory` label
+   last. Give the human the page's path. Exit 1
    after writing has begun leaves the epic without the label; show the
    message, and run the same command again once the cause is fixed. The
    rerun reuses the epic branch and posts no second table.

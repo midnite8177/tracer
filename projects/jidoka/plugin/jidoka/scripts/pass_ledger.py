@@ -10,9 +10,14 @@ twice, and the next pass starts with no flag. A pass with no file to review has 
 counts it, so such an epic still reaches the cap. Only a red validation or a send back at the gate starts a pass past
 the first, because a review files its large findings outside the epic.
 
+A send back at the gate restarts the pass with `restarted_pass`: the count starts again, and the test cleanup's and the
+tidy's state come off, so the next pass cleans and tidies again. The review needs no reset, because it runs whenever the
+epic's files changed since its head.
+
 The pass count is capped at three. An epic that holds open tasks after its third pass would start a fourth:
 `parks_at_the_cap` says so, and `park_at_the_cap` parks the epic with a question instead, and records the count in
-`pass.asked` so that each pass past the cap asks once. Taking the human label off runs the next pass.
+`pass.asked` so that each pass past the cap asks once. Taking the human label off runs the next pass. The human can
+land the parked epic instead: `asked_at_the_cap` tells the gate script the epic waits on that question.
 Everything here writes to bd with BEADS_ACTOR set to jidoka.
 """
 from __future__ import annotations
@@ -62,10 +67,24 @@ def end_clean_pass(epic: str, main_tree: Path) -> None:
     run(["bd", "update", epic, *counted_at_the_end(epic, main_tree)], main_tree, env_as_factory())
 
 
+def restarted_pass() -> list[str]:
+    """The metadata a send back at the acceptance gate takes off the epic: its passes are counted from none, so the
+    cap asks again only after three more, and the test cleanup's and the tidy's state go, so the next pass starts with
+    both."""
+    return unset_metadata(PASSES_KEY, ASKED_KEY, cleanup.STATE_KEY, tidy.STATE_KEY)
+
+
 def parks_at_the_cap(shown: dict, has_open_tasks: bool) -> bool:
     """True when the epic would start a pass past the cap, and has not asked about this one yet."""
     passes = count_of(shown, PASSES_KEY)
     return has_open_tasks and passes >= PASS_CAP and passes > count_of(shown, ASKED_KEY)
+
+
+def asked_at_the_cap(shown: dict) -> bool:
+    """True when the epic's passes have reached the cap and it asked about the next one, so it waits on the human's
+    answer."""
+    passes = count_of(shown, PASSES_KEY)
+    return passes >= PASS_CAP and passes == count_of(shown, ASKED_KEY)
 
 
 def park_at_the_cap(epic: str, shown: dict, main_tree: Path) -> None:
@@ -75,6 +94,7 @@ def park_at_the_cap(epic: str, shown: dict, main_tree: Path) -> None:
     text = "\n".join([f"{park.QUESTION_PREFIX}{epic} has been through {passes} passes, the pass cap is {PASS_CAP}, "
                       "and it still holds open tasks, so the factory parked it before the next pass.", "",
                       *(f"- {each['name']} ({each['confidence']}%)" for each in options), "",
-                      f"Recommended: {NEXT_PASS}. Take the human label off the epic to run it."])
+                      f"Recommended: {NEXT_PASS}. Take the human label off the epic to run it, or run "
+                      f"/jidoka:accept {epic} to land what it holds, which moves its open tasks to a new epic."])
     park_epic(epic, text, {ASKED_KEY: str(passes), park.OPTIONS_KEY: json.dumps(options),
                            park.RECOMMENDED_KEY: NEXT_PASS}, main_tree)

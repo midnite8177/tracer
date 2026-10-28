@@ -1,0 +1,5 @@
+interface:
+  display_name: "Explain"
+  short_description: "Set the look and parts of the pages that explain a moment to the human"
+policy:
+  allow_implicit_invocation: false

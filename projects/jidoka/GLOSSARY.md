@@ -229,11 +229,21 @@ Where the factory's work on an epic ends and the epic waits for the human
 to merge it, send it back with new tasks, or drop it.
 _Avoid_: Approval gate, sign-off
 
+**Send back**:
+The human's choice at the acceptance gate to return the epic with one note
+for each problem, a note pinned to a line of the epic's diff when it is
+about that line. A send-back worker turns each note into a task in the
+epic, with a proposed Demo line, Seams line, area and track. The epic
+leaves the gate and its pass count starts again. The Spec check's send back
+is a different act.
+_Avoid_: Reject, rework, bounce, reopen
+
 **Landing**:
 Putting an accepted epic's work, or bench work, on main as one commit or
 one per task. Bench work runs the full test suite once, at landing, on the
 branch rebased on main; an epic's work is tested again if main moved since
-validation.
+validation. An epic parked at its pass cap with open tasks lands too, and
+its open tasks move to a new epic that planning takes up.
 _Avoid_: Merge (a lap merges into the epic branch), ship, release, integrate
 
 **Discovered work**:
@@ -281,6 +291,13 @@ A web page that shows the human the work at a moment that needs them,
 such as a question or the acceptance gate, through diagrams and examples.
 It sits beside its bead, and the bead keeps the record in plain text.
 _Avoid_: Report, artifact, view, explainer, dashboard
+
+**Review guide**:
+The page at the acceptance gate, read top to bottom: what the epic does in
+short, before and after, how it works, what changed with each file's diff,
+the evidence, assumptions, design findings, removed tests, what nothing
+checked, cost and merge danger, then the human's decision.
+_Avoid_: Gate report, summary, PR description
 
 ### Holdouts
 

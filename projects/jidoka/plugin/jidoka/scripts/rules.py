@@ -66,7 +66,9 @@ KEY_PREFIX = "rules."
 GUIDANCE_KEY = f"{KEY_PREFIX}guidance"
 COMMENT_HEADING = "Factory rules:"
 LAP_LIMIT = "lap_limit"
-COMMITS_ON_MAIN = ["one", "per_task"]
+ONE_COMMIT = "one"
+PER_TASK = "per_task"
+COMMITS_ON_MAIN = [ONE_COMMIT, PER_TASK]
 EXTRA_COMMANDS = "extra_commands"
 
 
@@ -132,7 +134,7 @@ class Preset:
 
 
 PRESETS: dict[str, Preset] = {
-    "bug-epic": Preset({"discovered_bugs_into_epic": True, "commits_on_main": "per_task"}, ""),
+    "bug-epic": Preset({"discovered_bugs_into_epic": True, "commits_on_main": PER_TASK}, ""),
     "improvement-epic": Preset({}, "changes nothing a user sees"),
 }
 
@@ -147,6 +149,11 @@ class Rules:
         """The most laps of the epic at once: the repo's limit, or the epic's own when that is lower."""
         own = self.settings.get(LAP_LIMIT)
         return min(repo_limit, own) if is_whole(own) else repo_limit
+
+    @property
+    def commits_on_main(self) -> str:
+        """How landing puts the epic on main: ONE_COMMIT, or PER_TASK for a commit of each task."""
+        return str(self.settings.get("commits_on_main", ONE_COMMIT))
 
 
 def repo_lap_limit(settings: dict) -> int:

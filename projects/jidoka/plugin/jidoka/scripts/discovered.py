@@ -30,7 +30,7 @@ from pathlib import Path
 import lap_outcomes
 import lap_record
 from commands import BeadNotCreated, env_as_factory, run
-from epic_task import file_outside, file_task
+from epic_task import NewTask, file_outside, file_task
 from report_text import parsed_report
 
 DISCOVERED_REPORT = "discovered.json"
@@ -102,7 +102,8 @@ def file_finding(finding: Finding, found_in: str, area: str, epic: str, main_tre
     try:
         if finding.placement != OUTSIDE:
             origin = None if found_in == epic else found_in
-            return Filed(file_task(epic, finding.title, finding.description, area, origin, main_tree), finding)
+            task = NewTask(finding.title, finding.description, area, lap_record.SIMPLE_TRACK)
+            return Filed(file_task(epic, task, origin, env_as_factory(), main_tree), finding)
         return Filed(file_outside(finding.title, finding.description, found_in, [], main_tree), finding)
     except BeadNotCreated as error:
         raise DiscoveryError(f"bd create did not print the new bead's id: {error.printed.strip()[:200]!r}") from error

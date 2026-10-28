@@ -39,8 +39,40 @@ class GateCase(test_validation.ValidationCase):
         self.build_done(epic, task)
         return epic, task, branch
 
+    def bug_epic_at_the_gate(self, task_count: int) -> tuple[str, list[str], str]:
+        """A bug epic whose tasks each leave a file of their own and merge one after the other, brought to the gate;
+        returns the epic, its tasks in merge order and its epic branch."""
+        epic = self.new_epic()
+        tasks = [self.new_task_under(epic) for _ in range(task_count)]
+        branch = self.hand_off(epic, {task: f"area-{index}" for index, task in enumerate(tasks)})
+        preset = self.rules("preset", epic, "bug-epic")
+        self.assertEqual(0, preset.returncode, preset.stderr)
+        merged: list[str] = []
+        pending = self.lap_actions(self.next_printed(epic))
+        while pending:
+            action = pending.pop(0)
+            self.leave_in(Path(action["worktree"]), self.work_file(action["task"]), "built\n")
+            printed = self.build_done(epic, action["task"])
+            merged.append(action["task"])
+            queued = {each["task"] for each in pending}
+            pending += [each for each in self.lap_actions(printed)
+                        if each["task"] not in queued and each["task"] not in merged]
+        return epic, merged, branch
+
+    def parked_at_the_pass_cap(self, passes: int) -> tuple[str, str, str]:
+        """An epic whose first task merged and whose second is still open, parked on the question the pass cap asks
+        after the given number of passes; returns the epic, the merged task and the open one."""
+        epic, task, _ = self.epic_at_the_gate()
+        open_task = self.new_task_under(epic)
+        fixture.run([self.bd, "update", epic, "--unset-metadata", "gate.state", "--set-metadata",
+                     f"review.passes={passes}", "--set-metadata", f"pass.asked={passes}"], self.repo)
+        return epic, task, open_task
+
     def work_file(self, task: str) -> str:
         return f"{task}.txt"
+
+    def commit_subjects_since(self, commit: str) -> list[str]:
+        return git(self.repo, "log", "--reverse", "--format=%s", f"{commit}..main").splitlines()
 
     def merge(self, epic: str, message: str = MESSAGE) -> subprocess.CompletedProcess:
         return self.launch(GATE, "merge", epic, "--message", message)
@@ -276,6 +308,116 @@ class MergeClosesTheEpicTests(GateCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(landed, done.stdout.splitlines()[0])
         self.assertEqual(landed, git(self.repo, "rev-parse", "main"))
+
+
+class MergeOfABugEpicTests(GateCase):
+    def test_a_bug_epic_of_three_tasks_lands_three_commits_each_with_its_task_s_title_and_file(self):
+        epic, tasks, branch = self.bug_epic_at_the_gate(3)
+        titles = [self.shown(task)["title"] for task in tasks]
+        main_before = git(self.repo, "rev-parse", "main")
+        work = git(self.repo, "rev-parse", f"{branch}^{{tree}}")
+
+        done = self.merge(epic)
+
+        landed = git(self.repo, "rev-parse", "main")
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(landed, done.stdout.splitlines()[0])
+        self.assertEqual(titles, self.commit_subjects_since(main_before))
+        commits = reversed(self.commits_on_main_since(main_before))
+        self.assertEqual([[self.work_file(task)] for task in tasks],
+                         [sorted(git(self.repo, "show", "--format=", "--name-only", commit).splitlines())
+                          for commit in commits])
+        self.assertEqual(work, git(self.repo, "rev-parse", f"{landed}^{{tree}}"))
+        self.assertEqual(("closed", landed), (self.shown(epic)["status"], self.metadata(epic)["gate.landed"]))
+
+    def test_what_a_pass_changed_is_folded_into_the_commit_of_the_task_that_owns_the_file(self):
+        epic, tasks, branch = self.bug_epic_at_the_gate(3)
+        self.commit_on_epic_branch(branch, self.work_file(tasks[0]), "tidied\n")
+        self.commit_on_epic_branch(branch, "tidy-notes.txt", "kept\n")
+        main_before = git(self.repo, "rev-parse", "main")
+        work = git(self.repo, "rev-parse", f"{branch}^{{tree}}")
+
+        done = self.merge(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        first, second, third = reversed(self.commits_on_main_since(main_before))
+        self.assertEqual(3, len(self.commits_on_main_since(main_before)))
+        self.assertEqual("tidied", git(self.repo, "show", f"{first}:{self.work_file(tasks[0])}"))
+        self.assertEqual([self.work_file(tasks[1])], self.files_of(second))
+        self.assertEqual(sorted([self.work_file(tasks[2]), "tidy-notes.txt"]), self.files_of(third))
+        self.assertEqual(work, git(self.repo, "rev-parse", f"{git(self.repo, 'rev-parse', 'main')}^{{tree}}"))
+        self.assertEqual(self.commit_subjects_since(main_before),
+                         [self.shown(task)["title"] for task in tasks])
+
+    def test_a_bug_epic_that_main_moved_under_runs_the_full_suite_once_on_its_last_commit(self):
+        epic, tasks, _ = self.bug_epic_at_the_gate(2)
+        main_before = self.commit_in(self.repo, f"moved-{tasks[0]}.txt", "main moved\n")
+
+        done = self.merge(epic)
+
+        landed = git(self.repo, "rev-parse", "main")
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(2, len(self.commits_on_main_since(main_before)))
+        self.assertEqual([f"{test_validation.SKIP_HAND_RUN} {landed}"], self.landing_runs_of(epic))
+
+
+class MergeAtThePassCapTests(GateCase):
+    def test_an_epic_parked_at_its_pass_cap_with_an_open_task_lands_and_closes(self):
+        epic, task, open_task = self.parked_at_the_pass_cap(3)
+
+        done = self.merge(epic)
+
+        landed = git(self.repo, "rev-parse", "main")
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("built", (self.repo / self.work_file(task)).read_text(encoding="utf-8").strip())
+        self.assertEqual(("closed", landed), (self.shown(epic)["status"], self.metadata(epic)["gate.landed"]))
+        self.assertNotIn("human", self.shown(epic).get("labels") or [])
+        self.assertNotEqual("closed", self.shown(open_task)["status"])
+
+    def test_the_open_tasks_move_to_a_new_epic_that_carries_no_factory_label(self):
+        epic, _, open_task = self.parked_at_the_pass_cap(3)
+        title = self.shown(epic)["title"]
+
+        self.merge(epic)
+
+        new_epic = self.bead_titled(f"{title}, the tasks left open")
+        shown = self.shown(new_epic)
+        self.assertEqual(new_epic, self.metadata(epic)["gate.open_tasks_epic"])
+        self.assertEqual(("epic", "open", []), (shown["issue_type"], shown["status"], shown.get("labels") or []))
+        self.assertEqual({open_task: new_epic}, {child: self.shown(child)["parent"]
+                                                 for child in self.children_of(new_epic).values()})
+        self.assertEqual("open", self.shown(open_task)["status"])
+        self.assertEqual([], [child for child in self.children_of(epic).values() if child == open_task])
+
+    def test_a_rerun_after_the_landing_makes_no_second_epic_for_the_open_tasks(self):
+        epic, _, _ = self.parked_at_the_pass_cap(3)
+        title = self.shown(epic)["title"]
+        self.merge(epic)
+
+        done = self.merge(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.bead_titled(f"{title}, the tasks left open")
+
+    def test_an_epic_under_the_pass_cap_that_waits_on_the_human_is_refused_and_main_is_unchanged(self):
+        epic, _, open_task = self.parked_at_the_pass_cap(2)
+        main_before = git(self.repo, "rev-parse", "main")
+
+        done = self.merge(epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("pass cap", done.stderr)
+        self.assertEqual(main_before, git(self.repo, "rev-parse", "main"))
+        self.assertEqual(epic, self.shown(open_task)["parent"])
+
+    def test_an_epic_at_the_pass_cap_with_no_open_task_is_refused(self):
+        epic, _, open_task = self.parked_at_the_pass_cap(3)
+        fixture.run([self.bd, "close", open_task, "--reason", "done"], self.repo)
+
+        done = self.merge(epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertEqual("open", self.shown(epic)["status"])
 
 
 if __name__ == "__main__":

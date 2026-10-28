@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""The acceptance gate's script: it writes the human's decision on an epic that waits at the gate.
+"""The acceptance gate's script: it writes the human's decisions on an epic that waits at the gate.
 
 `merge <epic> --message <text>` lands the epic on local main. The epic must
 carry the factory and human labels, record its epic branch and have the
 gate.state waiting. The message is the one commit's message, written in the
 style of the repo's log, and it names no bead.
 
+An epic parked at its pass cap, with the human label and the question the cap asks, and open tasks, can be merged
+too, and its open tasks move to a new epic that carries no factory label, as open_tasks.py describes. Under the
+epic's commits_on_main rule per_task, the rebuild makes a commit of each task, as task_commits.py describes, each
+with its task's message, in place of the one commit; the message given then only words the epic's close reason.
+
 Behind the merge lock, the one land.py and the merge gate take, the script
 rebuilds the epic as one commit on main's head, in a detached worktree at
 .worktrees/landing-<epic>. When main is not an ancestor of the commit
-validation checked, main moved since validation, and the script runs the
+validation checked, or the epic branch moved past it, the script runs the
 full suite from the repo settings on the rebuilt commit. A red run posts a
 comment on the epic with the failing commands, leaves the epic at the gate
 and changes nothing else. A rebuild that conflicts with main does the same.
@@ -27,12 +32,44 @@ laps and the epic branch. Each step runs on its own, so one failure stops no
 other. The epic branch stays while the epic is open. A rerun on an epic
 that records gate.landed repeats these steps.
 
+The other decisions leave the epic at the gate, and each refuses an epic that
+does not wait there or that landed. Each is written as the git user.
+
+`wrong <epic> <number> --why <text>` marks an assumption wrong: the gate
+comment numbers the assumptions, and the script posts the assumption and the
+human's reason on the bead that recorded it.
+
+`restore <epic> <test> [--file <file>]` puts a test that the test cleanup
+removed back on the epic branch as one commit of its own, takes it out of the
+epic's cleanup.removed and posts a comment that names the commit, as
+gate_restore.py says. The merge then runs the full suite again, because the
+epic branch moved past the commit validation checked.
+
+`keep-finding <epic> <bead>` and `close-finding <epic> <bead>` take an open
+bead the gate lists as found outside the epic. Keep leaves it open with a
+comment that names the epic; close closes it with a reason that names the
+epic. Neither changes its labels or its parent.
+
+`send-back <epic> --note <text>... --proposals <file>` sends the epic back with one note for each problem, as
+gate_send_back.py says. A note is pinned to a diff line when it reads `<file>:<line>: <text>`. The proposals file is the
+send-back worker's list, one proposal for each note. The script files each as a task in the epic, with the Demo and
+Seams lines, the area and the track it proposes, comments on the epic, records gate.decision=send-back, takes
+gate.state and the human label off, starts the pass count again, and takes cleanup.state and tidy.state off, so the next
+call of the scheduler runs the new tasks and the pass cleans and tidies again. A proposal list that does not answer
+each note once files nothing.
+
+`drop <epic>` closes the epic without landing it, records gate.decision=drop, ends the laps still open on its tasks,
+and removes the factory and human labels. The epic branch stays.
+
+An epic whose human label comes off with no decision is parked again by the scheduler, as gate_guard.py says.
+
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka. After exit 0,
-4 or 5 the script lists each app's hand-run tests, as land.py does.
+4 or 5 the merge lists each app's hand-run tests, as land.py does.
 
 Exit codes:
-  0  landed and closed; the sha is printed.
-  1  refused or failed before the fast-forward, with main unchanged.
+  0  landed and closed, and the sha is printed; or the decision is written.
+  1  refused or failed before the fast-forward, with main unchanged; or the
+     decision is refused, and nothing is written.
   2  a usage error.
   3  waiting on uncommitted edits in main's checkout.
   4  main has the commit but a closing step failed; the sha is printed.
@@ -42,33 +79,51 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import cleanup
+import gate_drop
+import gate_restore
+import gate_send_back
 import lap_record
+import pass_ledger
 import repo_settings
 import review
+import rules
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, MAIN_REF, CommandError, bd_show, capture,
-                      env_as_git_user, labels_of, metadata_of, read_bead, run, worktree_list)
+                      env_as_git_user, labels_of, metadata_of, read_bead, run, set_metadata, unset_metadata,
+                      worktree_list)
 from epic_branch import branch_head, required_head
-from epic_reader import BRANCH_KEY, EPIC_TYPE, EpicReadError, child_ids, recorded_branch, shown_beads, validated_head
+from epic_reader import (BRANCH_KEY, EPIC_TYPE, EpicReadError, child_ids, read_epic, recorded_branch, shown_beads,
+                         validated_head)
 from epics import GATE_STATE_KEY, WAITING, at_the_gate, is_closed
+from gate_items import assumptions_of, gate_items, outside_of
 from holdouts import HOLDOUTS_KEY
 from land import (FULL_SUITE_FAILED_EXIT_CODE, PARTLY_LANDED_EXIT_CODE, WAITING_ON_EDITS_EXIT_CODE, FullSuiteFailed,
                   LandingError, LandingSettings, WaitingOnEdits, acquire_lock, attempt, landing_settings,
                   main_checkout, merge_lock, print_hand_run, refuse_bad_message, refuse_overlapping_edits,
                   release_lock, run_full_suite, subject)
 from merge_gate import contains
-from pass_support import MAIN_BRANCH, park_epic
+from open_tasks import move_open_tasks
+from pass_support import MAIN_BRANCH, PassError, park_epic
 from report_text import tail_of
+from task_commits import commit_per_task
 from worktrees import cut_detached, remove_worktree, stage_worktree
 
 GATE_COMMENT_HEADING = "Acceptance gate:"
 DECISION_KEY = "gate.decision"
 LANDED_KEY = "gate.landed"
 MERGE = "merge"
+WRONG = "wrong"
+RESTORE = "restore"
+KEEP_FINDING = "keep-finding"
+CLOSE_FINDING = "close-finding"
+SEND_BACK = "send-back"
+DROP = "drop"
+WRONG_PREFIX = "Assumption marked wrong at the acceptance gate: "
 WORKTREE_PREFIX = "landing-"
 
 
@@ -87,12 +142,15 @@ class BackAtTheGate(Exception):
 
 @dataclass(frozen=True)
 class EpicAtTheGate:
-    """The epic at the gate: its id, its epic branch, and what the gate recorded on it."""
+    """The epic at the gate: its id, its title, its epic branch, what the gate recorded on it, and its rule for the
+    commits that land on main."""
     id: str
+    title: str
     branch: str
     metadata: dict
     labels: list[str]
     closed: bool
+    commits_on_main: str
 
     @property
     def landed(self) -> str:
@@ -106,17 +164,30 @@ class Landed:
     failed_steps: list[str]
 
 
+def is_parked_at_the_cap(shown: dict, main_tree: Path) -> bool:
+    """True when the epic waits on the question the pass cap asks and still holds open tasks."""
+    return pass_ledger.asked_at_the_cap(shown) and bool(read_epic(shown, main_tree).tasks)
+
+
+def awaits_acceptance(shown: dict, main_tree: Path) -> bool:
+    """True when the human can accept the epic: it waits at the gate, or it is parked at the pass cap with open tasks.
+    The gate script, the gate page and the accept skill all ask this one question."""
+    return at_the_gate(shown) or is_parked_at_the_cap(shown, main_tree)
+
+
 def epic_at_the_gate(epic: str, main_tree: Path) -> EpicAtTheGate:
     shown = read_bead(epic, main_tree)
     labels = labels_of(shown)
-    found = EpicAtTheGate(epic, recorded_branch(shown), metadata_of(shown), labels, is_closed(shown))
+    found = EpicAtTheGate(epic, str(shown.get("title") or ""), recorded_branch(shown), metadata_of(shown), labels,
+                          is_closed(shown), rules.of_epic(shown).commits_on_main)
     if found.landed:
         return found
     if shown.get("issue_type") != EPIC_TYPE:
         raise GateError(f"{epic} is not an epic")
-    if FACTORY_LABEL not in labels or HUMAN_LABEL not in labels or not at_the_gate(shown):
-        raise GateError(f"{epic} does not wait at the acceptance gate: it needs the {FACTORY_LABEL} and "
-                        f"{HUMAN_LABEL} labels and {GATE_STATE_KEY}={WAITING}")
+    if FACTORY_LABEL not in labels or HUMAN_LABEL not in labels or not awaits_acceptance(shown, main_tree):
+        raise GateError(f"{epic} does not wait at the acceptance gate or at the pass cap: it needs the "
+                        f"{FACTORY_LABEL} and {HUMAN_LABEL} labels and either {GATE_STATE_KEY}={WAITING} or the "
+                        "question the pass cap asks, with open tasks")
     if not found.branch:
         raise GateError(f"{epic} records no epic branch as its {BRANCH_KEY} metadata")
     required_head(found.branch, main_tree, GateError)
@@ -134,24 +205,39 @@ def reach_the_gate(epic: str, branch: str, validated_head: str, figures: list[st
                    main_tree: Path) -> None:
     """Puts the epic at the acceptance gate: one comment that starts with the heading and lists the commits the epic
     branch holds that main lacks, the validation's figures, the tests the test cleanup removed, the review's findings
-    of low confidence and the hand-run lines, then gate.state waiting and the human label, last, so a labeled epic
-    always has its comment."""
+    of low confidence, the assumptions, the public API changes, the open beads found outside the epic and the
+    hand-run lines, then gate.state waiting and the human label, last, so a labeled epic always has its comment."""
     shown = bd_show(epic, main_tree)
-    notes = [*cleanup.removed_lines(shown), *review.low_confidence_lines(shown)] if shown is not None else []
+    notes = [*cleanup.removed_lines(shown), *review.low_confidence_lines(shown),
+             *gate_items(epic, str(shown.get("title") or ""), main_tree).lines()] if shown is not None else []
     lines = [f"{GATE_COMMENT_HEADING} {epic} waits for the human, on the epic branch {branch} at {validated_head}.",
              "", "Merged into the epic branch:", *(f"- {commit}" for commit in merged_commits(validated_head, main_tree)),
-             "", *figures, *notes, *hand_run]
+             "", *figures, *notes, *hand_run,
+             "", f"/jidoka:accept {epic} writes the review guide page and takes the human's choice."]
     park_epic(epic, "\n".join(lines), {GATE_STATE_KEY: WAITING}, main_tree)
 
 
-def main_moved_since_validation(epic: EpicAtTheGate, main_tree: Path) -> bool:
+def main_moved_since_validation(metadata: dict, main_tree: Path) -> bool:
     """True when main holds a commit that the commit validation checked lacks, or when no validation is recorded."""
-    validated = validated_head(epic.metadata)
+    validated = validated_head(metadata)
     return not validated or not contains(MAIN_REF, validated, main_tree)
 
 
+def branch_moved_since_validation(metadata: dict, branch: str, main_tree: Path) -> bool:
+    """True when the epic branch moved past the commit validation checked, as a restored test moves it."""
+    return branch_head(branch, main_tree) != validated_head(metadata)
+
+
+def moved_since_validation(metadata: dict, branch: str, main_tree: Path) -> bool:
+    """True when the merge runs the full suite again: main moved, the epic branch moved, or no validation is
+    recorded."""
+    return main_moved_since_validation(metadata, main_tree) or branch_moved_since_validation(metadata, branch,
+                                                                                            main_tree)
+
+
 def rebuild_on_main(epic: EpicAtTheGate, message: str, home: Path, main_tree: Path) -> tuple[Path, str]:
-    """Cuts a worktree at main's head, squashes the epic branch into one commit there; returns it and the commit."""
+    """Cuts a worktree at main's head, squashes the epic branch into one commit there, or into a commit of each task
+    under the per_task rule; returns the worktree and the last commit."""
     path = stage_worktree(WORKTREE_PREFIX, epic.id, main_tree)
     if path.exists():
         remove_worktree(path, main_tree)
@@ -165,8 +251,11 @@ def rebuild_on_main(epic: EpicAtTheGate, message: str, home: Path, main_tree: Pa
                                 "branch by hand and run the gate again.", 1)
         if capture(["git", "diff", "--cached", "--quiet"], path, None).returncode == 0:
             raise GateError(f"{epic.branch} holds nothing that main lacks, so there is nothing to land")
-        run(["git", "commit", "-q", "-m", message], path, None)
-        sha = run(["git", "rev-parse", "HEAD"], path, None).strip()
+        if epic.commits_on_main == rules.PER_TASK:
+            sha = commit_per_task(epic.id, epic.branch, path, main_tree, GateError)
+        else:
+            run(["git", "commit", "-q", "-m", message], path, None)
+            sha = run(["git", "rev-parse", "HEAD"], path, None).strip()
     except (BackAtTheGate, GateError, CommandError):
         remove_worktree(path, main_tree)
         raise
@@ -177,8 +266,8 @@ def validate_again(epic: EpicAtTheGate, worktree: Path, settings: LandingSetting
     try:
         run_full_suite(settings.full_suite, worktree)
     except FullSuiteFailed as failed:
-        lines = [f"Landing {epic.id} was refused: main moved since validation, and the full suite failed on the "
-                 f"epic rebuilt on main. {epic.id} waits at the gate again."]
+        lines = [f"Landing {epic.id} was refused: main or the epic branch moved since validation, and the full "
+                 f"suite failed on the epic rebuilt on main. {epic.id} waits at the gate again."]
         for failure in failed.failures:
             lines += ["", f"`{failure.command}` exited {failure.exit_code}. The end of its output:", "",
                       tail_of(failure.output)]
@@ -192,9 +281,10 @@ def fast_forward_main(epic: EpicAtTheGate, sha: str, checkout: Path) -> None:
 
 def land_on_main(epic: EpicAtTheGate, message: str, settings: LandingSettings, home: Path, checkout: Path,
                  main_tree: Path) -> str:
-    """Rebuilds the epic as one commit on main's head, reruns the suite if main moved, and fast-forwards main."""
+    """Rebuilds the epic as one commit on main's head, reruns the suite if main or the epic branch moved since
+    validation, and fast-forwards main."""
     refuse_overlapping_edits(epic.branch, checkout)
-    moved = main_moved_since_validation(epic, main_tree)
+    moved = moved_since_validation(epic.metadata, epic.branch, main_tree)
     worktree, sha = rebuild_on_main(epic, message, home, main_tree)
     try:
         if moved:
@@ -232,6 +322,10 @@ def close_out(epic: EpicAtTheGate, message: str, sha: str, main_tree: Path) -> L
     failed: list[str] = []
     attempt("bd update", ["bd", "update", epic.id, "--set-metadata", f"{DECISION_KEY}={MERGE}",
                           "--set-metadata", f"{LANDED_KEY}={sha}"], main_tree, env, failed)
+    try:
+        move_open_tasks(epic.id, env, main_tree)
+    except (CommandError, EpicReadError) as error:
+        failed.append(f"move the open tasks to a new epic: {error}")
     closed = epic.closed or attempt("bd close", ["bd", "close", epic.id, "--reason", f"{sha}: {subject(message)}"],
                                     main_tree, env, failed)
     if HOLDOUTS_KEY in epic.metadata:
@@ -262,20 +356,162 @@ def merge(epic_id: str, message: str, home: Path, main_tree: Path) -> tuple[Land
         release_lock(lock)
 
 
-def send_back(epic_id: str, back: BackAtTheGate, main_tree: Path) -> None:
+def post_why_back_at_the_gate(epic_id: str, back: BackAtTheGate, main_tree: Path) -> None:
+    """Posts the refusal on the epic, which stays at the gate."""
     run(["bd", "comment", epic_id, back.comment], main_tree, env_as_git_user(main_tree))
 
 
-def main(argv: list[str]) -> int:
+def epic_waiting(epic_id: str, main_tree: Path) -> EpicAtTheGate:
+    """The epic at the gate, which takes a decision short of the merge only until it lands."""
+    epic = epic_at_the_gate(epic_id, main_tree)
+    if epic.landed:
+        raise GateError(f"{epic_id} landed on main as {epic.landed}, so the gate takes no other decision on it")
+    return epic
+
+
+def mark_wrong(epic_id: str, number: int, why: str, main_tree: Path) -> str:
+    """Posts the human's word that the assumption the gate numbers so is wrong, on the bead that made it."""
+    epic = epic_waiting(epic_id, main_tree)
+    listed = assumptions_of(epic.id, epic.title, main_tree)
+    if not 1 <= number <= len(listed):
+        raise GateError(f"{epic.id} has {len(listed)} assumption{'' if len(listed) == 1 else 's'}, so there is no "
+                        f"assumption {number}")
+    chosen = listed[number - 1]
+    run(["bd", "comment", chosen.bead, f"{WRONG_PREFIX}{chosen.text}\n\n{why}"], main_tree,
+        env_as_git_user(main_tree))
+    return f"Assumption {number} of {epic.id} is marked wrong on {chosen.bead}."
+
+
+def finding_outside(epic_id: str, bead: str, main_tree: Path) -> EpicAtTheGate:
+    epic = epic_waiting(epic_id, main_tree)
+    if bead not in {each.bead for each in outside_of(epic.id, main_tree)}:
+        raise GateError(f"{bead} is no open bead found outside {epic.id}, so the gate leaves it as it is")
+    return epic
+
+
+def keep_finding(epic_id: str, bead: str, main_tree: Path) -> str:
+    epic = finding_outside(epic_id, bead, main_tree)
+    run(["bd", "comment", bead, f"Kept open by the human at the acceptance gate of {epic.id}."], main_tree,
+        env_as_git_user(main_tree))
+    return f"{bead} stays open."
+
+
+def close_finding(epic_id: str, bead: str, main_tree: Path) -> str:
+    epic = finding_outside(epic_id, bead, main_tree)
+    run(["bd", "close", bead, "--reason", f"Closed by the human at the acceptance gate of {epic.id}."], main_tree,
+        env_as_git_user(main_tree))
+    return f"{bead} is closed."
+
+
+def restore_test(epic_id: str, test: str, file: str | None, home: Path, main_tree: Path) -> str:
+    """Puts a test the test cleanup removed back on the epic branch, and takes it out of cleanup.removed."""
+    epic = epic_waiting(epic_id, main_tree)
+    shown = read_bead(epic.id, main_tree)
+    removals = cleanup.removed_before(shown)
+    removal = gate_restore.removal_named(removals, test, file)
+    head = required_head(epic.branch, main_tree, GateError)
+    restored = gate_restore.restore(removal, removals, gate_restore.EpicHead(epic.id, epic.branch, head), home,
+                                    main_tree)
+    kept = [each.fields() for each in removals if each != removal]
+    env = env_as_git_user(main_tree)
+    run(["bd", "update", epic.id, *set_metadata((cleanup.REMOVED_KEY, json.dumps(kept)))], main_tree, env)
+    run(["bd", "comment", epic.id, f"Restored at the acceptance gate: {removal.test} ({removal.file}) is back on "
+                                   f"{epic.branch} in the commit {restored}. Validation never ran it, so the merge "
+                                   "runs the full suite again."], main_tree, env)
+    return restored
+
+
+def send_epic_back(epic_id: str, notes: list[str], proposals: Path, main_tree: Path) -> str:
+    """Files a task for each note, and takes the epic off the gate with its pass count started again."""
+    epic = epic_waiting(epic_id, main_tree)
+    kept = gate_send_back.notes_of(notes)
+    env = env_as_git_user(main_tree)
+    filed = gate_send_back.file_tasks(epic.id, kept, gate_send_back.proposals_for(kept, proposals), env, main_tree)
+    run(["bd", "comment", epic.id, gate_send_back.comment_of(epic.id, filed)], main_tree, env)
+    run(["bd", "update", epic.id, *set_metadata((DECISION_KEY, SEND_BACK)), *unset_metadata(GATE_STATE_KEY),
+         *pass_ledger.restarted_pass()], main_tree, env)
+    run(["bd", "label", "remove", epic.id, HUMAN_LABEL], main_tree, env)
+    return gate_send_back.printed_lines(epic.id, filed)
+
+
+def drop_epic(epic_id: str, main_tree: Path) -> str:
+    """Closes the epic without landing it, ends the laps still open on its tasks, and keeps its epic branch."""
+    epic = epic_waiting(epic_id, main_tree)
+    env = env_as_git_user(main_tree)
+    run(["bd", "update", epic.id, *set_metadata((DECISION_KEY, DROP))], main_tree, env)
+    ended = gate_drop.end_laps(epic.id, main_tree)
+    run(["bd", "close", epic.id, "--reason", f"Dropped at the acceptance gate. The epic branch {epic.branch} stays."],
+        main_tree, env)
+    for label in (FACTORY_LABEL, HUMAN_LABEL):
+        run(["bd", "label", "remove", epic.id, label], main_tree, env)
+    laps = f" The laps of {', '.join(ended)} ended." if ended else ""
+    return f"{epic.id} is dropped and closed.{laps} Its epic branch {epic.branch} stays until you delete it."
+
+
+def decide(args: argparse.Namespace, home: Path, main_tree: Path) -> str:
+    """Writes one of the gate's decisions short of the merge and returns the line that says what changed."""
+    if args.mode == SEND_BACK:
+        return send_epic_back(args.epic, args.note, Path(args.proposals), main_tree)
+    if args.mode == DROP:
+        return drop_epic(args.epic, main_tree)
+    if args.mode == WRONG:
+        return mark_wrong(args.epic, args.number, args.why, main_tree)
+    if args.mode == KEEP_FINDING:
+        return keep_finding(args.epic, args.bead, main_tree)
+    if args.mode == CLOSE_FINDING:
+        return close_finding(args.epic, args.bead, main_tree)
+    return restore_test(args.epic, args.test, args.file, home, main_tree)
+
+
+def run_decision(args: argparse.Namespace) -> int:
+    try:
+        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = repo_settings.jidoka_home(args.jidoka_home)
+        print(decide(args, home, main_tree))
+    except (GateError, gate_restore.RestoreError, gate_send_back.SendBackError, PassError, EpicReadError, CommandError,
+            repo_settings.SettingsError, rules.RulesError, OSError) as error:
+        print(f"gate: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def parsed_arguments(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="gate.py", description="Write the human's decision on an epic at the "
                                                                  "acceptance gate.")
     modes = parser.add_subparsers(dest="mode", required=True)
-    merging = modes.add_parser("merge", help="land the epic on local main as one commit")
+    merging = modes.add_parser(MERGE, help="land the epic on local main as one commit")
     merging.add_argument("epic")
     merging.add_argument("--message", required=True, help="the commit message, which names no bead")
-    merging.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
-    args = parser.parse_args(argv)
+    wrong = modes.add_parser(WRONG, help="mark an assumption the gate comment lists wrong")
+    wrong.add_argument("epic")
+    wrong.add_argument("number", type=int, help="the assumption's number in the gate comment")
+    wrong.add_argument("--why", required=True, help="what is wrong with it, in the human's words")
+    restoring = modes.add_parser(RESTORE, help="put a test the test cleanup removed back on the epic branch")
+    restoring.add_argument("epic")
+    restoring.add_argument("test", help="the test as the Tests removed table names it")
+    restoring.add_argument("--file", help="the file the test was removed from, when two removed tests share a name")
+    keeping = modes.add_parser(KEEP_FINDING, help="keep a bead found outside the epic open")
+    closing = modes.add_parser(CLOSE_FINDING, help="close a bead found outside the epic")
+    for finding in (keeping, closing):
+        finding.add_argument("epic")
+        finding.add_argument("bead")
+    sending_back = modes.add_parser(SEND_BACK, help="send the epic back with a note for each problem")
+    sending_back.add_argument("epic")
+    sending_back.add_argument("--note", action="append", default=[], help="one problem, as `<file>:<line>: <text>` "
+                                                                          "when pinned to a diff line; repeat it")
+    sending_back.add_argument("--proposals", required=True, help="the send-back worker's JSON list, one proposal "
+                                                                 "for each note")
+    dropping = modes.add_parser(DROP, help="close the epic without landing it and keep its epic branch")
+    dropping.add_argument("epic")
+    for mode in (merging, wrong, restoring, keeping, closing, sending_back, dropping):
+        mode.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
+    return parser.parse_args(argv)
 
+
+def main(argv: list[str]) -> int:
+    args = parsed_arguments(argv)
+    if args.mode != MERGE:
+        return run_decision(args)
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         home = repo_settings.jidoka_home(args.jidoka_home)
@@ -287,12 +523,13 @@ def main(argv: list[str]) -> int:
         return WAITING_ON_EDITS_EXIT_CODE
     except BackAtTheGate as back:
         try:
-            send_back(args.epic, back, main_tree)
+            post_why_back_at_the_gate(args.epic, back, main_tree)
         except CommandError as error:
             print(f"gate: could not post the comment on {args.epic}: {error}", file=sys.stderr)
         print(f"gate: {back.comment}", file=sys.stderr)
         return back.exit_code
-    except (GateError, EpicReadError, LandingError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (GateError, EpicReadError, LandingError, CommandError, repo_settings.SettingsError, rules.RulesError,
+            PassError, OSError) as error:
         print(f"gate: {error}", file=sys.stderr)
         return 1
     print(landed.sha)

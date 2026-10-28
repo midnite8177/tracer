@@ -141,19 +141,30 @@ stop.
      outcome, so the task parks again;
    - the paths of `<skill folder>/../tdd/SKILL.md` and
      `<skill folder>/../unslop/SKILL.md`, absolute, to read before
-     writing code, and the repo's house rules by path;
+     writing code, `<skill folder>/../explain/SKILL.md`, absolute, to
+     read before writing a question report, and the repo's house rules by
+     path;
    - each app's `name`, `test` and `test_target`;
    - these limits: build exactly what the task says. Work only in the
      worktree, and keep every file that is not part of the work in the
      scratch folder, the action's `scratch`. Do not commit; the scheduler
      commits what the build leaves in the worktree. Run no `bd` command
      that changes anything. Ask no questions, because no person reads
-     them, and AskUserQuestion is denied. Start no workers. Run only the test files the diff reaches,
-     with an app's `test` command followed by its `test_target` with a
-     filter in the placeholder, and never an app's `test` command alone.
+     them, and AskUserQuestion is denied. Start no workers. Run only the
+     test files the diff reaches, with an app's `test` command followed by
+     its `test_target` with a filter in the placeholder, and never an
+     app's `test` command alone.
      An app with no test command has no tests to run. When the lap mod
      denies a call, find another way, or end with the question outcome
      and a permission question that names the call, as below;
+   - its notes: the assumptions it made, and each change to a library's
+     public API, written in plain sentences to `build-notes.json` in the
+     scratch folder, a JSON object with `assumptions` and
+     `public_api_changes`, each a list of strings, either left out when it
+     has none. A choice the bead, the epic, the glossary or an ADR does not
+     settle, that is cheap to reverse, is an assumption. The scheduler
+     posts each entry on the task, and the acceptance gate lists them. A
+     report that is not that object is a try;
    - this ending: the reply ends with one fenced `json` block, either
      `{"outcome": "done", "app": "<app>", "filter": "<filter>"}`, naming
      the app and the filter that run the build's targeted tests. The
@@ -166,12 +177,17 @@ stop.
      with `found`, what the worker found; `options`, two or more, each
      `{"name": "<option>", "confidence": <percent>}`, the worker's
      confidence in whole percent that it is the right answer; and
-     `recommended`, the name of the one option it recommends. A worker
-     asks only when the bead, the epic, the glossary and the ADRs do not
-     settle the choice, and its recommendation is below 90% or costly to
-     reverse. Otherwise it makes the choice, says so in its reply as an
-     assumption, and goes on: a question that only confirms the design
-     parks a task for nothing.
+     `recommended`, the name of the one option it recommends. The report
+     may add `shown`, what the app shows the user today; `why`, a list of
+     short steps that explain why, in order; and, on an option, `next`,
+     what happens next if the human picks it. The scheduler writes the
+     question's page from them, and the worker reads
+     `<skill folder>/../explain/SKILL.md` for the page's parts and runs
+     those words through unslop. A worker asks only when the bead, the
+     epic, the glossary and the ADRs do not settle the choice, and its
+     recommendation is below 90% or costly to reverse. Otherwise it makes
+     the choice, records it in its notes as an assumption, and goes on: a
+     question that only confirms the design parks a task for nothing.
 
      A permission question is the question about a denied call that has no
      other way round. Its report adds `call`, the denied call as the
@@ -215,6 +231,7 @@ stop.
      commits nothing more: the scheduler folds its fixes into the lap's
      commit. When a rebase is already in progress, it runs
      `git rebase --abort` first;
+   - no notes: the scheduler posts none of a merge worker's;
    - the same ending: `done` with the app and the filter that run the
      tests the merge touches, or `failed` with its `why`.
 

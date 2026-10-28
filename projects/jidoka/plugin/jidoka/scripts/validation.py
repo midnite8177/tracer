@@ -25,7 +25,8 @@ one comment that starts with
 "Acceptance gate:" and lists the commits the epic branch holds that main
 lacks, the figures, the Tests removed table from the epic's `cleanup.removed`
 metadata when a test cleanup removed any test, the review's findings of low confidence from `review.low`, which
-were never fixed, and each hand-run group with the command that runs it.
+were never fixed, the assumptions, the public API changes and the open beads found outside the epic, as
+gate_items.py reads them, and each hand-run group with the command that runs it.
 Then it sets the epic's `gate.state` to waiting and adds the human label,
 last, so a labeled epic always has its comment.
 
@@ -56,8 +57,9 @@ import targeted_tests
 from commands import env_as_factory, head_of, run, run_test_command, set_metadata
 from epic_branch import required_head
 from epic_reader import VALIDATED_HEAD_KEY
-from epic_task import file_task
+from epic_task import NewTask, file_task
 from epics import HOLDOUTS_PENDING_KEY, PENDING
+from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, PassError, move_epic_branch, worktree_at
 from report_text import tail_of
 from worktrees import cut_detached, remove_worktree, stage_worktree
@@ -70,6 +72,9 @@ HAND_RUN_FIELDS = ("app", "name", "reason", "command")
 UNKNOWN_FIGURES = "no test count in its output"
 RESULT_KEY = "validation.result"
 RUNS_KEY = "validation.runs"
+TESTS_KEY = "validation.tests"
+SKIPPED_KEY = "validation.skipped"
+SECONDS_KEY = "validation.seconds"
 PASS = "pass"
 FAIL = "fail"
 
@@ -261,9 +266,9 @@ def record(epic: str, validated: Validated, main_tree: Path) -> None:
     run(["bd", "comment", epic, "\n".join([validated.headline, *figures_lines(validated)])], main_tree, env)
     waiting = set_metadata((HOLDOUTS_PENDING_KEY, PENDING)) if validated.kept is not None else []
     run(["bd", "update", epic, *set_metadata((RESULT_KEY, validated.result), (VALIDATED_HEAD_KEY, validated.head),
-                                             ("validation.seconds", validated.seconds),
-                                             ("validation.tests", validated.tests),
-                                             ("validation.skipped", validated.skipped),
+                                             (SECONDS_KEY, validated.seconds),
+                                             (TESTS_KEY, validated.tests),
+                                             (SKIPPED_KEY, validated.skipped),
                                              (RUNS_KEY, runs_as_text(validated.runs))), *waiting], main_tree, env)
 
 
@@ -289,8 +294,9 @@ def failure_description(failed: list[CommandRun]) -> str:
 def file_failure(epic: str, failed: list[CommandRun], main_tree: Path) -> str:
     """Files the task that says what failed, with the track and area the scheduler needs to open its lap."""
     app = failed[0].suite.app
-    return file_task(epic, f"Make the {app} full suite pass on the epic branch", failure_description(failed), app,
-                     None, main_tree)
+    task = NewTask(f"Make the {app} full suite pass on the epic branch", failure_description(failed), app,
+                   SIMPLE_TRACK)
+    return file_task(epic, task, None, env_as_factory(), main_tree)
 
 
 def validate(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Validated:
