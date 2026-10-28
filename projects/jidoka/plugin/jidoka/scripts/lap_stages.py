@@ -160,7 +160,7 @@ def block(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
         if not blockers:
             raise discovered.DiscoveryError(f"the {BLOCKED} outcome needs a finding in "
                                             f"{discovered.DISCOVERED_REPORT} whose placement is {discovered.BLOCKS}")
-        filed = discovered.file_findings(findings, lap.task, lap.area, epic, main_tree)
+        filed = discovered.file_blockers(findings, lap.task, lap.area, epic, main_tree)
     except discovered.DiscoveryError as error:
         return count_try(lap, epic, f"the discovered work could not be filed: {error}", main_tree)
     discovered.block(lap.task, lap.tries, [item for item in filed if item.finding.placement == discovered.BLOCKS],

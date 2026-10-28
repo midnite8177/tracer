@@ -1498,6 +1498,49 @@ class DiscoveredWorkTests(SchedulerCase):
                          {open_lap["task"]: open_lap["stage"] for open_lap in printed["laps"]})
         self.assertNotIn(task, [open_lap["task"] for open_lap in printed["laps"]])
 
+    def two_tasks_with_a_lap_on_the_first(self) -> tuple[OpenLap, str, str]:
+        """An epic with two tasks and a lap open on the first; returns the lap, the second task and its title."""
+        epic = self.new_epic()
+        task, sibling = self.new_task_under(epic, "--priority", "1"), self.new_task_under(epic, "--priority", "2")
+        self.hand_off(epic, {task: "till", sibling: "receipts"})
+        opened = {action["task"]: action for action in self.next_printed(epic)["actions"]}
+        title = str(self.shown(sibling)["title"])
+        return OpenLap(epic, task, "", Path(opened[task]["worktree"])), sibling, title
+
+    def test_a_blocking_finding_that_names_a_sibling_task_by_its_title_waits_on_it_and_files_nothing(self):
+        lap, sibling, title = self.two_tasks_with_a_lap_on_the_first()
+        before = self.children_of(lap.epic)
+        self.leave_findings(lap, self.finding(title, "blocks"))
+
+        printed = self.report_printed(lap.epic, lap.task, "blocked")
+
+        self.assertEqual(before, self.children_of(lap.epic))
+        self.assertEqual({("blocks", sibling), ("parent-child", lap.epic)}, self.links_of(lap.task))
+        self.assertEqual("blocked", self.metadata(lap.task)["lap.stage"])
+        [blocked] = [comment for comment in self.comments(lap.task) if str(comment["text"]).startswith("Blocked: ")]
+        self.assertIn(sibling, str(blocked["text"]))
+        self.assertNotIn(lap.task, [open_lap["task"] for open_lap in printed["laps"]])
+
+    def test_a_blocking_finding_that_names_a_sibling_task_by_its_id_waits_on_it_and_files_nothing(self):
+        lap, sibling, _ = self.two_tasks_with_a_lap_on_the_first()
+        before = self.children_of(lap.epic)
+        self.leave_findings(lap, self.finding(sibling, "blocks"))
+
+        self.report_printed(lap.epic, lap.task, "blocked")
+
+        self.assertEqual(before, self.children_of(lap.epic))
+        self.assertEqual({("blocks", sibling), ("parent-child", lap.epic)}, self.links_of(lap.task))
+
+    def test_a_blocking_finding_that_names_no_task_is_filed_while_another_waits_on_the_sibling(self):
+        lap, sibling, title = self.two_tasks_with_a_lap_on_the_first()
+        self.leave_findings(lap, self.finding(title, "blocks"), self.finding("Round the receipt total", "blocks"))
+
+        self.report_printed(lap.epic, lap.task, "blocked")
+
+        new_task = self.children_of(lap.epic)["Round the receipt total"]
+        self.assertEqual({("blocks", sibling), ("blocks", new_task), ("parent-child", lap.epic)},
+                         self.links_of(lap.task))
+
     def test_a_blocked_report_naming_no_blocking_finding_counts_a_try_and_files_nothing(self):
         lap = self.open_one_lap()
         self.leave_findings(lap, self.finding("Sweep the till", "outside"))
