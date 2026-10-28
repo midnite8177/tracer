@@ -56,7 +56,10 @@ metadata gets `lap.number` (1, or one more than the number of the lap the task l
 `lap.stage` (the build, or the research on the full track while the task holds no `research brief:` comment),
 `lap.tries` (0), `lap.workspace` (the worktree), `lap.slot` (the lowest slot from 1 up that no open lap of the epic
 holds) and `lap.branch`. A rerun after a failure, and the lap that follows a park, reuse the worktree and branch they
-find. A new lap starts with no tries, no cutoffs, no send-backs and no merge tries, because each is a cap on one lap.
+find. A reused lap branch that lacks the epic branch's head is first rebased onto it under the merge lock, with the
+work its worktree holds uncommitted kept as it was, so the lap starts from the work left behind on top of the epic
+branch as it is now. A rebase that conflicts is aborted, and the task parks with the conflicting files named and no
+action, its worktree and branch as they were. A new lap starts with no tries, no cutoffs, no send-backs and no merge tries, because each is a cap on one lap.
 A lap opens for each ready task, in bd priority order and then by id, while the open laps of the epic number fewer
 than the lap limit, which is the repo settings' lap_limit or the epic's own factory rule when that is lower, read
 afresh on every call, and never for a task whose area an open lap already holds. A task is ready when every bead it
@@ -309,10 +312,20 @@ def planned_laps(ready: list[dict], held: list[Lap], limit: int, now: int, main_
     return planned
 
 
-def open_workspace(lap: Lap, epic_head: str, home: Path, main_tree: Path) -> None:
+def open_workspace(lap: Lap, epic_head: str, home: Path, main_tree: Path) -> list[str]:
+    """Makes the lap's worktree, or brings the one it reuses onto the epic head, and returns the files that conflict
+    with the epic branch, empty when none does."""
     make_worktree(Workspace(lap.branch, lap.worktree, epic_head), main_tree)
+    conflicted = lap_stages.rebase_onto_epic_head(lap, epic_head, home)
     private_docs.share(main_tree, lap.worktree.resolve(), home)
     lap.scratch.mkdir(exist_ok=True)
+    return conflicted
+
+
+def park_on_conflict(lap: Lap, epic: Epic, conflicted: list[str], main_tree: Path) -> None:
+    lap_stages.park_lap(lap, epic.id, lap.tries,
+                        f"the work left behind conflicts with {epic.branch} in {', '.join(conflicted)}, so the "
+                        "rebase onto it was aborted before the lap started", main_tree)
 
 
 def record(lap: Lap, main_tree: Path) -> None:
@@ -592,11 +605,13 @@ def open_laps(epic: Epic, holds: Holds, resumed: set[str], limit: int, now: int,
     if planned:
         hide_worktrees(main_tree)
         git_exclude.add(git_exclude.exclude_file(main_tree), [git_exclude.exclude_line(SCRATCH_FOLDER, True)])
-    for lap in planned:
-        open_workspace(lap, epic_head, home, main_tree)
+    conflicts = {lap.task: open_workspace(lap, epic_head, home, main_tree) for lap in planned}
     for lap in planned:
         record(lap, main_tree)
-    return planned
+    for lap in planned:
+        if conflicts[lap.task]:
+            park_on_conflict(lap, epic, conflicts[lap.task], main_tree)
+    return [lap for lap in planned if not conflicts[lap.task]]
 
 
 def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], restarting: bool) -> dict:

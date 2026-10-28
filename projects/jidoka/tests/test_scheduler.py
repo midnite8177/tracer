@@ -981,15 +981,17 @@ class MergeWorkerTests(SchedulerCase):
         self.assertEqual(("merge", 0, "0"), (metadata["lap.stage"], metadata["lap.tries"],
                                              str(metadata.get("lap.mergetries", 0))))
 
-    def test_a_manager_restarting_gives_a_lap_left_at_the_merge_stage_a_new_lap_at_the_build_on_its_worktree(self):
+    def test_a_manager_restarting_parks_a_lap_left_at_the_merge_stage_whose_new_lap_conflicts_with_the_epic_branch(
+            self):
         lap = self.conflicting_lap()
         self.build_done(lap.epic, lap.task)
 
         printed = self.next_printed(lap.epic)
 
-        [action] = printed["actions"]
-        self.assertEqual(("build", lap.task, 2), (action["action"], action["task"], action["lap"]))
-        self.assertEqual(str(lap.worktree), action["worktree"])
+        self.assertEqual([], printed["actions"])
+        self.assertEqual(2, self.metadata(lap.task)["lap.number"])
+        self.assertIn("conflicts with", self.assert_parked(lap, 0))
+        self.assertIn("card.txt", self.assert_parked(lap, 0))
 
     def test_two_laps_that_touch_the_same_function_both_merge_the_second_after_a_merge_worker_reconciles_it(self):
         epic = self.new_epic()
@@ -1467,22 +1469,66 @@ class DiscoveredWorkTests(SchedulerCase):
         self.assertEqual([new_task], [action["task"] for action in printed["actions"]])
         self.assertEqual([new_task], [open_lap["task"] for open_lap in printed["laps"]])
 
-    def test_the_blocked_task_gets_its_next_lap_in_the_same_worktree_only_after_the_new_task_merges(self):
-        lap = self.open_one_lap()
-        built = self.commit_in(lap.worktree, "card.txt", "half built\n")
+    def status_of(self, worktree: Path) -> list[str]:
+        return fixture.run(["git", "status", "--porcelain", "--untracked-files=all"], worktree).splitlines()
+
+    def block_until_the_new_task_merges(self, lap: OpenLap, new_task_file: str) -> tuple[str, dict]:
+        """Ends the lap blocked on a new task whose build commits the file and merges, and returns the epic branch's
+        head after the merge with what the merge's report printed."""
         new_task, printed = self.block_on(lap, "Round the receipt total")
         [new_action] = printed["actions"]
         self.assertEqual([new_task], [open_lap["task"] for open_lap in self.next_printed(lap.epic)["laps"]])
-        self.commit_in(Path(new_action["worktree"]), "rounding.txt", "rounded\n")
-
+        self.commit_in(Path(new_action["worktree"]), new_task_file, "rounded\n")
         merged = self.build_done(lap.epic, new_task)
+        return git(self.repo, "rev-parse", lap.epic_branch), merged
+
+    def test_the_blocked_task_gets_its_next_lap_in_the_same_worktree_only_after_the_new_task_merges(self):
+        lap = self.open_one_lap()
+        built = self.commit_in(lap.worktree, "card.txt", "half built\n")
+
+        epic_head, merged = self.block_until_the_new_task_merges(lap, "rounding.txt")
 
         [again] = merged["actions"]
         self.assertEqual(("build", lap.task, lap.worktree), (again["action"], again["task"], Path(again["worktree"])))
         self.assertIsNone(again["answer"])
-        self.assertEqual(built, git(lap.worktree, "rev-parse", "HEAD"))
+        self.assertEqual(epic_head, git(lap.worktree, "rev-parse", "HEAD~1"))
+        self.assertNotEqual(built, git(lap.worktree, "rev-parse", "HEAD"))
+        self.assertEqual(("Add card.txt", ["card.txt"], "half built"),
+                         (git(lap.worktree, "log", "-1", "--format=%s"), self.files_of(f"lap/{lap.task}"),
+                          git(lap.worktree, "show", "HEAD:card.txt")))
+        self.assertEqual("rounded\n", (lap.worktree / "rounding.txt").read_text(encoding="utf-8"))
         self.assertEqual(("in_progress", "build"), (self.shown(lap.task)["status"],
                                                     self.metadata(lap.task)["lap.stage"]))
+
+    def test_a_task_that_reopens_after_blocked_keeps_its_uncommitted_work_on_top_of_the_epic_head(self):
+        lap = self.open_one_lap()
+        self.commit_in(lap.worktree, "card.txt", "half built\n")
+        self.leave_in(lap.worktree, "card.txt", "more built\n")
+        self.leave_in(lap.worktree, "reader.txt", "started\n")
+
+        epic_head, _ = self.block_until_the_new_task_merges(lap, "rounding.txt")
+
+        self.assertEqual(epic_head, git(lap.worktree, "rev-parse", "HEAD~1"))
+        self.assertEqual("Add card.txt", git(lap.worktree, "log", "-1", "--format=%s"))
+        self.assertEqual(("more built\n", "started\n"),
+                         ((lap.worktree / "card.txt").read_text(encoding="utf-8"),
+                          (lap.worktree / "reader.txt").read_text(encoding="utf-8")))
+        self.assertEqual([" M card.txt", "?? reader.txt"], self.status_of(lap.worktree))
+
+    def test_a_task_whose_work_conflicts_with_the_epic_branch_when_it_reopens_parks_naming_the_files(self):
+        lap = self.open_one_lap()
+        built = self.commit_in(lap.worktree, "card.txt", "half built\n")
+        self.leave_in(lap.worktree, "reader.txt", "started\n")
+
+        _, merged = self.block_until_the_new_task_merges(lap, "card.txt")
+
+        self.assertEqual([], merged["actions"])
+        why = self.assert_parked(lap, 0)
+        self.assertIn("card.txt", why)
+        self.assertIn(f"lap/{lap.task}", why)
+        self.assertEqual((f"lap/{lap.task}", built),
+                         (git(lap.worktree, "branch", "--show-current"), git(lap.worktree, "rev-parse", "HEAD")))
+        self.assertEqual(["?? reader.txt"], self.status_of(lap.worktree))
 
     def test_a_blocked_task_opens_no_lap_while_the_task_it_waits_on_is_open(self):
         epic = self.new_epic()
@@ -1507,10 +1553,13 @@ class DiscoveredWorkTests(SchedulerCase):
         title = str(self.shown(sibling)["title"])
         return OpenLap(epic, task, "", Path(opened[task]["worktree"])), sibling, title
 
-    def test_a_blocking_finding_that_names_a_sibling_task_by_its_title_waits_on_it_and_files_nothing(self):
+    def naming(self, task: str, title: str) -> dict:
+        return {**self.finding(title, "blocks"), "task": task}
+
+    def test_a_blocking_finding_that_names_a_sibling_task_waits_on_it_and_files_nothing(self):
         lap, sibling, title = self.two_tasks_with_a_lap_on_the_first()
         before = self.children_of(lap.epic)
-        self.leave_findings(lap, self.finding(title, "blocks"))
+        self.leave_findings(lap, self.naming(sibling, title))
 
         printed = self.report_printed(lap.epic, lap.task, "blocked")
 
@@ -1521,19 +1570,45 @@ class DiscoveredWorkTests(SchedulerCase):
         self.assertIn(sibling, str(blocked["text"]))
         self.assertNotIn(lap.task, [open_lap["task"] for open_lap in printed["laps"]])
 
-    def test_a_blocking_finding_that_names_a_sibling_task_by_its_id_waits_on_it_and_files_nothing(self):
-        lap, sibling, _ = self.two_tasks_with_a_lap_on_the_first()
-        before = self.children_of(lap.epic)
-        self.leave_findings(lap, self.finding(sibling, "blocks"))
+    def test_a_blocking_finding_whose_title_is_a_sibling_task_but_names_no_task_is_filed_as_a_new_task(self):
+        lap, sibling, title = self.two_tasks_with_a_lap_on_the_first()
+        self.leave_findings(lap, self.finding(title, "blocks"))
 
         self.report_printed(lap.epic, lap.task, "blocked")
 
+        [(_, waited_on)] = [link for link in self.links_of(lap.task) if link[0] == "blocks"]
+        self.assertNotEqual(sibling, waited_on)
+
+    def test_a_finding_that_names_a_task_the_epic_does_not_hold_counts_a_try_and_files_nothing(self):
+        lap, _, title = self.two_tasks_with_a_lap_on_the_first()
+        before = self.children_of(lap.epic)
+        self.leave_findings(lap, self.naming("no-such-task", title))
+
+        self.report_printed(lap.epic, lap.task, "blocked")
+
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
         self.assertEqual(before, self.children_of(lap.epic))
-        self.assertEqual({("blocks", sibling), ("parent-child", lap.epic)}, self.links_of(lap.task))
+        self.assertTrue(any("no-such-task" in text for text in self.texts(lap.task)))
+
+    def test_a_finding_that_names_the_task_it_was_found_in_counts_a_try(self):
+        lap, _, title = self.two_tasks_with_a_lap_on_the_first()
+        self.leave_findings(lap, self.naming(lap.task, title))
+
+        self.report_printed(lap.epic, lap.task, "blocked")
+
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+
+    def test_a_finding_that_names_a_task_without_blocking_is_refused_and_counts_a_try(self):
+        lap, sibling, title = self.two_tasks_with_a_lap_on_the_first()
+        self.leave_findings(lap, {**self.finding(title, "outside"), "task": sibling})
+
+        self.report_printed(lap.epic, lap.task, "blocked")
+
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
 
     def test_a_blocking_finding_that_names_no_task_is_filed_while_another_waits_on_the_sibling(self):
         lap, sibling, title = self.two_tasks_with_a_lap_on_the_first()
-        self.leave_findings(lap, self.finding(title, "blocks"), self.finding("Round the receipt total", "blocks"))
+        self.leave_findings(lap, self.naming(sibling, title), self.finding("Round the receipt total", "blocks"))
 
         self.report_printed(lap.epic, lap.task, "blocked")
 

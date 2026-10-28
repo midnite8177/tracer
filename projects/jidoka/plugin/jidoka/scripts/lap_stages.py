@@ -91,9 +91,11 @@ from commands import HUMAN_LABEL, capture, env_as_factory, run
 from epic_branch import EpicBranchMoved, branch_head, checked_out_branch
 from lap_outcomes import BLOCKED, DONE, SchedulerError
 from lap_record import APP_CHECK, BRIEF_PREFIX, BUILD, FULL_TRACK, INTERRUPTED, MERGE, SPEC_CHECK, Lap, words
+from land import merge_locked
 from worktrees import stage_without_scratch
 
 RESEARCH_BRIEF = "research-brief.md"
+UNCOMMITTED_WORK = "The uncommitted work of the lap, carried through its rebase"
 INTERRUPTED_PREFIX = "Interrupted: "
 TEST_FAILURES_TO_MOVE = 2
 
@@ -385,6 +387,40 @@ def abandon_rebase(lap: Lap) -> None:
     """Puts a worktree whose rebase a worker left unfinished back on the lap branch as it was."""
     if rebase_unfinished(lap):
         capture(["git", "rebase", "--abort"], lap.worktree, env_as_factory())
+
+
+def rebase_onto_epic_head(lap: Lap, epic_head: str, home: Path) -> list[str]:
+    """Rebases the lap branch onto the epic head under the merge lock, so a lap that starts from the work left behind
+    starts on the epic branch as it is now. Returns the conflicting files, empty when the lap already held the epic
+    head or the rebase went through.
+
+    The work the worktree holds uncommitted rides through the rebase in a commit of its own, which is undone after it,
+    so the files are as the worker left them and the stash, which every worktree shares, is never touched. A conflict
+    aborts the rebase and leaves the worktree as it was.
+    """
+    if merge_gate.contains(epic_head, "HEAD", lap.worktree):
+        return []
+    with merge_locked(home):
+        return rebase_keeping_uncommitted_work(lap, epic_head)
+
+
+def rebase_keeping_uncommitted_work(lap: Lap, epic_head: str) -> list[str]:
+    env = env_as_factory()
+    carried = stage_work(lap)
+    if carried:
+        run(["git", "commit", "--quiet", "--no-verify", "--message", UNCOMMITTED_WORK], lap.worktree, env)
+    done = capture(["git", "rebase", "--quiet", "--empty=keep", "--reapply-cherry-picks", epic_head], lap.worktree,
+                   env)
+    conflicted = [] if done.returncode == 0 else run(["git", "diff", "--name-only", "--diff-filter=U"], lap.worktree,
+                                                     env).split()
+    if done.returncode != 0:
+        capture(["git", "rebase", "--abort"], lap.worktree, env)
+    if carried:
+        run(["git", "reset", "--quiet", "HEAD~1"], lap.worktree, env)
+    if done.returncode != 0 and not conflicted:
+        raise SchedulerError(f"git rebase of {lap.branch} onto {epic_head} failed, so its worktree is as it was: "
+                             f"{done.stderr.strip() or done.stdout.strip()}")
+    return conflicted
 
 
 def count_merge_try(lap: Lap, epic: str, why: str, main_tree: Path) -> list[Lap]:
