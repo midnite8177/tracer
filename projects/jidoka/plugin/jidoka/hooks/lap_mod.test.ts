@@ -378,6 +378,17 @@ test('a lap worker starts no workers', async ($, on) => {
   }
 })
 
+test('a lap worker that calls Skill is denied and told to Read the skill instead', async ($, on) => {
+  engineBeneath(on, SETTINGS)
+  await startLap($, WORKTREE)
+
+  const verdict = await $.tool.check({ tool: 'Skill', input: { skill: 'jidoka:no-comments' }, agentId: 'a1' })
+
+  expect(verdict.decision).toBe('deny')
+  expect(verdict.reason).toContain('SKILL.md')
+  expect(verdict.reason).toContain('Read')
+})
+
 test('any other tool the lists do not cover is denied, never asked', async ($, on) => {
   engineBeneath(on, SETTINGS)
   await startLap($, WORKTREE)

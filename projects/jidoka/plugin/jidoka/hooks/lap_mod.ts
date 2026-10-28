@@ -12,6 +12,7 @@ const DRIVE = /^[A-Za-z]:/
 const HOST_ONLY = new Set(['ToolSearch', 'SendMessage', 'ListAgents', 'SubagentHandback'])
 const ASKS_LIVE = 'AskUserQuestion'
 const STARTS_WORKERS = new Set(['Agent', 'Workflow'])
+const LOADS_A_SKILL = 'Skill'
 const FILE_PATH_FIELD: ReadonlyMap<string, string> = new Map([
   ['Write', 'file_path'],
   ['Edit', 'file_path'],
@@ -461,6 +462,14 @@ export const register: Register = on => {
     }
     if (STARTS_WORKERS.has(e.tool)) {
       return { decision: 'deny', reason: `jidoka: a lap worker starts no workers, so its ${e.tool} call is denied.` }
+    }
+    if (e.tool === LOADS_A_SKILL) {
+      return {
+        decision: 'deny',
+        reason:
+          "jidoka: a lap worker never calls Skill. Read the skill's SKILL.md with Read instead, " +
+          'and follow it as the prompt says.',
+      }
     }
     const pathField = FILE_PATH_FIELD.get(e.tool)
     if (pathField !== undefined) {

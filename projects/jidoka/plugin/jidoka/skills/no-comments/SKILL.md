@@ -23,7 +23,14 @@ Read the repo's rules before jidoka's: its `CLAUDE.md`, `AGENTS.md` and the file
 
 ## Unattended
 
-A caller that says the run is unattended (the factory's tidy stage does) gets the steps below with these changes, and no human in the loop. Ask nothing. The scope is the caller's file list, and no file outside it changes. Step 5 does not wait for approval: delete each constraint comment, report the constraint open, and encode nothing. Step 2's rerun still happens once. Leave the edits uncommitted, and end with the report from step 6.
+A caller that says the run is unattended (the factory's tidy stage does) gets the steps below with these changes, and no human in the loop. Ask nothing, spawn no subagent, and call no skill. The scope is the caller's file list, and no file outside it changes.
+
+- Step 1: make comment-sicko's pass yourself. Read `<this skill's folder>/../../agents/comment-sicko.md` for its rules, make the comment deletions it calls for in scope, and note its `MUST KILL` flags. Then audit your own diff as step 2 says.
+- Step 2: check a claim against the symbol's callers with Read and Grep only; there is no `git log` or `git blame`. A keep you cannot prove dies, as an ambiguous keep does. The rerun still happens once: revert the rejected deletions and make the pass again with the failure named.
+- Step 3: read `<this skill's folder>/../codebase-design/SKILL.md` instead of calling the Skill tool.
+- Steps 4 and 5: list out-of-scope work in `discovered.json` in the scratch folder the caller names, in the shape the caller gives, never as a bead. Step 5 does not wait for approval: delete each constraint comment, report the constraint open, and encode nothing.
+
+Leave the edits uncommitted, and end with the report from step 6.
 
 ## Steps
 

@@ -233,14 +233,19 @@ Then comes the tidy, tidy.py, once per pass: when the epic branch differs from
 main in files outside every acceptance folder and the epic's `tidy.state` is not
 done, the call prints a `tidy` action (`epic`, `branch`, `head`, `worktree`,
 `scratch`, `files`) for a worker on the local tier, runs no validation, and
-repeats the action on every call until the worker is reported. The worker runs
-no-comments, with comment-sicko, and unslop in their unattended mode over those
-files, asks no question and commits nothing. `report-tidy <epic>` commits what
-it left as the one commit "No comments and unslop" on the epic branch, records
-`tidy.state`, and does what `carry-on` does, which starts the review; it prints
-the same JSON as `next`, with `tidy` holding the new `head` and the `changed`
-files. A worktree that changed a file outside the epic's files refuses the call
-and writes nothing.
+repeats the action on every call until the worker is reported. The worker
+follows no-comments and unslop in their unattended mode over those files, asks
+no question, starts no workers and commits nothing, and lists the work it found
+outside those files in `discovered.json` in the scratch folder. `report-tidy
+<epic>` commits what it left as the one commit "No comments and unslop" on the
+epic branch, records `tidy.state`, files each finding through discovered.py,
+and does what `carry-on` does: a lap for each finding placed `epic`, a child of
+the epic with the area `tidy` and the simple track, then the review. A finding
+placed `outside` has no parent and is linked discovered-from to the epic. It
+prints the same JSON as `next`, with `tidy` holding the new `head` and the
+`changed` files. A worktree that changed a file outside the epic's files, an
+unusable discovered-work report, or a finding placed `blocks`, which the tidy
+cannot place, refuses the call and writes nothing.
 
 Then comes the review, review.py: when the epic's files changed since the
 review's fixed point, the call prints one `review` action for each lane,
@@ -426,6 +431,7 @@ SECONDS_PER_MINUTE = 60
 LAP_BRANCH_PREFIX = "lap/"
 LAP_FOLDER_PREFIX = "lap-"
 SCRATCH_FOLDER = ".scratch"
+TIDY_AREA = "tidy"
 NOTHING_STAGED = 0
 CHANGES_STAGED = 1
 HANDOFF = "/jidoka:handoff"
@@ -1397,14 +1403,33 @@ def report_cleanup(bead: str, home: Path, main_tree: Path) -> dict:
 
 
 def report_tidy(bead: str, home: Path, main_tree: Path) -> dict:
-    """Takes the tidy worker's word that it is done, commits what it left on the epic branch, then does what
-    `carry-on` does, which starts the review."""
+    """Takes the tidy worker's word that it is done, commits what it left on the epic branch, files the work it
+    discovered, then does what `carry-on` does: a lap for each task it filed in the epic, then the review."""
     settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
     epic = checked_epic(bead, settings, main_tree)
+    findings = tidy_findings(epic.id, main_tree)
     tidied = tidy.settle(epic.id, recorded_branch(epic), settings, home, main_tree)
+    discovered.file_findings(findings, epic.id, TIDY_AREA, epic.id, main_tree)
     printed = next_moves(bead, home, main_tree, [], False)
     printed["tidy"] = tidied.fields()
     return printed
+
+
+def tidy_findings(epic: str, main_tree: Path) -> list[discovered.Finding]:
+    """The work the tidy worker discovered.
+
+    The tidy has no task to block, so a finding placed `blocks` refuses the report, as an unusable report does.
+    """
+    try:
+        findings = discovered.read_findings(tidy.worktree_of(epic, main_tree) / SCRATCH_FOLDER)
+        if discovered.blockers_in(findings):
+            raise discovered.DiscoveryError(f"the tidy has no task to block, so no finding is placed "
+                                            f"{discovered.BLOCKS}; place each one {discovered.EPIC} or "
+                                            f"{discovered.OUTSIDE}")
+    except discovered.DiscoveryError as error:
+        raise SchedulerError(f"the tidy's discovered work cannot be filed, so nothing was written: {error}") \
+            from error
+    return findings
 
 
 def report_review(bead: str, home: Path, main_tree: Path) -> dict:

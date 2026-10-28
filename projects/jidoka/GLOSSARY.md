@@ -190,12 +190,11 @@ table. The pass starts only after every task has merged.
 _Avoid_: Test pruning, test pass
 
 **Tidy**:
-The stage of a pass after test cleanup, which runs no-comments, with
-comment-sicko, and unslop once over the epic's whole diff on the local tier,
-with no human prompt. It edits only files the epic added or changed outside
-the acceptance folders, and a script commits its changes as one commit of
-their own. The local tier falls back to the host's own harness until the
-local-model trial.
+The stage of a pass after test cleanup, which runs no-comments and unslop
+once over the epic's whole diff on the local tier, with no human prompt. It
+edits only files the epic added or changed outside the acceptance folders,
+and a script commits its changes as one commit of their own. The local tier
+falls back to the host's own harness until the local-model trial.
 _Avoid_: Polish, comment pass, prose cleanup
 
 **Review**:
@@ -234,13 +233,15 @@ validation.
 _Avoid_: Merge (a lap merges into the epic branch), ship, release, integrate
 
 **Discovered work**:
-A problem a lap or a pass finds outside the task or diff it is working
-on. It is filed as a bead linked discovered-from to the task it was found
-in, inside the epic when the epic cannot be accepted without it, and
-outside the epic otherwise. A worker never files it: its stage ends with a
-discovered-work report in its scratch folder, and a script files it. A lap
-that cannot finish without its discovered task ends blocked, and the task
-waits on the new one.
+A problem a lap or a pass finds outside the task or diff it is working on.
+It is filed as a bead inside the epic when the epic cannot be accepted
+without it, and outside the epic otherwise. A lap's finding is linked
+discovered-from to the task it was found in. A pass's finding inside the
+epic is the epic's child, which says where it came from; outside the epic it
+is linked discovered-from to the epic. A worker never files it: its stage
+ends with a discovered-work report in its scratch folder, and a script files
+it. A lap that cannot finish without its discovered task ends blocked, and
+the task waits on the new one.
 _Avoid_: Side quest, follow-up, tech debt
 
 ### Asking the human

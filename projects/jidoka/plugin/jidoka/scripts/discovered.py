@@ -1,22 +1,26 @@
-"""Files the work a lap discovers, and blocks a lap's task on the discovered task it cannot finish without.
+"""Files the work a lap or a pass discovers, and blocks a lap's task on the discovered task it cannot finish without.
 
 The scheduler imports it; no command line runs it. A worker never files a
 bead. A stage that found work ends with a discovered-work report, the JSON
-file `discovered.json` in the lap's scratch folder: a list of findings, each
-with
+file `discovered.json` in its worktree's scratch folder: a list of findings,
+each with
   title        the new bead's title.
   description  what was seen and where.
   placement    where it goes: `blocks`, `epic` or `outside`.
-`blocks` is work inside the epic that the lap's task cannot finish without.
+`blocks` is work inside the epic that the lap's task cannot finish without,
+so only a lap's report holds it.
 `epic` is work inside the epic that acceptance would reject the epic without.
 `outside` is everything else, and the new bead has no parent.
 
-Every bead filed is linked discovered-from to the lap's task. A bead inside
-the epic gets the lap's area and the simple track, so it is a task the
-factory takes once it is ready. A task that cannot finish waits on each
-`blocks` task and ends its lap blocked: stage `blocked`, status open, no
-assignee and no `human` label, so it is ready again, with a new lap on its
-kept worktree and branch, once every task it waits on is closed.
+A lap's finding is linked discovered-from to the lap's task. A pass's
+finding inside the epic is the epic's child and has no other link, because
+bd keeps one link per pair of beads; outside the epic it is linked
+discovered-from to the epic. A bead inside the epic gets an area and the
+simple track, so it is a task the factory takes once it is ready. A task
+that cannot finish waits on each `blocks` task and ends its lap blocked:
+stage `blocked`, status open, no assignee and no `human` label, so it is
+ready again, with a new lap on its kept worktree and branch, once every
+task it waits on is closed.
 """
 from __future__ import annotations
 
@@ -73,7 +77,8 @@ def finding_of(value: object) -> Finding:
 
 
 def read_findings(scratch: Path) -> list[Finding]:
-    """The findings in the lap's scratch folder; none when the lap left no report, and DiscoveryError when it is unusable."""
+    """The findings in the scratch folder; none when the stage left no report, and DiscoveryError when it is
+    unusable."""
     path = scratch / DISCOVERED_REPORT
     if not path.exists():
         return []
@@ -92,13 +97,19 @@ def blockers_in(findings: list[Finding]) -> list[Finding]:
     return [finding for finding in findings if finding.placement == BLOCKS]
 
 
-def file_finding(finding: Finding, task: str, area: str, epic: str, main_tree: Path) -> Filed:
-    """Creates the bead for one finding, linked discovered-from to the task; inside the epic it also gets the area."""
+def file_finding(finding: Finding, found_in: str, area: str, epic: str, main_tree: Path) -> Filed:
+    """Creates the bead for one finding, linked discovered-from to the bead it was found in unless that bead is its
+    parent; inside the epic it also gets the area.
+
+    bd keeps one link per pair of beads, so a finding inside the epic that the epic itself found keeps only the
+    parent-child link, which already says where it came from.
+    """
     env = env_as_factory()
     inside = finding.placement != OUTSIDE
     parent = ["--parent", epic] if inside else []
+    origin = [] if inside and found_in == epic else ["--deps", f"{DISCOVERED_FROM}:{found_in}"]
     created = run(["bd", "create", "--title", finding.title, "--description", finding.description, "--type=task",
-                   *parent, "--deps", f"{DISCOVERED_FROM}:{task}", "--json"], main_tree, env)
+                   *parent, *origin, "--json"], main_tree, env)
     try:
         bead = str(json.loads(created)["id"])
     except (ValueError, KeyError, TypeError) as error:
@@ -109,8 +120,8 @@ def file_finding(finding: Finding, task: str, area: str, epic: str, main_tree: P
     return Filed(bead, finding)
 
 
-def file_findings(findings: list[Finding], task: str, area: str, epic: str, main_tree: Path) -> list[Filed]:
-    return [file_finding(finding, task, area, epic, main_tree) for finding in findings]
+def file_findings(findings: list[Finding], found_in: str, area: str, epic: str, main_tree: Path) -> list[Filed]:
+    return [file_finding(finding, found_in, area, epic, main_tree) for finding in findings]
 
 
 def clear_report(scratch: Path) -> None:

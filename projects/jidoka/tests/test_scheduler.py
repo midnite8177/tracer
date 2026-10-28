@@ -159,6 +159,20 @@ class SchedulerCase(unittest.TestCase):
     def metadata(self, bead: str) -> dict:
         return self.shown(bead).get("metadata") or {}
 
+    def children_of(self, epic: str) -> dict[str, str]:
+        """The titles of the epic's children, each with its id."""
+        listed = json.loads(fixture.run([self.bd, "list", "--parent", epic, "--all", "--limit", "0", "--json"],
+                                        self.repo))
+        return {child["title"]: child["id"] for child in listed}
+
+    def bead_titled(self, title: str) -> str:
+        listed = json.loads(fixture.run([self.bd, "list", "--all", "--limit", "0", "--json"], self.repo))
+        [found] = [bead["id"] for bead in listed if bead["title"] == title]
+        return found
+
+    def links_of(self, bead: str) -> set[tuple[str, str]]:
+        return {(link["dependency_type"], link["id"]) for link in self.shown(bead).get("dependencies") or []}
+
     def comments(self, bead: str) -> list[dict]:
         return json.loads(fixture.run([self.bd, "comments", bead, "--json"], self.repo) or "[]") or []
 
@@ -1305,20 +1319,6 @@ class DiscoveredWorkTests(SchedulerCase):
 
     def leave_findings(self, lap: OpenLap, *findings: dict) -> None:
         self.leave_in(lap.worktree, ".scratch/discovered.json", json.dumps(list(findings)))
-
-    def children_of(self, epic: str) -> dict[str, str]:
-        """The titles of the epic's children, each with its id."""
-        listed = json.loads(fixture.run([self.bd, "list", "--parent", epic, "--all", "--limit", "0", "--json"],
-                                        self.repo))
-        return {child["title"]: child["id"] for child in listed}
-
-    def bead_titled(self, title: str) -> str:
-        listed = json.loads(fixture.run([self.bd, "list", "--all", "--limit", "0", "--json"], self.repo))
-        [found] = [bead["id"] for bead in listed if bead["title"] == title]
-        return found
-
-    def links_of(self, bead: str) -> set[tuple[str, str]]:
-        return {(link["dependency_type"], link["id"]) for link in self.shown(bead).get("dependencies") or []}
 
     def block_on(self, lap: OpenLap, title: str) -> tuple[str, dict]:
         """Ends the lap blocked on a new task, and returns that task's id with what the report printed."""

@@ -139,6 +139,10 @@ class Play:
                             "Fix the rounding", "--type=task", "--parent", epic, "--description",
                             "Seen while reading the card", "--deps", f"discovered-from:{second}")
         self.show("show a task discovered from another", found)
+        twice = self.create("create a task under the epic that names the epic in discovered-from too", "twice",
+                            "--title", "Round the total", "--type=task", "--parent", epic, "--description",
+                            "Seen while tidying the epic", "--deps", f"discovered-from:{epic}")
+        self.show("show a task linked to its epic twice", twice)
         self.call("hand off the tasks", "Jeff Contract", "update", first, "--set-metadata", "lap.track=simple",
                   "--set-metadata", "lap.area=till")
         self.call("record the epic branch", "Jeff Contract", "update", epic, "--set-metadata",
@@ -269,6 +273,13 @@ class FakeBdContractTests(unittest.TestCase):
         self.assertEqual("discovered-from", next(link["dependency_type"] for link in
                                                  self.fake.calls["show a task discovered from another"]
                                                  .printed[0]["dependencies"] if link["id"] == "second"))
+
+    def test_a_task_under_the_epic_that_names_the_epic_in_discovered_from_too_keeps_only_its_parent_link(self):
+        self.assert_same("create a task under the epic that names the epic in discovered-from too")
+        self.assert_same("show a task linked to its epic twice")
+        self.assertEqual([("parent-child", "epic")],
+                         [(link["dependency_type"], link["id"]) for link in
+                          self.fake.calls["show a task linked to its epic twice"].printed[0]["dependencies"]])
 
     def test_a_claim_takes_an_unclaimed_task_or_one_its_actor_holds_and_fails_on_another_actor_s(self):
         for step in ("claim a task", "claim a task its actor already holds", "claim a task another actor holds"):

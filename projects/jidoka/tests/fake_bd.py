@@ -36,10 +36,11 @@ value that reads as a JSON number, true, false or null is stored as that,
 and anything else as the text given, as bd stores it. A task's id is its
 parent's id and a number. Each bare id --deps names is a bead the new one
 waits on, as bd reads a bare id there, and each discovered-from:<id> is a
-link that waits on nothing. A bead is ready when it is open and
-waits on no bead that is still open, and blocked when it is not closed and
-waits on one; blocked prints the ids of the beads not yet closed that it
-waits on. A claim sets the assignee to the actor and the status to
+link that waits on nothing. bd keeps one link per pair of beads, so a --deps
+entry that names the --parent is dropped and only parent-child stays. A
+bead is ready when it is open and waits on no bead that is still open, and
+blocked when it is not closed and waits on one; blocked prints the ids of
+the beads not yet closed that it waits on. A claim sets the assignee to the actor and the status to
 in_progress, and fails when another actor is the assignee. The actor, who
 also writes each comment, is BEADS_ACTOR, or else the repo's git user.name.
 prime prints a fixed text in place of bd's workflow notes. A list without
@@ -316,7 +317,8 @@ def create(store: dict, flags: Flags) -> bool:
         if has_kind and kind != DISCOVERED_FROM:
             raise Refused(f"the fake bd takes --deps only as bead ids or {DISCOVERED_FROM}:<id>, not {dep_spec!r}")
         bead_in(store, target)
-        (origins if has_kind else blockers).append(target)
+        if target != parent:
+            (origins if has_kind else blockers).append(target)
     bead = {"id": bead_id, "title": title, "status": "open",
             "priority": int(priority) if priority is not None else DEFAULT_PRIORITY,
             "issue_type": flags.one("--type") or DEFAULT_TYPE, "assignee": "", "close_reason": "",

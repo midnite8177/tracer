@@ -284,13 +284,19 @@ stop.
    first line is `jidoka lap worktree: <worktree>`, the action's `worktree`.
    Its prompt holds the paths of the glossary and the house rules, and these
    limits: it works only in the worktree, commits nothing, runs no `bd`
-   command that changes anything, starts no workers other than
-   comment-sicko, and asks no question. Its job: run the `jidoka:no-comments`
-   skill and then the `jidoka:unslop` skill in their unattended mode over
-   the action's `files`, and no other file. Its ending is
-   `{"outcome": "done"}` or `{"outcome": "failed", "why": "<one line>"}`. Write
-   the event line `<epic-id> tidy started: <files> files on <head>` with the
-   count of the action's `files`.
+   command that changes anything, starts no workers, and asks no question.
+   Its job: read `<skill folder>/../no-comments/SKILL.md` and follow its
+   Unattended section, then read `<skill folder>/../unslop/SKILL.md` and
+   follow its Unattended section, over the action's `files`, and no other
+   file. It files no bead: it lists the work it finds outside those files
+   in `discovered.json` in the action's `scratch` folder, a JSON list of
+   objects with `title`, `description` and `placement`, where `placement`
+   is `epic` when acceptance would reject the epic without the work and
+   `outside` otherwise. The tidy has no task to block, so the scheduler
+   refuses `blocks`. Its ending is `{"outcome": "done"}` or
+   `{"outcome": "failed", "why": "<one line>"}`. Write the event line
+   `<epic-id> tidy started: <files> files on <head>` with the count of the
+   action's `files`.
 
    Actions whose `action` is `review` come together, one for each lane
    (`comments`, `standards`, `spec`, `design`), and have no task: the tidy is
