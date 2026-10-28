@@ -30,23 +30,40 @@ class Settled(Protocol):
 @dataclass(frozen=True)
 class ReportMode:
     """A `report-*` mode: the key its settled fields print under, the name its workers' ledger rows carry as their
-    stage, its help, and the call that settles the stage."""
+    stage, its help, the call that settles the stage, and the call that counts a run that ended failed or cut off,
+    given the epic, the ending, the worker's why and the main tree, and true when it parked the epic. A stage whose
+    ended runs are not counted has none, and takes no `--why`."""
     key: str
     stage: str
     help: str
     settle: Callable[[str, str, dict, Path, Path], Settled]
+    count_ended_run: Callable[[str, str, str | None, Path], bool] | None
+
+
+HOLDOUTS_STAGE = "holdouts"
+
+
+def count_ended_holdouts_run(epic: str, ended: str, why: str | None, main_tree: Path) -> bool:
+    return holdouts_run.count_failed_run(epic, ended, why or f"the validation worker ended {ended} with no reason",
+                                         main_tree)
 
 
 REPORT_MODES = {
     "report-cleanup": ReportMode("cleanup", cleanup.ACTION,
-                                 "take the test cleanup worker's report, and print the next moves", cleanup.settle),
+                                 "take the test cleanup worker's report, and print the next moves", cleanup.settle,
+                                 None),
     "report-tidy": ReportMode("tidy", tidy.ACTION,
-                              "take the tidy worker's word that it is done, and print the next moves", tidy.settle),
+                              "take the word of every tidy batch's worker that it is done, and print the next moves",
+                              tidy.settle, None),
     "report-review": ReportMode("review", review.REVIEW_ACTION,
-                                "take the reports of the review's lanes, and print the next moves", review.settle),
+                                "take the reports of the review's lanes, and print the next moves", review.settle,
+                                None),
     "report-fix": ReportMode("fix", review.FIX_ACTION,
                              "take the fix worker's word that it is done, and print the next moves",
-                             review.settle_fix),
+                             review.settle_fix, None),
+    "report-holdouts": ReportMode("validation", HOLDOUTS_STAGE,
+                                  "take the validation worker's report on the epic's holdouts, and print the next "
+                                  "moves", holdouts_run.settle_holdouts, count_ended_holdouts_run),
 }
 
 
@@ -88,7 +105,7 @@ def pass_stage_actions(epic: Epic, settings: dict, home: Path, main_tree: Path) 
         return [cleaned.fields()]
     tidied = tidy.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
     if tidied is not None:
-        return [tidied.fields()]
+        return tidied.actions()
     fixing = review.fix_to_run(epic.id, epic.shown, branch, settings, home, main_tree)
     if fixing is not None:
         return [fixing.fields()]

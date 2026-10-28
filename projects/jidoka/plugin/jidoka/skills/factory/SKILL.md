@@ -314,26 +314,35 @@ is no try.
    the event line `<epic-id> test-cleanup started: <tests> files on <head>`
    with the count of the action's `tests`.
 
-   An action whose `action` is `tidy` has no task: every task has merged and
-   the test cleanup is done. Run `bench route local` once, and start one lap
-   worker on that route; the local route runs in the host's own harness until
-   the local-model trial, so it falls back to native with no extra step. Its
-   first line is `jidoka lap worktree: <worktree>`, the action's `worktree`.
-   Its prompt holds the paths of the glossary and the house rules, and these
-   limits: it works only in the worktree, commits nothing, runs no `bd`
-   command that changes anything, starts no workers, and asks no question.
-   Its job: read `<skill folder>/../no-comments/SKILL.md` and follow its
-   Unattended section, then read `<skill folder>/../unslop/SKILL.md` and
-   follow its Unattended section, over the action's `files`, and no other
-   file. It files no bead: it lists the work it finds outside those files
-   in `discovered.json` in the action's `scratch` folder, a JSON list of
-   objects with `title`, `description` and `placement`, where `placement`
-   is `epic` when acceptance would reject the epic without the work and
-   `outside` otherwise. The tidy has no task to block, so the scheduler
-   refuses `blocks`. Its ending is `{"outcome": "done"}` or
+   Actions whose `action` is `tidy` come together, one for each tidy batch,
+   and have no task: every task has merged and the test cleanup is done. Each
+   batch is a few of the epic's files, its own `files`, numbered by its
+   `batch`. Run `bench route local` once, and start one lap worker for each
+   batch, side by side, all on that route; the local route runs in the host's
+   own harness until the local-model trial, so it falls back to native with
+   no extra step. Each prompt's first line is
+   `jidoka lap worktree: <worktree>`, the action's `worktree`, which the
+   batches share. Each prompt holds the paths of the glossary and the house
+   rules, and these limits: it works only in the worktree, commits nothing,
+   runs no `bd` command that changes anything, starts no workers, and asks no
+   question. It reads each file with the Read tool, never with `cat`, `head`
+   or `wc` through Bash, and never with a compound command such as
+   `cd <dir> && cat <file>`, which the lap mod denies. It leaves line wrapping
+   alone: it never re-wraps a line or a paragraph, never splits or joins a
+   sentence to fit a width, and changes a line only to delete a comment or to
+   reword prose that the skills call for. Its job: read
+   `<skill folder>/../no-comments/SKILL.md` and follow its Unattended
+   section, then read `<skill folder>/../unslop/SKILL.md` and follow its
+   Unattended section, over its action's `files`, and no other file, reading
+   every one of them. It files no bead: it lists the work it finds outside
+   those files in `discovered.json` in its action's `scratch` folder, a JSON
+   list of objects with `title`, `description` and `placement`, where
+   `placement` is `epic` when acceptance would reject the epic without the
+   work and `outside` otherwise. The tidy has no task to block, so the
+   scheduler refuses `blocks`. Its ending is `{"outcome": "done"}` or
    `{"outcome": "failed", "why": "<one line>"}`. Write the event line
-   `<epic-id> tidy started: <files> files on <head>` with the count of the
-   action's `files`.
+   `<epic-id> tidy started: batch <batch>, <files> files on <head>` for each,
+   with the count of the action's `files`.
 
    Actions whose `action` is `review` come together, one for each lane that
    runs, and have no task: the tidy is done. The `comments`, `standards` and
@@ -420,7 +429,8 @@ is no try.
    Each report below of a worker of the pass also ends with
    `--worker <agent id> <tier>`: the agent id the Agent tool printed when it
    started the worker, and the tier whose route you started it on. The report
-   of the review ends with one `--worker` for each lane. The ledger prices
+   of the tidy ends with one `--worker <agent id> local` for each batch, and
+   the report of the review with one `--worker` for each lane. The ledger prices
    each run from the tokens the lap mod summed under its agent id, and
    writes it with no task.
 
@@ -432,12 +442,13 @@ is no try.
    A worker that fails or is cut off is not reported: write
    `<epic-id> test-cleanup ended: failed` and stop.
 
-   A tidy worker's reply that ends with `{"outcome": "done"}` is reported
-   with `scheduler report-tidy <epic-id> --jidoka-home ...`, which prints the
+   Wait for every tidy batch worker you started. When each ended with
+   `{"outcome": "done"}`, report them once, together, with
+   `scheduler report-tidy <epic-id> --jidoka-home ...`, which prints the
    same JSON as `next`, with the review that follows. Write
    `<epic-id> tidy ended: done`. Exit 1 means the report was refused; show
-   stderr and stop, and the next `scheduler next` starts the worker again.
-   A worker that fails or is cut off is not reported: write
+   stderr and stop, and the next `scheduler next` starts the batches again.
+   When any batch worker fails or is cut off, report none: write
    `<epic-id> tidy ended: failed` and stop.
 
    Wait for every review lane worker you started. When each ended with

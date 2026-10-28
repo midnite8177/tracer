@@ -194,11 +194,19 @@ _Avoid_: Test pruning, test pass
 
 **Tidy**:
 The stage of a pass after test cleanup, which runs no-comments and unslop
-once over the epic's whole diff on the local tier, with no human prompt. It
-edits only files the epic added or changed outside the acceptance folders,
-and a script commits its changes as one commit of their own. The local tier
-falls back to the host's own harness until the local-model trial.
+over the files the epic added or changed outside the acceptance folders, in
+tidy batches side by side on the local tier, with no human prompt. It edits
+only those files and may add a new file, never in an acceptance folder, and
+once every batch's worker is done a script commits their changes as one
+commit of their own. The local tier falls back to the
+host's own harness until the local-model trial.
 _Avoid_: Polish, comment pass, prose cleanup
+
+**Tidy batch**:
+A slice of the tidy's files, a few of them and of a bounded size, that one
+tidy worker reads whole and edits. The batches of one tidy share its
+worktree and its head, and no file is in two of them.
+_Avoid_: Lane (that is the review's), chunk, shard
 
 **Review**:
 The stage of a pass after the tidy, in which the Comments, Standards and

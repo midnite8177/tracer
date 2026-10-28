@@ -1,30 +1,39 @@
-"""Tidy, the stage of a pass after test cleanup, which runs no-comments and unslop over the whole epic's diff without
-asking anyone.
+"""Tidy, the stage of a pass after test cleanup, which runs no-comments and unslop over the epic's files in tidy
+batches, side by side, without asking anyone.
 
 The scheduler calls `to_run` once every task of an epic is closed and its test cleanup is done. When the epic branch
 differs from main in files outside every app's acceptance folder, which is protected, it cuts a detached worktree at
-.worktrees/tidy-<epic> from the epic branch's head and hands the scheduler a `tidy` action for a worker on the local
-tier. The worker follows the two skills in their unattended mode, asks no question, starts no workers, edits only
-those files, commits nothing, and lists the work it found outside them in the scratch folder's discovered-work report,
-which `settle` files in the epic. `settle` takes its word that it is done: it refuses, and writes nothing, when the
-worktree changed a path outside those files that the epic's head already holds (a new file is accepted), or when the
-worktree is gone or at another head than the worker started from. Otherwise it commits the change as one commit, "No comments and unslop", fast-forwards the epic branch to it
-under the merge lock, and with BEADS_ACTOR set to jidoka records on the epic `tidy.state` (done) and posts a comment.
-A tidy that changes nothing makes no commit. Validation clears `tidy.state` when it ends red, so the next pass tidies
-again.
+.worktrees/tidy-<epic> from the epic branch's head and hands the scheduler one `tidy` action for each tidy batch, each
+for a worker on the local tier. A batch is a slice of those files, sorted by path, of at most BATCH_FILES files and,
+unless it holds one file, at most BATCH_BYTES bytes at the epic branch's head, so no worker runs out of effort before
+it has read its files. The batches share the worktree and its head, and each has a scratch folder of its own,
+.scratch/batch-<n>. Each worker follows the two skills in their unattended mode over its batch alone, asks no
+question, starts no workers, commits nothing, and lists the work it found outside its files in its scratch folder's
+discovered-work report, which `settle` files in the epic, once for each title.
+
+The manager reports the tidy once, after every batch's worker ended done. `settle` takes their word: it refuses, and
+writes nothing, when the worktree changed a path outside the epic's files that the epic's head already holds (a new
+file is accepted, unless it lies in an acceptance folder), or when the worktree is gone or at another head than the workers started from. Otherwise it commits
+the change as one commit, "No comments and unslop", fast-forwards the epic branch to it under the merge lock, and with
+BEADS_ACTOR set to jidoka records on the epic `tidy.state` (done) and posts a comment. A tidy that changes nothing
+makes no commit. Validation clears `tidy.state` when it ends red, so the next pass tidies again.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import discovered
 import pass_support
 from commands import SCRATCH_FOLDER, env_as_factory, read_bead, run, set_metadata
-from pass_support import Committed, PassError, Stage, StageToRun, accepts_any_change, every_file
+from pass_support import Committed, PassError, Stage, StageToRun, accepts_any_change, every_file, worktree_at
 
 STATE_KEY = "tidy.state"
 ACTION = "tidy"
 AREA = "tidy"
+BATCH_FILES = 4
+BATCH_BYTES = 40_000
+BATCH_FOLDER_PREFIX = "batch-"
 
 
 class TidyError(PassError):
@@ -36,40 +45,119 @@ STAGE = Stage(name="tidy", action=ACTION, prefix="tidy-", state_key=STATE_KEY,
               may_add_files=True, files_key="files", wants=every_file, report=None, error=TidyError)
 
 
+@dataclass(frozen=True)
+class SizedFile:
+    """A file of the epic and its size in bytes at the epic branch's head."""
+    path: str
+    size: int
+
+
+@dataclass(frozen=True)
+class TidyToRun:
+    """The tidy a pass owes: the stage over every file of the epic, which the settle checks the worktree against, and
+    the tidy batches its workers take, in order."""
+    stage: StageToRun
+    batches: list[list[str]]
+
+    def scratch_of(self, number: int) -> Path:
+        return self.stage.scratch / f"{BATCH_FOLDER_PREFIX}{number}"
+
+    def scratch_folders(self) -> list[Path]:
+        return [self.scratch_of(number) for number in range(1, len(self.batches) + 1)]
+
+    def actions(self) -> list[dict]:
+        return [{**self.stage.fields(), "batch": number, "scratch": str(self.scratch_of(number)),
+                 self.stage.stage.files_key: files} for number, files in enumerate(self.batches, 1)]
+
+
 def worktree_of(epic: str, main_tree: Path) -> Path:
     return STAGE.worktree_of(epic, main_tree)
 
 
-def to_run(epic: str, shown: dict, branch: str, settings: dict, home: Path, main_tree: Path) -> StageToRun | None:
+def batches_of(files: list[SizedFile], most_files: int, most_bytes: int) -> list[list[str]]:
+    """The files in batches, in path order: a batch takes the next file while it holds fewer than `most_files` files
+    and the file keeps its total within `most_bytes`. A file larger than `most_bytes` gets a batch of its own."""
+    batches: list[list[str]] = []
+    total = 0
+    for each in sorted(files, key=lambda sized: sized.path):
+        if not batches or len(batches[-1]) >= most_files or total + each.size > most_bytes:
+            batches.append([])
+            total = 0
+        batches[-1].append(each.path)
+        total += each.size
+    return batches
+
+
+def sizes_at(head: str, files: list[str], main_tree: Path) -> list[SizedFile]:
+    """Each file with its size in the commit, read from git, so the batches stay the same while the head does."""
+    listed = run(["git", "--literal-pathspecs", "ls-tree", "-r", "-l", "-z", head, "--", *files], main_tree, None)
+    sizes = {}
+    for entry in filter(None, listed.split("\0")):
+        described, path = entry.split("\t", 1)
+        size = described.split()[3]
+        sizes[path] = int(size) if size.isdigit() else 0
+    return [SizedFile(path, sizes.get(path, 0)) for path in files]
+
+
+def tidy_of(found: StageToRun, main_tree: Path) -> TidyToRun:
+    return TidyToRun(found, batches_of(sizes_at(found.head, found.files, main_tree), BATCH_FILES, BATCH_BYTES))
+
+
+def to_run(epic: str, shown: dict, branch: str, settings: dict, home: Path, main_tree: Path) -> TidyToRun | None:
     """The tidy this pass still owes, or None when it is done or the epic holds no file to tidy. The worktree is cut
-    again from the epic branch's head when its folder is gone."""
-    return pass_support.to_run(STAGE, epic, shown, branch, settings, home, main_tree)
+    again from the epic branch's head when its folder is gone, and each batch's scratch folder is made in it."""
+    found = pass_support.owed(STAGE, epic, shown, branch, settings, main_tree)
+    if found is None:
+        return None
+    worktree_at(found.worktree, found.head, home, main_tree)
+    owed = tidy_of(found, main_tree)
+    for folder in owed.scratch_folders():
+        folder.mkdir(exist_ok=True)
+    return owed
 
 
-def discovered_work(epic: str, main_tree: Path) -> list[discovered.Finding]:
-    """The work the tidy worker discovered.
+def batch_folders(scratch: Path) -> list[Path]:
+    """The scratch folder of every batch that the tidy's worktree holds, in batch order. The settle reads the folders
+    `to_run` made, so it depends on no recomputation of the batches."""
+    numbered = []
+    for folder in scratch.glob(f"{BATCH_FOLDER_PREFIX}*"):
+        number = folder.name[len(BATCH_FOLDER_PREFIX):]
+        if folder.is_dir() and number.isdigit():
+            numbered.append((int(number), folder))
+    return [folder for _, folder in sorted(numbered)]
+
+
+def discovered_work(folders: list[Path]) -> list[discovered.Finding]:
+    """The work the tidy's workers discovered, every batch's report in batch order, with a title an earlier batch
+    already listed left out.
 
     The tidy has no task to block, so a finding placed `blocks` refuses the report, as an unusable report does.
     """
     try:
-        findings = discovered.read_findings(worktree_of(epic, main_tree) / SCRATCH_FOLDER)
+        findings = [finding for folder in folders for finding in discovered.read_findings(folder)]
         if discovered.blockers_in(findings):
             raise discovered.DiscoveryError(f"the tidy has no task to block, so no finding is placed "
                                             f"{discovered.BLOCKS}; place each one {discovered.EPIC} or "
                                             f"{discovered.OUTSIDE}")
     except discovered.DiscoveryError as error:
         raise TidyError(f"the tidy's discovered work cannot be filed, so nothing was written: {error}") from error
-    return findings
+    titles: set[str] = set()
+    kept = []
+    for finding in findings:
+        if finding.title not in titles:
+            titles.add(finding.title)
+            kept.append(finding)
+    return kept
 
 
 def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Committed:
-    """Commits what the tidy worker left as one commit on the epic branch, records that the tidy is done, and files
-    the work the worker discovered. The findings are read first, because settling removes the worktree that holds
-    them, and a report that cannot be used refuses the settle."""
-    findings = discovered_work(epic, main_tree)
+    """Commits what the tidy's workers left as one commit on the epic branch, records that the tidy is done, and
+    files the work the workers discovered. The findings are read before the commit, because settling removes the
+    worktree that holds them, and a report that cannot be used refuses the settle."""
     shown = read_bead(epic, main_tree)
     found = pass_support.owed_in_worktree(STAGE, epic, shown, branch, settings, main_tree)
-    settled = pass_support.settle_worktree(found, accepts_any_change, home, main_tree)
+    findings = discovered_work(batch_folders(found.scratch))
+    settled = pass_support.settle_worktree(found, accepts_any_change, settings, home, main_tree)
     env = env_as_factory()
     run(["bd", "comment", epic, settled.comment(STAGE.commit_message)], main_tree, env)
     run(["bd", "update", epic, *set_metadata((STATE_KEY, pass_support.DONE))], main_tree, env)
