@@ -75,7 +75,8 @@ def is_test_path(path: str) -> bool:
 
 
 STAGE = Stage(name="test cleanup", action=ACTION, prefix="cleanup-", state_key=STATE_KEY,
-              commit_message="Test cleanup", allowed_kind="tests the epic added or changed", files_key="tests",
+              commit_message="Test cleanup", allowed_kind="tests the epic added or changed", may_add_files=False,
+              files_key="tests",
               wants=is_test_path, report=REPORT, error=CleanupError)
 
 
@@ -134,7 +135,7 @@ def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) 
             raise CleanupError(f"the cleanup report names the files {', '.join(reported) or 'none'} and the "
                                f"worktree changed {', '.join(changed) or 'none'}, so nothing was written")
 
-    head = pass_support.settle_worktree(found, agrees_with_report, home, main_tree).head
+    head = pass_support.settle_worktree(found, agrees_with_report, settings, home, main_tree).head
     kept = removed_before(shown) + removals
     env = env_as_factory()
     run(["bd", "comment", epic, comment_of(removals, head)], main_tree, env)

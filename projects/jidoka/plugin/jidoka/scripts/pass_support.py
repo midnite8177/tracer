@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import git_exclude
 import private_docs
@@ -17,9 +17,9 @@ from commands import (HUMAN_LABEL, SCRATCH_FOLDER, NotAWholeNumber, capture, cou
                       metadata_of, run, set_metadata)
 from epic_branch import (EditedCheckout, EpicBranchLeftTheHead, fast_forward, refuse_edited_checkout,
                          required_head)
-from land import acquire_lock, merge_lock, release_lock
+from land import merge_locked
 from merge_gate import is_protected, protected_folders
-from worktrees import cut_detached, remove_worktree, stage_without_scratch, stage_worktree
+from worktrees import added_since_head, cut_detached, remove_worktree, stage_without_scratch, stage_worktree
 
 MAIN_BRANCH = "main"
 DONE = "done"
@@ -43,14 +43,15 @@ class Stage:
     """A stage of a pass whose worker edits files in a detached worktree of its own: its name in a refusal, the
     action it prints, the prefix of its worktree's folder, the metadata key that records it done (none for a stage that
     is owed by other means), the commit it settles with, which files of the epic it may touch and how the action
-    names them, the report its worker writes in the scratch folder (none when the stage has no report), and the error
-    it raises."""
+    names them, whether its worker may also add a file that is not at the epic's head, the report its worker writes
+    in the scratch folder (none when the stage has no report), and the error it raises."""
     name: str
     action: str
     prefix: str
     state_key: str | None
     commit_message: str
     allowed_kind: str
+    may_add_files: bool
     files_key: str
     wants: Callable[[str], bool]
     report: str | None
@@ -153,11 +154,13 @@ def owed_in_worktree(stage: Stage, epic: str, shown: dict, branch: str, settings
     return found
 
 
-def settle_worktree(found: StageToRun, check: Callable[[list[str]], None], home: Path, main_tree: Path) -> Committed:
-    """Takes what the stage's worker left in its worktree: stages it, refuses a path the stage may not touch, lets
-    `check` refuse the changed paths, commits them as one commit, moves the epic branch to it and removes the
-    worktree. Nothing is committed when nothing changed."""
-    changed = changed_within(found.worktree, found.files, found.stage.name, found.stage.allowed_kind)
+def settle_worktree(found: StageToRun, check: Callable[[list[str]], None], settings: dict, home: Path,
+                    main_tree: Path) -> Committed:
+    """Takes what the stage's worker left in its worktree: stages it, refuses a path inside an acceptance folder and
+    a path the stage may not touch, lets `check` refuse the changed paths, commits them as one commit, moves the epic
+    branch to it and removes the worktree. Nothing is committed when nothing changed."""
+    changed = changed_within(found.worktree, found.files, protected_folders(settings), found.stage.name,
+                             found.stage.allowed_kind, found.stage.may_add_files)
     check(changed)
     head = found.head
     if changed:
@@ -198,11 +201,18 @@ def worktree_at(path: Path, head: str, home: Path, main_tree: Path) -> None:
     (path / SCRATCH_FOLDER).mkdir(exist_ok=True)
 
 
-def changed_within(worktree: Path, allowed: list[str], stage: str, allowed_kind: str) -> list[str]:
-    """Every path the stage's worktree changed, refusing when one is not among the allowed paths. `stage` and
-    `allowed_kind` word the refusal."""
+def changed_within(worktree: Path, allowed: list[str], protected: list[PurePosixPath], stage: str,
+                   allowed_kind: str, may_add_files: bool) -> list[str]:
+    """Every path the stage's worktree changed, refusing when one lies in a protected folder, whatever the stage may
+    add, and when one is not among the allowed paths. A path that is not at the worktree's head is a new file, which
+    `may_add_files` allows. `stage` and `allowed_kind` word the refusal."""
     changed = stage_without_scratch(worktree)
-    stray = [path for path in changed if path not in allowed]
+    barred = [path for path in changed if is_protected(path, protected)]
+    if barred:
+        raise PassError(f"the {stage} changed paths inside an acceptance folder: {', '.join(barred)}, so nothing was "
+                        "written")
+    added = set(added_since_head(worktree)) if may_add_files else set()
+    stray = [path for path in changed if path not in allowed and path not in added]
     if stray:
         raise PassError(f"the {stage} changed paths that are not {allowed_kind}: {', '.join(stray)}, so nothing was "
                         "written")
@@ -213,9 +223,7 @@ def move_epic_branch(branch: str, old: str, new: str, home: Path, main_tree: Pat
     """Fast-forwards the epic branch from old to new under the merge lock, bringing the main checkout along."""
     if old == new:
         return
-    lock = merge_lock(home)
-    acquire_lock(lock)
-    try:
+    with merge_locked(home):
         try:
             refuse_edited_checkout(branch, main_tree)
         except EditedCheckout as edited:
@@ -224,5 +232,3 @@ def move_epic_branch(branch: str, old: str, new: str, home: Path, main_tree: Pat
             fast_forward(branch, old, new, main_tree)
         except EpicBranchLeftTheHead as left:
             raise PassError(f"{left} while a stage ran, so nothing changed. Run the scheduler again") from left
-    finally:
-        release_lock(lock)

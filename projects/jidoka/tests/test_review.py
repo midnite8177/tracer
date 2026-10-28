@@ -193,17 +193,46 @@ class FixWorkerTests(ReviewCase):
         self.assertEqual([BUILT_FILE], fixed["fix"]["changed"])
         self.assertEqual("pass", fixed["validation"]["result"])
 
+    def test_a_fix_that_moves_code_into_a_new_file_commits_the_new_file_with_the_epic_files(self):
+        epic, printed = self.finish_epic_at_the_review()
+        branch = self.metadata(epic)["factory.branch"]
+        moved = self.reviewed(printed, self.FINDINGS)
+        worktree = Path(self.fix_action_of(moved)["worktree"])
+        self.leave_in(worktree, BUILT_FILE, "total = 2\n")
+        self.leave_in(worktree, "till_totals.txt", "moved = 1\n")
+
+        done = self.report_fix(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([BUILT_FILE, "till_totals.txt"], json.loads(done.stdout)["fix"]["changed"])
+        self.assertEqual("moved = 1", test_validation.git(self.repo, "show", f"{branch}:till_totals.txt"))
+
+    def test_a_fix_that_adds_a_file_in_an_acceptance_folder_is_refused_and_nothing_is_committed(self):
+        epic, printed = self.finish_epic_at_the_review()
+        branch = self.metadata(epic)["factory.branch"]
+        head = test_validation.git(self.repo, "rev-parse", branch)
+        moved = self.reviewed(printed, self.FINDINGS)
+        spec = f"{test_scheduler.ACCEPTANCE}/till.feature"
+        self.leave_in(Path(self.fix_action_of(moved)["worktree"]), spec, "stray\n")
+
+        done = self.report_fix(epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(spec, done.stderr)
+        self.assertEqual(head, test_validation.git(self.repo, "rev-parse", branch))
+        self.assertEqual(["fix"], [each["action"] for each in self.next_printed(epic)["actions"]])
+
     def test_a_fix_that_changes_a_file_outside_the_epics_files_is_refused_and_nothing_is_committed(self):
         epic, printed = self.finish_epic_at_the_review()
         branch = self.metadata(epic)["factory.branch"]
         head = test_validation.git(self.repo, "rev-parse", branch)
         moved = self.reviewed(printed, self.FINDINGS)
-        self.leave_in(Path(self.fix_action_of(moved)["worktree"]), "reader.txt", "stray\n")
+        self.leave_in(Path(self.fix_action_of(moved)["worktree"]), "README.md", "stray\n")
 
         done = self.report_fix(epic)
 
         self.assertEqual(1, done.returncode)
-        self.assertIn("reader.txt", done.stderr)
+        self.assertIn("README.md", done.stderr)
         self.assertEqual(head, test_validation.git(self.repo, "rev-parse", branch))
         self.assertEqual(["fix"], [each["action"] for each in self.next_printed(epic)["actions"]])
 

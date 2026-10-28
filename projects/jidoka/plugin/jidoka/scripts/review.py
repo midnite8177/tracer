@@ -28,10 +28,11 @@ to it, for a bench or a later epic, filed when the review settles; the epic keep
 with. The settled review records the head it covered as `review.head` and counts its pass through pass_ledger.py.
 
 The fix worker, on the standard tier, fixes those findings in a detached worktree at .worktrees/fix-<epic> and
-commits nothing. `settle_fix` refuses, writing nothing, when the worktree changed a path outside the epic's files, or
-is gone or at another head than the worker started from. Otherwise it commits the change as one commit, "Review
-fixes", fast-forwards the epic branch to it under the merge lock, and moves `review.head` to it, so no later review
-covers the fixes again and the pass owes no other review. Validation then runs everything.
+commits nothing. `settle_fix` refuses, writing nothing, when the worktree changed a path outside the epic's files that
+the epic's head already holds, added a file in an acceptance folder, or is gone or at another head than the worker
+started from. Otherwise it commits the change as one commit, "Review fixes", fast-forwards the epic branch to it under
+the merge lock, and moves `review.head` to it, so no later review covers the fixes again and the pass owes no other
+review. Validation then runs everything.
 
 Everything here writes to bd with BEADS_ACTOR set to jidoka.
 """
@@ -81,8 +82,8 @@ class ReviewError(PassError):
 
 
 FIX_STAGE = Stage(name="fix", action=FIX_ACTION, prefix=FIX_PREFIX, state_key=None, commit_message=FIX_COMMIT_MESSAGE,
-                  allowed_kind="files the epic added or changed", files_key="files", wants=every_file, report=None,
-                  error=ReviewError)
+                  allowed_kind="files the epic added or changed", may_add_files=True, files_key="files",
+                  wants=every_file, report=None, error=ReviewError)
 
 
 @dataclass(frozen=True)
@@ -361,7 +362,7 @@ def settle_fix(epic: str, branch: str, settings: dict, home: Path, main_tree: Pa
     if owed is None:
         raise ReviewError(f"{epic} waits on no fix, so nothing was written")
     pass_support.refuse_a_lost_worktree(owed.stage)
-    settled = pass_support.settle_worktree(owed.stage, accepts_any_change, home, main_tree)
+    settled = pass_support.settle_worktree(owed.stage, accepts_any_change, settings, home, main_tree)
     env = env_as_factory()
     run(["bd", "comment", epic, settled.comment(FIX_COMMENT_SUBJECT)], main_tree, env)
     run(["bd", "update", epic, *set_metadata((HEAD_KEY, settled.head)), *unset_metadata(FIXES_KEY)], main_tree, env)

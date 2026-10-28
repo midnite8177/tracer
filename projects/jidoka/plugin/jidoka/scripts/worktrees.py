@@ -44,3 +44,9 @@ def stage_without_scratch(worktree: Path) -> list[str]:
     run(["git", "add", "--all"], worktree, env)
     run(["git", "reset", "--quiet", "--", SCRATCH_FOLDER], worktree, env)
     return sorted(run(["git", "diff", "--cached", "--name-only"], worktree, env).splitlines())
+
+
+def added_since_head(worktree: Path) -> list[str]:
+    """The staged paths that the worktree's head does not hold, sorted."""
+    listed = run(["git", "diff", "--cached", "--name-only", "--diff-filter=A"], worktree, env_as_factory())
+    return sorted(listed.splitlines())

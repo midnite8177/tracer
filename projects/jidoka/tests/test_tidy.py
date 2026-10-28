@@ -11,7 +11,7 @@ import test_scheduler  # noqa: E402
 import test_validation  # noqa: E402
 
 BUILT_FILE = "till.txt"
-OTHER_FILE = "reader.txt"
+OTHER_FILE = "README.md"
 COMMENTED = "total = 1  # add one\n"
 CLEAN = "total = 1\n"
 TIDY_SUBJECT = "No comments and unslop"
@@ -113,6 +113,18 @@ class TidyCommitsTests(TidyCase):
 
         self.assertEqual([], [each for each in again["actions"] if each["action"] == "tidy"])
         self.assertEqual(1, self.epic_log(epic).count(TIDY_SUBJECT))
+
+    def test_a_tidy_that_adds_a_new_file_commits_it_with_the_epic_files(self):
+        epic, _, printed = self.finish_epic_whose_task_built_a_commented_file()
+        branch = self.metadata(epic)["factory.branch"]
+        action = self.tidy_action_of(printed)
+        self.tidy_by_hand(action, CLEAN)
+        self.leave_in(Path(action["worktree"]), "till_totals.txt", CLEAN)
+
+        done = self.report_tidy(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(CLEAN.strip(), test_validation.git(self.repo, "show", f"{branch}:till_totals.txt"))
 
     def test_a_change_to_a_file_outside_the_epics_files_is_refused_and_nothing_is_committed(self):
         epic, _, printed = self.finish_epic_whose_task_built_a_commented_file()
