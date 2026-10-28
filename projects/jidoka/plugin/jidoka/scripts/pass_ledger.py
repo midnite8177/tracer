@@ -23,8 +23,7 @@ from pathlib import Path
 import cleanup
 import park
 import tidy
-from caps import metadata_of
-from commands import bd_show, env_as_factory, run, set_metadata, unset_metadata
+from commands import env_as_factory, metadata_of, read_bead, run, set_metadata, unset_metadata
 from pass_support import PassError, count_of, park_epic
 
 PASSES_KEY = "review.passes"
@@ -43,9 +42,7 @@ def counted_by_review(shown: dict) -> list[str]:
 def counted_at_the_end(epic: str, main_tree: Path) -> list[str]:
     """The metadata that counts the epic's pass at its end, unless its review already did, and then takes the
     review's flag off, so the next pass starts unreviewed."""
-    shown = bd_show(epic, main_tree)
-    if shown is None:
-        raise PassError(f"bd show printed nothing usable for {epic}")
+    shown = read_bead(epic, main_tree)
     if metadata_of(shown).get(REVIEWED_KEY):
         return unset_metadata(REVIEWED_KEY)
     return set_metadata((PASSES_KEY, count_of(shown, PASSES_KEY) + 1))

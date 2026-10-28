@@ -53,15 +53,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import clock
-import gate
 import lap_record
 import park
 import pause
 import repo_settings
-from caps import metadata_of
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_factory, run
-from epic_reader import EPIC_TYPE, EpicReadError, read_epic
-from epics import EpicsError, at_the_gate, epics_of, is_closed, is_running, labels_of, shown_or_refuse
+from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, env_as_factory, is_labeled_for_human, metadata_of,
+                      parent_of, read_bead, run)
+from epic_reader import EpicReadError, NotAnEpic, read_epic, shown_epic, validated_head
+from epics import PARKED, WAITING, EpicsError, at_the_gate, epics_of, is_closed, is_running, state_of
 
 TASK_PARKED = "task-parked"
 EPIC_PARKED = "epic-parked"
@@ -77,7 +76,6 @@ PAUSE_HINTS = {pause.BILLING: "Fix the billing, and the factory carries on at it
                pause.OUTAGE: "The factory keeps retrying by itself, once an hour.",
                pause.USAGE_LIMIT: "The factory carries on when the limit resets."}
 NOTIFICATION_KEY = "notification"
-VALIDATION_HEAD_KEY = "validation.head"
 PUSHOVER_FILE = "pushover.json"
 PUSHOVER_API = "https://api.pushover.net/1/messages.json"
 UI_ADDRESS = "http://localhost:5099"
@@ -86,7 +84,6 @@ TITLE_LIMIT = 250
 MESSAGE_LIMIT = 1024
 DETAIL_LIMIT = 300
 FINGERPRINT_LENGTH = 12
-PARK_PREFIXES = (park.QUESTION_PREFIX, park.PARKED_PREFIX, park.BLOCKED_PREFIX)
 
 
 class NotifyError(EpicsError):
@@ -130,23 +127,19 @@ def last_park(bead: str, main_tree: Path) -> tuple[str, str]:
 
     Both are empty when the factory never parked it, as when the human did.
     """
-    parks = [comment for comment in park.posted_comments(bead, main_tree)
-             if comment.get("author") == park.FACTORY_ACTOR
-             and str(comment.get("text") or "").startswith(PARK_PREFIXES)]
-    if not parks:
+    latest = park.latest_park(bead, main_tree)
+    if latest is None:
         return "", ""
-    latest = parks[-1]
-    text = str(latest.get("text") or "")
-    prefix = next(prefix for prefix in PARK_PREFIXES if text.startswith(prefix))
-    first_line = text[len(prefix):].strip().splitlines()[0] if text[len(prefix):].strip() else ""
-    return digest(str(latest.get("id") or ""), str(latest.get("created_at") or ""), text), first_line
+    body = latest.body
+    first_line = body.splitlines()[0] if body else ""
+    return digest(latest.id, latest.created_at, latest.text), first_line
 
 
 def parked_task(task: str, main_tree: Path) -> Notice:
-    shown = shown_or_refuse(task, main_tree)
-    if is_closed(shown) or park.HUMAN_LABEL not in labels_of(shown):
+    shown = read_bead(task, main_tree)
+    if is_closed(shown) or not is_labeled_for_human(shown):
         raise NothingToSend(f"{task} is not parked")
-    epic = str(shown.get("parent") or "")
+    epic = parent_of(shown)
     if not epic:
         raise NotifyError(f"{task} is held by no epic, so there is no epic key to record the notification in")
     fingerprint, detail = last_park(task, main_tree)
@@ -155,15 +148,15 @@ def parked_task(task: str, main_tree: Path) -> Notice:
 
 
 def epic_of(bead: str, main_tree: Path) -> dict:
-    shown = shown_or_refuse(bead, main_tree)
-    if shown.get("issue_type") != EPIC_TYPE:
-        raise NotifyError(f"{bead} is a {shown.get('issue_type') or 'bead'}, not an epic")
-    return shown
+    try:
+        return shown_epic(bead, main_tree)
+    except NotAnEpic as error:
+        raise NotifyError(str(error)) from error
 
 
 def parked_epic(epic: str, main_tree: Path) -> Notice:
     shown = epic_of(epic, main_tree)
-    if is_closed(shown) or park.HUMAN_LABEL not in labels_of(shown) or at_the_gate(shown):
+    if is_closed(shown) or state_of(shown).name != PARKED:
         raise NothingToSend(f"{epic} is not parked")
     fingerprint, detail = last_park(epic, main_tree)
     return Notice(EPIC_PARKED, epic, epic, f"Epic parked: {shown.get('title') or epic}",
@@ -180,7 +173,7 @@ def only_parked_tasks_left(epic: str, main_tree: Path) -> Notice:
     if is_closed(shown) or at_the_gate(shown):
         raise NothingToSend(f"{epic} is closed or at the acceptance gate")
     tasks = open_tasks(shown, main_tree)
-    if not tasks or any(park.HUMAN_LABEL not in labels_of(task) for task in tasks):
+    if not tasks or any(not is_labeled_for_human(task) for task in tasks):
         raise NothingToSend(f"{epic} has a task that is not parked")
     parks = {str(task["id"]): last_park(str(task["id"]), main_tree)[0] for task in tasks}
     first = str(tasks[0]["id"])
@@ -194,10 +187,10 @@ def at_acceptance_gate(epic: str, main_tree: Path) -> Notice:
     shown = epic_of(epic, main_tree)
     if is_closed(shown) or not at_the_gate(shown):
         raise NothingToSend(f"{epic} is not at the acceptance gate")
-    head = str(metadata_of(shown).get(VALIDATION_HEAD_KEY) or "")
+    head = validated_head(metadata_of(shown))
     return Notice(ACCEPTANCE_GATE, epic, epic, f"Ready for acceptance: {shown.get('title') or epic}",
                   "The factory has finished its work on the epic. Merge it, send it back or drop it.",
-                  digest(gate.WAITING, head))
+                  digest(WAITING, head))
 
 
 def stopped_with_work_left(epic: str, main_tree: Path) -> Notice:
@@ -265,7 +258,7 @@ def sent_so_far(epic: dict) -> dict[str, str]:
 
 def record(notice: Notice, main_tree: Path) -> None:
     """Writes the notice into the epic's key; raises NothingToSend when the key already holds its fingerprint."""
-    sent = sent_so_far(shown_or_refuse(notice.epic, main_tree))
+    sent = sent_so_far(read_bead(notice.epic, main_tree))
     name = f"{notice.event}:{notice.bead}"
     if sent.get(name) == notice.fingerprint:
         raise NothingToSend(f"{notice.event} on {notice.bead} was already sent")

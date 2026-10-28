@@ -15,6 +15,7 @@ PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 PARK = PLUGIN / "scripts" / "park.py"
 RULES = PLUGIN / "scripts" / "rules.py"
+LAP_LISTS = PLUGIN / "scripts" / "lap_lists.py"
 SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 
 RUN_TIMEOUT_SECONDS = 120
@@ -112,11 +113,19 @@ class PermissionCase(unittest.TestCase):
         path = self.home / "built_in_commands.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 
-    def lap_commands(self, task: str) -> list[str]:
+    def lap_worktree(self, task: str) -> Path:
         worktree = self.repo / ".worktrees" / f"lap-{task}"
         if not worktree.exists():
             fixture.run(["git", "worktree", "add", "-q", "-b", f"lap/{task}", str(worktree)], self.repo)
-        done = self.script(RULES, "lap-commands", cwd=worktree)
+        return worktree
+
+    def lap_commands(self, task: str) -> list[str]:
+        done = self.script(RULES, "lap-commands", cwd=self.lap_worktree(task))
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def lap_list(self, task: str) -> list:
+        done = self.script(LAP_LISTS, "lap", cwd=self.lap_worktree(task))
         self.assertEqual(0, done.returncode, done.stderr)
         return json.loads(done.stdout)
 
@@ -282,8 +291,8 @@ class NextLapCommandsTests(PermissionCase):
 
         self.answer(task)
 
-        self.assertEqual([PATTERN], self.lap_commands(task))
-        self.assertEqual([PATTERN], self.lap_commands(other_task))
+        self.assertIn(PATTERN, self.lap_list(task))
+        self.assertIn(PATTERN, self.lap_list(other_task))
 
     def test_a_folder_that_is_no_lap_worktree_prints_nothing_and_refuses(self):
         done = self.script(RULES, "lap-commands")

@@ -30,9 +30,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import repo_settings
-from caps import metadata_of
-from commands import CommandError, env_as_factory, run
-from pass_support import PassError, created_id, located_texts, shortened_title
+from commands import CommandError, bd_comments, bd_list, env_as_factory, metadata_of, run
+from epic_task import file_outside
+from report_text import ReportError, listed_report, located_texts, shortened_title
 
 DESIGN_LABEL = "design"
 PROBLEM_KEY = "design.problem"
@@ -88,26 +88,15 @@ def problem_of(value: object, number: int) -> Problem:
 
 
 def read_report(path: Path) -> list[Problem]:
-    try:
-        listed = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise DesignFindingError(f"the report {path} is missing or is not JSON ({error}), so nothing was written") \
-            from error
-    if not isinstance(listed, list):
-        raise DesignFindingError(f"the report {path} is not a JSON list, so nothing was written")
+    listed = listed_report(path, f"the report {path}", DesignFindingError)
     return [problem_of(each, number) for number, each in enumerate(listed, 1)]
 
 
 def open_beads(main_tree: Path) -> list[tuple[str, dict]]:
     """The open design findings as the problem each keeps and its bead."""
-    output = run(["bd", "list", "--label", DESIGN_LABEL, "--type", "task", "--limit", "0", "--json"], main_tree, None)
-    try:
-        listed = json.loads(output)
-    except ValueError as error:
-        raise DesignFindingError(f"bd list did not print JSON: {output.strip()[:200]!r}") from error
     held = []
-    for bead in listed if isinstance(listed, list) else []:
-        key = metadata_of(bead).get(PROBLEM_KEY) if isinstance(bead, dict) else None
+    for bead in bd_list(["--label", DESIGN_LABEL, "--type", "task", "--limit", "0"], main_tree):
+        key = metadata_of(bead).get(PROBLEM_KEY)
         if isinstance(key, str):
             held.append((key, bead))
     return held
@@ -132,20 +121,12 @@ def ranked_findings(files: list[str], main_tree: Path) -> list[dict]:
 
 
 def sightings_of(bead: str, main_tree: Path) -> int:
-    output = run(["bd", "comments", bead, "--json"], main_tree, None)
-    try:
-        listed = json.loads(output or "[]") or []
-    except ValueError as error:
-        raise DesignFindingError(f"bd comments did not print JSON: {output.strip()[:200]!r}") from error
-    return sum(1 for each in listed if str(each.get("text", "")).startswith(SIGHTING_PREFIX))
+    return sum(1 for each in bd_comments(bead, main_tree) if str(each.get("text", "")).startswith(SIGHTING_PREFIX))
 
 
 def file_finding(problem: Problem, main_tree: Path) -> str:
-    env = env_as_factory()
-    created = run(["bd", "create", "--title", problem.bead_title, "--description", problem.description(),
-                   "--type=task", "--labels", DESIGN_LABEL, "--json"], main_tree, env)
-    bead = created_id(created)
-    run(["bd", "update", bead, "--set-metadata", f"{PROBLEM_KEY}={problem.key}"], main_tree, env)
+    bead = file_outside(problem.bead_title, problem.description(), None, [DESIGN_LABEL], main_tree)
+    run(["bd", "update", bead, "--set-metadata", f"{PROBLEM_KEY}={problem.key}"], main_tree, env_as_factory())
     return bead
 
 
@@ -167,7 +148,7 @@ def print_open(files: list[str]) -> int:
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), repo_settings.GIT_TIMEOUT_SECONDS)
         ranked = ranked_findings(files, main_tree)
-    except (DesignFindingError, PassError, repo_settings.SettingsError, CommandError, OSError) as error:
+    except (repo_settings.SettingsError, CommandError, OSError) as error:
         print(f"design_findings: {error}", file=sys.stderr)
         return 1
     print(json.dumps(ranked, indent=2))
@@ -184,7 +165,7 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), repo_settings.GIT_TIMEOUT_SECONDS)
         settled = settle(args.epic, read_report(args.report), main_tree)
-    except (DesignFindingError, PassError, repo_settings.SettingsError, CommandError, OSError) as error:
+    except (DesignFindingError, ReportError, repo_settings.SettingsError, CommandError, OSError) as error:
         print(f"design_findings: {error}", file=sys.stderr)
         return 1
     print(json.dumps([each.fields() for each in settled], indent=2))

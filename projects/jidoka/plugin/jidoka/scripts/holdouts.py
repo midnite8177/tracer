@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import repo_settings
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, env_as_git_user, run
+from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_git_user, metadata_of, read_bead, run
 
 HOLDOUTS_KEY = "holdouts"
 
@@ -97,7 +97,7 @@ def decode(value: str) -> list[Holdout]:
 
 def of_epic(shown: dict) -> list[Holdout]:
     """The holdouts of the epic as bd show --json prints it, an empty list when it has none."""
-    value = (shown.get("metadata") or {}).get(HOLDOUTS_KEY)
+    value = metadata_of(shown).get(HOLDOUTS_KEY)
     return decode(str(value)) if value else []
 
 
@@ -107,16 +107,11 @@ def numbered_naming(task: str, holdouts: list[Holdout]) -> list[tuple[int, Holdo
 
 
 def read(epic: str, main_tree: Path) -> list[Holdout]:
-    shown = bd_show(epic, main_tree)
-    if shown is None:
-        raise HoldoutsError(f"bd show printed nothing usable for {epic}")
-    return of_epic(shown)
+    return of_epic(read_bead(epic, main_tree))
 
 
 def brief(epic: str, main_tree: Path, home: Path) -> dict:
-    shown = bd_show(epic, main_tree)
-    if shown is None:
-        raise HoldoutsError(f"bd show printed nothing usable for {epic}")
+    shown = read_bead(epic, main_tree)
     settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
     apps = [app for app in settings.get("apps") or [] if isinstance(app, dict)]
     return {"epic": epic, "title": shown.get("title", ""), "spec": shown.get("description") or "",

@@ -1,36 +1,27 @@
-"""What the stages of a pass share: the epic branch they move forward, the files of the epic they may touch, the
-worktree a stage's worker edits and the one call that settles it as a commit, the tasks they file in the epic with the
-shape of a finding's report and of a title, and the way they park the epic on the human.
+"""The skeleton of a pass stage whose worker edits files in a detached worktree of its own, as the test cleanup, the
+tidy and the review's fix do, with the error, the metadata count and the parking that every stage of a pass shares.
 
-The `Stage` record configures a stage whose worker edits files in a detached worktree of its own, as the test cleanup,
-the tidy and the review's fix do, so that those stages share one skeleton: what is owed, the read of it that cuts no
-worktree, the cut, and the settle that refuses a worktree the worker no longer holds.
-
-No stage owns these. Each stage keeps its own metadata keys in its own module, and this module holds no key.
+What is owed, the read of it that cuts no worktree, the cut, and the settle that refuses a worktree the worker no
+longer holds are the `Stage` record's skeleton. No stage owns these. Each stage keeps its own metadata keys in its own
+module, and this module holds no key.
 """
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
-import caps
 import git_exclude
-import lap_record
-import park
 import private_docs
-from bench import WORKTREE_FOLDER, hide_worktrees
-from caps import metadata_of
-from commands import SCRATCH_FOLDER, capture, env_as_factory, head_of, run, set_metadata
-from land import acquire_lock, edited_paths, merge_lock, release_lock
-from merge_gate import checked_out_branch, protected_folders
+from commands import (HUMAN_LABEL, SCRATCH_FOLDER, NotAWholeNumber, capture, count_in, env_as_factory, head_of,
+                      metadata_of, run, set_metadata)
+from epic_branch import (EditedCheckout, EpicBranchLeftTheHead, fast_forward, refuse_edited_checkout,
+                         required_head)
+from land import acquire_lock, merge_lock, release_lock
+from merge_gate import is_protected, protected_folders
+from worktrees import cut_detached, remove_worktree, stage_without_scratch, stage_worktree
 
 MAIN_BRANCH = "main"
-TITLE_LIMIT = 80
-OUTPUT_TAIL_LINES = 40
-TEXT_FIELDS = ("file", "title", "note")
-LEAST_LINE = 1
 DONE = "done"
 
 
@@ -42,8 +33,8 @@ class PassError(Exception):
 def count_of(shown: dict, key: str) -> int:
     """The whole number the epic's metadata holds under the key, or none when it holds nothing."""
     try:
-        return caps.count_in(metadata_of(shown), key)
-    except caps.NotAWholeNumber as error:
+        return count_in(metadata_of(shown), key)
+    except NotAWholeNumber as error:
         raise PassError(f"on the epic, {error}") from error
 
 
@@ -66,7 +57,7 @@ class Stage:
     error: type[PassError]
 
     def worktree_of(self, epic: str, main_tree: Path) -> Path:
-        return main_tree / WORKTREE_FOLDER / f"{self.prefix}{epic}"
+        return stage_worktree(self.prefix, epic, main_tree)
 
     def is_done(self, shown: dict) -> bool:
         return self.state_key is not None and metadata_of(shown).get(self.state_key) == DONE
@@ -103,6 +94,16 @@ class Committed:
     head: str
     changed: list[str]
 
+    def fields(self) -> dict:
+        return {"head": self.head, "changed": self.changed}
+
+    def comment(self, subject: str) -> str:
+        """The comment on the epic that says what the stage named by `subject` changed."""
+        if not self.changed:
+            return f"{subject} changed no file, and the epic branch stays at {self.head}."
+        return "\n".join([f"{subject} changed {len(self.changed)} files, in the commit {self.head}:",
+                          *(f"- {path}" for path in self.changed)])
+
 
 def every_file(path: str) -> bool:
     return True
@@ -117,9 +118,7 @@ def owed(stage: Stage, epic: str, shown: dict, branch: str, settings: dict, main
     the path in the result is where one belongs."""
     if stage.is_done(shown):
         return None
-    head = head_of(f"refs/heads/{branch}", main_tree)
-    if head is None:
-        raise stage.error(f"the epic branch {branch} does not exist")
+    head = required_head(branch, main_tree, stage.error)
     files = [path for path in epic_files(head, settings, main_tree) if stage.wants(path)]
     if not files:
         return None
@@ -169,59 +168,12 @@ def settle_worktree(found: StageToRun, check: Callable[[list[str]], None], home:
     return Committed(head, changed)
 
 
-def tail_of(output: str) -> str:
-    """The last lines of a command's output, which is where a failure says what went wrong."""
-    return "\n".join(output.strip().splitlines()[-OUTPUT_TAIL_LINES:])
-
-
-def shortened_title(text: str) -> str:
-    """The text cut to TITLE_LIMIT characters, with an ellipsis where it was cut."""
-    return text if len(text) <= TITLE_LIMIT else f"{text[:TITLE_LIMIT - 3].rstrip()}..."
-
-
-def created_id(created: str) -> str:
-    """The id `bd create --json` printed for the bead it made."""
-    try:
-        return str(json.loads(created)["id"])
-    except (ValueError, KeyError, TypeError) as error:
-        raise PassError(f"bd create did not print the id of the bead it made: {created.strip()[:200]!r}") from error
-
-
-def located_texts(value: object, where: str, shape: str) -> tuple[dict[str, str], int]:
-    """The file, title and note, trimmed, and the line of one finding in a report.
-
-    `where` names the finding in a refusal, and `shape` lists the fields its object must hold.
-    """
-    if not isinstance(value, dict):
-        raise PassError(f"{where} must be an object with {shape}")
-    texts = {}
-    for field in TEXT_FIELDS:
-        text = value.get(field)
-        if not isinstance(text, str) or not text.strip():
-            raise PassError(f"{where} must name its {field}")
-        texts[field] = text.strip()
-    line = value.get("line")
-    if not isinstance(line, int) or isinstance(line, bool) or line < LEAST_LINE:
-        raise PassError(f"the line of {where} must be a whole number from {LEAST_LINE}, not {line!r}")
-    return texts, line
-
-
 def epic_files(branch_head: str, settings: dict, main_tree: Path) -> list[str]:
     """The files the epic added or changed, outside every acceptance folder, sorted."""
     folders = protected_folders(settings)
     listed = run(["git", "diff", "--name-only", "--diff-filter=AM", f"{MAIN_BRANCH}...{branch_head}"], main_tree,
                  None).splitlines()
-    return sorted(path for path in listed
-                  if not any(folder == PurePosixPath(path) or folder in PurePosixPath(path).parents
-                             for folder in folders))
-
-
-def changed_paths(worktree: Path) -> list[str]:
-    """Every path the worktree changed from its head, outside the scratch folder."""
-    env = env_as_factory()
-    run(["git", "add", "--all"], worktree, env)
-    run(["git", "reset", "--quiet", "--", SCRATCH_FOLDER], worktree, env)
-    return sorted(run(["git", "diff", "--cached", "--name-only"], worktree, env).splitlines())
+    return sorted(path for path in listed if not is_protected(path, folders))
 
 
 def park_epic(epic: str, comment: str, metadata: dict[str, str], main_tree: Path) -> None:
@@ -229,11 +181,7 @@ def park_epic(epic: str, comment: str, metadata: dict[str, str], main_tree: Path
     labeled epic always has its comment."""
     env = env_as_factory()
     run(["bd", "comment", epic, comment], main_tree, env)
-    run(["bd", "update", epic, *set_metadata(*metadata.items()), f"--add-label={park.HUMAN_LABEL}"], main_tree, env)
-
-
-def remove_worktree(path: Path, main_tree: Path) -> None:
-    capture(["git", "worktree", "remove", "--force", str(path)], main_tree, None)
+    run(["bd", "update", epic, *set_metadata(*metadata.items()), f"--add-label={HUMAN_LABEL}"], main_tree, env)
 
 
 def worktree_at(path: Path, head: str, home: Path, main_tree: Path) -> None:
@@ -242,12 +190,9 @@ def worktree_at(path: Path, head: str, home: Path, main_tree: Path) -> None:
         remove_worktree(path, main_tree)
     if not path.is_dir():
         capture(["git", "worktree", "prune"], main_tree, None)
-        hide_worktrees(main_tree)
-        run(["git", "worktree", "add", "-q", "--detach", str(path), head], main_tree, None)
         try:
-            private_docs.share(main_tree, path.resolve(), home)
+            cut_detached(path, head, home, main_tree)
         except private_docs.ClashError as error:
-            remove_worktree(path, main_tree)
             raise PassError(str(error)) from error
     git_exclude.add(git_exclude.exclude_file(main_tree), [git_exclude.exclude_line(SCRATCH_FOLDER, True)])
     (path / SCRATCH_FOLDER).mkdir(exist_ok=True)
@@ -256,7 +201,7 @@ def worktree_at(path: Path, head: str, home: Path, main_tree: Path) -> None:
 def changed_within(worktree: Path, allowed: list[str], stage: str, allowed_kind: str) -> list[str]:
     """Every path the stage's worktree changed, refusing when one is not among the allowed paths. `stage` and
     `allowed_kind` word the refusal."""
-    changed = changed_paths(worktree)
+    changed = stage_without_scratch(worktree)
     stray = [path for path in changed if path not in allowed]
     if stray:
         raise PassError(f"the {stage} changed paths that are not {allowed_kind}: {', '.join(stray)}, so nothing was "
@@ -271,28 +216,13 @@ def move_epic_branch(branch: str, old: str, new: str, home: Path, main_tree: Pat
     lock = merge_lock(home)
     acquire_lock(lock)
     try:
-        checked_out = checked_out_branch(main_tree) == branch
-        if checked_out:
-            edited = sorted(edited_paths(main_tree))
-            if edited:
-                raise PassError(f"the main checkout {main_tree} has {branch} checked out with uncommitted "
-                                f"edits: {', '.join(edited)}. Commit or discard them, then run the "
-                                "scheduler again")
-        done = capture(["git", "update-ref", f"refs/heads/{branch}", new, old], main_tree, None)
-        if done.returncode != 0:
-            raise PassError(f"{branch} moved from {old} while a stage ran, so nothing changed. Run the scheduler "
-                            f"again: {done.stderr.strip()}")
-        if checked_out:
-            run(["git", "read-tree", "-m", "-u", old, new], main_tree, None)
+        try:
+            refuse_edited_checkout(branch, main_tree)
+        except EditedCheckout as edited:
+            raise PassError(f"{edited}. Commit or discard them, then run the scheduler again") from edited
+        try:
+            fast_forward(branch, old, new, main_tree)
+        except EpicBranchLeftTheHead as left:
+            raise PassError(f"{left} while a stage ran, so nothing changed. Run the scheduler again") from left
     finally:
         release_lock(lock)
-
-
-def file_task(epic: str, title: str, description: str, area: str, main_tree: Path) -> str:
-    """Files a task in the epic with the track and area the scheduler needs to open its lap."""
-    env = env_as_factory()
-    created = run(["bd", "create", "--title", title, "--type", "task", "--parent", epic, "--description",
-                   description, "--json"], main_tree, env)
-    task = created_id(created)
-    run(["bd", "update", task, *lap_record.assigning(lap_record.SIMPLE_TRACK, area)], main_tree, env)
-    return task

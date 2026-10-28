@@ -1,7 +1,7 @@
 """What an epic records while the factory waits on the clock, and the back-off it waits by.
 
-The scheduler imports it; no command line runs it. A usage limit, an outage, a billing error or an auth
-failure pauses the epic: nothing new starts until the pause's `until`, and then the laps go on by themselves.
+The scheduler and the wake script import it; no command line runs it. A usage limit, an outage, a billing error or
+an auth failure pauses the epic: nothing new starts until the pause's `until`, and then the laps go on by themselves.
 Each retry that meets the same trouble waits longer: 5, 15 and 30 minutes, then an hour every time. The epic's
 `pause` metadata holds a JSON object with `cause`, `since` (the second the pause began), `until` (the second
 the next retry may start) and `retries` (how many retries have failed). A worker that ends without the trouble,
@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from commands import env_as_factory, run
+from commands import env_as_factory, metadata_of, read_bead, run
 
 PAUSE_KEY = "pause"
 USAGE_LIMIT = "usage-limit"
@@ -58,8 +58,7 @@ class Pause:
 
 def held_by(epic: dict) -> Pause | None:
     """The pause the epic's metadata holds, or None when it holds none or nothing usable."""
-    metadata = epic.get("metadata")
-    held = metadata.get(PAUSE_KEY) if isinstance(metadata, dict) else None
+    held = metadata_of(epic).get(PAUSE_KEY)
     if isinstance(held, str) and held.strip():
         try:
             held = json.loads(held)
@@ -92,6 +91,19 @@ def write(epic: str, pause: Pause, main_tree: Path) -> None:
     written = json.dumps({"cause": pause.cause, "since": pause.since, "until": pause.until,
                           "retries": pause.retries}, sort_keys=True)
     run(["bd", "update", epic, "--set-metadata", f"{PAUSE_KEY}={written}"], main_tree, env_as_factory())
+
+
+def meet_trouble(epic: str, cause: str, now: int, main_tree: Path) -> Pause | None:
+    """Reads the epic's pause, updates it for the trouble met at `now`, and writes it when it changed.
+
+    Returns the pause it wrote, or None when the held pause already covered the trouble and stays as it is.
+    """
+    held = held_by(read_bead(epic, main_tree))
+    paused = after_trouble(held, cause, now)
+    if paused == held:
+        return None
+    write(epic, paused, main_tree)
+    return paused
 
 
 def clear(epic: str, main_tree: Path) -> None:

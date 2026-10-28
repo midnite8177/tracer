@@ -15,7 +15,6 @@ readable id is dead once it is older than LOCK_UNRECORDED_SECONDS, which a live 
 """
 from __future__ import annotations
 
-import json
 import os
 import signal
 import time
@@ -24,12 +23,11 @@ from pathlib import Path
 
 import heartbeat
 import lap_record
-import park
-from bench import FACTORY_LABEL
-from caps import metadata_of
-from commands import CommandError, bd_show, capture, head_of, run
+from commands import (FACTORY_LABEL, CommandError, bd_list, bd_show, capture, is_labeled_for_human, metadata_of,
+                      run)
+from epic_branch import branch_head
 from epic_reader import EPIC_TYPE, read_epic
-from epics import is_closed, is_running, labels_of
+from epics import is_running
 from land import merge_lock
 from merge_gate import contains
 
@@ -146,8 +144,8 @@ def merged_head(branch: str, title: str, epic_branch: str, main_tree: Path) -> s
     scheduler commits a build. A lap branch cut from the epic branch and not built yet also sits inside it, but
     its head is another task's commit.
     """
-    lap_head = head_of(f"refs/heads/{branch}", main_tree)
-    epic_head = head_of(f"refs/heads/{epic_branch}", main_tree)
+    lap_head = branch_head(branch, main_tree)
+    epic_head = branch_head(epic_branch, main_tree)
     if lap_head is None or epic_head is None or not contains(lap_head, epic_head, main_tree):
         return None
     subject = run(["git", "log", "-1", "--format=%s", lap_head], main_tree, None).strip()
@@ -170,8 +168,8 @@ def stopped_on(epic: dict, home: Path, main_tree: Path, now: int) -> StoppedEpic
     if not is_running(epic) or heartbeat.is_fresh(home, epic_id, now):
         return None
     held = read_epic(epic, main_tree)
-    open_tasks = [bead for bead in held.task_beads if not is_closed(bead)]
-    waiting_on_a_restart = [bead for bead in open_tasks if park.HUMAN_LABEL not in labels_of(bead)]
+    open_tasks = held.open_task_beads
+    waiting_on_a_restart = [bead for bead in open_tasks if not is_labeled_for_human(bead)]
     if not waiting_on_a_restart or not has_started(list(held.children), home, epic_id):
         return None
     return StoppedEpic(epic_id, str(epic.get("title") or epic_id), len(open_tasks))
@@ -179,9 +177,8 @@ def stopped_on(epic: dict, home: Path, main_tree: Path, now: int) -> StoppedEpic
 
 def stopped_epics(home: Path, main_tree: Path, now: int) -> list[StoppedEpic]:
     """The epics the factory stopped on, by id."""
-    listing = run(["bd", "list", "--label", FACTORY_LABEL, "--type", EPIC_TYPE, "--limit", "0", "--json"], main_tree, None)
-    listed = json.loads(listing or "[]")
-    ids = sorted(str(item["id"]) for item in listed if isinstance(item, dict) and item.get("id"))
+    listed = bd_list(["--label", FACTORY_LABEL, "--type", EPIC_TYPE, "--limit", "0"], main_tree)
+    ids = sorted(str(item["id"]) for item in listed if item.get("id"))
     shown = [bd_show(epic, main_tree) for epic in ids]
     stopped = (stopped_on(epic, home, main_tree, now) for epic in shown if epic is not None)
     return [found for found in stopped if found is not None]

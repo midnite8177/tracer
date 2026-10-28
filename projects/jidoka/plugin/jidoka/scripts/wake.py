@@ -47,10 +47,7 @@ def pause_and_notify(epic: str, cause: str, home: Path, main_tree: Path) -> None
     pause.after_trouble says. notify.py sends each pause once. Missing a notification loses
     nothing, so one that cannot be sent never fails the wake.
     """
-    held = pause.held_by(notify.epic_of(epic, main_tree))
-    paused = pause.after_trouble(held, cause, clock.now())
-    if paused != held:
-        pause.write(epic, paused, main_tree)
+    pause.meet_trouble(epic, cause, clock.now(), main_tree)
     notify.announce(notify.FACTORY_PAUSED, epic, home, main_tree, "wake")
 
 

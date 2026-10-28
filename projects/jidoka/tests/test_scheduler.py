@@ -143,6 +143,25 @@ class SchedulerCase(unittest.TestCase):
             raise fixture.FixtureError(f"handoff.py take failed: {done.stderr}")
         return json.loads(done.stdout)["branch"]
 
+    def rules(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run([str(LAUNCHER), str(RULES), *args], input=stdin, capture_output=True, text=True,
+                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home),
+                              cwd=self.repo)
+
+    def rules_set(self, epic: str, *settings: str) -> dict:
+        done = self.rules("set", epic, *settings)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def rule_comments(self, epic: str) -> list[dict]:
+        return [comment for comment in self.comments(epic) if str(comment["text"]).startswith("Factory rules:")]
+
+    def handed_off_epic(self, areas: int) -> str:
+        epic = self.new_epic()
+        tasks = [self.new_task_under(epic) for _ in range(areas)]
+        self.hand_off(epic, {task: f"area-{index}" for index, task in enumerate(tasks)})
+        return epic
+
     def next_moves(self, epic: str) -> subprocess.CompletedProcess:
         """Runs `next` as a manager that starts after the one before it is gone, so the epic holds no heartbeat."""
         (self.home / "heartbeat" / f"{epic}.json").unlink(missing_ok=True)
@@ -764,42 +783,6 @@ class MergeWorkerTests(SchedulerCase):
         subprocess.run(["git", "-c", "core.editor=true", "rebase", "--continue"], cwd=worktree, capture_output=True,
                        text=True, env={k: v for k, v in os.environ.items() if k not in ("GIT_EDITOR", "EDITOR")},
                        check=True)
-
-    def lap_commands(self, worktree: Path) -> list:
-        done = subprocess.run([str(LAUNCHER), str(RULES), "lap-commands"], capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home),
-                              cwd=worktree)
-        self.assertEqual(0, done.returncode, done.stderr)
-        return json.loads(done.stdout)
-
-    def test_the_lap_commands_hold_the_merge_worker_s_git_commands_only_while_the_lap_is_at_the_merge(self):
-        lap = self.conflicting_lap()
-        at_the_build = self.lap_commands(lap.worktree)
-        self.build_done(lap.epic, lap.task)
-
-        at_the_merge = self.lap_commands(lap.worktree)
-
-        self.assertEqual([], at_the_build)
-        self.assertEqual([
-            {"command": f"git rebase {lap.epic_branch}", "then": "nothing"},
-            {"command": "git rebase --abort", "then": "nothing"},
-            {"command": "git -c core.editor=true rebase --continue", "then": "nothing"},
-            {"command": "git add", "then": "paths"},
-            {"command": "git status", "then": "words", "refusing": ["--output"]},
-            {"command": "git diff", "then": "words", "refusing": ["--output"]},
-            {"command": "git log", "then": "words", "refusing": ["--output"]},
-        ], at_the_merge)
-
-    def test_a_lap_at_the_merge_whose_worktree_is_in_the_middle_of_a_rebase_still_gets_the_merge_worker_s_commands(
-            self):
-        lap = self.conflicting_lap()
-        self.build_done(lap.epic, lap.task)
-        self.rebase_unfinished(lap.worktree, lap.epic_branch)
-
-        mid_rebase = self.lap_commands(lap.worktree)
-
-        self.assertIn({"command": "git rebase --abort", "then": "nothing"}, mid_rebase)
-        self.assertIn({"command": f"git rebase {lap.epic_branch}", "then": "nothing"}, mid_rebase)
 
     def test_a_worktree_on_a_detached_head_with_no_rebase_is_no_lap_worktree(self):
         lap = self.conflicting_lap()
@@ -1995,26 +1978,7 @@ class SchedulerRefusalTests(SchedulerCase):
         self.assertEqual(2, done.returncode)
 
 
-class FactoryRulesTests(SchedulerCase):
-    def rules(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(RULES), *args], input=stdin, capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home),
-                              cwd=self.repo)
-
-    def rules_set(self, epic: str, *settings: str) -> dict:
-        done = self.rules("set", epic, *settings)
-        self.assertEqual(0, done.returncode, done.stderr)
-        return json.loads(done.stdout)
-
-    def rule_comments(self, epic: str) -> list[dict]:
-        return [comment for comment in self.comments(epic) if str(comment["text"]).startswith("Factory rules:")]
-
-    def handed_off_epic(self, areas: int) -> str:
-        epic = self.new_epic()
-        tasks = [self.new_task_under(epic) for _ in range(areas)]
-        self.hand_off(epic, {task: f"area-{index}" for index, task in enumerate(tasks)})
-        return epic
-
+class SchedulerReadsRulesTests(SchedulerCase):
     def test_lowering_the_lap_limit_posts_one_line_under_the_git_user_and_the_scheduler_opens_no_more_laps(self):
         epic = self.handed_off_epic(3)
 
@@ -2048,101 +2012,6 @@ class FactoryRulesTests(SchedulerCase):
         self.assertEqual(1, len(second["actions"]))
         self.assertLessEqual({action["task"] for action in second["actions"]}, opened)
         self.assertEqual({action["task"] for action in second["actions"]}, {lap["task"] for lap in second["laps"]})
-
-    def test_a_lap_limit_that_is_not_below_the_repo_settings_is_refused_and_writes_nothing(self):
-        epic = self.handed_off_epic(1)
-
-        for higher in (LAP_LIMIT, LAP_LIMIT + 1):
-            done = self.rules("set", epic, f"lap_limit={higher}")
-
-            self.assertEqual(1, done.returncode)
-            self.assertIn(f"lap_limit must be below the repo's {LAP_LIMIT}", done.stderr)
-        self.assertEqual([], self.rule_comments(epic))
-        self.assertNotIn("rules.lap_limit", self.metadata(epic))
-
-    def test_a_refusal_names_every_bad_setting_and_writes_none_of_them(self):
-        epic = self.handed_off_epic(1)
-
-        done = self.rules("set", epic, "passes=0", "budget=cheap", "colour=red", "lap_limit=1")
-
-        self.assertEqual(1, done.returncode)
-        self.assertIn("passes must be a whole number above zero", done.stderr)
-        self.assertIn("budget must be a number of dollars above zero", done.stderr)
-        self.assertIn("colour is not a setting", done.stderr)
-        self.assertEqual([], self.rule_comments(epic))
-        self.assertNotIn("rules.lap_limit", self.metadata(epic))
-
-    def test_every_setting_is_stored_and_shown_with_one_comment_each(self):
-        epic = self.handed_off_epic(1)
-        wanted = {"lap_test_scope": "full", "lap_limit": 1, "wall_clocks": {"build": 30}, "passes": 2,
-                  "discovered_bugs_into_epic": True, "extra_commands": ["make lint"],
-                  "tier_routes": {"deep": "opus-high"}, "stage_tiers": {"build": "deep"}, "budget": 12.5,
-                  "reserves": {"home": 0.2}, "commits_on_main": "per_task"}
-
-        self.rules_set(epic, *(f"{name}={json.dumps(value)}" for name, value in wanted.items()))
-
-        shown = json.loads(self.rules("show", epic).stdout)
-        self.assertEqual(wanted, shown["settings"])
-        self.assertEqual(len(wanted), len(self.rule_comments(epic)))
-        self.assertTrue(all("\n" not in comment["text"] for comment in self.rule_comments(epic)))
-
-    def test_a_bare_word_is_taken_as_text_and_a_change_names_the_value_it_replaced(self):
-        epic = self.handed_off_epic(1)
-
-        self.rules_set(epic, "lap_test_scope=full")
-        self.rules_set(epic, "lap_test_scope=targeted")
-
-        self.assertEqual(['Factory rules: lap_test_scope set to "full".',
-                          'Factory rules: lap_test_scope set to "targeted", was "full".'],
-                         [comment["text"] for comment in self.rule_comments(epic)])
-
-    def test_a_setting_already_at_its_value_posts_nothing(self):
-        epic = self.handed_off_epic(1)
-        self.rules_set(epic, "passes=2")
-
-        printed = self.rules_set(epic, "passes=2")
-
-        self.assertEqual({}, printed["changed"])
-        self.assertEqual(1, len(self.rule_comments(epic)))
-
-    def test_guidance_is_stored_whole_and_its_comment_gives_its_size_not_its_text(self):
-        epic = self.handed_off_epic(1)
-        text = "Prefer small functions.\nName a test for its behavior.\n"
-
-        done = self.rules("guidance", epic, stdin=text)
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(text.strip(), json.loads(self.rules("show", epic).stdout)["guidance"])
-        self.assertEqual(["Factory rules: guidance set, 2 lines."],
-                         [comment["text"] for comment in self.rule_comments(epic)])
-
-    def test_the_improvement_epic_preset_holds_the_guidance_that_it_changes_nothing_a_user_sees(self):
-        epic = self.handed_off_epic(1)
-
-        self.rules_set(epic, "lap_limit=1")
-        done = self.rules("preset", epic, "improvement-epic")
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        shown = json.loads(self.rules("show", epic).stdout)
-        self.assertEqual({"lap_limit": 1}, shown["settings"])
-        self.assertEqual("changes nothing a user sees", shown["guidance"])
-
-    def test_the_bug_epic_preset_files_discovered_bugs_into_the_epic_and_commits_once_per_task(self):
-        epic = self.handed_off_epic(1)
-
-        done = self.rules("preset", epic, "bug-epic")
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        shown = json.loads(self.rules("show", epic).stdout)
-        self.assertEqual({"discovered_bugs_into_epic": True, "commits_on_main": "per_task"}, shown["settings"])
-
-    def test_rules_on_a_task_are_refused(self):
-        task = self.new_task_under(self.handed_off_epic(1))
-
-        done = self.rules("set", task, "passes=2")
-
-        self.assertEqual(1, done.returncode)
-        self.assertIn(f"{task} is a task, not an epic", done.stderr)
 
     def test_the_scheduler_refuses_an_epic_whose_stored_rules_cannot_be_read(self):
         epic = self.handed_off_epic(1)

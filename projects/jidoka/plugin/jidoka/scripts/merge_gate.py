@@ -51,11 +51,13 @@ from pathlib import Path, PurePosixPath
 
 import lap_record
 import repo_settings
-from bench import parent_of
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, env_as_factory, head_of, run
-from epic_reader import BRANCH_KEY
-from land import LandingError, acquire_lock, attempt, changed_paths, check_recorded, edited_paths, merge_lock, \
-    recorded_tests, release_lock
+from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, env_as_factory, metadata_of,
+                      parent_of, read_bead, run)
+from epic_branch import (EditedCheckout, EpicBranchLeftTheHead, EpicBranchMoved, branch_head, fast_forward,
+                         refuse_edited_checkout, required_head)
+from epic_reader import BRANCH_KEY, recorded_branch
+from land import LandingError, acquire_lock, attempt, changed_paths, check_recorded, merge_lock, recorded_tests, \
+    release_lock
 
 EPIC_BRANCH_MOVED_EXIT_CODE = 3
 PARTLY_MERGED_EXIT_CODE = 4
@@ -67,10 +69,6 @@ class GateRefused(Exception):
 
 class EmptyLap(Exception):
     """A lap whose head holds no commit the epic branch lacks, so its build left nothing to merge."""
-
-
-class EpicBranchMoved(Exception):
-    """The epic branch moved since the targeted run the record holds, so the run no longer speaks for the merge."""
 
 
 @dataclass(frozen=True)
@@ -95,16 +93,14 @@ def protected_folders(settings: dict) -> list[PurePosixPath]:
             if isinstance(app, dict) and repo_settings.is_repo_path(app.get("acceptance"))]
 
 
+def is_protected(path: str, folders: list[PurePosixPath]) -> bool:
+    """True when the path is an acceptance folder or lies inside one."""
+    return any(folder == PurePosixPath(path) or folder in PurePosixPath(path).parents for folder in folders)
+
+
 def protected_changes(settings: dict, epic_head: str, lap_head: str, main_tree: Path) -> list[str]:
     folders = protected_folders(settings)
-    return sorted(path for path in changed_paths(epic_head, lap_head, main_tree)
-                  if any(folder == PurePosixPath(path) or folder in PurePosixPath(path).parents
-                         for folder in folders))
-
-
-def checked_out_branch(tree: Path) -> str:
-    done = capture(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], tree, None)
-    return done.stdout.strip() if done.returncode == 0 else ""
+    return sorted(path for path in changed_paths(epic_head, lap_head, main_tree) if is_protected(path, folders))
 
 
 def contains(commit: str, head: str, main_tree: Path) -> bool:
@@ -128,21 +124,10 @@ def check(lap: LapToMerge, settings: dict, epic_head: str, lap_head: str, main_t
     if protected:
         raise GateRefused("the lap changed protected paths, inside an app's acceptance folder: "
                           + ", ".join(protected))
-    if checked_out_branch(main_tree) == lap.epic_branch:
-        edited = sorted(edited_paths(main_tree))
-        if edited:
-            raise GateRefused(f"the main checkout {main_tree} has {lap.epic_branch} checked out with uncommitted "
-                              f"edits: {', '.join(edited)}")
-
-
-def fast_forward(lap: LapToMerge, epic_head: str, lap_head: str, main_tree: Path) -> None:
-    done = capture(["git", "update-ref", f"refs/heads/{lap.epic_branch}", lap_head, epic_head], main_tree, None)
-    if done.returncode != 0:
-        if head_of(f"refs/heads/{lap.epic_branch}", main_tree) != epic_head:
-            raise EpicBranchMoved(f"{lap.epic_branch} moved from {epic_head} while the gate checked the lap")
-        raise CommandError(f"git update-ref {lap.epic_branch} failed: {done.stderr.strip()}")
-    if checked_out_branch(main_tree) == lap.epic_branch:
-        run(["git", "read-tree", "-m", "-u", epic_head, lap_head], main_tree, None)
+    try:
+        refuse_edited_checkout(lap.epic_branch, main_tree)
+    except EditedCheckout as edited:
+        raise GateRefused(str(edited)) from edited
 
 
 def close_out(lap: LapToMerge, sha: str, main_tree: Path) -> Merged:
@@ -151,7 +136,7 @@ def close_out(lap: LapToMerge, sha: str, main_tree: Path) -> Merged:
     closed = attempt("bd close", ["bd", "close", lap.task, "--reason", f"{sha}: merged into {lap.epic_branch}"],
                      main_tree, env, failed)
     if closed:
-        attempt("bd update", ["bd", "update", lap.task, *lap_record.entering(lap_record.MERGED)], main_tree, env,
+        attempt("bd update", ["bd", "update", lap.task, *lap_record.recording_merge()], main_tree, env,
                 failed)
         if lap.worktree.exists():
             attempt("git worktree remove", ["git", "worktree", "remove", "--force", str(lap.worktree)], main_tree,
@@ -164,29 +149,29 @@ def merge(lap: LapToMerge, settings: dict, home: Path, main_tree: Path) -> Merge
     lock = merge_lock(home)
     acquire_lock(lock)
     try:
-        epic_head = head_of(f"refs/heads/{lap.epic_branch}", main_tree)
-        if epic_head is None:
-            raise GateRefused(f"the epic branch {lap.epic_branch} does not exist")
-        lap_head = head_of(f"refs/heads/{lap.branch}", main_tree)
+        epic_head = required_head(lap.epic_branch, main_tree, GateRefused)
+        lap_head = branch_head(lap.branch, main_tree)
         if lap_head is None:
             raise GateRefused(f"the lap branch {lap.branch} does not exist")
         check(lap, settings, epic_head, lap_head, main_tree)
-        fast_forward(lap, epic_head, lap_head, main_tree)
+        try:
+            fast_forward(lap.epic_branch, epic_head, lap_head, main_tree)
+        except EpicBranchLeftTheHead as left:
+            raise EpicBranchMoved(f"{left} while the gate checked the lap") from left
         return close_out(lap, lap_head, main_tree)
     finally:
         release_lock(lock)
 
 
 def lap_of(task: str, main_tree: Path) -> LapToMerge:
-    shown = bd_show(task, main_tree)
-    if shown is None:
-        raise GateRefused(f"bd show printed nothing usable for {task}")
-    metadata = shown.get("metadata") or {}
+    shown = read_bead(task, main_tree)
+    metadata = metadata_of(shown)
     branch, worktree = lap_record.branch_of(metadata), lap_record.workspace_of(metadata)
     if not branch or not worktree:
         raise GateRefused(f"{task} records no lap branch or worktree, so it has no lap to merge")
-    epic = bd_show(parent_of(shown), main_tree) if parent_of(shown) else None
-    epic_branch = str(((epic or {}).get("metadata") or {}).get(BRANCH_KEY) or "")
+    parent = parent_of(shown)
+    epic = bd_show(parent, main_tree) if parent else None
+    epic_branch = recorded_branch(epic or {})
     if not epic_branch:
         raise GateRefused(f"the epic of {task} records no epic branch as its {BRANCH_KEY} metadata")
     return LapToMerge(task, branch, Path(worktree), epic_branch)

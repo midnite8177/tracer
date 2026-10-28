@@ -4,9 +4,11 @@ The scheduler imports it; no command line runs it. The caps of a lap park one
 task and never stop the factory: three build tries, two send-backs from the
 checks together, three cutoffs of one stage, and two tries of the merge
 worker. The validation worker has the try cap too, and its cap parks the
-epic; validation.py counts those runs. A stop is no cutoff: a lap an earlier
+epic; holdouts_run.py counts those runs. A stop is no cutoff: a lap an earlier
 session left with no worker ends interrupted, and its task gets a new lap,
 without counting one.
+
+`count_against_cap` is the one count of a try, a cutoff, a send-back or a run against its cap.
 
 A stage that runs past its wall clock ends cut off. lap_record.py holds the
 wall clocks, the record of when a stage started and the check against them.
@@ -18,15 +20,15 @@ open run on. The scheduler then records the ids of the epic's beads as
 `brake.beads`, and the brake lifts when the epic holds a bead that is not
 among them, the fix task the manager filed.
 
-Every record above lives in a bead's metadata, so the module also holds `metadata_of`, the one reader of it that the
-scripts share. It imports only commands.py, so any script can import it without a cycle.
+Every record above lives in a bead's metadata, which commands.py reads and writes.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from commands import bd_show, env_as_factory, run, set_metadata
+from commands import NONE_YET, bd_show, count_in, env_as_factory, metadata_of, run, set_metadata
 
 TRY_CAP = 3
 MERGE_TRY_CAP = 2
@@ -37,38 +39,6 @@ BRAKE_LAPS = 3
 BRAKE_STAGE_KEY = "brake.stage"
 BRAKE_LAPS_KEY = "brake.laps"
 BRAKE_BEADS_KEY = "brake.beads"
-NONE_YET = 0
-
-
-def metadata_of(bead: dict) -> dict:
-    """The metadata object bd shows on the bead, or an empty one when it shows none."""
-    metadata = bead.get("metadata")
-    return metadata if isinstance(metadata, dict) else {}
-
-
-class NotAWholeNumber(ValueError):
-    """A metadata value that should hold a whole number and holds something else."""
-
-
-def whole_number_in(metadata: dict, key: str) -> int | None:
-    """The whole number the metadata holds under the key, or None when it holds nothing.
-
-    A value that is not a whole number raises NotAWholeNumber. A caller that counts from zero takes None as zero, and
-    a caller that needs the value takes None as an error.
-    """
-    value = metadata.get(key)
-    if value is None or value == "":
-        return None
-    try:
-        return int(str(value))
-    except ValueError as error:
-        raise NotAWholeNumber(f"the {key} metadata holds {value!r} where it needs a whole number") from error
-
-
-def count_in(metadata: dict, key: str) -> int:
-    """The whole number the metadata holds under the key, or none yet when it holds nothing."""
-    counted = whole_number_in(metadata, key)
-    return NONE_YET if counted is None else counted
 
 
 @dataclass(frozen=True)
@@ -83,6 +53,20 @@ class Brake:
 
     def fields(self) -> dict:
         return {"stage": self.stage, "laps": self.laps}
+
+
+def count_against_cap(bead: str, number: int, cap: int, park: Callable[[], None], comment: str,
+                      recording: list[str], main_tree: Path) -> bool:
+    """Counts one more against a cap on the bead. A number that reaches the cap calls `park` and writes nothing
+    else; a lower one posts the comment and records the count with the `bd update` arguments. Returns True when it
+    parked."""
+    if number >= cap:
+        park()
+        return True
+    env = env_as_factory()
+    run(["bd", "comment", bead, comment], main_tree, env)
+    run(["bd", "update", bead, *recording], main_tree, env)
+    return False
 
 
 def brake_of(epic: dict) -> Brake:

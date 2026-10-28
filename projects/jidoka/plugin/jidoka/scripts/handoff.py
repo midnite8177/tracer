@@ -70,10 +70,11 @@ import holdouts
 import lap_record
 import repo_settings
 import rules
-from bench import FACTORY_LABEL, MAIN_REF, slug
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_git_user, head_of, run
-from epic_reader import (BRANCH_KEY, Epic, EpicReadError, Rerun, Task, epic_of, problems_while_held,
-                         recorded_branch)
+from bench import slug
+from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, MAIN_REF, CommandError, bd_comments, env_as_git_user,
+                      head_of, labels_of, run)
+from epic_branch import branch_head
+from epic_reader import BRANCH_KEY, Epic, EpicReadError, Rerun, Task, epic_of, problems_while_held
 from lap_record import FULL_TRACK, SIMPLE_TRACK
 
 BRANCH_PREFIX = "epic/"
@@ -123,15 +124,14 @@ class Proposal:
 
 def planned_branch(epic: Epic, main_tree: Path) -> tuple[str, list[str]]:
     """The epic branch's name, and the reasons it cannot be cut."""
-    recorded = recorded_branch(epic)
-    if recorded:
-        return recorded, []
+    if epic.branch:
+        return epic.branch, []
     name = slug(str(epic.shown.get("title") or ""))
     if not name:
         return "", [f"the title of {epic.id} has no letters or digits to name its epic branch from. "
                     "Retitle the epic"]
     branch = f"{BRANCH_PREFIX}{name}"
-    if head_of(f"refs/heads/{branch}", main_tree) is not None:
+    if branch_head(branch, main_tree) is not None:
         return branch, [f"the branch {branch} already exists and {epic.id} does not record it. "
                         "Retitle the epic or delete the branch"]
     return branch, []
@@ -163,7 +163,7 @@ def problems_of(epic: Epic, branch_problems: list[str], home: Path, main_tree: P
     settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
     problems = [*problems_while_held(epic, settings, RERUN), *no_task_problems(epic),
                 *out_of_scope_problems(epic)]
-    if FACTORY_LABEL in (epic.shown.get("labels") or []):
+    if FACTORY_LABEL in labels_of(epic.shown):
         problems.append(f"{epic.id} already carries the {FACTORY_LABEL} label, so the factory holds it. Start "
                         f"it with /jidoka:factory {epic.id}")
     if head_of(MAIN_REF, main_tree) is None:
@@ -264,13 +264,8 @@ def table(epic: Epic, branch: str, areas: dict[str, str], tracks: dict[str, Prop
 
 
 def has_table(epic: Epic, main_tree: Path) -> bool:
-    output = run(["bd", "comments", epic.id, "--json"], main_tree, None)
-    try:
-        comments = json.loads(output or "[]") or []
-    except ValueError as error:
-        raise HandoffError(f"bd comments did not print JSON: {output.strip()[:200]!r}") from error
-    return any(isinstance(comment, dict) and str(comment.get("text") or "").startswith(TABLE_HEADING)
-               for comment in comments)
+    return any(str(comment.get("text") or "").startswith(TABLE_HEADING)
+               for comment in bd_comments(epic.id, main_tree))
 
 
 def check(bead: str, home: Path, main_tree: Path) -> dict:
@@ -298,7 +293,7 @@ def take(bead: str, given_areas: list[str], given_tracks: list[str], preset: str
     for task in epic.tasks:
         run(["bd", "update", task.id, *lap_record.assigning(tracks[task.id].track, areas[task.id])], main_tree, env)
     run(["bd", "update", epic.id, "--set-metadata", f"{BRANCH_KEY}={branch}"], main_tree, env)
-    if head_of(f"refs/heads/{branch}", main_tree) is None:
+    if branch_head(branch, main_tree) is None:
         run(["git", "branch", branch, MAIN_REF], main_tree, None)
     held = holdout_counts(epic)
     if not has_table(epic, main_tree):
@@ -307,7 +302,7 @@ def take(bead: str, given_areas: list[str], given_tracks: list[str], preset: str
         repo_limit = rules.repo_lap_limit(repo_settings.load(repo_settings.settings_path(home, main_tree)))
         rules.write_preset(epic.id, preset, repo_limit, main_tree)
     run(["bd", "label", "add", epic.id, FACTORY_LABEL], main_tree, env)
-    return {"epic": epic.id, "branch": branch, "start": head_of(f"refs/heads/{branch}", main_tree),
+    return {"epic": epic.id, "branch": branch, "start": branch_head(branch, main_tree),
             "tasks": [{"id": task.id, "title": task.title, "track": tracks[task.id].track,
                        "why": tracks[task.id].why, "area": areas[task.id], "holdouts": held.get(task.id, 0),
                        "status": task.status} for task in epic.tasks]}

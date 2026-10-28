@@ -1,8 +1,8 @@
 """Reads an epic and its tasks from bd, and holds the checks that stay true for as long as the factory holds the epic.
 
 The handoff script and the scheduler both read an epic this way, and the scripts that watch epics read its children
-through it. Each script that runs the held-epic checks passes its own `Rerun`, so a refusal names the script the reader
-ran.
+through it. It also holds the recorded branch and the validated head of an epic. Each script that runs the
+held-epic checks passes its own `Rerun`, so a refusal names the script the reader ran.
 """
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import holdouts
-from commands import bd_show, run
+from commands import bd_list, is_labeled_for_human, metadata_of, read_bead, run
 
 BRANCH_KEY = "factory.branch"
+VALIDATED_HEAD_KEY = "validation.head"
 BLOCKING = "blocks"
 CLOSED = "closed"
 EPIC_TYPE = "epic"
@@ -53,6 +54,11 @@ class Epic:
         return str(self.shown["id"])
 
     @property
+    def branch(self) -> str:
+        """The epic branch the epic records, or an empty string when it records none."""
+        return recorded_branch(self.shown)
+
+    @property
     def task_beads(self) -> list[dict]:
         """Every bead the epic holds that is not an epic, closed or open, as bd shows it."""
         return [child for child in self.children if child.get("issue_type") != EPIC_TYPE]
@@ -62,6 +68,16 @@ class Epic:
         """The beads of the epic's open tasks, as bd shows them."""
         open_ids = {task.id for task in self.tasks}
         return [child for child in self.children if str(child["id"]) in open_ids]
+
+    @property
+    def labeled_task_ids(self) -> set[str]:
+        """The ids of the epic's open tasks that carry the human label."""
+        return {str(task["id"]) for task in self.open_task_beads if is_labeled_for_human(task)}
+
+
+def validated_head(metadata: dict) -> str:
+    """The commit of the epic branch that validation checked, or an empty string when none is recorded."""
+    return str(metadata.get(VALIDATED_HEAD_KEY) or "")
 
 
 def shown_beads(ids: list[str], main_tree: Path) -> list[dict]:
@@ -78,14 +94,8 @@ def shown_beads(ids: list[str], main_tree: Path) -> list[dict]:
 
 
 def child_ids(epic: str, main_tree: Path) -> list[str]:
-    output = run(["bd", "list", "--parent", epic, "--all", "--limit", "0", "--json"], main_tree, None)
-    try:
-        parsed = json.loads(output)
-    except ValueError as error:
-        raise EpicReadError(f"bd list did not print JSON: {output.strip()[:200]!r}") from error
-    if not isinstance(parsed, list):
-        raise EpicReadError("bd list printed JSON that is not a list")
-    return [str(item["id"]) for item in parsed if isinstance(item, dict) and item.get("id")]
+    return [str(item["id"]) for item in bd_list(["--parent", epic, "--all", "--limit", "0"], main_tree)
+            if item.get("id")]
 
 
 def read_epic(shown: dict, main_tree: Path) -> Epic:
@@ -98,18 +108,32 @@ def read_epic(shown: dict, main_tree: Path) -> Epic:
     return Epic(shown, children, tasks)
 
 
-def epic_of(bead: str, main_tree: Path, rerun: Rerun) -> Epic:
-    shown = bd_show(bead, main_tree)
-    if shown is None:
-        raise EpicReadError(f"bd show printed nothing usable for {bead}")
+class NotAnEpic(EpicReadError):
+    """A bead that was read as an epic and is another kind of bead."""
+
+    def __init__(self, bead: str, issue_type: str) -> None:
+        super().__init__(f"{bead} is a {issue_type or 'bead'}, not an epic")
+
+
+def shown_epic(bead: str, main_tree: Path) -> dict:
+    """The epic as bd shows it; raises NotAnEpic for a bead of another kind."""
+    shown = read_bead(bead, main_tree)
     if shown.get("issue_type") != EPIC_TYPE:
-        raise EpicReadError(f"{bead} is a {shown.get('issue_type') or 'bead'}, not an epic. "
-                            f"{rerun.on_the_holding_epic}")
+        raise NotAnEpic(bead, str(shown.get("issue_type") or ""))
+    return shown
+
+
+def epic_of(bead: str, main_tree: Path, rerun: Rerun) -> Epic:
+    try:
+        shown = shown_epic(bead, main_tree)
+    except NotAnEpic as error:
+        raise EpicReadError(f"{error}. {rerun.on_the_holding_epic}") from error
     return read_epic(shown, main_tree)
 
 
-def recorded_branch(epic: Epic) -> str:
-    return str((epic.shown.get("metadata") or {}).get(BRANCH_KEY) or "")
+def recorded_branch(shown: dict) -> str:
+    """The epic branch that the epic bead records, or an empty string when it records none."""
+    return str(metadata_of(shown).get(BRANCH_KEY) or "")
 
 
 def waiting_problems(epic: Epic) -> list[str]:

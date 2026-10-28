@@ -316,6 +316,17 @@ class EpicEventTests(NotifyCase):
         self.assertEqual(self.link_to(epic), message["url"])
         self.assertEqual([f"acceptance-gate:{epic}"], list(self.notified(epic)))
 
+    def test_the_epic_at_the_acceptance_gate_is_announced_again_when_validation_checked_another_head(self):
+        self.configure_pushover()
+        epic = self.new_epic("factory", "human")
+        self.bd("update", epic, "--set-metadata", "gate.state=waiting", "--set-metadata", "validation.head=abc123")
+        self.notify("acceptance-gate", epic)
+
+        self.bd("update", epic, "--set-metadata", "validation.head=def456")
+        self.notify("acceptance-gate", epic)
+
+        self.assertEqual(2, len(self.sent_to_pushover()))
+
     def test_an_epic_that_is_not_at_the_gate_sends_no_gate_notification(self):
         self.configure_pushover()
         epic = self.new_epic("factory")

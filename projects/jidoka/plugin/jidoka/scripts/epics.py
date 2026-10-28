@@ -1,34 +1,27 @@
-"""Which epics the factory holds and which of them run, as bd shows them.
+"""Which epics the factory holds, which of them run, and the state of each, as bd shows them.
 
-The scripts that tell the human, beat the heartbeat and print the status read the epics through this module. An epic
-runs when it is open, carries the `factory` label, and is neither parked on the human nor at the acceptance gate.
+An epic's state is read from the human label, the `gate.state` metadata that puts it at the acceptance gate and the
+`validation.holdouts` metadata that holds it for a run of its holdouts. This module names those two keys and their
+values, and the scripts that write them import the names from here. The scheduler, the resume, and the scripts that
+tell the human, beat the heartbeat and print the status read an epic's state through the module. An epic runs when it
+is open, carries the `factory` label, and is neither parked on the human nor at the acceptance gate.
 """
 from __future__ import annotations
 
-import json
+from dataclasses import dataclass
 from pathlib import Path
 
-import gate
-import park
-from bench import FACTORY_LABEL
-from caps import metadata_of
-from commands import bd_show, run
+from commands import FACTORY_LABEL, bd_list, is_labeled_for_human, labels_of, metadata_of, read_bead
 from epic_reader import CLOSED, EPIC_TYPE
+
+GATE_STATE_KEY = "gate.state"
+WAITING = "waiting"
+HOLDOUTS_PENDING_KEY = "validation.holdouts"
+PENDING = "pending"
 
 
 class EpicsError(Exception):
     """A reason the epics cannot be read, worded for the person who reads stderr."""
-
-
-def shown_or_refuse(bead: str, main_tree: Path) -> dict:
-    shown = bd_show(bead, main_tree)
-    if shown is None:
-        raise EpicsError(f"bd show printed nothing usable for {bead}")
-    return shown
-
-
-def labels_of(shown: dict) -> list[str]:
-    return [str(label) for label in shown.get("labels") or []]
 
 
 def is_closed(shown: dict) -> bool:
@@ -36,26 +29,58 @@ def is_closed(shown: dict) -> bool:
 
 
 def at_the_gate(shown: dict) -> bool:
-    return metadata_of(shown).get(gate.GATE_STATE_KEY) == gate.WAITING
+    return metadata_of(shown).get(GATE_STATE_KEY) == WAITING
+
+
+def awaits_holdouts(shown: dict) -> bool:
+    """True when the epic's suite passed and the run of its holdouts has not been settled."""
+    return metadata_of(shown).get(HOLDOUTS_PENDING_KEY) == PENDING
+
+
+RUNNING = "running"
+PARKED = "parked"
+AT_THE_GATE = "at the acceptance gate"
+
+
+@dataclass(frozen=True)
+class State:
+    """What holds an epic: the human's label, the acceptance gate, and the run of its holdouts that its validation
+    waits on."""
+    labeled_for_human: bool
+    at_the_gate: bool
+    awaiting_holdouts: bool
+
+    @property
+    def name(self) -> str:
+        """The state the human reads: at the gate, parked on the human, or running."""
+        if self.at_the_gate:
+            return AT_THE_GATE
+        return PARKED if self.labeled_for_human else RUNNING
+
+    @property
+    def is_running(self) -> bool:
+        return self.name == RUNNING
+
+    @property
+    def waits_on_nothing(self) -> bool:
+        """True when neither the human, the gate nor a run of holdouts holds the epic."""
+        return not (self.labeled_for_human or self.at_the_gate or self.awaiting_holdouts)
+
+
+def state_of(shown: dict) -> State:
+    return State(is_labeled_for_human(shown), at_the_gate(shown), awaits_holdouts(shown))
 
 
 def epics_of(main_tree: Path) -> list[dict]:
     """Every epic of the repo as bd shows it, by id."""
-    listing = run(["bd", "list", "--all", "--limit", "0", "--json"], main_tree, None)
-    try:
-        listed = json.loads(listing or "[]")
-    except ValueError as error:
-        raise EpicsError(f"bd list did not print JSON: {listing.strip()[:200]!r}") from error
-    ids = sorted(str(item["id"]) for item in listed
-                 if isinstance(item, dict) and item.get("id") and item.get("issue_type") == EPIC_TYPE)
-    return [shown_or_refuse(epic, main_tree) for epic in ids]
+    ids = sorted(str(item["id"]) for item in bd_list(["--all", "--limit", "0"], main_tree)
+                 if item.get("id") and item.get("issue_type") == EPIC_TYPE)
+    return [read_bead(epic, main_tree) for epic in ids]
 
 
 def is_running(shown: dict) -> bool:
     """True for an open epic the factory holds that is neither parked nor at the gate."""
-    labels = labels_of(shown)
-    return (FACTORY_LABEL in labels and park.HUMAN_LABEL not in labels and not is_closed(shown)
-            and not at_the_gate(shown))
+    return FACTORY_LABEL in labels_of(shown) and not is_closed(shown) and state_of(shown).is_running
 
 
 def running_epics(main_tree: Path) -> list[str]:

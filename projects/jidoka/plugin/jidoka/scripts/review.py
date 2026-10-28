@@ -44,13 +44,14 @@ from pathlib import Path
 import lizard_hints
 import pass_ledger
 import pass_support
-from bench import WORKTREE_FOLDER
-from caps import metadata_of
-from commands import FACTORY_ACTOR, SCRATCH_FOLDER, bd_show, capture, env_as_factory, head_of, run, set_metadata, \
-    unset_metadata
-from discovered import DISCOVERED_FROM
-from pass_support import (MAIN_BRANCH, PassError, Stage, StageToRun, accepts_any_change, created_id, epic_files,
-                          every_file, located_texts, remove_worktree, shortened_title, worktree_at)
+from commands import (FACTORY_ACTOR, SCRATCH_FOLDER, capture, env_as_factory, metadata_of, read_bead, run,
+                      set_metadata, unset_metadata)
+from epic_branch import required_head
+from epic_task import file_outside
+from pass_support import (MAIN_BRANCH, Committed, PassError, Stage, StageToRun, accepts_any_change, epic_files,
+                          every_file, worktree_at)
+from report_text import ReportError, listed_report, located_texts, shortened_title
+from worktrees import remove_worktree, stage_worktree
 
 COMMENTS = "comments"
 STANDARDS = "standards"
@@ -68,6 +69,7 @@ REVIEW_PREFIX = "review-"
 FIX_PREFIX = "fix-"
 REPORT_PREFIX = "review-"
 FIX_COMMIT_MESSAGE = "Review fixes"
+FIX_COMMENT_SUBJECT = "The review's fix"
 HEAD_KEY = "review.head"
 LOW_KEY = "review.low"
 FIXES_KEY = "review.fixes"
@@ -174,18 +176,11 @@ class FixToRun:
         return {**self.stage.fields(), "findings": [each.fields() for each in self.findings]}
 
 
-@dataclass(frozen=True)
-class Fixed:
-    """What a settled fix did: the commit the epic branch now ends with, and the files it changed."""
-    head: str
-    changed: list[str]
-
-    def fields(self) -> dict:
-        return {"head": self.head, "changed": self.changed}
-
-
 def finding_of(lane: str, value: object, where: str) -> Finding:
-    texts, line = located_texts(value, where, "a file, line, title, note, size and confidence")
+    try:
+        texts, line = located_texts(value, where, "a file, line, title, note, size and confidence")
+    except ReportError as error:
+        raise ReviewError(str(error)) from error
     size = value.get("size")
     if size not in SIZES:
         raise ReviewError(f"the size of {where} must be one of {', '.join(SIZES)}, not {size!r}")
@@ -205,7 +200,7 @@ def stored_findings(shown: dict, key: str) -> list[Finding]:
         if not isinstance(listed, list):
             raise TypeError("not a list")
         return [finding_of(str(each["lane"]), each, f"a finding in {key}") for each in listed]
-    except (ValueError, KeyError, TypeError, ReviewError, PassError) as error:
+    except (ValueError, KeyError, TypeError, ReviewError) as error:
         raise ReviewError(f"the {key} metadata of the epic cannot be read: {error!r}") from error
 
 
@@ -224,22 +219,9 @@ def as_json(findings: list[Finding]) -> str:
 
 
 def lane_findings(report: Path, lane: str) -> list[Finding]:
-    try:
-        listed = json.loads(report.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise ReviewError(f"the {lane} lane's report {report} is missing or is not JSON ({error}), so nothing was "
-                          "written") from error
-    if not isinstance(listed, list):
-        raise ReviewError(f"the {lane} lane's report {report} is not a JSON list, so nothing was written")
+    listed = listed_report(report, f"the {lane} lane's report {report}", ReviewError)
     return [finding_of(lane, each, f"finding {number} of the {lane} lane's report") for number, each in
             enumerate(listed, 1)]
-
-
-def branch_head(branch: str, main_tree: Path) -> str:
-    head = head_of(f"refs/heads/{branch}", main_tree)
-    if head is None:
-        raise ReviewError(f"the epic branch {branch} does not exist")
-    return head
 
 
 def fixed_point(shown: dict, head: str, main_tree: Path) -> str:
@@ -272,14 +254,14 @@ def review_owed(epic: str, shown: dict, branch: str, settings: dict, main_tree: 
     them has settled. It cuts no worktree: the path in the result is where one belongs."""
     if stored_findings(shown, FIXES_KEY):
         return None
-    head = branch_head(branch, main_tree)
+    head = required_head(branch, main_tree, ReviewError)
     base = own_work_base(fixed_point(shown, head, main_tree), head, main_tree)
     since = set(run(["git", "diff", "--name-only", base, head], main_tree, None).splitlines())
     modules = epic_files(head, settings, main_tree)
     files = [path for path in modules if path in since]
     if not files:
         return None
-    path = main_tree / WORKTREE_FOLDER / f"{REVIEW_PREFIX}{epic}"
+    path = stage_worktree(REVIEW_PREFIX, epic, main_tree)
     if metadata_of(shown).get(DESIGNED_KEY):
         return ReviewToRun(epic, DIFF_LANES, branch, base, head, path, files, modules, [])
     hints = lizard_hints.hints_between(base, head, files, lizard_hints.limits_of(settings), main_tree)
@@ -305,7 +287,7 @@ def fix_owed(epic: str, shown: dict, branch: str, settings: dict, main_tree: Pat
     findings = stored_findings(shown, FIXES_KEY)
     if not findings:
         return None
-    head = branch_head(branch, main_tree)
+    head = required_head(branch, main_tree, ReviewError)
     return FixToRun(StageToRun(FIX_STAGE, epic, branch, head, FIX_STAGE.worktree_of(epic, main_tree),
                                epic_files(head, settings, main_tree)), findings)
 
@@ -335,10 +317,7 @@ def task_description(epic: str, finding: Finding) -> str:
 def file_large(epic: str, large: list[Finding], main_tree: Path) -> list[str]:
     """Files a task outside the epic for each large finding, linked discovered-from to the epic, for a bench or a
     later epic. It has no area, so no lap of this epic takes it."""
-    env = env_as_factory()
-    return [created_id(run(["bd", "create", "--title", task_title(each), "--description", task_description(epic, each),
-                            "--type=task", "--deps", f"{DISCOVERED_FROM}:{epic}", "--json"], main_tree, env))
-            for each in large]
+    return [file_outside(task_title(each), task_description(epic, each), epic, [], main_tree) for each in large]
 
 
 def review_comment(owed: ReviewToRun, findings: list[Finding], fixes: list[Finding], large: list[Finding],
@@ -354,9 +333,7 @@ def review_comment(owed: ReviewToRun, findings: list[Finding], fixes: list[Findi
 def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Reviewed:
     """Takes the reports of the lanes that ran: sends the findings to fix to the fix worker, keeps the unsure ones
     for the gate, and files the large ones outside the epic."""
-    shown = bd_show(epic, main_tree)
-    if shown is None:
-        raise ReviewError(f"bd show printed nothing usable for {epic}")
+    shown = read_bead(epic, main_tree)
     owed = review_owed(epic, shown, branch, settings, main_tree)
     if owed is None:
         raise ReviewError(f"{epic} waits on no review, so nothing was written")
@@ -376,25 +353,16 @@ def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) 
     return Reviewed(owed.head, fixes, file_large(epic, large, main_tree), unsure)
 
 
-def settle_fix(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Fixed:
+def settle_fix(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Committed:
     """Commits what the fix worker left as one commit on the epic branch, and moves the review's fixed point past
     it."""
-    shown = bd_show(epic, main_tree)
-    if shown is None:
-        raise ReviewError(f"bd show printed nothing usable for {epic}")
+    shown = read_bead(epic, main_tree)
     owed = fix_owed(epic, shown, branch, settings, main_tree)
     if owed is None:
         raise ReviewError(f"{epic} waits on no fix, so nothing was written")
     pass_support.refuse_a_lost_worktree(owed.stage)
     settled = pass_support.settle_worktree(owed.stage, accepts_any_change, home, main_tree)
     env = env_as_factory()
-    run(["bd", "comment", epic, fix_comment(settled.changed, settled.head)], main_tree, env)
+    run(["bd", "comment", epic, settled.comment(FIX_COMMENT_SUBJECT)], main_tree, env)
     run(["bd", "update", epic, *set_metadata((HEAD_KEY, settled.head)), *unset_metadata(FIXES_KEY)], main_tree, env)
-    return Fixed(settled.head, settled.changed)
-
-
-def fix_comment(changed: list[str], head: str) -> str:
-    if not changed:
-        return f"The review's fix changed no file, and the epic branch stays at {head}."
-    return "\n".join([f"The review's fix changed {len(changed)} files, in the commit {head}:",
-                      *(f"- {path}" for path in changed)])
+    return settled

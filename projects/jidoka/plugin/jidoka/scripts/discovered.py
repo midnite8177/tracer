@@ -24,16 +24,17 @@ task it waits on is closed.
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import lap_outcomes
 import lap_record
-from commands import env_as_factory, run
+from commands import BeadNotCreated, env_as_factory, run
+from epic_task import file_outside, file_task
+from report_text import parsed_report
 
 DISCOVERED_REPORT = "discovered.json"
 BLOCKED_PREFIX = "Blocked: "
-DISCOVERED_FROM = "discovered-from"
 BLOCKS = "blocks"
 EPIC = "epic"
 OUTSIDE = "outside"
@@ -81,12 +82,7 @@ def read_findings(scratch: Path) -> list[Finding]:
     path = scratch / DISCOVERED_REPORT
     if not path.exists():
         return []
-    try:
-        report = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as error:
-        raise DiscoveryError(f"the discovered-work report {path} cannot be read: {error}") from error
-    except ValueError as error:
-        raise DiscoveryError(f"the discovered-work report {path} is not JSON: {error}") from error
+    report = parsed_report(path, f"the discovered-work report {path}", DiscoveryError)
     if not isinstance(report, list):
         raise DiscoveryError(f"the discovered-work report {path} must be a JSON list of findings")
     return [finding_of(item) for item in report]
@@ -103,19 +99,13 @@ def file_finding(finding: Finding, found_in: str, area: str, epic: str, main_tre
     bd keeps one link per pair of beads, so a finding inside the epic that the epic itself found keeps only the
     parent-child link, which already says where it came from.
     """
-    env = env_as_factory()
-    inside = finding.placement != OUTSIDE
-    parent = ["--parent", epic] if inside else []
-    origin = [] if inside and found_in == epic else ["--deps", f"{DISCOVERED_FROM}:{found_in}"]
-    created = run(["bd", "create", "--title", finding.title, "--description", finding.description, "--type=task",
-                   *parent, *origin, "--json"], main_tree, env)
     try:
-        bead = str(json.loads(created)["id"])
-    except (ValueError, KeyError, TypeError) as error:
-        raise DiscoveryError(f"bd create did not print the new bead's id: {created.strip()[:200]!r}") from error
-    if inside:
-        run(["bd", "update", bead, *lap_record.assigning(lap_record.SIMPLE_TRACK, area)], main_tree, env)
-    return Filed(bead, finding)
+        if finding.placement != OUTSIDE:
+            origin = None if found_in == epic else found_in
+            return Filed(file_task(epic, finding.title, finding.description, area, origin, main_tree), finding)
+        return Filed(file_outside(finding.title, finding.description, found_in, [], main_tree), finding)
+    except BeadNotCreated as error:
+        raise DiscoveryError(f"bd create did not print the new bead's id: {error.printed.strip()[:200]!r}") from error
 
 
 def file_findings(findings: list[Finding], found_in: str, area: str, epic: str, main_tree: Path) -> list[Filed]:
@@ -135,5 +125,4 @@ def block(task: str, tries: int, blockers: list[Filed], worktree: Path, branch: 
     run(["bd", "comment", task, f"{BLOCKED_PREFIX}the task cannot finish without {waiting}. The worktree {worktree} "
                                 f"and the branch {branch} keep the work. The task gets a new lap once "
                                 f"{'it' if len(blockers) == 1 else 'they'} merge."], main_tree, env)
-    run(["bd", "update", task, *lap_record.resting(lap_record.BLOCKED), *lap_record.counting_tries(tries)],
-        main_tree, env)
+    run(["bd", "update", task, *lap_record.resting_with_tries(lap_outcomes.BLOCKED, tries)], main_tree, env)

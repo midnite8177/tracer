@@ -5,37 +5,33 @@ import type { Engine } from 'claude-code/testing'
 const WORKTREE = '/repo/.worktrees/lap-t1'
 const HOST_VERDICT = { decision: 'ask', reason: 'the host decides' } as const
 
-const SETTINGS = {
-  worker_commands: ['dotnet build App.slnx', 'TMPDIR=/tmp python3 tests/run_suite.py'],
-  apps: [
-    { name: 'app', test: 'dotnet test App.slnx' },
-    { name: 'docs', test: null },
-  ],
-}
+const LAP_LIST = ['dotnet build App.slnx', 'TMPDIR=/tmp python3 tests/run_suite.py', 'dotnet test App.slnx']
 
-type Launched = { pluginRoot: string }
+type Launched = {
+  pluginRoot: string
+  /** The worker kinds the lap-lists script was run for, in order. */
+  asked: string[]
+}
 
 /**
  * Stands for the engine beneath the plugin: spawns start agent a1, the host
- * would ask about every call, and the launcher prints `settings` when it runs
- * `repo_settings.py show` in the worktree, as the real script does. The
- * plugin's folder is read off the launcher's path.
+ * would ask about every call, and the launcher prints `commands` when it runs
+ * `lap_lists.py` in the worktree, as the real script does. The plugin's
+ * folder is read off the launcher's path.
  */
-function engineBeneath(on: On, settings: object | undefined): Launched {
-  return engineWith(on, settings, { places: {}, statFails: false, granted: [], spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+function engineBeneath(on: On, commands: unknown[] | undefined): Launched {
+  return engineWith(on, commands, { places: {}, statFails: false, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
 }
 
 type World = {
   /** Every path exists and is its own real location, except a path here and what lies beneath it: it lands at the place named, or nowhere for null. */
   places: Record<string, string | null>
   statFails: boolean
-  /** What the launcher prints for `rules.py lap-commands` in the worktree: the built-in list's entries for the lap's stage, its additions and the epic's. */
-  granted: unknown[]
   spawn: () => Promise<{ model: string; agentId: string } | { deny: string }>
 }
 
-function engineWith(on: On, settings: object | undefined, world: World): Launched {
-  const launched: Launched = { pluginRoot: '' }
+function engineWith(on: On, commands: unknown[] | undefined, world: World): Launched {
+  const launched: Launched = { pluginRoot: '', asked: [] }
   const { places } = world
   on('fs.stat', (_, e) => {
     if (world.statFails) throw new Error('stat failed')
@@ -49,27 +45,21 @@ function engineWith(on: On, settings: object | undefined, world: World): Launche
   on('agent.spawn', () => world.spawn())
   on('tool.check', () => HOST_VERDICT)
   on('process.run', (_, e) => {
-    const [shell, launcher = '', script = '', mode] = e.argv
+    const [shell, launcher = '', script = '', kind = ''] = e.argv
     const root = launcher.slice(0, -'/bin/jidoka-run'.length)
     launched.pluginRoot = root
-    const isShow =
+    const isLapLists =
       shell === 'sh' &&
       launcher.endsWith('/bin/jidoka-run') &&
-      script === `${root}/scripts/repo_settings.py` &&
-      mode === 'show' &&
+      script === `${root}/scripts/lap_lists.py` &&
       e.init?.cwd === WORKTREE
-    const isGranted =
-      shell === 'sh' &&
-      launcher.endsWith('/bin/jidoka-run') &&
-      script === `${root}/scripts/rules.py` &&
-      mode === 'lap-commands' &&
-      e.init?.cwd === WORKTREE
-    const printed = isGranted || (isShow && settings !== undefined)
+    if (isLapLists) launched.asked.push(kind)
+    const printed = isLapLists && commands !== undefined
     return {
       value: {
         exitCode: printed ? 0 : 1,
-        stdout: !printed ? '' : JSON.stringify(isGranted ? world.granted : settings),
-        stderr: printed ? '' : 'repo_settings: no settings',
+        stdout: !printed ? '' : JSON.stringify(commands),
+        stderr: printed ? '' : 'lap_lists: no list',
         isStdoutTruncated: false,
         isStderrTruncated: false,
       },
@@ -96,7 +86,7 @@ test('a spawn whose prompt names a lap worktree runs the worker in that worktree
 })
 
 test('a call the tool marks read-only is allowed for a lap worker', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await $.agent.spawn({ prompt: `jidoka lap worktree: ${WORKTREE}\nBuild the task.` })
 
   const verdict = await $.tool.check({
@@ -114,7 +104,7 @@ async function startLap($: Engine, worktree: string): Promise<void> {
 }
 
 test('a write inside the worktree is allowed and an edit outside it is denied', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   const inside = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/src/a.py`, content: '' }, agentId: 'a1' })
@@ -132,7 +122,7 @@ test('a write inside the worktree is allowed and an edit outside it is denied', 
 })
 
 test('a relative path resolves against the worktree, and one that climbs out of it is denied', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   const inside = await $.tool.check({ tool: 'Write', input: { file_path: 'src/./b.py', content: '' }, agentId: 'a1' })
@@ -149,7 +139,7 @@ test('a relative path resolves against the worktree, and one that climbs out of 
 })
 
 test('a backslash path is judged by the folders it names', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   const inside = await $.tool.check({
@@ -168,7 +158,7 @@ test('a backslash path is judged by the folders it names', async ($, on) => {
 })
 
 test('a lap recorded on Windows judges drive-letter paths whatever their case', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   on('state.get', () => ({
     value: { value: { worktree: 'C:\\repo\\.worktrees\\lap-t1', kind: 'lap', commands: [] }, version: 1 },
   }))
@@ -189,7 +179,7 @@ test('a lap recorded on Windows judges drive-letter paths whatever their case', 
 })
 
 test('a write that names no path is denied', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   const verdict = await $.tool.check({ tool: 'Write', input: { content: '' }, agentId: 'a1' })
@@ -198,7 +188,7 @@ test('a write that names no path is denied', async ($, on) => {
 })
 
 test('a notebook edit inside the worktree is allowed', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   const verdict = await $.tool.check({
@@ -211,21 +201,12 @@ test('a notebook edit inside the worktree is allowed', async ($, on) => {
 })
 
 test('a command on the repo\'s list or an app\'s test command is allowed with any arguments after it', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   expect(await bash($, 'dotnet build App.slnx')).toBe('allow')
   expect(await bash($, 'TMPDIR=/tmp python3 tests/run_suite.py -k test_lap_mod')).toBe('allow')
   expect(await bash($, 'dotnet test App.slnx --filter "FullyQualifiedName~Lap"')).toBe('allow')
-})
-
-test('a command the epic or the built-in list adds is allowed, and the lap\'s other calls stay denied', async ($, on) => {
-  engineWith(on, SETTINGS, { ...NOTHING, granted: ['make lint'], spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
-  await startLap($, WORKTREE)
-
-  expect(await bash($, 'make lint --fix')).toBe('allow')
-  expect(await bash($, 'dotnet build App.slnx && make lint')).toBe('allow')
-  expect(await bash($, 'make deploy')).toBe('deny')
 })
 
 const EPIC_BRANCH = 'epic/take-card-payments'
@@ -241,7 +222,7 @@ const MERGE_GRANT = [
 ]
 
 async function startMergeWorker($: Engine, on: On): Promise<void> {
-  engineWith(on, SETTINGS, { ...NOTHING, granted: MERGE_GRANT, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+  engineWith(on, [...LAP_LIST, ...MERGE_GRANT], { ...NOTHING, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
   await $.agent.spawn({ prompt: `jidoka lap worktree: ${WORKTREE}\nReconcile the lap with the epic branch.` })
 }
 
@@ -257,7 +238,7 @@ test('a merge worker may rebase onto the epic branch, add what it resolved, cont
 })
 
 test('a build worker may not rebase, add or continue a rebase', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   expect(await bash($, `git rebase ${EPIC_BRANCH}`)).toBe('deny')
@@ -286,7 +267,7 @@ test('a merge worker\'s git call that could run code, open an editor or write a 
 })
 
 test('a list entry matches whole words only', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   expect(await bash($, 'dotnet build App.slnx.bak')).toBe('deny')
@@ -294,7 +275,7 @@ test('a list entry matches whole words only', async ($, on) => {
 })
 
 test('every part of a compound command must be on a list', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   expect(await bash($, 'dotnet build App.slnx && dotnet test App.slnx')).toBe('allow')
@@ -306,7 +287,7 @@ test('every part of a compound command must be on a list', async ($, on) => {
 })
 
 test('a command substitution or an output redirect is denied even after a listed command', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   expect(await bash($, 'dotnet build App.slnx $(rm -rf /)')).toBe('deny')
@@ -317,7 +298,7 @@ test('a command substitution or an output redirect is denied even after a listed
 })
 
 test('a quoted separator is part of an argument, not a second command', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   expect(await bash($, 'dotnet test App.slnx --filter "Name~a&&b|c;d"')).toBe('allow')
@@ -325,7 +306,7 @@ test('a quoted separator is part of an argument, not a second command', async ($
 })
 
 test('a call off the lists is denied with a reason that names it', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'curl https://example.com' }, agentId: 'a1' })
@@ -338,7 +319,7 @@ test('a call off the lists is denied with a reason that names it', async ($, on)
   })
 })
 
-test('a lap worker whose repo settings cannot be read runs only what the tools mark read-only', async ($, on) => {
+test('a lap worker whose list cannot be printed runs only what the tools mark read-only', async ($, on) => {
   engineBeneath(on, undefined)
   await startLap($, WORKTREE)
 
@@ -348,7 +329,7 @@ test('a lap worker whose repo settings cannot be read runs only what the tools m
 })
 
 test('the calls that only talk to the host are left to the host', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   for (const tool of ['ToolSearch', 'SendMessage', 'ListAgents', 'SubagentHandback']) {
@@ -358,7 +339,7 @@ test('the calls that only talk to the host are left to the host', async ($, on) 
 })
 
 test('a lap worker never asks live, so its AskUserQuestion call is denied with the way to ask', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   const verdict = await $.tool.check({ tool: 'AskUserQuestion', input: {}, agentId: 'a1' })
@@ -368,7 +349,7 @@ test('a lap worker never asks live, so its AskUserQuestion call is denied with t
 })
 
 test('a lap worker starts no workers', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   for (const tool of ['Agent', 'Workflow']) {
@@ -379,7 +360,7 @@ test('a lap worker starts no workers', async ($, on) => {
 })
 
 test('a lap worker that calls Skill is denied and told to Read the skill instead', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   const verdict = await $.tool.check({ tool: 'Skill', input: { skill: 'jidoka:no-comments' }, agentId: 'a1' })
@@ -390,7 +371,7 @@ test('a lap worker that calls Skill is denied and told to Read the skill instead
 })
 
 test('any other tool the lists do not cover is denied, never asked', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   const verdict = await $.tool.check({ tool: 'mcp__web__post', input: { url: 'https://example.com' }, agentId: 'a1' })
@@ -404,7 +385,7 @@ test('any other tool the lists do not cover is denied, never asked', async ($, o
 })
 
 test('a denied call ends with its reason as the error, with no prompt', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   on('tool.call', () => ({ result: {} }))
   await startLap($, WORKTREE)
 
@@ -415,7 +396,7 @@ test('a denied call ends with its reason as the error, with no prompt', async ($
 })
 
 test('a subagent that is not a lap worker is left to the host', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'curl https://example.com' }, agentId: 'a2' })
@@ -439,7 +420,7 @@ test('a spawn without the lap line keeps its cwd and starts no lap worker', asyn
 })
 
 test('the host\'s own calls are left to the host', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
 
   const bashVerdict = await $.tool.check({ tool: 'Bash', input: { command: 'curl https://example.com' } })
@@ -450,7 +431,7 @@ test('the host\'s own calls are left to the host', async ($, on) => {
 })
 
 test('the host\'s call to one of jidoka\'s scripts through the launcher is allowed', async ($, on) => {
-  const launched = engineBeneath(on, SETTINGS)
+  const launched = engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
   const skill = `${launched.pluginRoot}/skills/bench`
 
@@ -468,7 +449,7 @@ test('the host\'s call to one of jidoka\'s scripts through the launcher is allow
 })
 
 test('the host\'s launcher call is left to the host when it runs more than jidoka\'s scripts', async ($, on) => {
-  const launched = engineBeneath(on, SETTINGS)
+  const launched = engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
   const launcher = `sh ${launched.pluginRoot}/bin/jidoka-run`
 
@@ -485,7 +466,7 @@ test('the host\'s launcher call is left to the host when it runs more than jidok
 })
 
 test('a lap spawn whose worktree the engine refuses starts no worker', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
 
   const started = await $.agent.spawn({ prompt: 'jidoka lap worktree: .worktrees/lap-t1\nBuild the task.' })
 
@@ -494,7 +475,7 @@ test('a lap spawn whose worktree the engine refuses starts no worker', async ($,
 })
 
 test('a lap record of another shape denies the worker\'s calls instead of leaving them to the host', async ($, on) => {
-  engineBeneath(on, SETTINGS)
+  engineBeneath(on, LAP_LIST)
   on('state.get', () => ({ value: { value: { worktree: WORKTREE }, version: 1 } }))
 
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'ls' }, agentId: 'a1' })
@@ -504,10 +485,10 @@ test('a lap record of another shape denies the worker\'s calls instead of leavin
   expect(hostVerdict).toEqual(HOST_VERDICT)
 })
 
-const NOTHING: Pick<World, 'places' | 'statFails' | 'granted'> = { places: {}, statFails: false, granted: [] }
+const NOTHING: Pick<World, 'places' | 'statFails'> = { places: {}, statFails: false }
 
 function engineWithPlaces(on: On, places: World['places']): Launched {
-  return engineWith(on, SETTINGS, { ...NOTHING, places, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+  return engineWith(on, LAP_LIST, { ...NOTHING, places, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
 }
 
 /**
@@ -523,7 +504,7 @@ async function decisionWhileSpawning($: Engine, on: On, prompt: string, agentId:
   const underWay = new Promise<void>(resolve => {
     reach = resolve
   })
-  engineWith(on, SETTINGS, {
+  engineWith(on, LAP_LIST, {
     ...NOTHING,
     spawn: async () => {
       reach()
@@ -553,7 +534,7 @@ test('a spawn that is not a lap leaves the first call of an unrecorded agent to 
 })
 
 test('a lap worker that never started leaves no claim on the next unrecorded agent', async ($, on) => {
-  engineWith(on, SETTINGS, { ...NOTHING, spawn: () => Promise.resolve({ deny: 'the engine refused' }) })
+  engineWith(on, LAP_LIST, { ...NOTHING, spawn: () => Promise.resolve({ deny: 'the engine refused' }) })
   await startLap($, WORKTREE)
 
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'curl https://example.com' }, agentId: 'a2' })
@@ -611,7 +592,7 @@ test('a write to a file in folders not made yet is placed by the nearest folder 
 })
 
 test('a write whose location cannot be resolved is denied', async ($, on) => {
-  engineWith(on, SETTINGS, { ...NOTHING, statFails: true, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+  engineWith(on, LAP_LIST, { ...NOTHING, statFails: true, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
   await startLap($, WORKTREE)
 
   const verdict = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/src/a.py`, content: '' }, agentId: 'a1' })
@@ -827,25 +808,46 @@ test('a failed turn still reaches the host when the wake script cannot run', asy
   expect(answer).toEqual({})
 })
 
-const CHECK_SETTINGS = {
-  worker_commands: [],
-  apps: [
-    {
-      name: 'app',
-      build: 'dotnet build App.slnx',
-      run: 'dotnet run --project src/App',
-      way_in: 'curl http://localhost:5000',
-      test: null,
-    },
-  ],
-}
+const CHECK_LIST = ['dotnet build App.slnx', 'dotnet run --project src/App', 'curl http://localhost:5000']
 
 async function startCheck($: Engine, subagentType: string): Promise<void> {
   await $.agent.spawn({ prompt: `jidoka lap worktree: ${WORKTREE}\nRun the holdouts.`, subagentType })
 }
 
+test("the lap mod asks the lap-lists script for the worker's own kind", async ($, on) => {
+  const launched = engineBeneath(on, CHECK_LIST)
+
+  await startCheck($, 'jidoka:validation')
+  await startCheck($, 'app-check')
+  await startLap($, WORKTREE)
+
+  expect(launched.asked).toEqual(['check', 'check', 'lap'])
+})
+
+test("a check worker's app values are split into simple commands, and one it cannot vouch for adds nothing", async ($, on) => {
+  const launched = engineBeneath(on, [
+    'make "my target"',
+    'make run && make seed',
+    'make run > out.txt',
+    'echo `date`',
+    'echo $(date)',
+    "echo 'unclosed",
+    'curl localhost:8080',
+  ])
+  await startCheck($, 'jidoka:validation')
+  const launcher = `${launched.pluginRoot}/bin/jidoka-run`
+
+  expect(await bash($, 'make my target')).toBe('allow')
+  expect(await bash($, 'make seed')).toBe('allow')
+  expect(await bash($, 'curl localhost:8080 -s')).toBe('allow')
+  expect(await bash($, 'make run')).toBe('allow')
+  expect(await bash($, 'make')).toBe('deny')
+  expect(await bash($, 'rm -rf /tmp/x')).toBe('deny')
+  expect(await bash($, `sh ${launcher} ${launched.pluginRoot}/scripts/holdouts.py read e1`)).toBe('allow')
+})
+
 test("a validation worker may run an app's commands and the launcher on holdouts.py and nothing else", async ($, on) => {
-  const launched = engineBeneath(on, CHECK_SETTINGS)
+  const launched = engineBeneath(on, CHECK_LIST)
   await startCheck($, 'jidoka:validation')
   const launcher = `${launched.pluginRoot}/bin/jidoka-run`
   const holdouts = `${launched.pluginRoot}/scripts/holdouts.py`
@@ -858,7 +860,7 @@ test("a validation worker may run an app's commands and the launcher on holdouts
 })
 
 test('an app check worker is decided like a validation worker', async ($, on) => {
-  const launched = engineBeneath(on, CHECK_SETTINGS)
+  const launched = engineBeneath(on, CHECK_LIST)
   await startCheck($, 'app-check')
   const launcher = `${launched.pluginRoot}/bin/jidoka-run`
 
@@ -868,7 +870,7 @@ test('an app check worker is decided like a validation worker', async ($, on) =>
 })
 
 test('a check worker refused a call is told to report the holdout it could not test, never to park a task', async ($, on) => {
-  engineBeneath(on, CHECK_SETTINGS)
+  engineBeneath(on, CHECK_LIST)
   await startCheck($, 'jidoka:validation')
 
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf /tmp/x' }, agentId: 'a1' })
@@ -882,7 +884,7 @@ test('a check worker refused a call is told to report the holdout it could not t
 })
 
 test('a lap worker may not run the launcher on holdouts.py', async ($, on) => {
-  const launched = engineBeneath(on, CHECK_SETTINGS)
+  const launched = engineBeneath(on, CHECK_LIST)
   await startLap($, WORKTREE)
 
   const verdict = await bash($, `sh ${launched.pluginRoot}/bin/jidoka-run ${launched.pluginRoot}/scripts/holdouts.py read e1`)

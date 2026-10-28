@@ -37,17 +37,8 @@ of any the epic held.
 presets are bug-epic and improvement-epic.
 
 `lap-commands` runs in a lap's worktree and prints, as a JSON list, the
-commands the built-in list and the lap's epic add to what the repo settings
-let a lap worker run. The lap mod reads it. A text entry allows its words with
-any words after them: the built-in list's additions and the epic's
-extra_commands. An object entry is one of the built-in list's entries for the
-lap's stage, `{"command", "then"}`, which allows its words with nothing after
-them when `then` is `nothing`, with only paths after them when it is `paths`,
-and with any words but the long options in its `refusing` list, or an
-abbreviation of one, when it is `words`. A lap at the merge stage gets the
-merge worker's git commands: `git rebase <epic branch>`, `git rebase --abort`
-and `git -c core.editor=true rebase --continue` whole, `git add` of paths, and
-`git status`, `git diff` and `git log` without `--output`.
+extra_commands of the epic that holds the lap's task. lap_lists.py reads the
+same extra_commands through `extra_commands_of`.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
@@ -64,13 +55,12 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, TypedDict
+from typing import Callable
 
 import lap_record
 import repo_settings
-from caps import metadata_of
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, env_as_git_user, run
-from epic_reader import BRANCH_KEY, EPIC_TYPE
+from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_git_user, metadata_of, parent_of, run
+from epic_reader import NotAnEpic, shown_epic
 
 KEY_PREFIX = "rules."
 GUIDANCE_KEY = f"{KEY_PREFIX}guidance"
@@ -78,20 +68,6 @@ COMMENT_HEADING = "Factory rules:"
 LAP_LIMIT = "lap_limit"
 COMMITS_ON_MAIN = ["one", "per_task"]
 EXTRA_COMMANDS = "extra_commands"
-REBASE_STATES = ["rebase-merge", "rebase-apply"]
-HEADS_PREFIX = "refs/heads/"
-LOOKS_REFUSING = ["--output"]
-
-
-class Grant(TypedDict):
-    """A built-in entry for one stage: its command, and `nothing`, `paths` or `words` for what may follow it."""
-    command: str
-    then: str
-
-
-class RefusingGrant(Grant):
-    """A `words` entry, which refuses the long options in `refusing` and their abbreviations."""
-    refusing: list[str]
 
 
 class RulesError(Exception):
@@ -114,7 +90,7 @@ def is_map_of(value: object, valid: Callable[[object], bool]) -> bool:
     return isinstance(value, dict) and all(is_text(name) and valid(item) for name, item in value.items())
 
 
-def is_minutes(value: object) -> bool:
+def is_positive_whole(value: object) -> bool:
     return is_whole(value) and value > 0
 
 
@@ -129,10 +105,10 @@ def is_share(value: object) -> bool:
 SETTINGS: dict[str, tuple[Callable[[object], bool], str]] = {
     "lap_test_scope": (lambda value: value in repo_settings.TEST_SCOPES,
                        f"one of {', '.join(repo_settings.TEST_SCOPES)}"),
-    LAP_LIMIT: (is_minutes, "a whole number above zero"),
-    "wall_clocks": (lambda value: is_map_of(value, is_minutes),
+    LAP_LIMIT: (is_positive_whole, "a whole number above zero"),
+    "wall_clocks": (lambda value: is_map_of(value, is_positive_whole),
                     "an object of stage names to whole minutes above zero"),
-    "passes": (is_minutes, "a whole number above zero"),
+    "passes": (is_positive_whole, "a whole number above zero"),
     "discovered_bugs_into_epic": (lambda value: isinstance(value, bool), "true or false"),
     EXTRA_COMMANDS: (lambda value: isinstance(value, list) and all(map(is_text, value)),
                        "a list of commands"),
@@ -176,7 +152,7 @@ class Rules:
 def repo_lap_limit(settings: dict) -> int:
     """The repo settings' lap limit, or zero when they hold none."""
     limit = settings.get(LAP_LIMIT)
-    return limit if is_minutes(limit) else 0
+    return limit if is_positive_whole(limit) else 0
 
 
 def encode(value: object) -> str:
@@ -235,13 +211,10 @@ def problems_in(wanted: dict[str, object], repo_limit: int) -> list[str]:
 
 
 def epic_to_write(epic: str, main_tree: Path) -> dict:
-    shown = bd_show(epic, main_tree)
-    if shown is None:
-        raise RulesError(f"bd show printed nothing usable for {epic}")
-    if shown.get("issue_type") != EPIC_TYPE:
-        raise RulesError(f"{epic} is a {shown.get('issue_type') or 'bead'}, not an epic. Factory rules belong to "
-                         "an epic")
-    return shown
+    try:
+        return shown_epic(epic, main_tree)
+    except NotAnEpic as error:
+        raise RulesError(f"{error}. Factory rules belong to an epic") from error
 
 
 def change_comment(name: str, value: object, before: object | None) -> str:
@@ -305,44 +278,25 @@ def allow_extra_command(epic: str, command: str, home: Path, main_tree: Path) ->
     return True
 
 
-def merge_grant(epic_branch: str) -> list[Grant]:
-    whole = [f"git rebase {epic_branch}", "git rebase --abort", "git -c core.editor=true rebase --continue"]
-    looks = ["git status", "git diff", "git log"]
-    return [*(Grant(command=command, then="nothing") for command in whole),
-            Grant(command="git add", then="paths"),
-            *(RefusingGrant(command=command, then="words", refusing=LOOKS_REFUSING) for command in looks)]
+def epic_holding(task: dict, main_tree: Path) -> dict:
+    """The epic that holds the task as bd shows it; empty for a task with no parent."""
+    parent = parent_of(task)
+    return epic_to_write(parent, main_tree) if parent else {}
 
 
-def checked_out_or_rebasing_branch(worktree: Path) -> str:
-    """The branch checked out in the worktree, or the branch its rebase in progress rewrites, whose HEAD is
-    detached until the rebase ends; empty when it is neither."""
-    done = capture(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], worktree, None)
-    if done.returncode == 0:
-        return done.stdout.strip()
-    for state in REBASE_STATES:
-        found = capture(["git", "rev-parse", "--git-path", f"{state}/head-name"], worktree, None)
-        head_name = worktree / found.stdout.strip()
-        if found.returncode == 0 and head_name.is_file():
-            ref = head_name.read_text(encoding="utf-8").strip()
-            return ref[len(HEADS_PREFIX):] if ref.startswith(HEADS_PREFIX) else ""
-    return ""
+def extra_commands_of(epic: dict) -> list[str]:
+    """The extra_commands of the epic as bd show --json prints it; none when it holds none."""
+    extra = of_epic(epic).settings.get(EXTRA_COMMANDS, [])
+    return extra if isinstance(extra, list) else []
 
 
-def lap_commands(worktree: Path, home: Path, main_tree: Path) -> list[str | Grant]:
-    """The built-in list's entries for the lap's stage, its additions, then the extra_commands of the epic that
-    holds the lap's task."""
-    branch = checked_out_or_rebasing_branch(worktree)
-    if not branch.startswith(lap_record.LAP_BRANCH_PREFIX):
-        raise RulesError(f"{worktree} is not a lap worktree: its branch is {branch or 'unknown'}, not "
-                         f"{lap_record.LAP_BRANCH_PREFIX}<task>")
-    task = bd_show(branch[len(lap_record.LAP_BRANCH_PREFIX):], main_tree)
-    epic = str(task.get("parent") or "") if task is not None else ""
-    shown = epic_to_write(epic, main_tree) if epic else {}
-    extra = of_epic(shown).settings.get(EXTRA_COMMANDS, []) if epic else []
-    stage = lap_record.stage_of(metadata_of(task or {}))
-    epic_branch = str(metadata_of(shown).get(BRANCH_KEY) or "")
-    granted = merge_grant(epic_branch) if stage == lap_record.MERGE and epic_branch else []
-    return [*granted, *repo_settings.built_in_commands(home), *(extra if isinstance(extra, list) else [])]
+def lap_commands(worktree: Path, main_tree: Path) -> list[str]:
+    """The extra_commands of the epic that holds the lap's task."""
+    try:
+        task = lap_record.task_in_worktree(worktree, main_tree)
+    except lap_record.NotALapWorktree as error:
+        raise RulesError(str(error)) from error
+    return extra_commands_of(epic_holding(task, main_tree))
 
 
 def shown_rules(epic: str, main_tree: Path) -> dict:
@@ -384,7 +338,7 @@ def main(argv: list[str]) -> int:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         home = repo_settings.jidoka_home(args.jidoka_home)
         if args.mode == "lap-commands":
-            printed = lap_commands(Path.cwd(), home, main_tree)
+            printed = lap_commands(Path.cwd(), main_tree)
         elif args.mode == "show":
             printed = shown_rules(args.epic, main_tree)
         elif args.mode == "guidance":

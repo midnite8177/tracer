@@ -31,19 +31,14 @@ from pathlib import Path
 import clock
 import pause
 import repo_settings
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show
-from epic_reader import CLOSED, EPIC_TYPE, EpicReadError, child_ids, shown_beads
-from park import HUMAN_LABEL
+from commands import COMMAND_TIMEOUT_SECONDS, CommandError, is_labeled_for_human
+from epic_reader import CLOSED, EpicReadError, read_epic, shown_epic
 
 UNPARKED = "unparked"
 NEW_TASK = "new-task"
 MERGED = "merged"
 PAUSE_OVER = "pause-over"
 DEFAULT_INTERVAL_SECONDS = 30
-
-
-class WatchError(Exception):
-    """A reason the watch cannot read the epic, worded for the person who reads stderr."""
 
 
 @dataclass(frozen=True)
@@ -63,13 +58,9 @@ class Change:
 
 
 def snapshot_of(epic: str, main_tree: Path) -> Snapshot:
-    shown = bd_show(epic, main_tree)
-    if shown is None:
-        raise WatchError(f"bd show printed nothing usable for {epic}")
-    if shown.get("issue_type") != EPIC_TYPE:
-        raise WatchError(f"{epic} is a {shown.get('issue_type') or 'bead'}, not an epic")
-    tasks = [bead for bead in shown_beads(child_ids(epic, main_tree), main_tree) if bead.get("issue_type") != EPIC_TYPE]
-    parked = {str(bead["id"]) for bead in [shown, *tasks] if HUMAN_LABEL in (bead.get("labels") or [])}
+    shown = shown_epic(epic, main_tree)
+    tasks = read_epic(shown, main_tree).task_beads
+    parked = {str(bead["id"]) for bead in [shown, *tasks] if is_labeled_for_human(bead)}
     held = pause.held_by(shown)
     return Snapshot(frozenset(parked), frozenset(str(task["id"]) for task in tasks),
                     frozenset(str(task["id"]) for task in tasks if task.get("status") != CLOSED),
@@ -112,7 +103,7 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         change = watch(args.epic, args.interval, main_tree)
-    except (WatchError, EpicReadError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (EpicReadError, CommandError, repo_settings.SettingsError, OSError) as error:
         print(f"watch: {error}", file=sys.stderr)
         return 1
     print(json.dumps({"epic": args.epic, "event": change.event, "bead": change.bead}))

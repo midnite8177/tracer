@@ -48,29 +48,26 @@ from pathlib import Path
 
 import cleanup
 import lap_record
-import private_docs
 import repo_settings
 import review
-from bench import FACTORY_LABEL, MAIN_REF, WORKTREE_FOLDER, hide_worktrees
-from caps import metadata_of
-from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, env_as_git_user, head_of, run,
-                      worktree_list)
-from epic_reader import BRANCH_KEY, CLOSED, EpicReadError, child_ids, shown_beads
+from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, MAIN_REF, CommandError, bd_show, capture,
+                      env_as_git_user, labels_of, metadata_of, read_bead, run, worktree_list)
+from epic_branch import branch_head, required_head
+from epic_reader import BRANCH_KEY, EPIC_TYPE, EpicReadError, child_ids, recorded_branch, shown_beads, validated_head
+from epics import GATE_STATE_KEY, WAITING, at_the_gate, is_closed
 from holdouts import HOLDOUTS_KEY
 from land import (FULL_SUITE_FAILED_EXIT_CODE, PARTLY_LANDED_EXIT_CODE, WAITING_ON_EDITS_EXIT_CODE, FullSuiteFailed,
                   LandingError, LandingSettings, WaitingOnEdits, acquire_lock, attempt, landing_settings,
                   main_checkout, merge_lock, print_hand_run, refuse_bad_message, refuse_overlapping_edits,
                   release_lock, run_full_suite, subject)
 from merge_gate import contains
-from park import HUMAN_LABEL
-from pass_support import MAIN_BRANCH, park_epic, remove_worktree, tail_of
+from pass_support import MAIN_BRANCH, park_epic
+from report_text import tail_of
+from worktrees import cut_detached, remove_worktree, stage_worktree
 
-GATE_STATE_KEY = "gate.state"
-WAITING = "waiting"
 GATE_COMMENT_HEADING = "Acceptance gate:"
 DECISION_KEY = "gate.decision"
 LANDED_KEY = "gate.landed"
-VALIDATION_HEAD_KEY = "validation.head"
 MERGE = "merge"
 WORKTREE_PREFIX = "landing-"
 
@@ -89,7 +86,7 @@ class BackAtTheGate(Exception):
 
 
 @dataclass(frozen=True)
-class Epic:
+class EpicAtTheGate:
     """The epic at the gate: its id, its epic branch, and what the gate recorded on it."""
     id: str
     branch: str
@@ -109,24 +106,20 @@ class Landed:
     failed_steps: list[str]
 
 
-def epic_at_the_gate(epic: str, main_tree: Path) -> Epic:
-    shown = bd_show(epic, main_tree)
-    if shown is None:
-        raise GateError(f"bd show printed nothing usable for {epic}")
-    metadata = metadata_of(shown)
-    labels = [str(label) for label in shown.get("labels") or []]
-    found = Epic(epic, str(metadata.get(BRANCH_KEY) or ""), metadata, labels, shown.get("status") == CLOSED)
+def epic_at_the_gate(epic: str, main_tree: Path) -> EpicAtTheGate:
+    shown = read_bead(epic, main_tree)
+    labels = labels_of(shown)
+    found = EpicAtTheGate(epic, recorded_branch(shown), metadata_of(shown), labels, is_closed(shown))
     if found.landed:
         return found
-    if shown.get("issue_type") != "epic":
+    if shown.get("issue_type") != EPIC_TYPE:
         raise GateError(f"{epic} is not an epic")
-    if FACTORY_LABEL not in labels or HUMAN_LABEL not in labels or metadata.get(GATE_STATE_KEY) != WAITING:
+    if FACTORY_LABEL not in labels or HUMAN_LABEL not in labels or not at_the_gate(shown):
         raise GateError(f"{epic} does not wait at the acceptance gate: it needs the {FACTORY_LABEL} and "
                         f"{HUMAN_LABEL} labels and {GATE_STATE_KEY}={WAITING}")
     if not found.branch:
         raise GateError(f"{epic} records no epic branch as its {BRANCH_KEY} metadata")
-    if head_of(f"refs/heads/{found.branch}", main_tree) is None:
-        raise GateError(f"the epic branch {found.branch} does not exist")
+    required_head(found.branch, main_tree, GateError)
     return found
 
 
@@ -151,19 +144,18 @@ def reach_the_gate(epic: str, branch: str, validated_head: str, figures: list[st
     park_epic(epic, "\n".join(lines), {GATE_STATE_KEY: WAITING}, main_tree)
 
 
-def main_moved_since_validation(epic: Epic, main_tree: Path) -> bool:
+def main_moved_since_validation(epic: EpicAtTheGate, main_tree: Path) -> bool:
     """True when main holds a commit that the commit validation checked lacks, or when no validation is recorded."""
-    validated = str(epic.metadata.get(VALIDATION_HEAD_KEY) or "")
+    validated = validated_head(epic.metadata)
     return not validated or not contains(MAIN_REF, validated, main_tree)
 
 
-def rebuild_on_main(epic: Epic, message: str, home: Path, main_tree: Path) -> tuple[Path, str]:
+def rebuild_on_main(epic: EpicAtTheGate, message: str, home: Path, main_tree: Path) -> tuple[Path, str]:
     """Cuts a worktree at main's head, squashes the epic branch into one commit there; returns it and the commit."""
-    path = main_tree / WORKTREE_FOLDER / f"{WORKTREE_PREFIX}{epic.id}"
+    path = stage_worktree(WORKTREE_PREFIX, epic.id, main_tree)
     if path.exists():
         remove_worktree(path, main_tree)
-    hide_worktrees(main_tree)
-    run(["git", "worktree", "add", "-q", "--detach", str(path), MAIN_REF], main_tree, None)
+    cut_detached(path, MAIN_REF, home, main_tree)
     try:
         squashed = capture(["git", "merge", "--squash", f"refs/heads/{epic.branch}"], path, None)
         if squashed.returncode != 0:
@@ -175,14 +167,13 @@ def rebuild_on_main(epic: Epic, message: str, home: Path, main_tree: Path) -> tu
             raise GateError(f"{epic.branch} holds nothing that main lacks, so there is nothing to land")
         run(["git", "commit", "-q", "-m", message], path, None)
         sha = run(["git", "rev-parse", "HEAD"], path, None).strip()
-        private_docs.share(main_tree, path.resolve(), home)
-    except (BackAtTheGate, GateError, CommandError, private_docs.ClashError):
+    except (BackAtTheGate, GateError, CommandError):
         remove_worktree(path, main_tree)
         raise
     return path, sha
 
 
-def validate_again(epic: Epic, worktree: Path, settings: LandingSettings) -> None:
+def validate_again(epic: EpicAtTheGate, worktree: Path, settings: LandingSettings) -> None:
     try:
         run_full_suite(settings.full_suite, worktree)
     except FullSuiteFailed as failed:
@@ -194,12 +185,12 @@ def validate_again(epic: Epic, worktree: Path, settings: LandingSettings) -> Non
         raise BackAtTheGate("\n".join(lines), FULL_SUITE_FAILED_EXIT_CODE) from failed
 
 
-def fast_forward_main(epic: Epic, sha: str, checkout: Path) -> None:
+def fast_forward_main(epic: EpicAtTheGate, sha: str, checkout: Path) -> None:
     refuse_overlapping_edits(epic.branch, checkout)
     run(["git", "merge", "--ff-only", sha], checkout, None)
 
 
-def land_on_main(epic: Epic, message: str, settings: LandingSettings, home: Path, checkout: Path,
+def land_on_main(epic: EpicAtTheGate, message: str, settings: LandingSettings, home: Path, checkout: Path,
                  main_tree: Path) -> str:
     """Rebuilds the epic as one commit on main's head, reruns the suite if main moved, and fast-forwards main."""
     refuse_overlapping_edits(epic.branch, checkout)
@@ -214,7 +205,7 @@ def land_on_main(epic: Epic, message: str, settings: LandingSettings, home: Path
     return sha
 
 
-def lap_branches(epic: Epic, main_tree: Path) -> list[str]:
+def lap_branches(epic: EpicAtTheGate, main_tree: Path) -> list[str]:
     """The branch of every lap the epic's beads opened, from the lap metadata and the lap/<bead> naming."""
     ids = child_ids(epic.id, main_tree)
     names = {f"{lap_record.LAP_BRANCH_PREFIX}{bead}" for bead in ids}
@@ -225,17 +216,17 @@ def lap_branches(epic: Epic, main_tree: Path) -> list[str]:
     return sorted(names)
 
 
-def remove_branches(epic: Epic, main_tree: Path) -> None:
+def remove_branches(epic: EpicAtTheGate, main_tree: Path) -> None:
     names = lap_branches(epic, main_tree) + [epic.branch]
     for tree in worktree_list(main_tree):
         if tree.branch in names:
             run(["git", "worktree", "remove", "--force", str(tree.path)], main_tree, None)
     for name in names:
-        if head_of(f"refs/heads/{name}", main_tree) is not None:
+        if branch_head(name, main_tree) is not None:
             run(["git", "branch", "-D", name], main_tree, None)
 
 
-def close_out(epic: Epic, message: str, sha: str, main_tree: Path) -> Landed:
+def close_out(epic: EpicAtTheGate, message: str, sha: str, main_tree: Path) -> Landed:
     """Records the decision, closes the epic and removes its labels and branches, each step on its own."""
     env = env_as_git_user(main_tree)
     failed: list[str] = []

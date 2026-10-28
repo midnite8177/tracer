@@ -252,46 +252,30 @@ function jsonIn(text: string): unknown {
 }
 
 /**
- * The repo settings that jidoka's own script shows for the worktree; empty
- * when the script cannot show them.
+ * A text entry split into one entry for each simple command it holds, with
+ * the quotes taken off; an entry object stays as it is, and a text that holds
+ * a command substitution, a process substitution, an output redirect or an
+ * unclosed quote adds nothing, because no list entry can vouch for it.
  */
-async function repoSettings($: EngineInterface, worktree: string): Promise<Record<string, unknown>> {
-  const shown = await runScript($, 'repo_settings', ['show'], worktree)
-  const settings = shown?.exitCode === 0 ? jsonIn(shown.stdout) : undefined
-  return typeof settings === 'object' && settings !== null ? (settings as Record<string, unknown>) : {}
-}
-
-/** The values the settings' apps hold under the named fields, app by app. */
-function appFields(settings: Record<string, unknown>, fields: readonly string[]): unknown[] {
-  const apps: unknown[] = Array.isArray(settings.apps) ? settings.apps : []
-  return apps.flatMap(app =>
-    typeof app === 'object' && app !== null ? fields.map(field => (app as Record<string, unknown>)[field]) : [],
+function splitIntoSimpleCommands(entries: readonly ListEntry[]): ListEntry[] {
+  return entries.flatMap((entry): ListEntry[] =>
+    typeof entry !== 'string'
+      ? [entry]
+      : (simpleCommands(entry) ?? []).filter(words => words.length > 0).map(words => words.join(' ')),
   )
 }
 
-/** Each app's test command and the repo's `worker_commands`. */
-function projectTests(settings: Record<string, unknown>): string[] {
-  return [...textsOf(appFields(settings, ['test'])), ...textsOf(settings.worker_commands)]
-}
-
 /**
- * What a validation or app check worker may run besides the launcher on the
- * holdouts script: the repo's `worker_commands` and each app's `build`, `run`
- * and `way_in`. A value that holds several simple commands counts each of them.
+ * The commands a worker of this kind may run besides what the tools mark
+ * read-only, from jidoka's lap-lists script run in the worktree; none when
+ * the script cannot print them. The script prints a check worker's app values
+ * whole, and they are split here.
  */
-function checkCommands(settings: Record<string, unknown>): string[] {
-  const values = [...textsOf(appFields(settings, ['build', 'run', 'way_in'])), ...textsOf(settings.worker_commands)]
-  return values.flatMap(value => (simpleCommands(value) ?? []).map(words => words.join(' ')))
-}
-
-/**
- * The commands the built-in list's entries for the lap's stage, its additions
- * and the lap's epic allow, from jidoka's own script run in the worktree;
- * none when the script cannot print them.
- */
-async function grantedCommands($: EngineInterface, worktree: string): Promise<ListEntry[]> {
-  const shown = await runScript($, 'rules', ['lap-commands'], worktree)
-  return shown?.exitCode === 0 ? entriesOf(jsonIn(shown.stdout)) : []
+async function commandsFor($: EngineInterface, kind: LapWorker['kind'], worktree: string): Promise<ListEntry[]> {
+  const shown = await runScript($, 'lap_lists', [kind], worktree)
+  if (shown === undefined || shown.exitCode !== 0) return []
+  const listed = entriesOf(jsonIn(shown.stdout))
+  return kind === 'check' ? splitIntoSimpleCommands(listed) : listed
 }
 
 /**
@@ -489,10 +473,8 @@ export const register: Register = on => {
     if (!isAbsolute(worktree)) {
       return { deny: `jidoka: the lap worktree ${worktree} is not an absolute path, so no lap worker started.` }
     }
-    const settings = await repoSettings($, worktree)
-    const lap: LapWorker = isCheckWorker(e.subagentType)
-      ? { kind: 'check', worktree, commands: checkCommands(settings) }
-      : { kind: 'lap', worktree, commands: [...projectTests(settings), ...(await grantedCommands($, worktree))] }
+    const kind = isCheckWorker(e.subagentType) ? 'check' : 'lap'
+    const lap: LapWorker = { kind, worktree, commands: await commandsFor($, kind, worktree) }
     await $.state.set(STARTING, { lap })
     try {
       const started = await next({ ...e, cwd: worktree })

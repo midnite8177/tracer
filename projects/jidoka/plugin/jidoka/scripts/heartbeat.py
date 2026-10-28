@@ -28,9 +28,9 @@ import argparse
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
+import clock
 import epics
 import repo_settings
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError
@@ -73,10 +73,16 @@ def beat_session(home: Path, epic: str) -> str | None:
     return session if isinstance(session, str) else None
 
 
+def fresh_age_seconds(home: Path, epic: str, now: int) -> int | None:
+    """Seconds since the epic's last beat when that is no older than FRESH_SECONDS, and None when the heartbeat is
+    stale or unreadable."""
+    seconds = beat_age_seconds(home, epic, now)
+    return seconds if seconds is not None and seconds <= FRESH_SECONDS else None
+
+
 def is_fresh(home: Path, epic: str, now: int) -> bool:
     """True when the epic's last beat is no older than FRESH_SECONDS."""
-    seconds = beat_age_seconds(home, epic, now)
-    return seconds is not None and seconds <= FRESH_SECONDS
+    return fresh_age_seconds(home, epic, now) is not None
 
 
 def mark_stopped(home: Path, epic: str, now: int) -> None:
@@ -120,7 +126,7 @@ def beat(home: Path, main_tree: Path, session: str) -> list[str]:
     an epic claimed by another session has a manager in that session, so a beat writes none of them: it would show
     a manager where none runs. Only a manager's call claims an epic.
     """
-    now = int(time.time())
+    now = clock.now()
     beaten = [epic for epic in managed_by(home, main_tree, session) if is_fresh(home, epic, now)]
     for epic in beaten:
         write_beat(home, epic, now, session)

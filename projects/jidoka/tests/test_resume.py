@@ -404,6 +404,16 @@ class SecondManagerTests(ResumeCase):
 
         self.assertGreaterEqual(self.beat_time(), int(time.time()) - FRESH_SECONDS * 2)
 
+    def test_a_beat_made_after_the_clock_moved_past_fresh_renews_nothing(self):
+        self.next_printed()
+        before = self.beat_time()
+
+        done = self.script_with(MANAGER_SESSION, {"JIDOKA_NOW": str(int(time.time()) + STALE_SECONDS)}, HEARTBEAT,
+                                "beat", "--session", MANAGER_SESSION)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(before, self.beat_time())
+
     def test_a_manager_call_that_knows_no_session_says_so_on_stderr(self):
         done = self.script_with(MANAGER_SESSION, {"JIDOKA_SESSION_ID": ""}, SCHEDULER, "next", self.epic)
 

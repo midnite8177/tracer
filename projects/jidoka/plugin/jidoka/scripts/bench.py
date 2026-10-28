@@ -45,18 +45,16 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import git_exclude
 import private_docs
 import repo_settings
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, env_as_git_user, head_of, run, worktree_list
+from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, MAIN_REF, WORKTREE_FOLDER, CommandError,
+                      env_as_git_user, head_of, labels_of, metadata_of, parent_of, read_bead, run, worktree_list)
+from epic_branch import branch_head
+from worktrees import hide_worktrees
 
-MAIN_REF = "refs/heads/main"
-WORKTREE_FOLDER = ".worktrees"
-WORKTREE_EXCLUDE_LINE = f"{WORKTREE_FOLDER}/"
 BRANCH_PREFIX = "bench/"
 SLUG_LIMIT = 50
 CONTAINER_TYPES = {"epic"}
-FACTORY_LABEL = "factory"
 
 
 class BenchError(Exception):
@@ -90,34 +88,22 @@ def slug(title: str) -> str:
     return words[:SLUG_LIMIT].rstrip("-")
 
 
-def parent_of(shown: dict) -> str:
-    """The bead's parent id, from bd's parent field or else its parent-child dependency."""
-    if shown.get("parent"):
-        return str(shown["parent"])
-    for link in shown.get("dependencies") or []:
-        if isinstance(link, dict) and link.get("dependency_type") == "parent-child" and link.get("id"):
-            return str(link["id"])
-    return ""
-
-
 def bead_of(bead: str, main_tree: Path) -> Bead:
-    shown = bd_show(bead, main_tree)
-    if shown is None:
-        raise BenchError(f"bd show printed nothing usable for {bead}")
-    metadata = shown.get("metadata") or {}
+    shown = read_bead(bead, main_tree)
+    metadata = metadata_of(shown)
     return Bead(id=str(shown.get("id") or bead),
                 title=str(shown.get("title") or ""),
                 issue_type=str(shown.get("issue_type") or ""),
                 assignee=str(shown.get("assignee") or ""),
-                labels=tuple(str(label) for label in shown.get("labels") or []),
+                labels=tuple(labels_of(shown)),
                 parent=parent_of(shown),
                 recorded_branch=str(metadata.get("bench.branch") or ""),
                 recorded_worktree=str(metadata.get("bench.worktree") or ""),
                 recorded_start=str(metadata.get("bench.start") or ""))
 
 
-def exists(ref: str, main_tree: Path) -> bool:
-    return head_of(ref, main_tree) is not None
+def exists(branch: str, main_tree: Path) -> bool:
+    return branch_head(branch, main_tree) is not None
 
 
 def main_head(main_tree: Path) -> str:
@@ -125,10 +111,6 @@ def main_head(main_tree: Path) -> str:
     if head is None:
         raise BenchError("the repo has no main branch to cut the bench branch from")
     return head
-
-
-def hide_worktrees(main_tree: Path) -> None:
-    git_exclude.add(git_exclude.exclude_file(main_tree), [WORKTREE_EXCLUDE_LINE])
 
 
 def worktree_branches(main_tree: Path) -> dict[Path, str]:
@@ -139,13 +121,13 @@ def worktree_branches(main_tree: Path) -> dict[Path, str]:
 def planned_workspace(bead: Bead, main_tree: Path) -> Workspace:
     """The workspace the bead's metadata records, or a new one named from its title."""
     if (bead.recorded_branch and bead.recorded_worktree and bead.recorded_start
-            and exists(f"refs/heads/{bead.recorded_branch}", main_tree)):
+            and exists(bead.recorded_branch, main_tree)):
         return Workspace(bead.recorded_branch, Path(bead.recorded_worktree), bead.recorded_start)
     name = slug(bead.title)
     if not name:
         raise BenchError(f"the title of {bead.id} has no letters or digits to name its branch from")
     branch = f"{BRANCH_PREFIX}{name}"
-    if exists(f"refs/heads/{branch}", main_tree):
+    if exists(branch, main_tree):
         raise BenchError(f"the branch {branch} already exists and {bead.id} does not record it. "
                          "Retitle the bead or delete the branch")
     return Workspace(branch, main_tree / WORKTREE_FOLDER / name, main_head(main_tree))
@@ -160,7 +142,7 @@ def make_worktree(workspace: Workspace, main_tree: Path) -> None:
         return
     if path.exists():
         raise BenchError(f"{path} exists and is not a worktree of the repo. Move it aside and start again")
-    if exists(f"refs/heads/{workspace.branch}", main_tree):
+    if exists(workspace.branch, main_tree):
         run(["git", "worktree", "add", "-q", str(path), workspace.branch], main_tree, None)
     else:
         run(["git", "worktree", "add", "-q", "-b", workspace.branch, str(path), workspace.start], main_tree, None)

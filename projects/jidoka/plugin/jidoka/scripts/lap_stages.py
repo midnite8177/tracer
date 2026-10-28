@@ -2,9 +2,9 @@
 
 Each function takes one way a stage ended, such as a failed build, a Spec check that sent the diff back or a
 finished build, and returns the laps that go back to a worker: an empty list when the lap parked, blocked or
-merged. The scheduler picks the function from the worker's outcome and prints the next moves after it. Everything
-these functions write on a lap they write with BEADS_ACTOR set to jidoka, and the output of the tests and the gate
-goes to stderr.
+merged. Interrupting a lap is here too, beside parking it. The scheduler picks the function from the worker's outcome
+and prints the next moves after it. Everything these functions write on a lap they write with BEADS_ACTOR set to
+jidoka, and the output of the tests and the gate goes to stderr.
 
 The outcomes of a worker's stage, for a task on the simple track, whose lap starts at the build:
   done       the build finished, with the app and the filter the builder named, which are recorded on the task. The
@@ -71,8 +71,8 @@ that newer work causes again call the merge worker, with no try. `failed` is a m
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import app_check
@@ -84,15 +84,26 @@ import merge_gate
 import park
 import spec_check
 import targeted_tests
-from commands import SCRATCH_FOLDER, CommandError, capture, env_as_factory, head_of, run
-from lap_record import APP_CHECK, BLOCKED_OUTCOME, BRIEF_PREFIX, BUILD, DONE, FULL_TRACK, MERGE, SPEC_CHECK, \
-    GateContext, Lap, SchedulerError, words
-from park import HUMAN_LABEL
+from commands import HUMAN_LABEL, capture, env_as_factory, run
+from epic_branch import EpicBranchMoved, branch_head, checked_out_branch
+from lap_outcomes import BLOCKED, DONE, SchedulerError
+from lap_record import APP_CHECK, BRIEF_PREFIX, BUILD, FULL_TRACK, INTERRUPTED, MERGE, SPEC_CHECK, Lap, words
+from worktrees import stage_without_scratch
 
 RESEARCH_BRIEF = "research-brief.md"
+INTERRUPTED_PREFIX = "Interrupted: "
 TEST_FAILURES_TO_MOVE = 2
-NOTHING_STAGED = 0
-CHANGES_STAGED = 1
+
+
+@dataclass(frozen=True)
+class GateContext:
+    """What the stages that end at the merge gate need to know about the epic the lap belongs to, built once for a
+    call: the epic, its branch, the repo settings, the jidoka home and the main checkout."""
+    epic: str
+    epic_branch: str
+    settings: dict
+    home: Path
+    main_tree: Path
 
 
 def park_lap(lap: Lap, epic: str, tries: int, why: str, main_tree: Path) -> None:
@@ -104,6 +115,24 @@ def park_lap(lap: Lap, epic: str, tries: int, why: str, main_tree: Path) -> None
                                f"keep the work. Take the {HUMAN_LABEL} label off to give the task a new lap.", [],
               main_tree)
     caps.note_parked_lap(epic, lap.stage, main_tree)
+
+
+def interrupt_lap(lap: Lap, because: str, afterwards: str, main_tree: Path) -> None:
+    """Ends the lap interrupted: the task is open and unassigned, with its worktree and branch kept.
+
+    The lap's tries, cutoffs and send-backs stay as they were, and the epic's brake is not touched. The comment
+    says why the lap ended and when its task gets a new lap.
+    """
+    env = env_as_factory()
+    run(["bd", "comment", lap.task, f"{INTERRUPTED_PREFIX}{because}. The worktree {lap.worktree} and the branch "
+                                    f"{lap.branch} keep the work. The task gets a new lap when {afterwards}."],
+        main_tree, env)
+    run(["bd", "update", lap.task, *lap_record.resting(INTERRUPTED)], main_tree, env)
+
+
+def interrupt_for_stop(lap: Lap, main_tree: Path) -> None:
+    """Ends the lap interrupted because the factory stopped under it."""
+    interrupt_lap(lap, f"the factory stopped during the {lap.stage}", "the factory starts again", main_tree)
 
 
 def ask(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
@@ -124,7 +153,7 @@ def block(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
         findings = discovered.read_findings(lap.scratch)
         blockers = discovered.blockers_in(findings)
         if not blockers:
-            raise discovered.DiscoveryError(f"the {BLOCKED_OUTCOME} outcome needs a finding in "
+            raise discovered.DiscoveryError(f"the {BLOCKED} outcome needs a finding in "
                                             f"{discovered.DISCOVERED_REPORT} whose placement is {discovered.BLOCKS}")
         filed = discovered.file_findings(findings, lap.task, lap.area, epic, main_tree)
     except discovered.DiscoveryError as error:
@@ -144,7 +173,7 @@ def file_discovered_work(lap: Lap, epic: str, main_tree: Path) -> str | None:
         findings = discovered.read_findings(lap.scratch)
         if discovered.blockers_in(findings):
             raise discovered.DiscoveryError(f"a {DONE} stage has no finding whose placement is {discovered.BLOCKS}. "
-                                            f"End {BLOCKED_OUTCOME} instead")
+                                            f"End {BLOCKED} instead")
         discovered.file_findings(findings, lap.task, lap.area, epic, main_tree)
     except discovered.DiscoveryError as error:
         return f"the discovered work could not be filed: {error}"
@@ -168,34 +197,29 @@ def _count_lap_try(lap: Lap, epic: str, why: str, main_tree: Path) -> list[Lap]:
     tries = lap.tries + 1
     name = words(lap.stage)
     cap = lap_record.try_cap(lap.stage)
-    if tries >= cap:
-        park_lap(lap, epic, tries, f"the try cap of {cap} is reached: {name} try {tries} of {cap} "
-                                   f"failed: {why}", main_tree)
-        return []
-    env = env_as_factory()
-    run(["bd", "comment", lap.task,
-         f"{name[:1].upper()}{name[1:]} try {tries} of {cap} failed: {why}. The lap goes back to the "
-         f"{name}."], main_tree, env)
-    run(["bd", "update", lap.task, *lap_record.counting_tries(tries), *lap_record.entering(lap.stage)], main_tree,
-        env)
-    return [dataclasses.replace(lap, tries=tries)]
+    retried, arguments = lap_record.retrying(lap, tries)
+    parked = caps.count_against_cap(
+        lap.task, tries, cap,
+        lambda: park_lap(lap, epic, tries, f"the try cap of {cap} is reached: {name} try {tries} of {cap} "
+                                           f"failed: {why}", main_tree),
+        f"{name[:1].upper()}{name[1:]} try {tries} of {cap} failed: {why}. The lap goes back to the {name}.",
+        arguments, main_tree)
+    return [] if parked else [retried]
 
 
 def cut_off(lap: Lap, epic: str, why: str, main_tree: Path) -> list[Lap]:
     """Counts a cutoff of the stage. The cutoff that reaches caps.CUTOFF_CAP parks the task; an earlier one reruns the
     stage, and no try is counted."""
     cutoffs = lap.cutoffs + 1
-    if cutoffs >= caps.CUTOFF_CAP:
-        park_lap(lap, epic, lap.tries, f"the cutoff cap of {caps.CUTOFF_CAP} is reached: the {lap.stage} was cut off "
-                                       f"{cutoffs} of {caps.CUTOFF_CAP} times, the last time because {why}",
-                 main_tree)
-        return []
-    env = env_as_factory()
-    run(["bd", "comment", lap.task, f"The {lap.stage} was cut off, cutoff {cutoffs} of {caps.CUTOFF_CAP}, because "
-                                    f"{why}. The lap goes back to the {lap.stage} and no try is counted."],
-        main_tree, env)
-    run(["bd", "update", lap.task, *lap_record.counting_cutoffs(lap.stage, cutoffs)], main_tree, env)
-    return [dataclasses.replace(lap, cutoffs=cutoffs)]
+    counted, arguments = lap_record.counting_cutoffs(lap, cutoffs)
+    parked = caps.count_against_cap(
+        lap.task, cutoffs, caps.CUTOFF_CAP,
+        lambda: park_lap(lap, epic, lap.tries, f"the cutoff cap of {caps.CUTOFF_CAP} is reached: the {lap.stage} was "
+                                               f"cut off {cutoffs} of {caps.CUTOFF_CAP} times, the last time "
+                                               f"because {why}", main_tree),
+        f"The {lap.stage} was cut off, cutoff {cutoffs} of {caps.CUTOFF_CAP}, because {why}. The lap goes back to "
+        f"the {lap.stage} and no try is counted.", arguments, main_tree)
+    return [] if parked else [counted]
 
 
 def send_back(lap: Lap, epic: str, findings: list[spec_check.Finding], failed_holdouts: list[app_check.Verdict],
@@ -207,22 +231,19 @@ def send_back(lap: Lap, epic: str, findings: list[spec_check.Finding], failed_ho
     saw, never its steps.
     """
     send_backs = lap.send_backs + 1
-    if send_backs >= caps.SEND_BACK_CAP:
-        park_lap(lap, epic, lap.tries, f"the send-back cap of {caps.SEND_BACK_CAP} is reached: the checks sent the "
-                                       f"diff back {send_backs} of {caps.SEND_BACK_CAP} times"
-                                       + findings_in_words(findings, failed_holdouts), main_tree)
-        return []
     stage = BUILD if lap.stage in (SPEC_CHECK, APP_CHECK) else lap.stage
     spec_json = spec_check.as_json(findings) if findings else ""
     app_json = app_check.as_json(failed_holdouts) if failed_holdouts else ""
-    env = env_as_factory()
-    run(["bd", "comment", lap.task, f"The checks sent the diff back, send-back {send_backs} of "
-                                    f"{caps.SEND_BACK_CAP}. The lap goes back to the {stage} and no try is "
-                                    f"counted.{findings_in_words(findings, failed_holdouts)}"], main_tree, env)
-    run(["bd", "update", lap.task, *lap_record.counting_send_backs(send_backs), *lap_record.entering(stage),
-         *lap_record.recording_findings(spec_json, app_json)], main_tree, env)
-    return [dataclasses.replace(lap, stage=stage, send_backs=send_backs, spec_passed=False, findings=spec_json,
-                                app_findings=app_json)]
+    sent_back, arguments = lap_record.sending_back(lap, stage, send_backs, spec_json, app_json)
+    in_words = findings_in_words(findings, failed_holdouts)
+    parked = caps.count_against_cap(
+        lap.task, send_backs, caps.SEND_BACK_CAP,
+        lambda: park_lap(lap, epic, lap.tries, f"the send-back cap of {caps.SEND_BACK_CAP} is reached: the checks "
+                                               f"sent the diff back {send_backs} of {caps.SEND_BACK_CAP} times"
+                                               + in_words, main_tree),
+        f"The checks sent the diff back, send-back {send_backs} of {caps.SEND_BACK_CAP}. The lap goes back to the "
+        f"{stage} and no try is counted.{in_words}", arguments, main_tree)
+    return [] if parked else [sent_back]
 
 
 def findings_in_words(findings: list[spec_check.Finding], failed_holdouts: list[app_check.Verdict]) -> str:
@@ -255,8 +276,9 @@ def spec_check_cannot_judge(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
 
 def enter_stage(lap: Lap, stage: str, main_tree: Path) -> Lap:
     """Moves the lap to the stage and returns it; the stage's own cutoffs start at none for the lap's records."""
-    run(["bd", "update", lap.task, *lap_record.entering(stage)], main_tree, env_as_factory())
-    return dataclasses.replace(lap, stage=stage, cutoffs=caps.NONE_YET)
+    entered, arguments = lap_record.entering(lap, stage)
+    run(["bd", "update", lap.task, *arguments], main_tree, env_as_factory())
+    return entered
 
 
 def research_done(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
@@ -313,13 +335,14 @@ def spec_check_passed(lap: Lap, context: GateContext) -> list[Lap]:
     The tests run again only when the epic branch moved since that run. The lap returns to the build when they then
     fail, so the build's try count and its stage are what a red run counts against.
     """
-    building = dataclasses.replace(lap, stage=BUILD, spec_passed=True)
+    passed, arguments = lap_record.passing_spec_check(lap)
+    building = lap_record.at_build(passed)
     if not (lap.app and lap.test_filter):
         return count_try(building, context.epic, "the lap records no app and filter for its targeted tests",
                          context.main_tree)
     run(["bd", "comment", lap.task, f"The {words(SPEC_CHECK)} passed: the diff does what the task says, and nothing "
                                     "more."], context.main_tree, env_as_factory())
-    run(["bd", "update", lap.task, *lap_record.passing_spec_check()], context.main_tree, env_as_factory())
+    run(["bd", "update", lap.task, *arguments], context.main_tree, env_as_factory())
     spec_check.clear_report(lap.scratch)
     return through_the_gate(building, context)
 
@@ -327,13 +350,7 @@ def spec_check_passed(lap: Lap, context: GateContext) -> list[Lap]:
 def stage_work(lap: Lap) -> bool:
     """Stages everything a worker left in the lap's worktree outside the scratch folder; True when any change is
     staged."""
-    env = env_as_factory()
-    run(["git", "add", "--all"], lap.worktree, env)
-    run(["git", "reset", "--quiet", "--", SCRATCH_FOLDER], lap.worktree, env)
-    staged = capture(["git", "diff", "--cached", "--quiet"], lap.worktree, env)
-    if staged.returncode not in (NOTHING_STAGED, CHANGES_STAGED):
-        raise CommandError(f"git diff --cached failed in {lap.worktree}: {staged.stderr.strip()}")
-    return staged.returncode == CHANGES_STAGED
+    return bool(stage_without_scratch(lap.worktree))
 
 
 def commit_build(lap: Lap) -> None:
@@ -356,7 +373,7 @@ def commit_reconciliation(lap: Lap, epic_branch: str) -> None:
 
 def rebase_unfinished(lap: Lap) -> bool:
     """True when the lap's worktree is off the lap branch, as it is in the middle of a rebase."""
-    return merge_gate.checked_out_branch(lap.worktree) != lap.branch
+    return checked_out_branch(lap.worktree) != lap.branch
 
 
 def abandon_rebase(lap: Lap) -> None:
@@ -371,15 +388,13 @@ def count_merge_try(lap: Lap, epic: str, why: str, main_tree: Path) -> list[Lap]
     abandon_rebase(lap)
     tries = lap.merge_tries + 1
     cap = lap_record.try_cap(MERGE)
-    if tries >= cap:
-        park_lap(lap, epic, lap.tries, f"the merge try cap of {cap} is reached: merge try {tries} of "
-                                       f"{cap} failed: {why}", main_tree)
-        return []
-    env = env_as_factory()
-    run(["bd", "comment", lap.task, f"Merge try {tries} of {cap} failed: {why}. The lap goes back to "
-                                    f"the {MERGE} worker."], main_tree, env)
-    run(["bd", "update", lap.task, *lap_record.counting_merge_tries(tries)], main_tree, env)
-    return [dataclasses.replace(lap, merge_tries=tries)]
+    counted, arguments = lap_record.counting_merge_tries(lap, tries)
+    parked = caps.count_against_cap(
+        lap.task, tries, cap,
+        lambda: park_lap(lap, epic, lap.tries, f"the merge try cap of {cap} is reached: merge try {tries} of "
+                                               f"{cap} failed: {why}", main_tree),
+        f"Merge try {tries} of {cap} failed: {why}. The lap goes back to the {MERGE} worker.", arguments, main_tree)
+    return [] if parked else [counted]
 
 
 def call_merge_worker(lap: Lap, epic_branch: str, why: str, main_tree: Path) -> list[Lap]:
@@ -387,19 +402,19 @@ def call_merge_worker(lap: Lap, epic_branch: str, why: str, main_tree: Path) -> 
 
     The lap records the epic branch's head as of the call, which a reconciled lap must hold.
     """
-    base = head_of(f"refs/heads/{epic_branch}", main_tree) or ""
+    base = branch_head(epic_branch, main_tree) or ""
     env = env_as_factory()
+    called, arguments = lap_record.calling_merge_worker(lap, why, base)
     run(["bd", "comment", lap.task, f"Merge worker called: {why}. The lap goes to the {MERGE} stage and no try is "
                                     "counted."], main_tree, env)
-    run(["bd", "update", lap.task, *lap_record.calling_merge_worker(why, base)], main_tree, env)
-    cutoffs = lap.cutoffs if lap.stage == MERGE else caps.NONE_YET
-    return [dataclasses.replace(lap, stage=MERGE, cutoffs=cutoffs, merge_why=why, merge_base=base)]
+    run(["bd", "update", lap.task, *arguments], main_tree, env)
+    return [called]
 
 
 def brings_newer_work(lap: Lap, epic_branch: str, main_tree: Path) -> bool:
     """True when the epic branch holds a commit the lap's head lacks, so the targeted tests rebase it in."""
-    epic_head = head_of(f"refs/heads/{epic_branch}", main_tree)
-    lap_head = head_of(f"refs/heads/{lap.branch}", main_tree)
+    epic_head = branch_head(epic_branch, main_tree)
+    lap_head = branch_head(lap.branch, main_tree)
     return epic_head is not None and lap_head is not None and not merge_gate.contains(epic_head, lap_head, main_tree)
 
 
@@ -408,7 +423,7 @@ def reconciled(lap: Lap, context: GateContext) -> list[Lap]:
     the gate again."""
     if rebase_unfinished(lap):
         return count_merge_try(lap, context.epic, "the merge worker left the rebase unfinished", context.main_tree)
-    lap_head = head_of(f"refs/heads/{lap.branch}", context.main_tree)
+    lap_head = branch_head(lap.branch, context.main_tree)
     if lap.merge_base and (lap_head is None
                            or not merge_gate.contains(lap.merge_base, lap_head, context.main_tree)):
         return count_merge_try(lap, context.epic, f"the lap does not hold {context.epic_branch} at "
@@ -426,21 +441,22 @@ def count_red_tests(lap: Lap, epic: str, why: str, main_tree: Path) -> list[Lap]
         return count_try(lap, epic, why, main_tree)
     failures = lap.test_failures + 1
     env = env_as_factory()
-    run(["bd", "update", lap.task, *lap_record.counting_test_failures(failures)], main_tree, env)
-    lap = dataclasses.replace(lap, test_failures=failures)
+    lap, arguments = lap_record.counting_test_failures(lap, failures)
+    run(["bd", "update", lap.task, *arguments], main_tree, env)
     if failures >= TEST_FAILURES_TO_MOVE:
         run(["bd", "comment", lap.task, f"Moved to the full track: the targeted tests failed twice in this simple "
                                         f"lap, the last time because {why}."], main_tree, env)
-        run(["bd", "update", lap.task, *lap_record.moving_to_full_track()], main_tree, env)
-        lap = dataclasses.replace(lap, track=FULL_TRACK)
+        lap, arguments = lap_record.moving_to_full_track(lap)
+        run(["bd", "update", lap.task, *arguments], main_tree, env)
     return count_try(lap, epic, why, main_tree)
 
 
 def name_tests(lap: Lap, app: str, test_filter: str, main_tree: Path) -> Lap:
     """Records the app and the filter the worker named for the lap's targeted tests on the task, and returns the lap
     that holds them. The merge gate and a Spec check pass read them from the lap."""
-    run(["bd", "update", lap.task, *lap_record.naming_tests(app, test_filter)], main_tree, env_as_factory())
-    return dataclasses.replace(lap, app=app, test_filter=test_filter)
+    named, arguments = lap_record.naming_tests(lap, app, test_filter)
+    run(["bd", "update", lap.task, *arguments], main_tree, env_as_factory())
+    return named
 
 
 def targeted_run_sends_away(lap: Lap, context: GateContext) -> list[Lap] | None:
@@ -482,7 +498,7 @@ def merge_attempt(lap: Lap, context: GateContext) -> list[Lap] | None:
         with contextlib.redirect_stdout(sys.stderr):
             merged = merge_gate.merge(merge_gate.LapToMerge(lap.task, lap.branch, lap.worktree, context.epic_branch),
                                       context.settings, context.home, context.main_tree)
-    except merge_gate.EpicBranchMoved as moved:
+    except EpicBranchMoved as moved:
         print(f"scheduler: {moved}, so the targeted tests run again", file=sys.stderr)
         return None
     except merge_gate.EmptyLap as empty:
@@ -527,6 +543,6 @@ def build_done(lap: Lap, context: GateContext) -> list[Lap]:
         return count_try(lap, context.epic, unfiled, context.main_tree)
     commit_build(lap)
     if lap.track == FULL_TRACK:
-        run(["bd", "update", lap.task, *lap_record.recording_findings("", "")], context.main_tree, env_as_factory())
-        lap = dataclasses.replace(lap, spec_passed=False, findings="", app_findings="")
+        lap, arguments = lap_record.recording_findings(lap, "", "")
+        run(["bd", "update", lap.task, *arguments], context.main_tree, env_as_factory())
     return through_the_tests(lap, context)

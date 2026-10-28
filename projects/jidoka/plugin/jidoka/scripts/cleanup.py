@@ -13,11 +13,11 @@ acceptance spec that covers the same behavior. `settle` takes that report. It re
 report is missing or unusable, when a deletion names no covering test or names a test that was itself deleted,
 when the worktree changed a path that is not a test the epic added or changed, when the changed paths and the
 reported files differ, or when the worktree is gone or at another head than the worker started from, because a worktree
-cut again would hold none of the worker's deletions. Otherwise it commits the change as one commit, "Test cleanup", fast-forwards the epic
-branch to it under the merge lock, and with BEADS_ACTOR set to jidoka records on the epic `cleanup.state` (done)
-and `cleanup.removed`, every deletion of the epic's passes, and posts a comment that lists them. Validation clears
-`cleanup.state` when it ends red, so the next pass cleans again, and the gate comment's Tests removed table reads
-`cleanup.removed`.
+cut again would hold none of the worker's deletions. Otherwise it commits the change as one commit, "Test cleanup",
+fast-forwards the epic branch to it under the merge lock, and with BEADS_ACTOR set to jidoka records on the epic
+`cleanup.state` (done) and `cleanup.removed`, every deletion of the epic's passes, and posts a comment that lists
+them. Validation clears `cleanup.state` when it ends red, so the next pass cleans again, and the gate comment's Tests
+removed table reads `cleanup.removed`.
 """
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import pass_support
-from caps import metadata_of
-from commands import bd_show, env_as_factory, run, set_metadata
+from commands import env_as_factory, metadata_of, read_bead, run, set_metadata
 from pass_support import PassError, Stage, StageToRun
+from report_text import listed_report
 
 STATE_KEY = "cleanup.state"
 REMOVED_KEY = "cleanup.removed"
@@ -106,13 +106,7 @@ def to_run(epic: str, shown: dict, branch: str, settings: dict, home: Path, main
 
 
 def removals_of(report: Path) -> list[Removal]:
-    try:
-        listed = json.loads(report.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise CleanupError(f"the cleanup report {report} is missing or is not JSON ({error}), so nothing was "
-                           "written") from error
-    if not isinstance(listed, list):
-        raise CleanupError(f"the cleanup report {report} is not a JSON list, so nothing was written")
+    listed = listed_report(report, f"the cleanup report {report}", CleanupError)
     removals = []
     for number, each in enumerate(listed, 1):
         if not isinstance(each, dict) or not all(isinstance(each.get(field), str) and each[field].strip()
@@ -130,9 +124,7 @@ def removals_of(report: Path) -> list[Removal]:
 
 def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Cleaned:
     """Takes the cleanup worker's report: commits its deletions as one commit on the epic branch and records them."""
-    shown = bd_show(epic, main_tree)
-    if shown is None:
-        raise CleanupError(f"bd show printed nothing usable for {epic}")
+    shown = read_bead(epic, main_tree)
     found = pass_support.owed_in_worktree(STAGE, epic, shown, branch, settings, main_tree)
     removals = removals_of(found.scratch / REPORT)
     reported = sorted({each.file for each in removals})

@@ -39,7 +39,6 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -49,8 +48,8 @@ from pathlib import Path
 from typing import TextIO
 
 import repo_settings
-from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, head_of, run, run_test_command,
-                      worktree_list)
+from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_list, capture, head_of, metadata_of, read_bead, run,
+                      run_test_command, worktree_list)
 
 LOCK_POLL_SECONDS = 0.1
 WAITING_ON_EDITS_EXIT_CODE = 3
@@ -133,7 +132,6 @@ def acquire_lock(lock: Path) -> None:
             time.sleep(LOCK_POLL_SECONDS)
             continue
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            # A killed holder leaves this file behind, and the pid is how a person finds that holder.
             handle.write(f"{os.getpid()}\n")
         return
 
@@ -193,14 +191,7 @@ def print_hand_run(groups: list[HandRunGroup], stream: TextIO) -> None:
 
 
 def tracker_ids(checkout: Path) -> set[str]:
-    output = run(["bd", "list", "--all", "--limit", "0", "--json"], checkout, None)
-    try:
-        parsed = json.loads(output)
-    except ValueError as error:
-        raise LandingError(f"bd list did not print JSON: {output.strip()[:200]!r}") from error
-    if not isinstance(parsed, list):
-        raise LandingError("bd list printed JSON that is not a list")
-    return {str(item["id"]) for item in parsed if isinstance(item, dict) and "id" in item}
+    return {str(item["id"]) for item in bd_list(["--all", "--limit", "0"], checkout) if "id" in item}
 
 
 def bead_ids_in(message: str, bead: str, checkout: Path) -> list[str]:
@@ -213,10 +204,7 @@ def bead_ids_in(message: str, bead: str, checkout: Path) -> list[str]:
 
 
 def recorded_tests(bead: str, checkout: Path) -> dict[str, str]:
-    shown = bd_show(bead, checkout)
-    if shown is None:
-        raise LandingError(f"bd show printed nothing usable for {bead}")
-    metadata = shown.get("metadata") or {}
+    metadata = metadata_of(read_bead(bead, checkout))
     return {key: str(metadata.get(f"tests.{key}", "")) for key in ("command", "base", "result")}
 
 
@@ -334,7 +322,6 @@ def close_out(bead: str, branch: str, worktree: Path, message: str, sha: str, ch
     failed: list[str] = []
     closed = attempt("bd close", ["bd", "close", bead, "--reason", f"{sha}: {subject(message)}"], checkout, None,
                      failed)
-    # The work is already on main, so forcing the worktree off and deleting the branch loses nothing.
     if worktree.exists():
         attempt("git worktree remove", ["git", "worktree", "remove", "--force", str(worktree)], checkout, None,
                 failed)

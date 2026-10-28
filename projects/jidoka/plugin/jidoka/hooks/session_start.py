@@ -24,7 +24,6 @@ import json
 import os
 import shlex
 import sys
-import time
 from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parents[1]
@@ -161,8 +160,9 @@ def stopped_factories(main_tree: Path | None) -> str:
         return ""
     try:
         script = repo_settings()
+        import clock
         import resume
-        stopped = resume.stopped_epics(script.jidoka_home(None), main_tree, int(time.time()))
+        stopped = resume.stopped_epics(script.jidoka_home(None), main_tree, clock.now())
     except Exception:
         return ""
     return "".join(f"\n{epic.line()}\n" for epic in stopped)

@@ -30,14 +30,12 @@ import caps
 import clock
 import heartbeat
 import lap_record
-import park
 import pause
 import repo_settings
-from bench import FACTORY_LABEL
-from caps import metadata_of
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError
+from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError, NotAWholeNumber, labels_of, metadata_of
 from epic_reader import CLOSED, EpicReadError, read_epic
-from epics import EpicsError, at_the_gate, epics_of, is_closed, labels_of
+from epics import EpicsError, epics_of, is_closed, state_of
+from lap_outcomes import SchedulerError
 
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
@@ -93,16 +91,10 @@ def table(tasks: list[dict], now: int) -> list[str]:
             for row, title in zip(rows, titles)]
 
 
-def state_of(epic: dict) -> str:
-    if at_the_gate(epic):
-        return "at the acceptance gate"
-    return "parked" if park.HUMAN_LABEL in labels_of(epic) else "running"
-
-
 def epic_lines(epic: dict, home: Path, main_tree: Path, now: int) -> list[str]:
     state = state_of(epic)
-    lines = [f"{epic['id']}  {epic.get('title') or ''} [{state}]"]
-    if state == "running":
+    lines = [f"{epic['id']}  {epic.get('title') or ''} [{state.name}]"]
+    if state.is_running:
         seconds = heartbeat.beat_age_seconds(home, str(epic["id"]), now)
         lines.append("  " + ("no heartbeat" if seconds is None else f"heartbeat {age(seconds)} ago"))
     held_pause = pause.held_by(epic)
@@ -130,7 +122,7 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         printed = status(repo_settings.jidoka_home(args.jidoka_home), main_tree, clock.now())
-    except (EpicsError, EpicReadError, lap_record.SchedulerError, caps.NotAWholeNumber, CommandError,
+    except (EpicsError, EpicReadError, SchedulerError, NotAWholeNumber, CommandError,
             repo_settings.SettingsError, OSError) as error:
         print(f"status: {error}", file=sys.stderr)
         return 1

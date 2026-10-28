@@ -60,14 +60,16 @@ from pathlib import Path
 import lap_record
 import repo_settings
 import rules
-from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, CommandError, bd_show, env_as_factory, run, set_metadata
+from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, HUMAN_LABEL, CommandError, bd_comments, env_as_factory,
+                      metadata_of, parent_of, read_bead, run, set_metadata)
 from discovered import BLOCKED_PREFIX
+from report_text import parsed_report
 
 QUESTION_PREFIX = "Question: "
 PARKED_PREFIX = "Parked: "
+PARK_PREFIXES = (QUESTION_PREFIX, PARKED_PREFIX, BLOCKED_PREFIX)
 COMMENT = "comment"
 RECOMMENDATION = "recommendation"
-HUMAN_LABEL = "human"
 QUESTION_REPORT = "question.json"
 OPTIONS_KEY = "question.options"
 RECOMMENDED_KEY = "question.recommended"
@@ -159,12 +161,7 @@ def denial_of(report: dict, option_names: list[str]) -> Denial | None:
 def read_question(scratch: Path) -> Question:
     """The question report in the lap's scratch folder; raises QuestionError when it is missing or unusable."""
     path = scratch / QUESTION_REPORT
-    try:
-        report = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as error:
-        raise QuestionError(f"the question report {path} cannot be read: {error}") from error
-    except ValueError as error:
-        raise QuestionError(f"the question report {path} is not JSON: {error}") from error
+    report = parsed_report(path, f"the question report {path}", QuestionError)
     if not isinstance(report, dict):
         raise QuestionError(f"the question report {path} must be a JSON object")
     raw_options = report.get("options")
@@ -209,13 +206,45 @@ class Answer:
         return {"source": self.source, "text": self.text}
 
 
-def posted_comments(task: str, main_tree: Path) -> list[dict]:
-    output = run(["bd", "comments", task, "--json"], main_tree, None)
-    try:
-        comments = json.loads(output or "[]") or []
-    except ValueError as error:
-        raise CommandError(f"bd comments did not print JSON: {output.strip()[:200]!r}") from error
-    return [comment for comment in comments if isinstance(comment, dict)]
+@dataclass(frozen=True)
+class ParkComment:
+    """The factory's comment that parked a bead: its id and time as bd printed them, its whole text and the prefix the
+    text opens with."""
+    id: str
+    created_at: str
+    text: str
+    prefix: str
+
+    @property
+    def body(self) -> str:
+        """The text after the prefix, without the whitespace around it."""
+        return self.text[len(self.prefix):].strip()
+
+
+def park_prefix_of(comment: dict) -> str | None:
+    """The prefix the comment opens with when the factory posted it to park a bead, else None."""
+    if comment.get("author") != FACTORY_ACTOR:
+        return None
+    text = str(comment.get("text") or "")
+    return next((prefix for prefix in PARK_PREFIXES if text.startswith(prefix)), None)
+
+
+def latest_park_index(comments: list[dict]) -> int | None:
+    """The place in the comments of the latest one that parked the bead, or None when none did."""
+    parks = [index for index, comment in enumerate(comments) if park_prefix_of(comment) is not None]
+    return parks[-1] if parks else None
+
+
+def latest_park(bead: str, main_tree: Path) -> ParkComment | None:
+    """The factory's latest `Question:`, `Parked:` or `Blocked:` comment on the bead, or None when the factory never
+    parked it, as when the human did."""
+    comments = bd_comments(bead, main_tree)
+    index = latest_park_index(comments)
+    if index is None:
+        return None
+    comment = comments[index]
+    return ParkComment(str(comment.get("id") or ""), str(comment.get("created_at") or ""),
+                       str(comment.get("text") or ""), park_prefix_of(comment) or "")
 
 
 def answer_of(task: str, recommended: str, main_tree: Path) -> Answer | None:
@@ -225,13 +254,11 @@ def answer_of(task: str, recommended: str, main_tree: Path) -> Answer | None:
     else since a question, joined in order, or the recommended option when there are none. The comment of a
     failed build try is no park, so the answer survives a retry and a restart.
     """
-    comments = posted_comments(task, main_tree)
-    parks = [index for index, comment in enumerate(comments)
-             if comment.get("author") == FACTORY_ACTOR
-             and str(comment.get("text") or "").startswith((QUESTION_PREFIX, PARKED_PREFIX, BLOCKED_PREFIX))]
-    if not parks or not str(comments[parks[-1]].get("text")).startswith(QUESTION_PREFIX) or not recommended:
+    comments = bd_comments(task, main_tree)
+    parked = latest_park_index(comments)
+    if parked is None or park_prefix_of(comments[parked]) != QUESTION_PREFIX or not recommended:
         return None
-    replies = [str(comment.get("text") or "").strip() for comment in comments[parks[-1] + 1:]
+    replies = [str(comment.get("text") or "").strip() for comment in comments[parked + 1:]
                if comment.get("author") != FACTORY_ACTOR]
     replies = [reply for reply in replies if reply]
     if replies:
@@ -243,8 +270,8 @@ def park(task: str, tries: int, comment: str, metadata: list[tuple[str, str]], m
     """Comments on the task and ends its lap parked, under the actor jidoka."""
     env = env_as_factory()
     run(["bd", "comment", task, comment], main_tree, env)
-    run(["bd", "update", task, f"--add-label={HUMAN_LABEL}", *lap_record.resting(lap_record.PARKED),
-         *lap_record.counting_tries(tries), *set_metadata(*metadata)], main_tree, env)
+    run(["bd", "update", task, f"--add-label={HUMAN_LABEL}", *lap_record.resting_with_tries(lap_record.PARKED, tries),
+         *set_metadata(*metadata)], main_tree, env)
 
 
 def park_on_question(task: str, tries: int, scratch: Path, worktree: Path, branch: str, main_tree: Path) -> None:
@@ -298,17 +325,15 @@ def allow_answered(denial: Denial, answer: Answer, epic: str, home: Path, main_t
 
 def answered_permission(task: str, home: Path, main_tree: Path) -> Allowed:
     """Applies the answer of the task's permission question; raises QuestionError when there is none to apply."""
-    shown = bd_show(task, main_tree)
-    if shown is None:
-        raise QuestionError(f"bd show printed nothing usable for {task}")
-    metadata = shown.get("metadata") or {}
+    shown = read_bead(task, main_tree)
+    metadata = metadata_of(shown)
     denial = denial_in(metadata)
     if denial is None:
         raise QuestionError(f"the last question on {task} was no permission question")
     answer = answer_of(task, str(metadata.get(RECOMMENDED_KEY) or ""), main_tree)
     if answer is None:
         raise QuestionError(f"{task} holds no answered question")
-    return allow_answered(denial, answer, str(shown.get("parent") or ""), home, main_tree)
+    return allow_answered(denial, answer, parent_of(shown), home, main_tree)
 
 
 def main(argv: list[str]) -> int:
