@@ -9,6 +9,10 @@ once `until` has passed, ends the pause.
 
 A billing error and an auth failure wait on the human, so each is notified at once. An outage is notified once
 it has lasted an hour. A usage limit waits on the reset and is never notified.
+
+The five-hour reserve (reserves.py) pauses the epic too, on the cause `reserve`, until the window resets. Unlike a
+trouble a worker met, it has no back-off and no retries, and reserves.py writes and clears it by each reading of the
+account.
 """
 from __future__ import annotations
 
@@ -23,11 +27,14 @@ USAGE_LIMIT = "usage-limit"
 OUTAGE = "outage"
 BILLING = "billing"
 AUTH = "auth"
+RESERVE = "reserve"
 CAUSES = [USAGE_LIMIT, OUTAGE, BILLING, AUTH]
+HELD_CAUSES = [*CAUSES, RESERVE]
 BACKOFF_SECONDS = (5 * 60, 15 * 60, 30 * 60)
 HOURLY_SECONDS = 60 * 60
 OUTAGE_NOTIFIED_AFTER_SECONDS = 60 * 60
-WORDS = {USAGE_LIMIT: "a usage limit", OUTAGE: "an outage", BILLING: "a billing error", AUTH: "an auth failure"}
+WORDS = {USAGE_LIMIT: "a usage limit", OUTAGE: "an outage", BILLING: "a billing error", AUTH: "an auth failure",
+         RESERVE: "the five-hour reserve"}
 
 
 def wait_seconds(retries: int) -> int:
@@ -68,18 +75,26 @@ def held_by(epic: dict) -> Pause | None:
         return None
     try:
         cause = str(held["cause"])
-        return Pause(cause, int(held["since"]), int(held["until"]), int(held["retries"])) if cause in CAUSES else None
+        return (Pause(cause, int(held["since"]), int(held["until"]), int(held["retries"]))
+                if cause in HELD_CAUSES else None)
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def waiting_at(epic: dict, now: int) -> Pause | None:
+    """The epic's pause when it still waits at `now`: no stage starts and no lap opens while it does."""
+    held = held_by(epic)
+    return held if held is not None and held.is_waiting(now) else None
 
 
 def after_trouble(held: Pause | None, cause: str, now: int) -> Pause:
     """The pause once a worker has met the trouble at `now`.
 
     The first trouble starts a pause. Trouble that another lap met while the pause waits changes nothing, and
-    trouble that a retry meets lengthens the wait.
+    trouble that a retry meets lengthens the wait. A pause on the reserve that has run out is no trouble to retry, so
+    the trouble starts a pause of its own.
     """
-    if held is None:
+    if held is None or (held.cause == RESERVE and not held.is_waiting(now)):
         return Pause(cause, now, now + wait_seconds(0), 0)
     if held.is_waiting(now):
         return held

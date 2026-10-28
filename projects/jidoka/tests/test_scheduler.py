@@ -22,6 +22,7 @@ HANDOFF = PLUGIN / "scripts" / "handoff.py"
 RULES = PLUGIN / "scripts" / "rules.py"
 SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 MERGE_GATE = PLUGIN / "scripts" / "merge_gate.py"
+SAVED_PRICE_PAGES = HERE / "fixtures" / "pricing"
 
 RUN_TIMEOUT_SECONDS = 120
 OUT_OF_SCOPE = "## Out of Scope\nRefunds."
@@ -126,7 +127,9 @@ class SchedulerCase(unittest.TestCase):
         return home
 
     def caller_env(self, home: Path) -> dict[str, str]:
-        return {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home), "BEADS_ACTOR": "claude"}
+        """The environment the scripts run in, which reads the providers' pricing pages from the saved copies."""
+        return {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home), "BEADS_ACTOR": "claude",
+                "JIDOKA_PRICE_PAGES": str(SAVED_PRICE_PAGES)}
 
     def launch(self, script: Path, *args: str) -> subprocess.CompletedProcess:
         return self.launch_in(self.home, script, *args)
@@ -406,6 +409,31 @@ class SchedulerOrderTests(SchedulerCase):
         printed = self.next_printed(epic)
 
         self.assertEqual(([], []), (printed["actions"], printed["laps"]))
+
+    def finished_epic(self) -> str:
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: "till"})
+        fixture.run([self.bd, "close", task, "--reason", "built"], self.repo)
+        return epic
+
+    def test_an_epic_whose_tasks_are_all_closed_runs_its_validation(self):
+        epic = self.finished_epic()
+
+        printed = self.next_printed(epic)
+
+        self.assertIsNotNone(printed["validation"])
+
+    def test_an_epic_whose_tasks_are_all_closed_starts_no_pass_stage_while_a_pause_waits(self):
+        epic = self.finished_epic()
+        now = int(time.time())
+        waiting = json.dumps({"cause": "usage-limit", "since": now, "until": now + 3600, "retries": 0})
+        fixture.run([self.bd, "update", epic, "--set-metadata", f"pause={waiting}"], self.repo)
+
+        printed = self.next_printed(epic)
+
+        self.assertIsNone(printed["validation"])
+        self.assertEqual(([], "usage-limit"), (printed["actions"], printed["paused"]["cause"]))
 
 
 class SchedulerWorkspaceTests(SchedulerCase):

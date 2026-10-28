@@ -891,3 +891,258 @@ test('a lap worker may not run the launcher on holdouts.py', async ($, on) => {
 
   expect(verdict).toBe('deny')
 })
+
+const SONNET = 'claude-sonnet-5-5'
+const STEP = { model: SONNET, input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 1000, cache_creation_input_tokens: 5 }
+
+/** Stands for the engine beneath the plugin: every step of a turn used `usage`, which is null when the host reports
+ * none, and a write lands in `files` by path. */
+function engineThatSteps(on: On, env: Record<string, string>, usage: typeof STEP | null): Map<string, string> {
+  const files = new Map<string, string>()
+  mock.env(on, env)
+  on('turn.step', async function* () {
+    return { answer: '', toolUses: [], usage }
+  })
+  on('fs.write', (_, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  return files
+}
+
+/** Runs one step of a turn to its end, for the agent with this id, or for the manager when there is none. */
+async function step($: Engine, agentId: string | undefined): Promise<void> {
+  for await (const _chunk of $.turn.step(agentId === undefined ? { model: SONNET } : { model: SONNET, agentId })) {
+  }
+}
+
+function sumsAt(files: Map<string, string>, path: string): unknown {
+  return JSON.parse(files.get(path) ?? 'null')
+}
+
+test("a lap worker's steps are summed under its agent id in the tokens folder of jidoka's home", async ($, on) => {
+  const files = engineThatSteps(on, { HOME: '/home/t' }, STEP)
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  await step($, 'a1')
+  await step($, 'a1')
+
+  expect(sumsAt(files, '/home/t/.jidoka/tokens/a1.json')).toEqual({
+    model: SONNET,
+    steps: 2,
+    input_tokens: 200,
+    output_tokens: 20,
+    cache_read_input_tokens: 2000,
+    cache_creation_input_tokens: 10,
+  })
+})
+
+test('each lap worker keeps sums of its own, in the folder JIDOKA_HOME names', async ($, on) => {
+  const files = engineThatSteps(on, { HOME: '/home/t', JIDOKA_HOME: '/data/jidoka' }, STEP)
+  let started = 0
+  engineWith(on, LAP_LIST, { places: {}, statFails: false, spawn: () => Promise.resolve({ model: 'sonnet', agentId: `w${++started}` }) })
+  await startLap($, WORKTREE)
+  await startLap($, WORKTREE)
+
+  await step($, 'w1')
+  await step($, 'w2')
+  await step($, 'w2')
+
+  expect(sumsAt(files, '/data/jidoka/tokens/w1.json')).toMatchObject({ steps: 1, input_tokens: 100 })
+  expect(sumsAt(files, '/data/jidoka/tokens/w2.json')).toMatchObject({ steps: 2, input_tokens: 200 })
+})
+
+test('a step of an agent that is no lap worker writes no sums', async ($, on) => {
+  const files = engineThatSteps(on, { HOME: '/home/t' }, STEP)
+  engineBeneath(on, LAP_LIST)
+
+  await step($, 'somebody-else')
+
+  expect([...files.keys()]).toEqual([])
+})
+
+test('a step whose usage the host did not report still counts as a step', async ($, on) => {
+  const files = engineThatSteps(on, { HOME: '/home/t' }, null)
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  await step($, 'a1')
+
+  expect(sumsAt(files, '/home/t/.jidoka/tokens/a1.json')).toMatchObject({ steps: 1, input_tokens: 0 })
+})
+
+/** Stands for the host of a manager: its folder, its session, the scripts run beneath it, and a turn that ends. */
+function managerHost(on: On, run: (argv: string[], cwd: string | undefined) => void): void {
+  on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('session.id', () => ({ value: 'session-1' }))
+  on('classic.Stop', () => ({}))
+  on('process.run', (_, e) => {
+    run(e.argv, e.init?.cwd)
+    return { value: RAN }
+  })
+}
+
+test("a manager's request is handed to the ledger script when its turn ends, with the seconds it took", async ($, on) => {
+  const calls: Call[] = []
+  const clock = mock.clock(on)
+  engineThatSteps(on, { HOME: '/home/t' }, STEP)
+  managerHost(on, (argv, cwd) => calls.push({ argv, cwd }))
+
+  await step($, undefined)
+  await clock.advance(4000)
+  await step($, undefined)
+  await $.classic.Stop({})
+
+  const [launcher = '', script = ''] = calls[0]?.argv.slice(1) ?? []
+  expect(calls).toHaveLength(1)
+  expect(script).toBe(`${launcher.slice(0, -'/bin/jidoka-run'.length)}/scripts/ledger.py`)
+  expect(calls[0]?.argv.slice(3)).toEqual([
+    'request', '--session', 'session-1', '--model', SONNET,
+    '--input', '200', '--output', '20', '--cache-read', '2000', '--cache-write', '10', '--seconds', '4',
+  ])
+  expect(calls[0]?.cwd).toBe(HOST_FOLDER)
+})
+
+test('the next request of the manager starts its sums again', async ($, on) => {
+  const calls: Call[] = []
+  engineThatSteps(on, { HOME: '/home/t' }, STEP)
+  managerHost(on, (argv, cwd) => calls.push({ argv, cwd }))
+
+  await step($, undefined)
+  await $.classic.Stop({})
+  await step($, undefined)
+  await $.classic.Stop({})
+
+  expect(calls.map(call => call.argv[call.argv.indexOf('--input') + 1])).toEqual(['100', '100'])
+})
+
+test('a turn that ends with no step in it hands the ledger nothing', async ($, on) => {
+  const calls: Call[] = []
+  managerHost(on, (argv, cwd) => calls.push({ argv, cwd }))
+
+  await $.classic.Stop({})
+
+  expect(calls).toEqual([])
+})
+
+test('a manager request whose ledger script cannot run still reaches the host', async ($, on) => {
+  engineThatSteps(on, { HOME: '/home/t' }, STEP)
+  managerHost(on, () => {
+    throw new Error('no such launcher')
+  })
+
+  await step($, undefined)
+  const answer = await $.classic.Stop({})
+
+  expect(answer).toEqual({})
+})
+
+const NOW_MS = 1_790_000_000_000
+const USAGE_FILE = '/home/t/.jidoka/usage/claude.json'
+
+/** The usage the host reports for the account it runs on, in the shape of the SDK's usage call. */
+function usageAt(fiveHour: number, sevenDay: number): unknown {
+  return {
+    rate_limits_available: true,
+    five_hour: { utilization: fiveHour, resets_at: '1970-01-01T01:00:00Z' },
+    seven_day: { utilization: sevenDay, resets_at: '1970-01-02T00:00:00Z' },
+  }
+}
+
+/**
+ * Stands for the engine beneath the plugin when the manager calls a jidoka script: the clock reads NOW_MS, the
+ * account has the usage `reported` returns (or the usage call fails when it throws), and a write lands in `files`.
+ * The plugin's folder is learned from the launcher call of a lap spawn.
+ */
+function managerCalling(
+  on: On,
+  reported: () => unknown,
+  canWrite: boolean,
+): { files: Map<string, string>; launcher: () => string } {
+  const files = new Map<string, string>()
+  mock.env(on, { HOME: '/home/t' })
+  on('fs.write', (_, e) => {
+    if (!canWrite) throw new Error('disk full')
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  const launched = engineBeneath(on, LAP_LIST)
+  on('clock.now', () => ({ value: NOW_MS }))
+  on('session.usage', () => ({ value: reported() }))
+  return { files, launcher: () => `sh ${launched.pluginRoot}/bin/jidoka-run ${launched.pluginRoot}/scripts` }
+}
+
+async function callScript(world: ReturnType<typeof managerCalling>, $: Engine, script: string) {
+  return $.tool.check({ tool: 'Bash', input: { command: `${world.launcher()}/${script} carry-on e1` } })
+}
+
+test("a manager's call of the scheduler writes the account's usage windows to the usage folder first", async ($, on) => {
+  const world = managerCalling(on, () => usageAt(91, 40), true)
+  await startLap($, WORKTREE)
+
+  const verdict = await callScript(world, $, 'scheduler.py')
+
+  expect(verdict.decision).toBe('allow')
+  expect(sumsAt(world.files, USAGE_FILE)).toEqual({
+    read_at: NOW_MS / 1000,
+    five_hour: { used_percent: 91, resets_at: 3600 },
+    seven_day: { used_percent: 40, resets_at: 86400 },
+  })
+})
+
+test('the account is read again on every call of the scheduler', async ($, on) => {
+  let used = 91
+  const world = managerCalling(on, () => usageAt(used, 40), true)
+  await startLap($, WORKTREE)
+
+  await callScript(world, $, 'scheduler.py')
+  used = 12
+  await callScript(world, $, 'scheduler.py')
+
+  expect(sumsAt(world.files, USAGE_FILE)).toMatchObject({ five_hour: { used_percent: 12 } })
+})
+
+test("a call of another of jidoka's scripts reads no usage", async ($, on) => {
+  const world = managerCalling(on, () => usageAt(91, 40), true)
+  await startLap($, WORKTREE)
+
+  const verdict = await callScript(world, $, 'status.py')
+
+  expect(verdict.decision).toBe('allow')
+  expect(world.files.has(USAGE_FILE)).toBe(false)
+})
+
+test('an account with no usage windows leaves a reading with none', async ($, on) => {
+  const world = managerCalling(on, () => ({ rate_limits_available: false, five_hour: null, seven_day: null }), true)
+  await startLap($, WORKTREE)
+
+  await callScript(world, $, 'scheduler.py')
+
+  expect(sumsAt(world.files, USAGE_FILE)).toEqual({ read_at: NOW_MS / 1000 })
+})
+
+test('a usage call that fails leaves a reading with no windows and still lets the scheduler run', async ($, on) => {
+  const world = managerCalling(
+    on,
+    () => {
+      throw new Error('no usage')
+    },
+    true,
+  )
+  await startLap($, WORKTREE)
+
+  const verdict = await callScript(world, $, 'scheduler.py')
+
+  expect(verdict.decision).toBe('allow')
+  expect(sumsAt(world.files, USAGE_FILE)).toEqual({ read_at: NOW_MS / 1000 })
+})
+
+test('a usage reading that cannot be written still lets the scheduler run', async ($, on) => {
+  const world = managerCalling(on, () => usageAt(91, 40), false)
+  await startLap($, WORKTREE)
+
+  const verdict = await callScript(world, $, 'scheduler.py')
+
+  expect(verdict.decision).toBe('allow')
+})

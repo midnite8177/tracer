@@ -29,20 +29,23 @@ class Settled(Protocol):
 
 @dataclass(frozen=True)
 class ReportMode:
-    """A `report-*` mode: the key its settled fields print under, its help, and the call that settles the stage."""
+    """A `report-*` mode: the key its settled fields print under, the name its workers' ledger rows carry as their
+    stage, its help, and the call that settles the stage."""
     key: str
+    stage: str
     help: str
     settle: Callable[[str, str, dict, Path, Path], Settled]
 
 
 REPORT_MODES = {
-    "report-cleanup": ReportMode("cleanup", "take the test cleanup worker's report, and print the next moves",
-                                 cleanup.settle),
-    "report-tidy": ReportMode("tidy", "take the tidy worker's word that it is done, and print the next moves",
-                              tidy.settle),
-    "report-review": ReportMode("review", "take the reports of the review's lanes, and print the next moves",
-                                review.settle),
-    "report-fix": ReportMode("fix", "take the fix worker's word that it is done, and print the next moves",
+    "report-cleanup": ReportMode("cleanup", cleanup.ACTION,
+                                 "take the test cleanup worker's report, and print the next moves", cleanup.settle),
+    "report-tidy": ReportMode("tidy", tidy.ACTION,
+                              "take the tidy worker's word that it is done, and print the next moves", tidy.settle),
+    "report-review": ReportMode("review", review.REVIEW_ACTION,
+                                "take the reports of the review's lanes, and print the next moves", review.settle),
+    "report-fix": ReportMode("fix", review.FIX_ACTION,
+                             "take the fix worker's word that it is done, and print the next moves",
                              review.settle_fix),
 }
 

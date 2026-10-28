@@ -401,6 +401,21 @@ class RecordedSettingsTests(InstallerTestCase):
         self.assertEqual({"weekly": 40}, settings["budget"])
         self.assertEqual([str(self.config_b.resolve())], settings["config_dirs"])
 
+    def test_a_route_already_recorded_for_a_tier_survives_a_second_run_and_new_tiers_get_the_defaults(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+        kept = self.settings()
+        confirmed = {"harness": "codex", "model": None, "version": None, "effort": None}
+        kept["routes"]["second"] = confirmed
+        del kept["routes"]["light"]
+        (self.home / "settings.json").write_text(json.dumps(kept), encoding="utf-8")
+
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        routes = self.settings()["routes"]
+        self.assertEqual(confirmed, routes["second"])
+        self.assertEqual({"harness": "claude", "model": "haiku", "version": "5.5", "effort": "medium"},
+                         routes["light"])
+
     def test_the_settings_hold_the_checkout_the_installer_ran_from_as_the_source_repo(self):
         done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
 

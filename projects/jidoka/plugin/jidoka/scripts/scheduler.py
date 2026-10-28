@@ -28,7 +28,8 @@ for it on stderr. It leaves the epic's heartbeat stale, so that no beat from a h
 prints `{"epic", "interrupted"}`, the ids of the tasks whose laps it ended. A notification that cannot be sent is a
 line on stderr and no failure.
 
-`report <epic> <task> <outcome> [--app <app> --filter <filter>] [--why <why>] [--cause <cause>]` takes how the
+`report <epic> <task> <outcome> [--app <app> --filter <filter>] [--why <why>] [--cause <cause>] [--agent <id>]
+[--tier <tier>]` takes how the
 worker of the task's open lap ended, one outcome of `done`, `failed`, `cut off`, `send back`, `question`, `blocked`,
 `pass` or `cannot judge`, makes the checks below first, settles the lap as lap_stages.py describes, and then does what
 `next` does, so its actions start with the lap that went back to a worker. `done` at the build or the merge needs
@@ -61,6 +62,16 @@ than the lap limit, which is the repo settings' lap_limit or the epic's own fact
 afresh on every call, and never for a task whose area an open lap already holds. A task is ready when every bead it
 waits on is closed, it has no open lap, no assignee and no `human` label, and its `lap.area` metadata names its area.
 
+An epic whose spend has reached its budget, as budget.py describes, starts no stage: no lap opens, no pass stage runs,
+and a lap that would go back to a worker ends interrupted as a pause ends it. The stages already running finish and
+are reported as always. When none runs, the call parks the epic with a comment that names the spend and sends the
+epic-parked notification through notify.py.
+
+Every call reads the account's usage windows afresh, as reserves.py describes. A five-hour window past its reserve
+pauses the epic on the cause `reserve` until the window resets, and a reading under the reserve ends that pause. A
+seven-day window past its reserve stops the epic as a reached budget does, but the epic parks with a question that
+gives the projection of the window and three choices, once for each window.
+
 The `human` label is also the human's brake. A stage already running finishes, and its report is taken as always, but
 no stage starts on a task that carries the label, and none starts on any task of an epic that carries it: no lap
 opens, and a lap that goes back to a worker, or that `next` finds left with no worker, is not in the actions. It
@@ -79,6 +90,11 @@ left on the epic branch, prints the stage's fields under its key, and does what 
   validation    validation.py: runs once the stages above owe nothing. An epic that holds holdouts ends with a
                 holdouts action until holdouts_run.py takes `report-holdouts <epic> [--ended failed|cut-off]
                 [--why <why>]`.
+Each of these report modes, `report-holdouts` included, takes `--worker <agent id> <tier>` once for each worker it
+reports, and the review reports one for each lane. The call writes a ledger row for each, with no task and the stage's
+name (`test-cleanup`, `tidy`, `review`, `fix` or `holdouts`), before it settles the stage, so a refused report still
+prices the run. A `report-holdouts --ended` row ends `failed` or `cut off`; every other row ends `done`. A report that
+names no worker writes no row.
 pass_ledger.py holds the cap on passes, and gate.py the acceptance gate. An epic at the gate whose human label came off
 with no decision is parked again, as gate_guard.py says. A report that is missing or unusable refuses
 the call and writes nothing. A stage that files tasks in the epic has this call open their laps.
@@ -157,6 +173,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import app_check
+import budget
 import caps
 import clock
 import gate_guard
@@ -165,6 +182,7 @@ import heartbeat
 import holdouts
 import holdouts_run
 import lap_record
+import ledger
 import lap_stages
 import merge_gate
 import notify
@@ -174,6 +192,7 @@ import pass_stages
 import pause
 import private_docs
 import repo_settings
+import reserves
 import resume
 import rules
 import spec_check
@@ -194,6 +213,8 @@ from worktrees import hide_worktrees
 
 SCRIPT = "scheduler"
 HOLDOUTS_ENDINGS = ("failed", "cut-off")
+HOLDOUTS_OUTCOMES = {"failed": FAILED, "cut-off": CUT_OFF}
+HOLDOUTS_STAGE = "holdouts"
 OUTCOMES = [DONE, FAILED, CUT_OFF, QUESTION, SEND_BACK, BLOCKED, PASS, CANNOT_JUDGE]
 FIRST_SLOT = 1
 SECONDS_PER_MINUTE = 60
@@ -422,10 +443,45 @@ class Holds:
     waiting: pause.Pause | None
     brake: caps.Brake
     epic_parked: bool
+    will_park: bool
 
     @property
     def stops_new_laps(self) -> bool:
-        return self.epic_parked or self.waiting is not None
+        return self.epic_parked or self.waiting is not None or self.will_park
+
+
+@dataclass(frozen=True)
+class Parking:
+    """Why the epic starts no new stage and parks once none runs: what it reached, in words that follow the epic's id,
+    when its laps start again, and how it parks."""
+    reason: str
+    resumes_when: str
+    park: Callable[[], None]
+
+
+@dataclass(frozen=True)
+class Standstill:
+    """What keeps the epic from starting a stage in this call: a pause that waits, or a reached budget or a passed
+    seven-day reserve that parks it once no stage runs."""
+    waiting: pause.Pause | None
+    parking: Parking | None
+
+    @property
+    def is_on(self) -> bool:
+        return self.waiting is not None or self.parking is not None
+
+
+def parking_of(epic: Epic, reading: reserves.Reading | None, now: int, home: Path,
+               main_tree: Path) -> Parking | None:
+    """The parking that holds the epic: its budget when reached, else its seven-day reserve when passed."""
+    reached = budget.reached_by(epic.shown, home)
+    if reached is not None:
+        return Parking(reached.reason, budget.RESUMES_WHEN, lambda: park_at_the_budget(epic, reached, home, main_tree))
+    window = reserves.seven_day_past_reserve(epic.shown, reading, now)
+    if window is not None:
+        return Parking(window.reason, reserves.RESUMES_WHEN,
+                       lambda: park_at_the_reserve(epic, window, now, home, main_tree))
+    return None
 
 
 def settle_epic(epic: Epic, settings: dict, home: Path, main_tree: Path) -> PassState:
@@ -455,10 +511,11 @@ def running_laps(held: list[Lap]) -> list[Lap]:
     return [lap for lap in sorted(held, key=lambda lap: lap.slot) if lap.stage in WORKER_STAGES]
 
 
-def apply_holds(epic: Epic, held: list[Lap], rebuilds: list[Lap], now: int, home: Path, main_tree: Path) -> Holds:
+def apply_holds(epic: Epic, held: list[Lap], rebuilds: list[Lap], standstill: Standstill, now: int,
+                home: Path, main_tree: Path) -> Holds:
     """Decides what holds the epic's laps. The human label, on the epic or on a task, keeps a lap from starting
-    again, a pause that waits ends the laps that would start again interrupted, and the laps that go on start their
-    wall clock again. The brake holds only the laps that have not opened."""
+    again, a standstill ends the laps that would start again interrupted, and the laps that go on start their wall
+    clock again. The brake holds only the laps that have not opened."""
     labeled = epic.labeled_task_ids
     epic_parked = is_parked(epic)
     stopped = [lap for lap in rebuilds if epic_parked or lap.task in labeled]
@@ -469,23 +526,45 @@ def apply_holds(epic: Epic, held: list[Lap], rebuilds: list[Lap], now: int, home
     for lap in stopped:
         print(f"scheduler: {lap.task} waits at the {lap.stage} for the {HUMAN_LABEL} label to come off, so no stage "
               "starts on it", file=sys.stderr)
-    held_pause = pause.held_by(epic.shown)
-    waiting = held_pause if held_pause is not None and held_pause.is_waiting(now) else None
+    waiting, parking = standstill.waiting, standstill.parking
+    interruption = None
     if waiting is not None:
         print(f"scheduler: {epic.id} is paused on {pause.WORDS[waiting.cause]} for {waiting.until - now} more "
               "seconds, so no stage starts and no lap opens until then", file=sys.stderr)
+        interruption = (f"the factory paused on {pause.WORDS[waiting.cause]}", "the factory goes on after the pause")
+    elif parking is not None:
+        interruption = (f"{epic.id} {parking.reason}", parking.resumes_when)
+    if interruption is not None:
+        because, resumes_when = interruption
         for lap in starting:
-            interrupt_lap(lap, f"the factory paused on {pause.WORDS[waiting.cause]} before the {lap.stage} could "
-                               "start again", "the factory goes on after the pause", main_tree)
+            interrupt_lap(lap, f"{because} before the {lap.stage} could start again", resumes_when, main_tree)
         held = [lap for lap in held if lap not in starting]
         starting = []
+    if waiting is not None:
         notify.announce(notify.FACTORY_PAUSED, epic.id, home, main_tree, SCRIPT)
     starting = [restart_clock(lap, now, main_tree) for lap in starting]
     brake = caps.brake_after_new_beads(epic.shown, [str(child["id"]) for child in epic.children], main_tree)
     if brake.is_on:
         print(f"scheduler: {brake.laps} laps in a row parked at the {brake.stage} with no merge between, so no new "
               f"lap opens until a fix task is filed in {epic.id}. The laps already open run on", file=sys.stderr)
-    return Holds(starting, held, waiting, brake, epic_parked)
+    return Holds(starting, held, waiting, brake, epic_parked, parking is not None)
+
+
+def park_at_the_budget(epic: Epic, reached: budget.Reached, home: Path, main_tree: Path) -> None:
+    """Parks the epic whose budget is reached, now that no stage of it runs, and tells the human."""
+    print(f"scheduler: {epic.id} spent ${reached.spent:.2f} of its budget of ${reached.budget:.2f}, so no stage "
+          "starts and it is parked", file=sys.stderr)
+    budget.park_epic_at(epic.id, reached, main_tree)
+    notify.announce(notify.EPIC_PARKED, epic.id, home, main_tree, SCRIPT)
+
+
+def park_at_the_reserve(epic: Epic, window: reserves.Window, now: int, home: Path, main_tree: Path) -> None:
+    """Parks the epic whose seven-day window is past its reserve, now that no stage of it runs, asks the human, and
+    tells the human."""
+    print(f"scheduler: {epic.id} is on an account whose {window.name} window is {window.used_percent:g}% used, past "
+          "its reserve, so no stage starts and it is parked with a question", file=sys.stderr)
+    reserves.park_epic_at(epic.id, window, now, main_tree)
+    notify.announce(notify.EPIC_PARKED, epic.id, home, main_tree, SCRIPT)
 
 
 def unplaced_tasks(tasks: list[dict]) -> list[str]:
@@ -536,12 +615,19 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
         refuse_second_manager(epic.id, home)
         resumed = resume_laps(epic, home, main_tree)
         epic = checked_epic(bead, settings, main_tree)
-    state = settle_epic(epic, settings, home, main_tree)
+    now = clock.now()
+    reading = reserves.read(home, now, epic.shown)
+    if reserves.sync_pause(epic.id, epic.shown, reading, now, main_tree):
+        epic = checked_epic(bead, settings, main_tree)
+    standstill = Standstill(pause.waiting_at(epic.shown, now), parking_of(epic, reading, now, home, main_tree))
+    state = PassState(epic, None, None, []) if standstill.is_on else settle_epic(epic, settings, home, main_tree)
     epic = state.epic
     tasks = epic.open_task_beads
     open_now = [lap for lap in map(open_lap, tasks) if lap is not None]
-    now = clock.now()
-    holds = apply_holds(epic, open_now, running_laps(open_now) if restarting else rebuilds, now, home, main_tree)
+    holds = apply_holds(epic, open_now, running_laps(open_now) if restarting else rebuilds, standstill, now, home,
+                        main_tree)
+    if standstill.parking is not None and not holds.held:
+        standstill.parking.park()
     limit = rules.of_epic(epic.shown).lap_limit_under(rules.repo_lap_limit(settings))
     unplaced = unplaced_tasks(tasks)
     planned = open_laps(epic, holds, resumed, limit, now, home, main_tree)
@@ -635,17 +721,16 @@ def ending_for(outcome: str, stage: str) -> Ending:
                          "so nothing was written")
 
 
-def refuse_arguments(ending: Ending, outcome: str, app: str | None, test_filter: str | None, cause: str | None,
-                     why: str | None) -> None:
-    if ending.names_tests and not (app and test_filter):
+def refuse_arguments(ending: Ending, said: WorkerReport) -> None:
+    if ending.names_tests and not (said.app and said.test_filter):
         raise SchedulerError(f"{DONE} needs --app and --filter, the app and the filter the builder named, and "
                              "nothing was written")
-    if not ending.names_tests and (app is not None or test_filter is not None):
+    if not ending.names_tests and (said.app is not None or said.test_filter is not None):
         raise SchedulerError(f"--app and --filter go only with {DONE} at the {BUILD} or the {MERGE}, and nothing was "
                              "written")
-    if cause is not None and outcome != CUT_OFF:
+    if said.cause is not None and said.outcome != CUT_OFF:
         raise SchedulerError(f"--cause goes only with {CUT_OFF}, and nothing was written")
-    if why is not None and outcome != FAILED:
+    if said.why is not None and said.outcome != FAILED:
         raise SchedulerError(f"--why goes only with {FAILED}, and nothing was written")
 
 
@@ -672,18 +757,40 @@ def end_pause_after_a_retry_that_worked(epic: Epic, main_tree: Path) -> None:
         pause.clear(epic.id, main_tree)
 
 
-def report(bead: str, task_id: str, outcome: str, app: str | None, test_filter: str | None, cause: str | None,
-           why: str | None, home: Path, main_tree: Path) -> dict:
+def record_pass_in_ledger(epic: str, stage: str, outcome: str, workers: list[ledger.Worker], home: Path,
+                          main_tree: Path) -> None:
+    """Prices the runs of the workers of one pass stage in the ledger, a row for each worker."""
+    for worker in workers:
+        ledger.record_run_or_say(home, main_tree, epic, ledger.Where.of_pass(stage), worker, outcome, clock.now())
+
+
+@dataclass(frozen=True)
+class WorkerReport:
+    """What a worker's report names: its outcome, the app and the filter of its targeted tests, the trouble that cut
+    it off, and why it failed."""
+    outcome: str
+    app: str | None
+    test_filter: str | None
+    cause: str | None
+    why: str | None
+
+
+def report(bead: str, task_id: str, said: WorkerReport, worker: ledger.Worker, home: Path, main_tree: Path) -> dict:
     settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
     epic = checked_epic(bead, settings, main_tree)
     lap = working_lap(epic, task_id)
+    outcome, cause = said.outcome, said.cause
     ending = ending_for(outcome, lap.stage)
-    refuse_arguments(ending, outcome, app, test_filter, cause, why)
+    refuse_arguments(ending, said)
+    now = clock.now()
+    is_overdue = outcome != CUT_OFF and lap_record.is_past_wall_clock(lap.stage, lap.started, now)
+    ledger.record_run_or_say(home, main_tree, epic.id, ledger.Where.of_lap(lap, now), worker,
+                             CUT_OFF if is_overdue else outcome, now)
     if cause is not None:
         pause_on_trouble(lap, epic, cause, main_tree)
         return next_moves(bead, home, main_tree, [], False)
     end_pause_after_a_retry_that_worked(epic, main_tree)
-    if lap_record.is_past_wall_clock(lap.stage, lap.started, clock.now()) and outcome != CUT_OFF:
+    if is_overdue:
         past = f"ran past its wall clock of {lap_record.wall_clock_seconds(lap.stage) // SECONDS_PER_MINUTE} minutes"
         print(f"scheduler: the {lap.stage} of {task_id} {past}, so it ends cut off whatever the worker reported",
               file=sys.stderr)
@@ -691,13 +798,14 @@ def report(bead: str, task_id: str, outcome: str, app: str | None, test_filter: 
         cutoff_why = f"the {lap.stage} {past}"
     else:
         cutoff_why = f"the {lap.stage} worker ended for a reason outside its work"
-    failed_why = why or f"the {lap.stage} worker reported that the {lap.stage} failed"
+    failed_why = said.why or f"the {lap.stage} worker reported that the {lap.stage} failed"
     context = GateContext(epic.id, epic.branch, settings, home, main_tree)
-    rebuilds = ending.settle(lap, Reported(app, test_filter, failed_why, cutoff_why), context)
+    rebuilds = ending.settle(lap, Reported(said.app, said.test_filter, failed_why, cutoff_why), context)
     return next_moves(bead, home, main_tree, rebuilds, False)
 
 
-def report_holdouts(bead: str, ended: str | None, why: str | None, home: Path, main_tree: Path) -> dict:
+def report_holdouts(bead: str, ended: str | None, why: str | None, workers: list[ledger.Worker], home: Path,
+                    main_tree: Path) -> dict:
     """Takes the validation worker's report on the epic's holdouts, then does what `carry-on` does.
 
     A worker that ended failed or cut off (`ended`) counts a run instead, and the cap parks the epic and notifies.
@@ -706,6 +814,8 @@ def report_holdouts(bead: str, ended: str | None, why: str | None, home: Path, m
     """
     settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
     epic = checked_epic(bead, settings, main_tree)
+    outcome = DONE if ended is None else HOLDOUTS_OUTCOMES[ended]
+    record_pass_in_ledger(epic.id, HOLDOUTS_STAGE, outcome, workers, home, main_tree)
     if ended is not None:
         reason = why or f"the validation worker ended {ended} with no reason"
         if holdouts_run.count_failed_run(epic.id, ended, reason, main_tree):
@@ -717,12 +827,13 @@ def report_holdouts(bead: str, ended: str | None, why: str | None, home: Path, m
     return printed
 
 
-def report_stage(mode: str, bead: str, home: Path, main_tree: Path) -> dict:
-    """Takes the report of a pass stage's worker, settles the stage on the epic branch, then does what `carry-on`
-    does."""
+def report_stage(mode: str, bead: str, workers: list[ledger.Worker], home: Path, main_tree: Path) -> dict:
+    """Takes the report of a pass stage's workers, prices their runs, settles the stage on the epic branch, then does
+    what `carry-on` does."""
     stage = pass_stages.REPORT_MODES[mode]
     settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
     epic = checked_epic(bead, settings, main_tree)
+    record_pass_in_ledger(epic.id, stage.stage, DONE, workers, home, main_tree)
     settled = stage.settle(epic.id, epic.branch, settings, home, main_tree)
     printed = next_moves(bead, home, main_tree, [], False)
     printed[stage.key] = settled.fields()
@@ -740,6 +851,10 @@ def stop(bead: str, home: Path, main_tree: Path) -> dict:
     return {"epic": epic.id, "interrupted": [lap.task for lap in sorted(held, key=lambda lap: lap.slot)]}
 
 
+def workers_of(args: argparse.Namespace) -> list[ledger.Worker]:
+    return [ledger.Worker(agent, tier) for agent, tier in args.worker]
+
+
 def main(argv: list[str]) -> int:
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument("epic")
@@ -747,19 +862,23 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="scheduler.py", description="Print the manager's next moves on a "
                                                                        "handed-off epic.")
     modes = parser.add_subparsers(dest="mode", required=True)
+    worked = argparse.ArgumentParser(add_help=False)
+    worked.add_argument("--worker", nargs=2, action="append", metavar=("AGENT", "TIER"), default=[],
+                        help="the agent id the host gave a worker, which names its tokens, and the tier it ran on; "
+                             "once for each worker the report covers")
     modes.add_parser("next", parents=[shared], help="restart the laps left at the build, open the laps that fit "
                                                     "and print the next moves")
     modes.add_parser("stop", parents=[shared], help="end every open lap interrupted, because the human stopped the "
                                                     "host, and send the stopped notification")
     modes.add_parser("carry-on", parents=[shared], help="print the next moves when the pause is over, a task was "
                                                         "unparked or added, or a lap merged, with no restart")
-    holdouts_report = modes.add_parser("report-holdouts", parents=[shared], help="take the validation worker's "
+    holdouts_report = modes.add_parser("report-holdouts", parents=[shared, worked], help="take the validation worker's "
                                        "report on the epic's holdouts, and print the next moves")
     holdouts_report.add_argument("--ended", choices=HOLDOUTS_ENDINGS, help="a worker that failed or was cut off: "
                                                                           "count the run instead of a report")
     holdouts_report.add_argument("--why", help="with --ended failed, the why of the worker's failed block")
     for mode, stage in pass_stages.REPORT_MODES.items():
-        modes.add_parser(mode, parents=[shared], help=stage.help)
+        modes.add_parser(mode, parents=[shared, worked], help=stage.help)
     reporting = modes.add_parser("report", parents=[shared], help="take how a lap's build ended, and print the "
                                                                   "next moves")
     reporting.add_argument("task")
@@ -768,6 +887,8 @@ def main(argv: list[str]) -> int:
     reporting.add_argument("--filter", help="with done, the filter the builder named")
     reporting.add_argument("--cause", choices=pause.CAUSES, help="with cut off, the trouble that cut the worker off")
     reporting.add_argument("--why", help="with failed, the why of the worker's failed block")
+    reporting.add_argument("--agent", help="the agent id the host gave the worker, which names its tokens")
+    reporting.add_argument("--tier", help="the tier the worker ran on")
     args = parser.parse_args(argv)
 
     try:
@@ -778,14 +899,14 @@ def main(argv: list[str]) -> int:
         elif args.mode == "carry-on":
             printed = next_moves(args.epic, home, main_tree, [], False)
         elif args.mode == "report-holdouts":
-            printed = report_holdouts(args.epic, args.ended, args.why, home, main_tree)
+            printed = report_holdouts(args.epic, args.ended, args.why, workers_of(args), home, main_tree)
         elif args.mode in pass_stages.REPORT_MODES:
-            printed = report_stage(args.mode, args.epic, home, main_tree)
+            printed = report_stage(args.mode, args.epic, workers_of(args), home, main_tree)
         elif args.mode == "stop":
             printed = stop(args.epic, home, main_tree)
         else:
-            printed = report(args.epic, args.task, args.outcome, args.app, args.filter, args.cause, args.why, home,
-                             main_tree)
+            said = WorkerReport(args.outcome, args.app, args.filter, args.cause, args.why)
+            printed = report(args.epic, args.task, said, ledger.Worker(args.agent, args.tier), home, main_tree)
     except (SchedulerError, NotAWholeNumber, PassError, EpicReadError, BenchError, CommandError,
             repo_settings.SettingsError, holdouts.HoldoutsError, private_docs.ClashError, OSError) as error:
         print(f"scheduler: {error}", file=sys.stderr)

@@ -100,7 +100,9 @@ def epic_lines(epic: dict, home: Path, main_tree: Path, now: int) -> list[str]:
     held_pause = pause.held_by(epic)
     if held_pause is not None and held_pause.is_waiting(now):
         retries = f"{held_pause.retries} retry" if held_pause.retries == 1 else f"{held_pause.retries} retries"
-        lines.append(f"  paused on {pause.WORDS[held_pause.cause]}, {minutes(held_pause.until - now)} left, {retries}")
+        left = f"{minutes(held_pause.until - now)} left"
+        waiting_on = left if held_pause.cause == pause.RESERVE else f"{left}, {retries}"
+        lines.append(f"  paused on {pause.WORDS[held_pause.cause]}, {waiting_on}")
     brake = caps.brake_of(epic)
     if brake.is_on:
         lines.append(f"  brake on at the {brake.stage}: {brake.laps} laps in a row parked there")

@@ -17,6 +17,7 @@ The scripts, run from inside the repo:
 - factory: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/factory.py"`
 - scheduler: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/scheduler.py"`
 - bench: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/bench.py"`
+- route: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/route.py"`
 - repo settings: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py"`
 - watcher: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/watch.py"`
 
@@ -81,11 +82,25 @@ Run `bench route <tier>` once for each tier you use. It prints the route
 as JSON with `harness`, `model`, `version` and `effort`. When the harness
 is the host's own (`claude` in Claude Code), start each worker on that tier
 with that `model` and `effort`. A `model` or `effort` that is null means
-the harness default; leave it out when you start the worker. Any other
-harness falls back to the host's: start the worker with the host's own
-model and effort, and say in one line which tier fell back. When the
-script refuses, show its message, which says to run the installer, and
-stop.
+the harness default; leave it out when you start the worker. For any other
+harness, start the worker on it when this session has a tool that starts
+one there, such as a `codex` tool. A route whose harness this session has
+no tool to start cannot run, so it falls back to the host's before any
+worker starts: start the worker with the host's own model and effort, and
+say in one line which tier fell back. That is no failure, and `route
+fallback` is not called for it. When the script refuses, show its message,
+which says to run the installer, and stop.
+
+When a worker you started on a route that is not the host's own fails before it did
+the stage's work, because its harness could not start or errored, run
+`route fallback <bead> <stage> <tier> --run <mark> --jidoka-home ...`. The
+bead is the lap's task, or the epic for a stage of a pass, and the mark is
+the lap's number or the pass's number. When it prints `"rerun": true`,
+start the stage's worker again, once, on the printed route, with the same
+prompt, and write the event line with that route's model. When it prints
+`"rerun": false`, the stage failed as it would have without the fallback;
+report it to the scheduler as the worker's outcome says. The failed route
+is no try.
 
 ## Steps
 
@@ -370,7 +385,11 @@ stop.
    event line `<epic-id> holdouts started: <holdouts> holdouts on <head>`.
 5. **Report.** Wait for the workers' notifications, and do nothing in
    between. Report each worker as it ends, one report at a time, with
-   `scheduler report <epic-id> <task> <outcome> --jidoka-home ...`:
+   `scheduler report <epic-id> <task> <outcome> --jidoka-home ...`. Every
+   task report also ends with `--agent <agent id> --tier <tier>`: the agent
+   id the Agent tool printed when it started the worker, and the tier whose
+   route you started it on. The ledger prices the run from the tokens the
+   lap mod summed under that id:
    - a build or merge worker's reply ends with a done block that names an
      app and a filter: `done --app <app> --filter "<filter>"`;
    - a research worker's reply ends with a done block with no app and no
@@ -397,6 +416,13 @@ stop.
      and an outage past an hour;
    - it stopped before it replied on any other error or an interruption:
      `"cut off"`.
+
+   Each report below of a worker of the pass also ends with
+   `--worker <agent id> <tier>`: the agent id the Agent tool printed when it
+   started the worker, and the tier whose route you started it on. The report
+   of the review ends with one `--worker` for each lane. The ledger prices
+   each run from the tokens the lap mod summed under its agent id, and
+   writes it with no task.
 
    A test cleanup worker's reply that ends with `{"outcome": "done"}` is
    reported with `scheduler report-cleanup <epic-id> --jidoka-home ...`, which
@@ -444,7 +470,8 @@ stop.
    `scheduler next` starts the worker again. A validation worker that fails
    or is cut off is reported with `scheduler report-holdouts <epic-id>
    --ended failed --why "<why>"` (the why cleaned as above; none when it
-   gave none) or `--ended cut-off`, which counts the run: the third parks
+   gave none) or `--ended cut-off`, which counts the run and prices it, so it
+   also ends with `--worker <agent id> <tier>`: the third parks
    the epic with the why and notifies. Write `<epic-id> holdouts ended:
    failed` and go on with the JSON it prints.
 

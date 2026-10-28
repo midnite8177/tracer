@@ -1,4 +1,4 @@
-import type { EngineInterface, Register, Timer } from 'claude-code'
+import type { EngineInterface, Register, Timer, TurnUsage } from 'claude-code'
 import type { Grant, LapWorker, ListEntry } from '../types/index'
 
 const LAP_LINE = /^jidoka lap worktree: (.+?)\s*$/
@@ -445,6 +445,155 @@ async function wakeAfterFailure($: EngineInterface, error: unknown): Promise<voi
   }
 }
 
+const TOKENS_FOLDER = 'tokens'
+
+/** The sums of the steps of one agent, or of one manager request, in the shape the ledger script reads. */
+type Sums = {
+  model: string
+  steps: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_input_tokens: number
+  cache_creation_input_tokens: number
+}
+
+function emptySums(): Sums {
+  return { model: '', steps: 0, input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+}
+
+/** `sums` with one more step, whose usage is null where the host reported none. */
+function withStep(sums: Sums, usage: TurnUsage | null): Sums {
+  const next = { ...sums, steps: sums.steps + 1 }
+  if (usage === null) return next
+  return {
+    model: usage.model,
+    steps: next.steps,
+    input_tokens: sums.input_tokens + usage.input_tokens,
+    output_tokens: sums.output_tokens + usage.output_tokens,
+    cache_read_input_tokens: sums.cache_read_input_tokens + usage.cache_read_input_tokens,
+    cache_creation_input_tokens: sums.cache_creation_input_tokens + usage.cache_creation_input_tokens,
+  }
+}
+
+const agentSums = new Map<string, Sums>()
+let requestSums = emptySums()
+let requestStartedAt: number | undefined
+
+/** Jidoka's home as the launcher finds it: `JIDOKA_HOME`, else `.jidoka` in the user's home. */
+async function jidokaHome($: EngineInterface): Promise<string | undefined> {
+  const named = await $.env.get('JIDOKA_HOME').catch(() => undefined)
+  if (named !== undefined && named !== '') return named
+  const home = await $.env.get('HOME').catch(() => undefined)
+  return home === undefined || home === '' ? undefined : `${home.replace(/[\\/]+$/, '')}/.jidoka`
+}
+
+/**
+ * Adds one step to the sums kept for a lap worker's agent id and writes them to
+ * `<jidoka home>/tokens/<agent id>.json`, where the ledger script reads them. A
+ * step of an agent that is no lap worker adds nothing, and a failed write is
+ * lost without telling the host.
+ */
+async function tallyWorkerStep($: EngineInterface, agentId: string, usage: TurnUsage | null): Promise<void> {
+  try {
+    if ((await lapOf($, agentId)) === undefined) return
+    const sums = withStep(agentSums.get(agentId) ?? emptySums(), usage)
+    agentSums.set(agentId, sums)
+    const home = await jidokaHome($)
+    if (home !== undefined) await $.fs.write(`${home}/${TOKENS_FOLDER}/${agentId}.json`, `${JSON.stringify(sums)}\n`)
+  } catch {
+    return
+  }
+}
+
+/** Adds one step to the manager's current request. */
+async function tallyRequestStep($: EngineInterface, usage: TurnUsage | null): Promise<void> {
+  requestStartedAt ??= await $.clock.now().catch(() => undefined)
+  requestSums = withStep(requestSums, usage)
+}
+
+/**
+ * Tells jidoka's ledger script, run in the host's own folder, what the manager's
+ * request that just ended used and how long it took, then starts the next
+ * request's sums. The script writes a row only for a session that manages an
+ * epic, and a failure here never reaches the host.
+ */
+async function recordRequest($: EngineInterface): Promise<void> {
+  const used = requestSums
+  const startedAt = requestStartedAt
+  requestSums = emptySums()
+  requestStartedAt = undefined
+  if (used.steps === 0) return
+  try {
+    const now = await $.clock.now().catch(() => startedAt ?? 0)
+    const seconds = startedAt === undefined ? 0 : Math.max(0, Math.round((now - startedAt) / SECOND_MS))
+    await runScript(
+      $,
+      'ledger',
+      [
+        'request',
+        '--session', await $.session.id(),
+        '--model', used.model,
+        '--input', String(used.input_tokens),
+        '--output', String(used.output_tokens),
+        '--cache-read', String(used.cache_read_input_tokens),
+        '--cache-write', String(used.cache_creation_input_tokens),
+        '--seconds', String(seconds),
+      ],
+      await $.session.cwd(),
+    )
+  } catch {
+    return
+  }
+}
+
+const USAGE_FOLDER = 'usage'
+const ACCOUNT = 'claude'
+
+/** One usage window as the scheduler reads it: the share used, in percent, and the second it resets. */
+type UsageWindow = { used_percent: number; resets_at: number }
+
+/** What the account's usage looked like when the manager called the scheduler; a window the account lacks is left out. */
+type UsageReading = { read_at: number; five_hour?: UsageWindow; seven_day?: UsageWindow }
+
+/** The window in `value`, a usage entry with `utilization` and an ISO `resets_at`; undefined for anything else, such as the null of an account that has none. */
+function usageWindowIn(value: unknown): UsageWindow | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const { utilization, resets_at } = value as Record<string, unknown>
+  const resets = typeof resets_at === 'string' ? Date.parse(resets_at) : Number.NaN
+  if (typeof utilization !== 'number' || Number.isNaN(resets)) return undefined
+  return { used_percent: utilization, resets_at: Math.floor(resets / SECOND_MS) }
+}
+
+/** True when every simple command of `command` runs jidoka's launcher on a script inside the plugin and one of them runs the scheduler. */
+function runsScheduler(command: string, pluginRoot: string): boolean {
+  const scheduler = resolved(`${pluginRoot}/scripts/scheduler.py`, '/')
+  return scheduler !== undefined && (jidokaScriptsIn(command, pluginRoot) ?? []).includes(scheduler)
+}
+
+/**
+ * Writes the usage windows of the account the host runs on to
+ * `<jidoka home>/usage/claude.json`, where the scheduler reads them. It runs on
+ * every call of the scheduler, so the file always shows the account as it is
+ * now. An account with no windows, or a usage call that fails, leaves a
+ * reading with none, and a failed write is lost without telling the host.
+ */
+async function recordUsage($: EngineInterface): Promise<void> {
+  try {
+    const home = await jidokaHome($)
+    if (home === undefined) return
+    const usage: unknown = await $.session.usage().catch(() => undefined)
+    const windows = typeof usage === 'object' && usage !== null ? (usage as Record<string, unknown>) : {}
+    const reading: UsageReading = { read_at: Math.floor((await $.clock.now()) / SECOND_MS) }
+    const fiveHour = usageWindowIn(windows.five_hour)
+    const sevenDay = usageWindowIn(windows.seven_day)
+    if (fiveHour !== undefined) reading.five_hour = fiveHour
+    if (sevenDay !== undefined) reading.seven_day = sevenDay
+    await $.fs.write(`${home}/${USAGE_FOLDER}/${ACCOUNT}.json`, `${JSON.stringify(reading)}\n`)
+  } catch {
+    return
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     startHeartbeat($)
@@ -459,7 +608,15 @@ export const register: Register = on => {
   on('classic.Stop', async ($, e, next) => {
     failedTurns = 0
     cancelWake()
+    await recordRequest($)
     return next(e)
+  })
+
+  on('turn.step', async function* ($, e, next) {
+    const result = yield* next(e)
+    if (e.agentId === undefined) await tallyRequestStep($, result.usage)
+    else await tallyWorkerStep($, e.agentId, result.usage)
+    return result
   })
 
   on('classic.PermissionRequest', async ($, e, next) => {
@@ -491,7 +648,9 @@ export const register: Register = on => {
 
   on('tool.check', async ($, e, next) => {
     if (e.agentId === undefined) {
-      const isJidokaScript = e.tool === 'Bash' && runsJidokaScripts(commandOf(e.input), $.plugin.root)
+      const command = e.tool === 'Bash' ? commandOf(e.input) : ''
+      const isJidokaScript = e.tool === 'Bash' && runsJidokaScripts(command, $.plugin.root)
+      if (isJidokaScript && runsScheduler(command, $.plugin.root)) await recordUsage($)
       return isJidokaScript ? { decision: 'allow' } : next(e)
     }
     const lap = await lapOf($, e.agentId)

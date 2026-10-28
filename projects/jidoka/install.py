@@ -8,8 +8,9 @@ changes, so what gets installed is a commit. It writes that commit's plugin
 to <jidoka-home>/plugins/<version>/, a snapshot, because Claude Code runs a
 plugin from a folder marketplace in place and an edit to the checkout would
 otherwise change the scripts under a running session. It records the Python
-it runs under, the config dirs, a native route for each tier and jidoka's
-source repo in <jidoka-home>, then adds the snapshot as a local marketplace
+it runs under, the config dirs, a native route for each tier, except for a
+tier whose route is already recorded, which /jidoka:setup may have set, and
+jidoka's source repo in <jidoka-home>, then adds the snapshot as a local marketplace
 and installs the plugin at user scope into each named config dir, and into
 Codex when codex is on the PATH. A snapshot is never rewritten. A version
 whose snapshot came from different plugin content is refused until
@@ -39,11 +40,19 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path, PureWindowsPath
 
+PLUGIN_FOLDER = Path(__file__).resolve().parent / "plugin"
+sys.path.append(str(PLUGIN_FOLDER / "jidoka" / "scripts"))
+# A bytecode file written into the plugin folder would count as an uncommitted change to what gets installed.
+WRITES_BYTECODE = sys.dont_write_bytecode
+sys.dont_write_bytecode = True
+import routes as machine_routes  # noqa: E402
+
+sys.dont_write_bytecode = WRITES_BYTECODE
+
 MIN_PYTHON = (3, 10)
 REQUIRED_TOOLS = ["git", "bd", "claude"]
 MARKETPLACE = "jidoka"
 PLUGIN_ID = "jidoka@jidoka"
-PLUGIN_FOLDER = Path(__file__).resolve().parent / "plugin"
 PLUGIN_MANIFEST = Path("jidoka") / ".claude-plugin" / "plugin.json"
 TREE_FILE = "plugin-tree-id"
 OWNED_SETTINGS = ["python", "config_dirs", "routes", "source_repo"]
@@ -98,14 +107,7 @@ def locate_tools(which: Callable[[str], str | None]) -> Tools:
 
 
 def default_routes(codex_present: bool) -> dict[str, Route]:
-    second = Route("codex", None, None, None) if codex_present else Route("claude", "opus", "5.5", "high")
-    return {
-        "light": Route("claude", "haiku", "5.5", "medium"),
-        "standard": Route("claude", "sonnet", "5.5", "high"),
-        "deep": Route("claude", "opus", "5.5", "high"),
-        "second": second,
-        "local": Route("claude", "sonnet", "5.5", "medium"),
-    }
+    return {tier: Route(**route) for tier, route in machine_routes.default_routes(codex_present).items()}
 
 
 def git_run(git: str, folder: Path, args: list[str]) -> subprocess.CompletedProcess:
@@ -152,7 +154,7 @@ def read_version(plugin_folder: Path) -> str:
 
 
 def load_settings(home: Path) -> dict:
-    path = home / "settings.json"
+    path = home / machine_routes.SETTINGS_FILE
     if not path.is_file():
         return {}
     try:
@@ -169,14 +171,16 @@ def record(home: Path, python: str, config_dirs: list[Path], routes: dict[str, R
     home.mkdir(parents=True, exist_ok=True)
     (home / "python").write_text(python + "\n", encoding="utf-8", newline="\n")
     kept = {key: value for key, value in previous.items() if key not in OWNED_SETTINGS}
+    earlier_routes = previous.get("routes")
     settings = {
         "python": python,
         "config_dirs": [str(path) for path in config_dirs],
-        "routes": {tier: asdict(route) for tier, route in routes.items()},
+        "routes": {**{tier: asdict(route) for tier, route in routes.items()},
+                   **(earlier_routes if isinstance(earlier_routes, dict) else {})},
         "source_repo": str(source_repo),
         **kept,
     }
-    (home / "settings.json").write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
+    (home / machine_routes.SETTINGS_FILE).write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
                                         encoding="utf-8", newline="\n")
 
 

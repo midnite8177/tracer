@@ -91,8 +91,8 @@ _Avoid_: Stuck, on hold, needs-owner, escalated
 
 **Paused**:
 Waiting on the clock, for a usage window's reset or the API's return,
-while the host still runs. A usage limit, an outage, a billing error or an
-auth failure pauses the epic. Nothing new starts on what is paused, and
+while the host still runs. A usage limit, an outage, a billing error, an
+auth failure or a five-hour window past its reserve pauses the epic. Nothing new starts on what is paused, and
 the factory retries after a back-off of 5, 15 and 30 minutes, then every
 hour, and carries on by itself.
 _Avoid_: Held, throttled, sleeping
@@ -470,8 +470,25 @@ _Avoid_: Class, level, size, model
 **Route**:
 How one machine runs a tier: a model and effort in the host's own
 harness, or in another harness. Each machine keeps its own routes, and a
-route that cannot run falls back to the host's harness.
+route that cannot run falls back to the host's harness. A route that fails
+reruns its stage once on the native route, the host's own harness at the
+model and effort the tier asks for; a second failure is the stage's own
+failure.
 _Avoid_: Provider, backend, adapter
+
+**Machine settings**:
+What install and setup record about one machine in jidoka's home: its
+Python, config dirs, routes, the default budget of an epic, the reserves
+and jidoka's source repo. They hold nothing about a repo.
+_Avoid_: Global config, user settings, preferences
+
+**Setup**:
+The step the human takes, with `/jidoka:setup`, to set the machine settings
+that jidoka can propose from what it finds on the machine: a route for each
+tier, the default budget and the reserves. It shows the proposal and writes
+nothing until the human confirms. It is not onboarding, which brings a repo
+under jidoka.
+_Avoid_: Configure, install, init
 
 **Account**:
 The login a harness runs on at the moment, with its own usage windows or
@@ -485,8 +502,28 @@ _Avoid_: Spend cap, limit, quota ("cap" counts tries)
 
 **Reserve**:
 The share of an account's usage window that the factory leaves unused.
-Past it, the factory starts no new stage on that account.
+Past it, the factory starts no new stage on that account. An epic's
+`reserves` rule sets it for the account, else the machine settings' default
+does, and one share holds for both windows; an account with neither keeps
+10% of the five-hour window and 25% of the seven-day window. Past the five-hour reserve
+the epic pauses until the reset; past the seven-day reserve it parks with a
+question that gives a projection and three choices. The factory reads the
+account afresh on every call of the scheduler.
 _Avoid_: Headroom, buffer, threshold
+
+**Ledger**:
+The SQLite file in jidoka's home that holds one row for each worker run and
+each request of a manager, priced in dollars at list price when the row is
+written. It holds every repo and outlives the epics it prices. An epic's
+running total, kept in its metadata, is the sum of its rows.
+_Avoid_: Spend log, usage table, cost database
+
+**List price**:
+What a provider's pricing page asks, at its standard tier, for a million
+tokens of each kind of one model. jidoka reads it from the pages and keeps
+it in its home for seven days; its own hand-written table prices what the
+pages do not list.
+_Avoid_: Rate card, cost, tariff
 
 **Area**:
 The part of the codebase a task is expected to touch. Handoff names one
@@ -540,7 +577,7 @@ _Avoid_: Permission prompt, approval request
 The one-time step that brings a repo under jidoka on one machine. Its
 beads start in stealth mode, and jidoka records what it needs to know
 about the repo and its apps.
-_Avoid_: Adopt, install, setup, enroll
+_Avoid_: Adopt, install, enroll
 
 **Repo settings**:
 What onboarding records about one repo on one machine, in jidoka's home and

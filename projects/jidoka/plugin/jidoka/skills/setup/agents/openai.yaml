@@ -1,0 +1,5 @@
+interface:
+  display_name: "Setup"
+  short_description: "Propose this machine's routes, budget and reserves"
+policy:
+  allow_implicit_invocation: false
