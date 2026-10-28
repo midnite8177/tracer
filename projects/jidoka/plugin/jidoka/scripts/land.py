@@ -43,6 +43,8 @@ import os
 import re
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -118,8 +120,9 @@ def merge_lock(home: Path) -> Path:
     return home / "locks" / "merge.lock"
 
 
-def acquire_lock(lock: Path) -> None:
-    """Creates the lock file exclusively, polling until the holder removes it."""
+def take_lock(lock: Path, waiting_on: TextIO) -> None:
+    """Creates the lock file exclusively, polling until the holder removes it, and says once on `waiting_on` that it
+    waits."""
     lock.parent.mkdir(parents=True, exist_ok=True)
     announced = False
     while True:
@@ -127,13 +130,20 @@ def acquire_lock(lock: Path) -> None:
             descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
             if not announced:
-                print(f"waiting for the merge lock at {lock}, {lock_holder(lock)}", flush=True)
+                print(f"waiting for the merge lock at {lock}, {lock_holder(lock)}", file=waiting_on, flush=True)
                 announced = True
             time.sleep(LOCK_POLL_SECONDS)
             continue
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            # The pid is only for people: lock_holder prints it so a waiter can see which process
+            # holds the lock and whether that process is still alive. Nothing reads it to decide ownership.
             handle.write(f"{os.getpid()}\n")
         return
+
+
+def acquire_lock(lock: Path) -> None:
+    """Takes the lock, saying on stdout that it waits, as the landing script's output allows."""
+    take_lock(lock, sys.stdout)
 
 
 def release_lock(lock: Path) -> None:
@@ -141,6 +151,18 @@ def release_lock(lock: Path) -> None:
         lock.unlink()
     except FileNotFoundError:
         pass
+
+
+@contextmanager
+def merge_locked(home: Path) -> Iterator[None]:
+    """Holds the merge lock for the block. It says on stderr that it waits, because a caller that prints a JSON
+    document on stdout must not have a line in it."""
+    lock = merge_lock(home)
+    take_lock(lock, sys.stderr)
+    try:
+        yield
+    finally:
+        release_lock(lock)
 
 
 def main_checkout(repo: Path) -> Path:
@@ -323,6 +345,8 @@ def close_out(bead: str, branch: str, worktree: Path, message: str, sha: str, ch
     closed = attempt("bd close", ["bd", "close", bead, "--reason", f"{sha}: {subject(message)}"], checkout, None,
                      failed)
     if worktree.exists():
+        # --force is safe here: the commit is already on main, so what the worktree still holds is the
+        # scratch folder and other untracked files, which git would otherwise refuse to remove.
         attempt("git worktree remove", ["git", "worktree", "remove", "--force", str(worktree)], checkout, None,
                 failed)
     if closed:
