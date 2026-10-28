@@ -59,7 +59,8 @@ holds) and `lap.branch`. A rerun after a failure, and the lap that follows a par
 find. A reused lap branch that lacks the epic branch's head is first rebased onto it under the merge lock, with the
 work its worktree holds uncommitted kept as it was, so the lap starts from the work left behind on top of the epic
 branch as it is now. A rebase that conflicts is aborted, and the task parks with the conflicting files named and no
-action, its worktree and branch as they were. A new lap starts with no tries, no cutoffs, no send-backs and no merge tries, because each is a cap on one lap.
+action, its worktree and branch as they were. A new lap starts with no tries, no cutoffs, no send-backs and no merge
+tries, because each is a cap on one lap.
 A lap opens for each ready task, in bd priority order and then by id, while the open laps of the epic number fewer
 than the lap limit, which is the repo settings' lap_limit or the epic's own factory rule when that is lower, read
 afresh on every call, and never for a task whose area an open lap already holds. A task is ready when every bead it
@@ -93,11 +94,14 @@ left on the epic branch, prints the stage's fields under its key, and does what 
   validation    validation.py: runs once the stages above owe nothing. An epic that holds holdouts ends with a
                 holdouts action until holdouts_run.py takes `report-holdouts <epic> [--ended failed|cut-off]
                 [--why <why>]`.
-Each of these report modes, `report-holdouts` included, takes `--worker <agent id> <tier>` once for each worker it
-reports, and the review reports one for each lane. The call writes a ledger row for each, with no task and the stage's
-name (`test-cleanup`, `tidy`, `review`, `fix` or `holdouts`), before it settles the stage, so a refused report still
-prices the run. A `report-holdouts --ended` row ends `failed` or `cut off`; every other row ends `done`. A report that
-names no worker writes no row.
+Each of these report modes, `report-holdouts` included, takes `--worker <agent id> <tier> [done|failed|cut-off]` once
+for each worker it reports, and the review reports one for each lane. The call writes a ledger row for each, with no
+task and the stage's name (`test-cleanup`, `tidy`, `review`, `fix` or `holdouts`), before it settles the stage, so a
+refused report still prices the run. A stage that failed or was cut off is reported with `--ended failed|cut-off`
+(`report-holdouts` also takes `--why`): the call settles nothing and prints what `carry-on` prints, so the stage is
+still owed. Each worker's row ends as the third value of its `--worker` says, else as `--ended` says, else `done`, so
+the batches or lanes that finished are priced `done` beside the one that failed. A report that names no worker writes
+no row.
 pass_ledger.py holds the cap on passes, and gate.py the acceptance gate. An epic at the gate whose human label came off
 with no decision is parked again, as gate_guard.py says. A report that is missing or unusable refuses
 the call and writes nothing. A stage that files tasks in the epic has this call open their laps.
@@ -215,9 +219,9 @@ from pass_support import PassError
 from worktrees import hide_worktrees
 
 SCRIPT = "scheduler"
-HOLDOUTS_ENDINGS = ("failed", "cut-off")
-HOLDOUTS_OUTCOMES = {"failed": FAILED, "cut-off": CUT_OFF}
-HOLDOUTS_STAGE = "holdouts"
+PASS_ENDINGS = ("failed", "cut-off")
+PASS_OUTCOMES = {"failed": FAILED, "cut-off": CUT_OFF}
+WORKER_OUTCOMES = {"done": DONE, **PASS_OUTCOMES}
 OUTCOMES = [DONE, FAILED, CUT_OFF, QUESTION, SEND_BACK, BLOCKED, PASS, CANNOT_JUDGE]
 FIRST_SLOT = 1
 SECONDS_PER_MINUTE = 60
@@ -772,11 +776,21 @@ def end_pause_after_a_retry_that_worked(epic: Epic, main_tree: Path) -> None:
         pause.clear(epic.id, main_tree)
 
 
-def record_pass_in_ledger(epic: str, stage: str, outcome: str, workers: list[ledger.Worker], home: Path,
+@dataclass(frozen=True)
+class PassWorker:
+    """A worker a pass stage's report names, and the ending the report gives it, one of WORKER_OUTCOMES' keys; None
+    when it gives none and the report's own ending stands."""
+    worker: ledger.Worker
+    ending: str | None
+
+
+def record_pass_in_ledger(epic: str, stage: str, outcome: str, workers: list[PassWorker], home: Path,
                           main_tree: Path) -> None:
-    """Prices the runs of the workers of one pass stage in the ledger, a row for each worker."""
-    for worker in workers:
-        ledger.record_run_or_say(home, main_tree, epic, ledger.Where.of_pass(stage), worker, outcome, clock.now())
+    """Prices the runs of the workers of one pass stage in the ledger, a row for each worker, with the worker's own
+    ending or else the report's `outcome`."""
+    for each in workers:
+        ended = outcome if each.ending is None else WORKER_OUTCOMES[each.ending]
+        ledger.record_run_or_say(home, main_tree, epic, ledger.Where.of_pass(stage), each.worker, ended, clock.now())
 
 
 @dataclass(frozen=True)
@@ -819,36 +833,26 @@ def report(bead: str, task_id: str, said: WorkerReport, worker: ledger.Worker, h
     return next_moves(bead, home, main_tree, rebuilds, False)
 
 
-def report_holdouts(bead: str, ended: str | None, why: str | None, workers: list[ledger.Worker], home: Path,
-                    main_tree: Path) -> dict:
-    """Takes the validation worker's report on the epic's holdouts, then does what `carry-on` does.
+def report_stage(mode: str, bead: str, ended: str | None, why: str | None, workers: list[PassWorker], home: Path,
+                 main_tree: Path) -> dict:
+    """Takes the report of a pass stage's workers, prices their runs, settles the stage on the epic branch, then does
+    what `carry-on` does.
 
-    A worker that ended failed or cut off (`ended`) counts a run instead, and the cap parks the epic and notifies.
+    Workers that ended failed or cut off (`ended`) are priced with that ending unless the report gives a worker its
+    own, and settle nothing, so the stage is still owed and the next call starts its worker again. A stage that counts
+    its ended runs counts this one with `why`, and the cap parks the epic and notifies.
 
     A red holdout files a task in the epic, and this call opens its lap with the others.
     """
-    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
-    epic = checked_epic(bead, settings, main_tree)
-    outcome = DONE if ended is None else HOLDOUTS_OUTCOMES[ended]
-    record_pass_in_ledger(epic.id, HOLDOUTS_STAGE, outcome, workers, home, main_tree)
-    if ended is not None:
-        reason = why or f"the validation worker ended {ended} with no reason"
-        if holdouts_run.count_failed_run(epic.id, ended, reason, main_tree):
-            notify.announce(notify.EPIC_PARKED, epic.id, home, main_tree, SCRIPT)
-        return next_moves(bead, home, main_tree, [], False)
-    settled = holdouts_run.settle_holdouts(epic.id, epic.branch, settings, home, main_tree)
-    printed = next_moves(bead, home, main_tree, [], False)
-    printed["validation"] = settled.fields()
-    return printed
-
-
-def report_stage(mode: str, bead: str, workers: list[ledger.Worker], home: Path, main_tree: Path) -> dict:
-    """Takes the report of a pass stage's workers, prices their runs, settles the stage on the epic branch, then does
-    what `carry-on` does."""
     stage = pass_stages.REPORT_MODES[mode]
     settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
     epic = checked_epic(bead, settings, main_tree)
-    record_pass_in_ledger(epic.id, stage.stage, DONE, workers, home, main_tree)
+    record_pass_in_ledger(epic.id, stage.stage, DONE if ended is None else PASS_OUTCOMES[ended], workers, home,
+                          main_tree)
+    if ended is not None:
+        if stage.count_ended_run is not None and stage.count_ended_run(epic.id, ended, why, main_tree):
+            notify.announce(notify.EPIC_PARKED, epic.id, home, main_tree, SCRIPT)
+        return next_moves(bead, home, main_tree, [], False)
     settled = stage.settle(epic.id, epic.branch, settings, home, main_tree)
     printed = next_moves(bead, home, main_tree, [], False)
     printed[stage.key] = settled.fields()
@@ -866,8 +870,15 @@ def stop(bead: str, home: Path, main_tree: Path) -> dict:
     return {"epic": epic.id, "interrupted": [lap.task for lap in sorted(held, key=lambda lap: lap.slot)]}
 
 
-def workers_of(args: argparse.Namespace) -> list[ledger.Worker]:
-    return [ledger.Worker(agent, tier) for agent, tier in args.worker]
+def workers_of(args: argparse.Namespace) -> list[PassWorker]:
+    """The workers a report names, each `AGENT TIER` with an optional ending after them."""
+    workers = []
+    for given in args.worker:
+        if len(given) not in (2, 3) or (len(given) == 3 and given[2] not in WORKER_OUTCOMES):
+            raise SchedulerError(f"--worker takes an agent id, a tier and optionally the worker's ending, one of "
+                                 f"{', '.join(WORKER_OUTCOMES)}, not {' '.join(given)}, and nothing was written")
+        workers.append(PassWorker(ledger.Worker(given[0], given[1]), given[2] if len(given) == 3 else None))
+    return workers
 
 
 def main(argv: list[str]) -> int:
@@ -878,22 +889,22 @@ def main(argv: list[str]) -> int:
                                                                        "handed-off epic.")
     modes = parser.add_subparsers(dest="mode", required=True)
     worked = argparse.ArgumentParser(add_help=False)
-    worked.add_argument("--worker", nargs=2, action="append", metavar=("AGENT", "TIER"), default=[],
-                        help="the agent id the host gave a worker, which names its tokens, and the tier it ran on; "
-                             "once for each worker the report covers")
+    worked.add_argument("--worker", nargs="+", action="append", metavar="AGENT TIER [ENDING]", default=[],
+                        help="the agent id the host gave a worker, which names its tokens, the tier it ran on and "
+                             "optionally how it ended (done, failed or cut-off), which stands for --ended; once for "
+                             "each worker the report covers")
     modes.add_parser("next", parents=[shared], help="restart the laps left at the build, open the laps that fit "
                                                     "and print the next moves")
     modes.add_parser("stop", parents=[shared], help="end every open lap interrupted, because the human stopped the "
                                                     "host, and send the stopped notification")
     modes.add_parser("carry-on", parents=[shared], help="print the next moves when the pause is over, a task was "
                                                         "unparked or added, or a lap merged, with no restart")
-    holdouts_report = modes.add_parser("report-holdouts", parents=[shared, worked], help="take the validation worker's "
-                                       "report on the epic's holdouts, and print the next moves")
-    holdouts_report.add_argument("--ended", choices=HOLDOUTS_ENDINGS, help="a worker that failed or was cut off: "
-                                                                          "count the run instead of a report")
-    holdouts_report.add_argument("--why", help="with --ended failed, the why of the worker's failed block")
     for mode, stage in pass_stages.REPORT_MODES.items():
-        modes.add_parser(mode, parents=[shared, worked], help=stage.help)
+        stage_report = modes.add_parser(mode, parents=[shared, worked], help=stage.help)
+        stage_report.add_argument("--ended", choices=PASS_ENDINGS, help="workers that failed or were cut off: price "
+                                                                       "their runs and settle nothing")
+        if stage.count_ended_run is not None:
+            stage_report.add_argument("--why", help="with --ended failed, the why of the worker's failed block")
     reporting = modes.add_parser("report", parents=[shared], help="take how a lap's build ended, and print the "
                                                                   "next moves")
     reporting.add_argument("task")
@@ -913,10 +924,9 @@ def main(argv: list[str]) -> int:
             printed = next_moves(args.epic, home, main_tree, [], True)
         elif args.mode == "carry-on":
             printed = next_moves(args.epic, home, main_tree, [], False)
-        elif args.mode == "report-holdouts":
-            printed = report_holdouts(args.epic, args.ended, args.why, workers_of(args), home, main_tree)
         elif args.mode in pass_stages.REPORT_MODES:
-            printed = report_stage(args.mode, args.epic, workers_of(args), home, main_tree)
+            printed = report_stage(args.mode, args.epic, args.ended, getattr(args, "why", None), workers_of(args),
+                                   home, main_tree)
         elif args.mode == "stop":
             printed = stop(args.epic, home, main_tree)
         else:

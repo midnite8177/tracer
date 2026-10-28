@@ -222,7 +222,10 @@ is no try.
      the work, and `outside` otherwise; work that is only nice to have is
      no finding. A worker that cannot finish its task without the work lists
      it with `placement` `blocks`, and ends with
-     `{"outcome": "blocked"}` instead of `done`. A done build with a finding
+     `{"outcome": "blocked"}` instead of `done`. When a task the epic already
+     holds is that work, the finding adds `task`, that task's id, and the
+     task waits on it with no new bead; an id the epic does not hold, or
+     `task` on any other placement, is a try. A done build with a finding
      whose placement is `blocks` is a try.
 
    Write the event line for the started build, with the route's model or
@@ -446,8 +449,10 @@ is no try.
    prints the same JSON as `next`, with the validation that follows. Write
    `<epic-id> test-cleanup ended: done`. Exit 1 means the report was refused;
    show stderr and stop, and the next `scheduler next` starts the worker again.
-   A worker that fails or is cut off is not reported: write
-   `<epic-id> test-cleanup ended: failed` and stop.
+   A worker that fails or is cut off is reported with
+   `scheduler report-cleanup <epic-id> --ended failed --worker <agent id> <tier>`
+   (`--ended cut-off` when it was cut off), which prices the run and settles
+   nothing. Write `<epic-id> test-cleanup ended: failed` and stop.
 
    Wait for every tidy batch worker you started. When each ended with
    `{"outcome": "done"}`, report them once, together, with
@@ -455,7 +460,12 @@ is no try.
    same JSON as `next`, with the review that follows. Write
    `<epic-id> tidy ended: done`. Exit 1 means the report was refused; show
    stderr and stop, and the next `scheduler next` starts the batches again.
-   When any batch worker fails or is cut off, report none: write
+   When any batch worker fails or is cut off, report every batch worker you
+   started with `scheduler report-tidy <epic-id> --ended failed`
+   (`--ended cut-off` when a batch worker was cut off) and one
+   `--worker <agent id> local <ending>` for each, where `<ending>` is
+   `done`, `failed` or `cut-off`, as that worker ended. The call prices each
+   run with its own ending and settles nothing. Write
    `<epic-id> tidy ended: failed` and stop.
 
    Wait for every review lane worker you started. When each ended with
@@ -466,14 +476,22 @@ is no try.
    lap of the epic takes. Write `<epic-id> review ended: done`.
    Exit 1 means the report was refused; show stderr and stop, and the next
    `scheduler next` starts the lanes again. When any lane fails or is cut off,
-   report none: write `<epic-id> review ended: failed` and stop.
+   report every lane you started with
+   `scheduler report-review <epic-id> --ended failed` (`--ended cut-off` when
+   a lane was cut off) and one `--worker <agent id> <tier> <ending>` for each,
+   where `<ending>` is `done`, `failed` or `cut-off`, as that lane ended. The
+   call prices each run with its own ending and settles nothing. Write
+   `<epic-id> review ended: failed` and stop.
 
    A fix worker's reply that ends with `{"outcome": "done"}` is reported with
    `scheduler report-fix <epic-id> --jidoka-home ...`, which prints the same
    JSON as `next`, with the validation that follows. Write
    `<epic-id> fix ended: done`. Exit 1 means the report was refused; show
-   stderr and stop, and the next `scheduler next` starts the worker again. A worker that fails or is cut off
-   is not reported: write `<epic-id> fix ended: failed` and stop.
+   stderr and stop, and the next `scheduler next` starts the worker again.
+   A worker that fails or is cut off is reported with
+   `scheduler report-fix <epic-id> --ended failed --worker <agent id> <tier>`
+   (`--ended cut-off` when it was cut off), which prices the run and settles
+   nothing. Write `<epic-id> fix ended: failed` and stop.
 
    An epic that holds open tasks after its third pass parks with a question
    instead of a fourth pass, and the call that parks it opens no lap and

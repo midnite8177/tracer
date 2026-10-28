@@ -544,6 +544,62 @@ class TheReviewAndFixWorkersArePricedTests(PassRowsAre, LedgerBooks, test_review
                          [(row["stage"], row["agent"]) for row in rows])
         self.assert_row_of(rows[1], "fix", "fixer", "standard", SONNET, "done", 10.0)
 
+    def test_a_fix_worker_cut_off_at_its_wall_clock_leaves_a_row_that_the_epics_spend_includes(self):
+        epic, printed = self.finish_epic_at_the_review()
+        self.write_lanes(printed, {"comments": [test_review.finding("Echo", "small", "high")]})
+        reviewed = self.launch(test_scheduler.SCHEDULER, "report-review", epic, *worker("comments-agent", "standard"))
+        self.assertEqual(0, reviewed.returncode, reviewed.stderr)
+        self.leave_tokens("fixer", tokens(SONNET, 0, 1_000_000, 0, 0))
+
+        ended = self.launch(test_scheduler.SCHEDULER, "report-fix", epic, "--ended", "cut-off",
+                            *worker("fixer", "standard"))
+
+        self.assertEqual(0, ended.returncode, ended.stderr)
+        rows = self.passes_of(epic)
+        self.assertEqual([("review", "done"), ("fix", "cut off")], [(row["stage"], row["outcome"]) for row in rows])
+        self.assert_row_of(rows[1], "fix", "fixer", "standard", SONNET, "cut off", 10.0)
+        self.assertAlmostEqual(10.0, float(self.metadata(epic)["spend.dollars"]), places=6)
+        self.assertEqual(["fix"], [action["action"] for action in json.loads(ended.stdout)["actions"]])
+
+    def test_a_review_whose_lane_failed_prices_every_lane_it_started_as_failed(self):
+        epic, printed = self.finish_epic_at_the_review()
+        self.write_lanes(printed, {})
+        self.leave_tokens("comments-agent", tokens(SONNET, 1_000_000, 0, 0, 0))
+
+        ended = self.launch(test_scheduler.SCHEDULER, "report-review", epic, "--ended", "failed",
+                            *worker("comments-agent", "standard"), *worker("spec-agent", "standard"))
+
+        self.assertEqual(0, ended.returncode, ended.stderr)
+        rows = self.passes_of(epic)
+        self.assertEqual([("review", "failed"), ("review", "failed")], [(row["stage"], row["outcome"]) for row in rows])
+        self.assertNotIn("review.head", self.metadata(epic))
+        self.assertAlmostEqual(2.0, float(self.metadata(epic)["spend.dollars"]), places=6)
+
+    def test_a_worker_reported_with_its_own_ending_is_priced_with_it_beside_the_lane_that_failed(self):
+        epic, printed = self.finish_epic_at_the_review()
+        self.write_lanes(printed, {})
+
+        ended = self.launch(test_scheduler.SCHEDULER, "report-review", epic, "--ended", "failed",
+                            *worker("comments-agent", "standard"), "done",
+                            *worker("spec-agent", "standard"), "cut-off",
+                            *worker("standards-agent", "standard"))
+
+        self.assertEqual(0, ended.returncode, ended.stderr)
+        self.assertEqual([("comments-agent", "done"), ("spec-agent", "cut off"), ("standards-agent", "failed")],
+                         [(row["agent"], row["outcome"]) for row in self.passes_of(epic)])
+        self.assertNotIn("review.head", self.metadata(epic))
+
+    def test_a_worker_ending_that_is_not_done_failed_or_cut_off_is_refused_and_writes_no_row(self):
+        epic, printed = self.finish_epic_at_the_review()
+        self.write_lanes(printed, {})
+
+        refused = self.launch(test_scheduler.SCHEDULER, "report-review", epic, "--ended", "failed",
+                              *worker("comments-agent", "standard"), "sideways")
+
+        self.assertEqual(1, refused.returncode)
+        self.assertIn("sideways", refused.stderr)
+        self.assertEqual([], self.passes_of(epic))
+
 
 class TheValidationWorkerIsPricedTests(PassRowsAre, LedgerBooks, test_validation.ValidationHoldoutsCase):
     def test_a_reported_holdouts_run_writes_a_row_that_ends_done(self):
