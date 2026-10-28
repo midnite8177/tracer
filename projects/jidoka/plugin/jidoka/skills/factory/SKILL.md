@@ -286,12 +286,15 @@ is no try.
    the route of the standard tier. Its prompt's first line is
    `jidoka lap worktree: <worktree>`, the action's `worktree`, so that the lap
    mod decides its tool calls: it allows each app's `build`, `run` and `way_in`
-   and the launcher on the holdouts script, and denies the rest. Its prompt
+   and the launcher on the holdouts script and on the app process script, and
+   denies the rest. Its prompt
    holds the action's `epic` (the top-level `epic`), `task`, `worktree`, `slot` and
    `report`, each app's `name`, `build`, `run` and `way_in` from
-   `repo settings show`, the repo settings' `slot_use`, and the absolute path
+   `repo settings show`, the repo settings' `slot_use`, the absolute path
    of the holdouts script, `<plugin folder>/scripts/holdouts.py`, to run through
-   the launcher as `holdouts.py read <epic> --task <task>`. It holds no
+   the launcher as `holdouts.py read <epic> --task <task>`, and the absolute
+   path of the app process script, `<plugin folder>/scripts/app_process.py`,
+   which starts and stops an app through the launcher. It holds no
    holdout, you read none and never print one. The lap's slot is the worker's
    own: it picks the port or folder `slot_use` names from it, so that no other
    app check shares it. Write the event line for the started app check worker.
@@ -385,11 +388,15 @@ is no try.
    standard tier's route. Its prompt's first line is
    `jidoka lap worktree: <worktree>`, the action's `worktree`, so that the lap
    mod decides its tool calls: it allows each app's `build`, `run` and `way_in`
-   and the launcher on the holdouts script, and denies the rest. Its prompt
+   and the launcher on the holdouts script and on the app process script, and
+   denies the rest. Its prompt
    holds the action's `epic`, `worktree`
    and `report`, each app's `name`, `build`, `run` and `way_in` from
-   `repo settings show`, and the absolute path of the holdouts script,
-   `<plugin folder>/scripts/holdouts.py`, to run through the launcher. It
+   `repo settings show`, the absolute path of the holdouts script,
+   `<plugin folder>/scripts/holdouts.py`, to run through the launcher, and the
+   absolute path of the app process script,
+   `<plugin folder>/scripts/app_process.py`, which starts and stops an app
+   through the launcher. It
    holds no task, and you read no holdout and never print one. Write the
    event line `<epic-id> holdouts started: <holdouts> holdouts on <head>`.
 5. **Report.** Wait for the workers' notifications, and do nothing in

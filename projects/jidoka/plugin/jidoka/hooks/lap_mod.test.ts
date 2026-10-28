@@ -883,6 +883,29 @@ test('a check worker refused a call is told to report the holdout it could not t
   })
 })
 
+test('a validation worker may start and stop its app through the launcher on app_process.py and still may not kill', async ($, on) => {
+  const launched = engineBeneath(on, CHECK_LIST)
+  await startCheck($, 'jidoka:validation')
+  const launcher = `${launched.pluginRoot}/bin/jidoka-run`
+  const appProcess = `${launched.pluginRoot}/scripts/app_process.py`
+
+  expect(await bash($, `sh ${launcher} ${appProcess} start shop --env PORT=5103`)).toBe('allow')
+  expect(await bash($, `${launcher} ${appProcess} stop shop`)).toBe('allow')
+  expect(await bash($, `sh ${launcher} ${appProcess} stop shop && sh ${launcher} ${appProcess} start shop`)).toBe('allow')
+  expect(await bash($, `sh ${launcher} ${appProcess} stop shop; kill -9 1234`)).toBe('deny')
+  expect(await bash($, 'kill 1234')).toBe('deny')
+  expect(await bash($, `sh ${launcher} ${launched.pluginRoot}/scripts/scheduler.py next e1`)).toBe('deny')
+})
+
+test('a lap worker may not run the launcher on app_process.py', async ($, on) => {
+  const launched = engineBeneath(on, CHECK_LIST)
+  await startLap($, WORKTREE)
+
+  const verdict = await bash($, `sh ${launched.pluginRoot}/bin/jidoka-run ${launched.pluginRoot}/scripts/app_process.py start shop`)
+
+  expect(verdict).toBe('deny')
+})
+
 test('a lap worker may not run the launcher on holdouts.py', async ($, on) => {
   const launched = engineBeneath(on, CHECK_LIST)
   await startLap($, WORKTREE)

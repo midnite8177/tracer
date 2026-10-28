@@ -302,11 +302,14 @@ function runsJidokaScripts(command: string, pluginRoot: string): boolean {
   return jidokaScriptsIn(command, pluginRoot) !== undefined
 }
 
-/** True when every simple command of `command` runs jidoka's launcher on the holdouts script. */
-function runsHoldoutsScript(command: string, pluginRoot: string): boolean {
-  const holdouts = resolved(`${pluginRoot}/scripts/holdouts.py`, '/')
+/** The scripts a check worker may run through the launcher: the holdouts, and the one that starts and stops its app. */
+const CHECK_SCRIPTS = ['holdouts.py', 'app_process.py']
+
+/** True when every simple command of `command` runs jidoka's launcher on a script a check worker may run. */
+function runsCheckScripts(command: string, pluginRoot: string): boolean {
+  const allowed = CHECK_SCRIPTS.map(name => resolved(`${pluginRoot}/scripts/${name}`, '/'))
   const scripts = jidokaScriptsIn(command, pluginRoot)
-  return holdouts !== undefined && scripts !== undefined && scripts.every(script => script === holdouts)
+  return scripts !== undefined && scripts.every(script => allowed.includes(script))
 }
 
 function commandOf(input: unknown): string {
@@ -687,8 +690,8 @@ export const register: Register = on => {
     if (e.isReadOnly === true) return { decision: 'allow' }
     if (e.tool === 'Bash') {
       const command = commandOf(e.input)
-      const isHoldouts = lap.kind === 'check' && runsHoldoutsScript(command, $.plugin.root)
-      return isHoldouts || isListed(command, lap.commands) ? { decision: 'allow' } : offTheLists(lap, `\`${command}\``)
+      const isCheckScript = lap.kind === 'check' && runsCheckScripts(command, $.plugin.root)
+      return isCheckScript || isListed(command, lap.commands) ? { decision: 'allow' } : offTheLists(lap, `\`${command}\``)
     }
     return offTheLists(lap, e.tool)
   }).catch(($, e, next) =>

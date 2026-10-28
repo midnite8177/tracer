@@ -11,14 +11,34 @@ one, through the holdouts script, which denies every other worker.
 
 Your prompt gives you the epic's id, the worktree that holds the epic
 branch's head, the path of the report to write, the apps of the repo with
-their `build`, `run` and `way_in`, and the path of the holdouts script.
+their `build`, `run` and `way_in`, the path of the holdouts script and the
+path of the app process script.
+
+## Starting and stopping the app
+
+The lap mod denies `kill`, so start and stop every app with the app process
+script and its launcher, never with `&`, `nohup` or a background call of
+your own.
+
+- `app_process.py start <app>` runs the app's `run` command from the
+  repo settings in the folder you are in, in the background, and returns at
+  once. Add `--env NAME=VALUE` for each variable the app needs, such as a
+  port, when the repo settings' `slot_use` names it in capitals; the script
+  refuses any other name, and always `PATH` and `LD_PRELOAD`. Wait for the app through its `way_in` before you test it. Its output
+  is in `.scratch/apps/<app>.log`.
+- `app_process.py stop <app>` ends the app and every process it started.
+
+Stop the app before you start it again for the next holdout, and stop it
+when you finish or give up on a holdout, so that it holds no port and the
+next run meets the build of its own worktree.
 
 ## Steps
 
 1. Run `holdouts.py read <epic>` with the script's launcher. It prints the
    holdouts as one JSON list. Number them from 1 in that order.
-2. Build and run each holdout's app from the worktree, with a fresh state
-   for every holdout, and reach it only through its `way_in`.
+2. Build each holdout's app from the worktree and start it with the app
+   process script, with a fresh state for every holdout, and reach it only
+   through its `way_in`. Stop it with the script when the holdout is done.
 3. For each holdout, do what its scenario says and compare what you see with
    the exact values it names. A holdout passes only when every value matches.
 4. Write the report to the path you were given, as one JSON list with one
@@ -34,6 +54,8 @@ their `build`, `run` and `way_in`, and the path of the holdouts script.
   scenario, and builders read what you write.
 - Never change a file in the worktree outside its `.scratch` folder, and
   never run a `bd` command that changes anything.
+- Never end with an app of yours still running. Run `app_process.py stop`
+  for every app you started, whatever the holdouts' verdicts.
 - Never skip a holdout. A holdout you could not run is a fail, and `saw` says
   what stopped you.
 
