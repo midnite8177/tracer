@@ -9,6 +9,7 @@ from pathlib import Path
 
 COMMAND_TIMEOUT_SECONDS = 120
 FACTORY_ACTOR = "jidoka"
+SCRATCH_FOLDER = ".scratch"
 
 
 class CommandError(Exception):
@@ -57,6 +58,16 @@ def env_as_git_user(main_tree: Path) -> dict[str, str]:
 def env_as_factory() -> dict[str, str]:
     """The environment bd runs in for what the factory writes on a lap, with BEADS_ACTOR set to jidoka."""
     return {**os.environ, "BEADS_ACTOR": FACTORY_ACTOR}
+
+
+def set_metadata(*pairs: tuple[str, object]) -> list[str]:
+    """The `--set-metadata key=value` arguments of a `bd update`, one for each pair."""
+    return [argument for key, value in pairs for argument in ("--set-metadata", f"{key}={value}")]
+
+
+def unset_metadata(*keys: str) -> list[str]:
+    """The `--unset-metadata key` arguments of a `bd update`, one for each key."""
+    return [argument for key in keys for argument in ("--unset-metadata", key)]
 
 
 def head_of(ref: str, cwd: Path) -> str | None:

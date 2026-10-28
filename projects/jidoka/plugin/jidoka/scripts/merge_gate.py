@@ -49,14 +49,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+import lap_record
 import repo_settings
 from bench import parent_of
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, env_as_factory, head_of, run
-from handoff import BRANCH_KEY
+from epic_reader import BRANCH_KEY
 from land import LandingError, acquire_lock, attempt, changed_paths, check_recorded, edited_paths, merge_lock, \
     recorded_tests, release_lock
 
-MERGED = "merged"
 EPIC_BRANCH_MOVED_EXIT_CODE = 3
 PARTLY_MERGED_EXIT_CODE = 4
 
@@ -151,7 +151,7 @@ def close_out(lap: LapToMerge, sha: str, main_tree: Path) -> Merged:
     closed = attempt("bd close", ["bd", "close", lap.task, "--reason", f"{sha}: merged into {lap.epic_branch}"],
                      main_tree, env, failed)
     if closed:
-        attempt("bd update", ["bd", "update", lap.task, "--set-metadata", f"lap.stage={MERGED}"], main_tree, env,
+        attempt("bd update", ["bd", "update", lap.task, *lap_record.entering(lap_record.MERGED)], main_tree, env,
                 failed)
         if lap.worktree.exists():
             attempt("git worktree remove", ["git", "worktree", "remove", "--force", str(lap.worktree)], main_tree,
@@ -182,7 +182,7 @@ def lap_of(task: str, main_tree: Path) -> LapToMerge:
     if shown is None:
         raise GateRefused(f"bd show printed nothing usable for {task}")
     metadata = shown.get("metadata") or {}
-    branch, worktree = str(metadata.get("lap.branch") or ""), str(metadata.get("lap.workspace") or "")
+    branch, worktree = lap_record.branch_of(metadata), lap_record.workspace_of(metadata)
     if not branch or not worktree:
         raise GateRefused(f"{task} records no lap branch or worktree, so it has no lap to merge")
     epic = bd_show(parent_of(shown), main_tree) if parent_of(shown) else None

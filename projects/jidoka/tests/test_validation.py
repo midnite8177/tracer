@@ -364,6 +364,36 @@ class ValidationHoldoutsTests(ValidationHoldoutsCase):
         self.assertEqual((first["head"], first["worktree"]), (again["head"], again["worktree"]))
         self.assertEqual(1, len(self.validation_runs_of(epic)))
 
+    def test_a_validation_worker_that_fails_every_run_parks_the_epic_at_the_try_cap_with_its_why_and_one_notification(self):
+        epic, _, _ = self.finish_epic_with_holdouts([SCENARIO])
+        why = "the app did not start"
+
+        runs = [self.launch(test_scheduler.SCHEDULER, "report-holdouts", epic, "--ended", "failed", "--why", why)
+                for _ in range(3)]
+
+        shown = self.shown(epic)
+        parked = [text for text in self.texts(epic) if text.startswith("Parked:")]
+        self.assertEqual([0, 0, 0], [done.returncode for done in runs])
+        self.assertEqual([], [each for each in json.loads(runs[2].stdout)["actions"] if each["action"] == "holdouts"])
+        self.assertEqual([True, True, False], [self.has_holdouts_action(json.loads(done.stdout)) for done in runs[:2]]
+                         + [self.has_holdouts_action(json.loads(runs[2].stdout))])
+        self.assertIn("human", shown["labels"])
+        self.assertEqual(1, len(parked))
+        self.assertIn(why, parked[0])
+        self.assertEqual(1, len(json.loads(shown["metadata"]["notification"])))
+        self.assertIn(f"epic-parked:{epic}", shown["metadata"]["notification"])
+
+    def has_holdouts_action(self, printed: dict) -> bool:
+        return any(each["action"] == "holdouts" for each in printed["actions"])
+
+    def test_a_cut_off_validation_worker_counts_a_run_toward_the_same_cap(self):
+        epic, _, _ = self.finish_epic_with_holdouts([SCENARIO])
+
+        for _ in range(3):
+            self.launch(test_scheduler.SCHEDULER, "report-holdouts", epic, "--ended", "cut-off")
+
+        self.assertIn("human", self.shown(epic)["labels"])
+
     def test_a_report_for_an_epic_that_waits_on_no_holdouts_is_refused(self):
         epic, task, _ = self.finish_epic_but_for_the_last_report()
         self.build_done(epic, task)

@@ -30,14 +30,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import repo_settings
+from caps import metadata_of
 from commands import CommandError, env_as_factory, run
-from validation import TITLE_LIMIT
+from pass_support import PassError, created_id, located_texts, shortened_title
 
 DESIGN_LABEL = "design"
 PROBLEM_KEY = "design.problem"
 SIGHTING_PREFIX = "Sighting: "
-TEXT_FIELDS = ("file", "title", "note")
-LEAST_LINE = 1
 
 
 class DesignFindingError(Exception):
@@ -58,8 +57,7 @@ class Problem:
 
     @property
     def bead_title(self) -> str:
-        title = f"{self.title} in {self.file}"
-        return title if len(title) <= TITLE_LIMIT else f"{title[:TITLE_LIMIT - 3].rstrip()}..."
+        return shortened_title(f"{self.title} in {self.file}")
 
     def sighting(self, epic: str) -> str:
         return f"{SIGHTING_PREFIX}{epic} met this at {self.file}:{self.line}. {self.note}"
@@ -85,18 +83,7 @@ class Settled:
 
 
 def problem_of(value: object, number: int) -> Problem:
-    where = f"finding {number} of the report"
-    if not isinstance(value, dict):
-        raise DesignFindingError(f"{where} must be an object with a file, line, title and note")
-    texts = {}
-    for field in TEXT_FIELDS:
-        text = value.get(field)
-        if not isinstance(text, str) or not text.strip():
-            raise DesignFindingError(f"{where} must name its {field}")
-        texts[field] = text.strip()
-    line = value.get("line")
-    if not isinstance(line, int) or isinstance(line, bool) or line < LEAST_LINE:
-        raise DesignFindingError(f"the line of {where} must be a whole number from {LEAST_LINE}, not {line!r}")
+    texts, line = located_texts(value, f"finding {number} of the report", "a file, line, title and note")
     return Problem(texts["file"], line, texts["title"], texts["note"])
 
 
@@ -120,8 +107,7 @@ def open_beads(main_tree: Path) -> list[tuple[str, dict]]:
         raise DesignFindingError(f"bd list did not print JSON: {output.strip()[:200]!r}") from error
     held = []
     for bead in listed if isinstance(listed, list) else []:
-        metadata = bead.get("metadata") if isinstance(bead, dict) else None
-        key = metadata.get(PROBLEM_KEY) if isinstance(metadata, dict) else None
+        key = metadata_of(bead).get(PROBLEM_KEY) if isinstance(bead, dict) else None
         if isinstance(key, str):
             held.append((key, bead))
     return held
@@ -158,10 +144,7 @@ def file_finding(problem: Problem, main_tree: Path) -> str:
     env = env_as_factory()
     created = run(["bd", "create", "--title", problem.bead_title, "--description", problem.description(),
                    "--type=task", "--labels", DESIGN_LABEL, "--json"], main_tree, env)
-    try:
-        bead = str(json.loads(created)["id"])
-    except (ValueError, KeyError, TypeError) as error:
-        raise DesignFindingError(f"bd create did not print the new bead's id: {created.strip()[:200]!r}") from error
+    bead = created_id(created)
     run(["bd", "update", bead, "--set-metadata", f"{PROBLEM_KEY}={problem.key}"], main_tree, env)
     return bead
 
@@ -184,7 +167,7 @@ def print_open(files: list[str]) -> int:
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), repo_settings.GIT_TIMEOUT_SECONDS)
         ranked = ranked_findings(files, main_tree)
-    except (DesignFindingError, repo_settings.SettingsError, CommandError, OSError) as error:
+    except (DesignFindingError, PassError, repo_settings.SettingsError, CommandError, OSError) as error:
         print(f"design_findings: {error}", file=sys.stderr)
         return 1
     print(json.dumps(ranked, indent=2))
@@ -201,7 +184,7 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), repo_settings.GIT_TIMEOUT_SECONDS)
         settled = settle(args.epic, read_report(args.report), main_tree)
-    except (DesignFindingError, repo_settings.SettingsError, CommandError, OSError) as error:
+    except (DesignFindingError, PassError, repo_settings.SettingsError, CommandError, OSError) as error:
         print(f"design_findings: {error}", file=sys.stderr)
         return 1
     print(json.dumps([each.fields() for each in settled], indent=2))

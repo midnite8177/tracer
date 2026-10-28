@@ -12,10 +12,14 @@ export type Grant =
 export type ListEntry = string | Grant
 
 /**
- * What the lap mod keeps about one lap worker, under the worker's agent id:
- * the lap's worktree, and the commands the worker may run there.
+ * What the lap mod keeps about one worker, under the worker's agent id: its
+ * kind, the worktree it works in, and the commands it may run there. A `lap`
+ * worker builds, merges or checks the diff of a task and can park it with a
+ * question. A `check` worker is a validation or app check worker: it belongs
+ * to no task, it reports a verdict for each holdout, and it also runs the
+ * launcher on the holdouts script.
  */
-export type LapWorker = { worktree: string; commands: ListEntry[] }
+export type LapWorker = { kind: 'lap' | 'check'; worktree: string; commands: ListEntry[] }
 
 /**
  * The lap whose worker is starting. It is held from before the spawn runs

@@ -1,6 +1,8 @@
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -196,6 +198,34 @@ class FixWorkerTests(ReviewCase):
         self.assertEqual(head, test_validation.git(self.repo, "rev-parse", branch))
         self.assertEqual(["fix"], [each["action"] for each in self.next_printed(epic)["actions"]])
 
+    def test_a_fix_whose_worktree_is_gone_is_refused_instead_of_settled_as_a_fix_that_changed_nothing(self):
+        epic, printed = self.finish_epic_at_the_review()
+        branch = self.metadata(epic)["factory.branch"]
+        head = test_validation.git(self.repo, "rev-parse", branch)
+        worktree = Path(self.fix_action_of(self.reviewed(printed, self.FINDINGS))["worktree"])
+        self.leave_in(worktree, BUILT_FILE, "total = 2\n")
+        test_validation.git(self.repo, "worktree", "remove", "--force", str(worktree))
+
+        done = self.report_fix(epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(str(worktree), done.stderr)
+        self.assertEqual(head, test_validation.git(self.repo, "rev-parse", branch))
+        self.assertEqual(["fix"], [each["action"] for each in self.next_printed(epic)["actions"]])
+
+    def test_a_fix_whose_worktree_moved_to_another_head_is_refused_and_nothing_is_committed(self):
+        epic, printed = self.finish_epic_at_the_review()
+        branch = self.metadata(epic)["factory.branch"]
+        head = test_validation.git(self.repo, "rev-parse", branch)
+        worktree = Path(self.fix_action_of(self.reviewed(printed, self.FINDINGS))["worktree"])
+        test_validation.git(worktree, "commit", "--allow-empty", "--message", "Moved by hand")
+
+        done = self.report_fix(epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(str(worktree), done.stderr)
+        self.assertEqual(head, test_validation.git(self.repo, "rev-parse", branch))
+
 
 class LargeFindingTests(ReviewCase):
     LARGE = {"spec": [finding("Split the till module", "large", "high")]}
@@ -225,6 +255,36 @@ class LargeFindingTests(ReviewCase):
         self.assertEqual(LANES, [each["lane"] for each in lanes])
         self.assertEqual([first_head] * 4, [each["base"] for each in lanes])
         self.assertEqual([["reader.txt"]] * 3 + [["reader.txt", BUILT_FILE]], [each["files"] for each in lanes])
+
+    def test_the_second_pass_diff_holds_none_of_the_hunks_main_brought_in_by_a_merge(self):
+        shared = "".join(f"line {number}\n" for number in range(1, 9))
+        self.commit_in(self.repo, "shared.txt", shared)
+        epic, printed = self.finish_epic_at_the_review()
+        branch = self.metadata(epic)["factory.branch"]
+        moved = self.reviewed(printed, self.LARGE)
+        [task] = moved["review"]["filed"]
+        [lap] = [each for each in moved["actions"] if each.get("task") == task]
+        self.leave_in(Path(lap["worktree"]), "shared.txt", shared.replace("line 1\n", "the epic's line\n"))
+        self.tidied(test_scheduler.SchedulerCase.build_done(self, epic, task))
+        self.commit_in(self.repo, "shared.txt", shared.replace("line 8\n", "main's line\n"))
+        self.merge_main_into(branch)
+
+        lanes = self.review_actions_of(self.next_printed(epic))
+
+        diff = test_validation.git(self.repo, "diff", lanes[0]["base"], lanes[0]["head"], "--", "shared.txt")
+        changed = [each for each in diff.splitlines() if each[:1] in "+-" and each[:3] not in ("+++", "---")]
+        self.assertEqual(["-line 1", "+the epic's line"], changed)
+
+    def merge_main_into(self, branch: str) -> None:
+        """Merges main into the epic branch in a throwaway worktree, as validation does."""
+        scratch = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, scratch, True)
+        tree = scratch / "merge"
+        test_validation.git(self.repo, "worktree", "add", "--quiet", "--detach", str(tree), branch)
+        test_validation.git(tree, "merge", "--quiet", "--no-edit", "main")
+        merged = test_validation.git(tree, "rev-parse", "HEAD")
+        test_validation.git(self.repo, "worktree", "remove", "--force", str(tree))
+        test_validation.git(self.repo, "update-ref", f"refs/heads/{branch}", merged)
 
     def test_a_large_finding_waits_for_the_fix_and_is_filed_when_the_fix_settles(self):
         epic, printed = self.finish_epic_at_the_review()
@@ -269,6 +329,47 @@ class PassCapTests(ReviewCase):
 
         self.assertEqual([task], [each["task"] for each in self.lap_actions(again)])
         self.assertNotIn("human", self.shown(epic).get("labels") or [])
+
+
+class EndOfPassTests(ReviewCase):
+    def test_a_reviewed_pass_that_ends_in_a_red_validation_is_counted_once_and_starts_the_next_pass_over(self):
+        epic, printed = self.finish_epic_at_the_review()
+        self.assertEqual("done", self.metadata(epic)["tidy.state"])
+        self.queue_validation_exit_codes(epic, 1)
+
+        moved = self.reviewed(printed, {})
+
+        self.assertEqual("fail", moved["validation"]["result"])
+        metadata = self.metadata(epic)
+        self.assertEqual("1", str(metadata["review.passes"]))
+        for key in ("tidy.state", "cleanup.state", "review.reviewed"):
+            self.assertNotIn(key, metadata)
+
+
+class PassCapWithoutReviewTests(ReviewCase):
+    def merge_the_open_task(self, epic: str, printed: dict, removed: str) -> dict:
+        """Merges the one task the moves open, which only deletes a file, so no file is left for a review to read."""
+        [lap] = [each for each in printed["actions"] if each["action"] == "build"]
+        (Path(lap["worktree"]) / removed).unlink()
+        return self.tidied(test_scheduler.SchedulerCase.build_done(self, epic, lap["task"]))
+
+    def test_an_epic_with_no_reviewable_file_and_a_red_validation_parks_at_the_third_pass(self):
+        for name in ("one.txt", "two.txt", "three.txt"):
+            self.commit_in(self.repo, name, "old\n")
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: "till"})
+        self.queue_validation_exit_codes(epic, 1, 1, 1, 1)
+        printed = self.next_printed(epic)
+        for name in ("one.txt", "two.txt"):
+            printed = self.merge_the_open_task(epic, printed, name)
+            self.assertNotIn("human", self.shown(epic).get("labels") or [])
+
+        printed = self.merge_the_open_task(epic, printed, "three.txt")
+
+        self.assertEqual([], self.lap_actions(printed))
+        self.assertIn("human", self.shown(epic)["labels"])
+        self.assertTrue(any(text.startswith("Question: ") and "3 passes" in text for text in self.texts(epic)))
 
 
 if __name__ == "__main__":

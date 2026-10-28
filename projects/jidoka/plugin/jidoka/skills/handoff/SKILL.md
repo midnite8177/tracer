@@ -54,8 +54,12 @@ The skill folder is the directory that holds this SKILL.md. Pass
    Change the table as they say, and show it again until they confirm it.
    Each flip becomes a `--track <task>=<simple|full>` argument.
 6. **Offer a preset.** The `presets` that `check` printed are factory
-   rules the human can start from: `bug-epic` and `improvement-epic`. Show
-   both with their settings, and ask which one fits this epic, or none.
+   rules the human can start from, each with its `settings` and its
+   `guidance`. A preset whose guidance forbids the work of a feature epic,
+   as the guidance of `improvement-epic` does, fits only an epic that
+   improves what exists, so offer it only for one. Show the ones that fit
+   with their settings and guidance, and ask which one fits this epic, or
+   none.
    The human may also change any rule afterwards with the rules script:
    `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/rules.py" set <epic-id> <name>=<value> ...`,
    or `guidance <epic-id>` with the guidance on stdin. A lap limit can only

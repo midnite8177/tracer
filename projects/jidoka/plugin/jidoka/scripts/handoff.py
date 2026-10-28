@@ -67,21 +67,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import holdouts
+import lap_record
 import repo_settings
 import rules
 from bench import FACTORY_LABEL, MAIN_REF, slug
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, env_as_git_user, head_of, run
+from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_git_user, head_of, run
+from epic_reader import (BRANCH_KEY, Epic, EpicReadError, Rerun, Task, epic_of, problems_while_held,
+                         recorded_branch)
+from lap_record import FULL_TRACK, SIMPLE_TRACK
 
 BRANCH_PREFIX = "epic/"
-BRANCH_KEY = "factory.branch"
-TRACK = "simple"
-FULL_TRACK = "full"
-TRACKS = (TRACK, FULL_TRACK)
+TRACKS = (SIMPLE_TRACK, FULL_TRACK)
 TABLE_HEADING = "Handoff:"
-BLOCKING = "blocks"
-CLOSED = "closed"
-EPIC_TYPE = "epic"
-ONBOARD = "/jidoka:onboard"
 OUT_OF_SCOPE_SECTION = re.compile(r"^#{1,6}[ \t]*Out[ \t]+of[ \t]+Scope[ \t]*:?[ \t]*(?:\n|\Z)(.*?)(?=^#{1,2}[ \t]|\Z)",
                                   re.MULTILINE | re.DOTALL | re.IGNORECASE)
 OUT_OF_SCOPE_LINE = re.compile(r"\bOut[ \t]+of[ \t]+scope(?:\*\*)?[ \t]*:(?:\*\*)?[ \t]*\S", re.IGNORECASE)
@@ -94,14 +91,6 @@ class HandoffError(Exception):
     """A reason the script writes nothing more, worded for the person who reads stderr."""
 
 
-@dataclass(frozen=True)
-class Rerun:
-    """How a script that makes the shared checks words its advice to run it again: on the epic that holds a
-    task, and after onboarding. Each script passes its own, so a refusal names the script the reader ran."""
-    on_the_holding_epic: str
-    after_onboarding: str
-
-
 RERUN = Rerun(on_the_holding_epic="Hand off the epic that holds it", after_onboarding="hand the epic off")
 
 
@@ -112,25 +101,17 @@ def section_of(description: str, name: str) -> str:
     return found.group(1).strip() if found else ""
 
 
-@dataclass(frozen=True)
-class Task:
-    """One of the epic's tasks, with its description."""
-    id: str
-    title: str
-    status: str
-    description: str
+def seams_of(task: Task) -> str:
+    return section_of(task.description, "Seams")
 
-    @property
-    def seams(self) -> str:
-        return section_of(self.description, "Seams")
 
-    @property
-    def demo(self) -> str:
-        return section_of(self.description, "Demo")
+def demo_of(task: Task) -> str:
+    return section_of(task.description, "Demo")
 
-    @property
-    def missing(self) -> list[str]:
-        return [name for name, text in (("demo", self.demo), ("seams", self.seams)) if not text]
+
+def missing_of(task: Task) -> list[str]:
+    """The sections among "demo" and "seams" that the task's description lacks."""
+    return [name for name, text in (("demo", demo_of(task)), ("seams", seams_of(task))) if not text]
 
 
 @dataclass(frozen=True)
@@ -138,61 +119,6 @@ class Proposal:
     """The track the rule gives a task, with every reason it gives it."""
     track: str
     why: str
-
-
-@dataclass(frozen=True)
-class Epic:
-    """The epic as handoff reads it: the bead itself, every bead it holds, and its tasks among them."""
-    shown: dict
-    children: tuple[dict, ...]
-    tasks: tuple[Task, ...]
-
-    @property
-    def id(self) -> str:
-        return str(self.shown["id"])
-
-
-def shown_beads(ids: list[str], main_tree: Path) -> list[dict]:
-    if not ids:
-        return []
-    output = run(["bd", "show", *ids, "--json"], main_tree, None)
-    try:
-        parsed = json.loads(output)
-    except ValueError as error:
-        raise HandoffError(f"bd show did not print JSON: {output.strip()[:200]!r}") from error
-    if not isinstance(parsed, list):
-        raise HandoffError("bd show printed JSON that is not a list")
-    return [bead for bead in parsed if isinstance(bead, dict)]
-
-
-def child_ids(epic: str, main_tree: Path) -> list[str]:
-    output = run(["bd", "list", "--parent", epic, "--all", "--limit", "0", "--json"], main_tree, None)
-    try:
-        parsed = json.loads(output)
-    except ValueError as error:
-        raise HandoffError(f"bd list did not print JSON: {output.strip()[:200]!r}") from error
-    if not isinstance(parsed, list):
-        raise HandoffError("bd list printed JSON that is not a list")
-    return [str(item["id"]) for item in parsed if isinstance(item, dict) and item.get("id")]
-
-
-def epic_of(bead: str, main_tree: Path, rerun: Rerun) -> Epic:
-    shown = bd_show(bead, main_tree)
-    if shown is None:
-        raise HandoffError(f"bd show printed nothing usable for {bead}")
-    if shown.get("issue_type") != EPIC_TYPE:
-        raise HandoffError(f"{bead} is a {shown.get('issue_type') or 'bead'}, not an epic. "
-                           f"{rerun.on_the_holding_epic}")
-    children = tuple(shown_beads(child_ids(bead, main_tree), main_tree))
-    tasks = tuple(Task(str(child["id"]), str(child.get("title") or ""), str(child.get("status") or ""),
-                       str(child.get("description") or ""))
-                  for child in children
-                  if child.get("status") != CLOSED and child.get("issue_type") != EPIC_TYPE)
-    return Epic(shown, children, tasks)
-
-
-def recorded_branch(epic: Epic) -> str:
-    return str((epic.shown.get("metadata") or {}).get(BRANCH_KEY) or "")
 
 
 def planned_branch(epic: Epic, main_tree: Path) -> tuple[str, list[str]]:
@@ -209,27 +135,6 @@ def planned_branch(epic: Epic, main_tree: Path) -> tuple[str, list[str]]:
         return branch, [f"the branch {branch} already exists and {epic.id} does not record it. "
                         "Retitle the epic or delete the branch"]
     return branch, []
-
-
-def waiting_problems(epic: Epic) -> list[str]:
-    """The blocking edges from the epic or one of its tasks to an open bead outside the epic."""
-    inside = {epic.id, *(str(child["id"]) for child in epic.children)}
-    task_ids = {task.id for task in epic.tasks}
-    waiters = [epic.shown, *(child for child in epic.children if str(child["id"]) in task_ids)]
-    problems = []
-    for waiter in waiters:
-        for link in waiter.get("dependencies") or []:
-            if (isinstance(link, dict) and link.get("dependency_type") == BLOCKING
-                    and str(link.get("id")) not in inside and link.get("status") != CLOSED):
-                problems.append(f"{waiter['id']} waits on {link['id']} ({link.get('title') or 'no title'}), an "
-                                f"open bead outside {epic.id}. Close {link['id']}, move it into the epic, or "
-                                f"remove the dependency with bd dep remove {waiter['id']} {link['id']}")
-    return problems
-
-
-def nested_epic_problems(epic: Epic) -> list[str]:
-    return [f"{epic.id} holds {child['id']}, which is an epic. An epic holds only tasks: move {child['id']} "
-            "out of it, or make it a task" for child in epic.children if child.get("issue_type") == EPIC_TYPE]
 
 
 def no_task_problems(epic: Epic) -> list[str]:
@@ -251,51 +156,6 @@ def out_of_scope_problems(epic: Epic) -> list[str]:
         return [f"the Out of Scope section of the spec of {epic.id} is empty. Say what the epic leaves out, "
                 f"with bd update {epic.id} --description"]
     return []
-
-
-def settings_problems(settings: dict, rerun: Rerun) -> list[str]:
-    if not settings:
-        return [f"the repo has no repo settings on this machine. Run {ONBOARD}, then {rerun.after_onboarding}"]
-    untested, full_suite = settings.get("untested_apps"), settings.get("full_suite")
-    if not (isinstance(untested, list) and isinstance(full_suite, list)):
-        return [f"the repo settings lack untested_apps or full_suite. Run {ONBOARD} again to record them"]
-    problems = [f"the app {app} has no test command, so the factory cannot test its work. Build a test project "
-                f"for it at the bench, then run {ONBOARD} to record its command" for app in untested]
-    if not full_suite:
-        problems.append(f"the repo settings hold no full suite. Run {ONBOARD} to record a test command")
-    return problems
-
-
-def holdout_problems(epic: Epic, epic_holdouts: list[holdouts.Holdout]) -> list[str]:
-    inside = {str(child["id"]) for child in epic.children}
-    return [f"a holdout of the app {holdout.app} names {task}, which is not a task of {epic.id}. Move {task} "
-            "into the epic, or take it out of the holdout"
-            for holdout in epic_holdouts for task in holdout.tasks if task not in inside]
-
-
-def way_in_problems(settings: dict, epic_holdouts: list[holdouts.Holdout]) -> list[str]:
-    apps = {app.get("name"): app for app in settings.get("apps") or [] if isinstance(app, dict)}
-    held = list(dict.fromkeys(holdout.app for holdout in epic_holdouts))
-    problems = [f"a holdout reaches the app {name}, which the repo settings do not list. Run {ONBOARD} to "
-                "record it with its way in" for name in held if name not in apps]
-    for name, app in apps.items():
-        has = [kind for kind, present in (("holdouts", name in held), ("acceptance specs", app.get("acceptance")))
-               if present]
-        if has and app.get("way_in") is None:
-            problems.append(f"the app {name} has {' and '.join(has)} but no way in, so no app check can reach "
-                            f"it. Run {ONBOARD} to record how a person or a program reaches it")
-    return problems
-
-
-def problems_while_held(epic: Epic, settings: dict, rerun: Rerun) -> list[str]:
-    """The checks that hold for as long as the factory holds the epic."""
-    try:
-        epic_holdouts = holdouts.of_epic(epic.shown)
-        unreadable = []
-    except holdouts.HoldoutsError as error:
-        epic_holdouts, unreadable = [], [f"{error}. Write the epic's holdouts again"]
-    return [*waiting_problems(epic), *nested_epic_problems(epic), *settings_problems(settings, rerun),
-            *unreadable, *holdout_problems(epic, epic_holdouts), *way_in_problems(settings, epic_holdouts)]
 
 
 def problems_of(epic: Epic, branch_problems: list[str], home: Path, main_tree: Path) -> list[str]:
@@ -354,16 +214,17 @@ def propose(task: Task, held: int) -> Proposal:
     reasons = []
     if held:
         reasons.append(f"named by {held} holdout{'' if held == 1 else 's'}")
-    if PUBLIC_API.search(task.description.replace(task.seams, "")):
+    task_seams = seams_of(task)
+    if PUBLIC_API.search(task.description.replace(task_seams, "")):
         reasons.append("its text names a public API or type")
-    seams = seam_count(task.seams)
+    seams = seam_count(task_seams)
     if seams == 0:
         reasons.append("no Seams line")
     elif seams > 1:
         reasons.append(f"its Seams line names {seams} seams")
     if reasons:
         return Proposal(FULL_TRACK, "; ".join(reasons))
-    return Proposal(TRACK, "no holdouts, one seam, no public API or type")
+    return Proposal(SIMPLE_TRACK, "no holdouts, one seam, no public API or type")
 
 
 def proposals_of(epic: Epic) -> dict[str, Proposal]:
@@ -382,7 +243,8 @@ def tracks_of(given: list[str], epic: Epic, proposed: dict[str, Proposal]) -> tu
             problems.append(f"--track {argument} names {bead or 'no bead'}, which is not a task of {epic.id}. "
                             "Flip the tracks of the epic's tasks only")
         elif track not in TRACKS:
-            problems.append(f"--track {argument} gives the track {track or 'nothing'}. Use {TRACK} or {FULL_TRACK}")
+            problems.append(f"--track {argument} gives the track {track or 'nothing'}. "
+                            f"Use {SIMPLE_TRACK} or {FULL_TRACK}")
         elif track != proposed[bead].track:
             tracks[bead] = Proposal(track, f"flipped by the human from {proposed[bead].track}: "
                                            f"{proposed[bead].why}")
@@ -417,11 +279,12 @@ def check(bead: str, home: Path, main_tree: Path) -> dict:
     refuse(epic, problems_of(epic, branch_problems, home, main_tree))
     proposed, held = proposals_of(epic), holdout_counts(epic)
     return {"epic": epic.id, "title": str(epic.shown.get("title") or ""), "branch": branch,
-            "tasks": [{"id": task.id, "title": task.title, "status": task.status, "seams": task.seams,
-                       "demo": task.demo, "missing": task.missing, "track": proposed[task.id].track,
-                       "why": proposed[task.id].why, "holdouts": held.get(task.id, 0)}
+            "tasks": [{"id": task.id, "title": task.title, "status": task.status,
+                       "seams": seams_of(task), "demo": demo_of(task), "missing": missing_of(task),
+                       "track": proposed[task.id].track, "why": proposed[task.id].why,
+                       "holdouts": held.get(task.id, 0)}
                       for task in epic.tasks],
-            "presets": rules.PRESETS}
+            "presets": {name: preset.fields() for name, preset in rules.PRESETS.items()}}
 
 
 def take(bead: str, given_areas: list[str], given_tracks: list[str], preset: str | None, home: Path,
@@ -433,8 +296,7 @@ def take(bead: str, given_areas: list[str], given_tracks: list[str], preset: str
     refuse(epic, problems_of(epic, branch_problems, home, main_tree) + area_problems + track_problems)
     env = env_as_git_user(main_tree)
     for task in epic.tasks:
-        run(["bd", "update", task.id, "--set-metadata", f"lap.track={tracks[task.id].track}",
-             "--set-metadata", f"lap.area={areas[task.id]}"], main_tree, env)
+        run(["bd", "update", task.id, *lap_record.assigning(tracks[task.id].track, areas[task.id])], main_tree, env)
     run(["bd", "update", epic.id, "--set-metadata", f"{BRANCH_KEY}={branch}"], main_tree, env)
     if head_of(f"refs/heads/{branch}", main_tree) is None:
         run(["git", "branch", branch, MAIN_REF], main_tree, None)
@@ -443,7 +305,7 @@ def take(bead: str, given_areas: list[str], given_tracks: list[str], preset: str
         run(["bd", "comment", epic.id, table(epic, branch, areas, tracks, held)], main_tree, env)
     if preset is not None:
         repo_limit = rules.repo_lap_limit(repo_settings.load(repo_settings.settings_path(home, main_tree)))
-        rules.write_settings(epic.id, rules.PRESETS[preset], repo_limit, main_tree)
+        rules.write_preset(epic.id, preset, repo_limit, main_tree)
     run(["bd", "label", "add", epic.id, FACTORY_LABEL], main_tree, env)
     return {"epic": epic.id, "branch": branch, "start": head_of(f"refs/heads/{branch}", main_tree),
             "tasks": [{"id": task.id, "title": task.title, "track": tracks[task.id].track,
@@ -475,8 +337,8 @@ def main(argv: list[str]) -> int:
             printed = check(args.epic, home, main_tree)
         else:
             printed = take(args.epic, args.area, args.track, args.preset, home, main_tree)
-    except (HandoffError, CommandError, repo_settings.SettingsError, holdouts.HoldoutsError, rules.RulesError,
-            OSError) as error:
+    except (HandoffError, EpicReadError, CommandError, repo_settings.SettingsError, holdouts.HoldoutsError,
+            rules.RulesError, OSError) as error:
         print(f"handoff: {error}", file=sys.stderr)
         return 1
     print(json.dumps(printed))

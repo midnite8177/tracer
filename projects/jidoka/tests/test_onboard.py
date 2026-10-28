@@ -103,10 +103,11 @@ def init_committed_repo(repo: Path) -> None:
     fixture.git_commit_all(repo, "Start")
 
 
-class OnboardingTests(unittest.TestCase):
+class OnboardingFixture:
     """Beads repos with the fake bd's store and the fake first on the scripts' PATH, a worktree of one, a repo with no
     beads, and a jidoka home of each test's own. A repo whose beads git tracks holds a copy of the workspace real bd
-    init made, and the switch to stealth runs real bd."""
+    init made, and the switch to stealth runs real bd. The tests live in several classes that mix this in, so
+    run_suite.py spreads them across workers."""
 
     @classmethod
     def setUpClass(cls):
@@ -163,6 +164,10 @@ class OnboardingTests(unittest.TestCase):
         event = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd)}
         return subprocess.run([str(LAUNCHER), str(HOOK)], input=json.dumps(event), capture_output=True,
                               text=True, encoding="utf-8", env=self.env(), cwd=self.root)
+
+
+class SettingsStorageTests(OnboardingFixture, unittest.TestCase):
+    """Storing, listing and deriving the repo's settings."""
 
     def test_writes_one_settings_file_per_repo_named_for_its_main_worktree(self):
         first = self.write(self.repo, tracer_settings())
@@ -287,6 +292,10 @@ class OnboardingTests(unittest.TestCase):
         self.assertNotEqual(0, done.returncode)
         self.assertIn("'spam' has a hand_run that is not a list", done.stderr)
         self.assertEqual([], self.stored_files())
+
+
+class SettingsRefusalTests(OnboardingFixture, unittest.TestCase):
+    """The settings the writer refuses, and the ones it accepts despite how they look."""
 
     def test_refuses_a_group_whose_exclusion_neither_the_full_suite_nor_the_targeted_command_holds(self):
         settings = hand_run_settings()
@@ -413,6 +422,10 @@ class OnboardingTests(unittest.TestCase):
                               done.stderr)
                 self.assertEqual([], self.stored_files())
 
+
+class LinkedWorktreeAndMovedLineTests(OnboardingFixture, unittest.TestCase):
+    """Settings shared across worktrees, reruns, and the lines moved out of CLAUDE.local.md."""
+
     def test_settings_written_from_the_main_worktree_are_found_from_a_linked_worktree(self):
         self.write(self.repo, tracer_settings())
 
@@ -522,6 +535,10 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual([], self.stored_files())
         self.assertEqual("Build: make\n", local.read_text(encoding="utf-8"))
 
+
+class TrackedBeadsTests(OnboardingFixture, unittest.TestCase):
+    """Settings refused while git tracks the beads."""
+
     def committed_beads_repo(self) -> Path:
         repo = self.root / f"depot-{self.count}"
         init_committed_repo(repo)
@@ -552,6 +569,10 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(0, switched.returncode, switched.stderr)
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(1, len(self.stored_files()))
+
+
+class PrivateDocsTests(OnboardingFixture, unittest.TestCase):
+    """The choice to keep the glossary and ADRs committed or private, and the session line about it."""
 
     def repo_with_untracked_glossary_and_adrs(self) -> Path:
         repo = self.root / f"atlas-{self.count}"
@@ -764,6 +785,10 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn("Code, tests, GLOSSARY.md and ADRs are always committed.", done.stdout)
         self.assertNotIn("uncommitted", done.stdout)
 
+
+class RuleConflictTests(OnboardingFixture, unittest.TestCase):
+    """The session hook's rules and the rule conflicts a repo records."""
+
     def test_a_session_whose_settings_cannot_be_read_gets_every_rule_with_the_committed_wording(self):
         self.write(self.repo, {**tracer_settings(), "glossary_and_adrs": "committed"})
         self.stored_files()[0].write_text("{not json", encoding="utf-8")
@@ -866,6 +891,10 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(1, done.returncode)
         self.assertIn("rule_conflicts must be a list of conflicts", done.stderr)
         self.assertEqual([], self.stored_files())
+
+
+class LizardAndOnboardLineTests(OnboardingFixture, unittest.TestCase):
+    """Lizard limits and the session hook's line that says to onboard."""
 
     def test_settings_hold_the_default_lizard_limits_when_none_are_given(self):
         done = self.write(self.repo, tracer_settings())

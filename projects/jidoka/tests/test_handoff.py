@@ -20,9 +20,9 @@ SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 
 RUN_TIMEOUT_SECONDS = 120
 JEFF = "Jeff Handoff"
-PRESETS = {"bug-epic": {"discovered_bugs_into_epic": True, "commits_on_main": "one"},
-           "improvement-epic": {"lap_test_scope": "full", "discovered_bugs_into_epic": False,
-                                "commits_on_main": "per_task"}}
+PRESETS = {"bug-epic": {"settings": {"discovered_bugs_into_epic": True, "commits_on_main": "per_task"},
+                        "guidance": ""},
+           "improvement-epic": {"settings": {}, "guidance": "changes nothing a user sees"}}
 SCENARIO = "A shopper pays 5.00 with a card and the till prints receipt 1."
 SPEC = "## Problem Statement\nA shopper cannot pay by card.\n\n## Solution\nThe till takes a card and prints `receipt 1`."
 OUT_OF_SCOPE = "## Out of Scope\nRefunds and tips."
@@ -209,23 +209,12 @@ class HandoffPresetTests(HandoffCase):
         done = self.handoff("take", epic, "--area", f"{task}=till", "--preset", "improvement-epic")
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual({"rules.lap_test_scope": '"full"', "rules.discovered_bugs_into_epic": False,
-                          "rules.commits_on_main": '"per_task"'}, self.rule_metadata(epic))
+        self.assertEqual({"rules.guidance": '"changes nothing a user sees"'}, self.rule_metadata(epic))
         texts = [comment["text"] for comment in self.comments(epic)]
         rule_lines = [text for text in texts if text.startswith("Factory rules:")]
-        self.assertEqual(3, len(rule_lines))
+        self.assertEqual(1, len(rule_lines))
         self.assertTrue(all("\n" not in line for line in rule_lines))
         self.assertIn("factory", self.shown(epic).get("labels", []))
-
-    def test_taking_with_the_bug_epic_preset_writes_the_bug_epic_rules(self):
-        epic, _ = self.new_epic()
-        task = self.new_task_under(epic)
-
-        done = self.handoff("take", epic, "--area", f"{task}=till", "--preset", "bug-epic")
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual({"rules.discovered_bugs_into_epic": True, "rules.commits_on_main": '"one"'},
-                         self.rule_metadata(epic))
 
     def test_taking_without_a_preset_writes_no_rules(self):
         epic, _ = self.new_epic()

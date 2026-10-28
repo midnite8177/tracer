@@ -68,9 +68,10 @@ worker follows and that the Spec check holds each diff to.
 _Avoid_: Epic config, run settings, policy, ruleset
 
 **Preset**:
-A named set of factory rules that handoff offers as a starting point: the
-bug-epic preset for an epic that fixes bugs, and the improvement-epic
-preset for an improvement epic. Only the rules script writes the rules a
+A named set of factory rules that handoff offers as a starting point, each
+holding its settings and its guidance: the bug-epic preset for an epic that
+fixes bugs, and the improvement-epic preset for an improvement epic.
+Handoff's check prints both parts of each. Only the rules script writes the rules a
 preset holds, and each change posts a one-line comment on the epic.
 _Avoid_: Template, profile, mode
 
@@ -365,9 +366,11 @@ _Avoid_: Root session, driver, parent
 
 **Heartbeat**:
 A file in the jidoka home, one for each epic a manager runs. The manager's
-first call writes it, and the lap mod rewrites it every minute while the
-host lives. It holds the second of the last beat, so a heartbeat that stops
-getting younger shows a stopped factory. An epic handed off with no manager
+first call writes it with the id of the host session it runs in, and the lap
+mod of that session rewrites it every minute while the host lives. A beat
+from any other session open in the repo writes nothing. It holds the second
+of the last beat, so a heartbeat that stops getting younger shows a stopped
+factory. An epic handed off with no manager
 has none.
 _Avoid_: Pulse, ping, keep-alive
 

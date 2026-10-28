@@ -28,6 +28,8 @@ HUMAN = "Pat Human"
 LAP_LIMIT = 2
 STALE_SECONDS = 600
 FRESH_SECONDS = 5
+MANAGER_SESSION = "session-of-the-manager"
+OTHER_SESSION = "session-of-an-advisor"
 
 
 class ResumeCase(unittest.TestCase):
@@ -70,10 +72,17 @@ class ResumeCase(unittest.TestCase):
         self.assertEqual(0, done.returncode, done.stderr)
 
     def script(self, script: Path, *args: str) -> subprocess.CompletedProcess:
+        return self.script_with(MANAGER_SESSION, {}, script, *args)
+
+    def script_with(self, session: str, env: dict[str, str], script: Path, *args: str) -> subprocess.CompletedProcess:
+        """Runs a script as a call made from the session, with more variables in its environment."""
         return subprocess.run([str(LAUNCHER), str(script), *args], capture_output=True, text=True,
                               encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
-                                   "BEADS_ACTOR": HUMAN})
+                                   "BEADS_ACTOR": HUMAN, "JIDOKA_SESSION_ID": session, **env})
+
+    def beat_as(self, session: str) -> subprocess.CompletedProcess:
+        return self.script(HEARTBEAT, "beat", "--session", session)
 
     def bd(self, *args: str) -> str:
         return fixture.run([self.fake_bd, *args], self.repo)
@@ -107,10 +116,10 @@ class ResumeCase(unittest.TestCase):
     def beat_file(self) -> Path:
         return self.home / "heartbeat" / f"{self.epic}.json"
 
-    def write_beat(self, seconds_ago: int) -> None:
+    def write_beat(self, seconds_ago: int, session: str) -> None:
         self.beat_file().parent.mkdir(exist_ok=True)
-        self.beat_file().write_text(json.dumps({"epic": self.epic, "time": int(time.time()) - seconds_ago}),
-                                    encoding="utf-8")
+        self.beat_file().write_text(json.dumps({"epic": self.epic, "time": int(time.time()) - seconds_ago,
+                                                "session": session}), encoding="utf-8")
 
     def beat_time(self) -> int:
         return json.loads(self.beat_file().read_text(encoding="utf-8"))["time"]
@@ -122,7 +131,7 @@ class ResumeCase(unittest.TestCase):
     def stop_the_host(self) -> dict[str, dict]:
         """The state a closed host leaves: two laps at the build with no worker, and a heartbeat gone stale."""
         opened = self.start_a_manager()
-        self.write_beat(STALE_SECONDS)
+        self.write_beat(STALE_SECONDS, MANAGER_SESSION)
         return opened
 
 
@@ -325,7 +334,7 @@ class OrphanWorkerTests(ResumeCase):
 
 class SecondManagerTests(ResumeCase):
     def test_a_manager_is_refused_while_the_epics_heartbeat_is_fresh_and_nothing_is_written(self):
-        self.write_beat(FRESH_SECONDS)
+        self.write_beat(FRESH_SECONDS, MANAGER_SESSION)
 
         done = self.next_run()
 
@@ -335,7 +344,7 @@ class SecondManagerTests(ResumeCase):
             self.assertNotIn("lap.stage", self.metadata(task))
 
     def test_a_manager_starts_when_the_heartbeat_is_stale(self):
-        self.write_beat(STALE_SECONDS)
+        self.write_beat(STALE_SECONDS, MANAGER_SESSION)
 
         done = self.next_run()
 
@@ -348,7 +357,7 @@ class SecondManagerTests(ResumeCase):
         self.assertEqual(0, done.returncode, done.stderr)
 
     def test_a_manager_that_starts_after_a_host_beat_with_no_manager_is_not_refused(self):
-        self.script(HEARTBEAT, "beat")
+        self.beat_as(MANAGER_SESSION)
 
         done = self.next_run()
 
@@ -362,7 +371,7 @@ class SecondManagerTests(ResumeCase):
 
     def test_a_managers_later_call_claims_the_epic_again_after_the_heartbeat_went_stale(self):
         self.next_printed()
-        self.write_beat(STALE_SECONDS)
+        self.write_beat(STALE_SECONDS, MANAGER_SESSION)
 
         self.assertEqual(0, self.script(SCHEDULER, "carry-on", self.epic).returncode)
 
@@ -372,17 +381,17 @@ class SecondManagerTests(ResumeCase):
         self.stop_the_host()
         before = self.beat_time()
 
-        done = self.script(HEARTBEAT, "beat")
+        done = self.beat_as(MANAGER_SESSION)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(before, self.beat_time())
 
     def test_a_stop_leaves_the_heartbeat_stale_so_a_host_still_open_shows_no_manager(self):
         self.start_a_manager()
-        self.write_beat(0)
+        self.write_beat(0, MANAGER_SESSION)
         self.assertEqual(0, self.script(SCHEDULER, "stop", self.epic).returncode)
 
-        self.script(HEARTBEAT, "beat")
+        self.beat_as(MANAGER_SESSION)
         resumed = self.next_run()
 
         self.assertEqual(0, resumed.returncode, resumed.stderr)
@@ -391,9 +400,47 @@ class SecondManagerTests(ResumeCase):
         self.stop_the_host()
         self.next_printed()
 
-        self.script(HEARTBEAT, "beat")
+        self.beat_as(MANAGER_SESSION)
 
         self.assertGreaterEqual(self.beat_time(), int(time.time()) - FRESH_SECONDS * 2)
+
+    def test_a_manager_call_that_knows_no_session_says_so_on_stderr(self):
+        done = self.script_with(MANAGER_SESSION, {"JIDOKA_SESSION_ID": ""}, SCHEDULER, "next", self.epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("JIDOKA_SESSION_ID is not set", done.stderr)
+        self.assertIsNone(json.loads(self.beat_file().read_text(encoding="utf-8"))["session"])
+
+    def test_a_beat_from_a_session_that_claimed_nothing_leaves_the_epics_heartbeat_to_go_stale(self):
+        self.next_printed()
+        self.write_beat(80, MANAGER_SESSION)
+        before = self.beat_time()
+
+        self.beat_as(OTHER_SESSION)
+
+        self.assertEqual(before, self.beat_time())
+        later = self.script_with(OTHER_SESSION, {"JIDOKA_NOW": str(int(time.time()) + 15)}, SCHEDULER, "next",
+                                 self.epic)
+        self.assertEqual(0, later.returncode, later.stderr)
+
+    def test_a_manager_of_another_session_is_refused_while_the_heartbeat_is_fresh_though_that_session_beat(self):
+        self.next_printed()
+        self.write_beat(80, MANAGER_SESSION)
+        self.beat_as(OTHER_SESSION)
+
+        soon = self.script_with(OTHER_SESSION, {}, SCHEDULER, "next", self.epic)
+
+        self.assertEqual(1, soon.returncode)
+        self.assertIn("already has a manager", soon.stderr)
+
+    def test_a_manager_that_starts_in_a_new_session_takes_the_epic_over_once_the_old_heartbeat_is_stale(self):
+        self.next_printed()
+        self.write_beat(STALE_SECONDS, MANAGER_SESSION)
+
+        self.assertEqual(0, self.script_with(OTHER_SESSION, {}, SCHEDULER, "next", self.epic).returncode)
+        self.beat_as(MANAGER_SESSION)
+
+        self.assertEqual(OTHER_SESSION, json.loads(self.beat_file().read_text(encoding="utf-8"))["session"])
 
 
 class SessionStartTests(ResumeCase):
@@ -418,7 +465,7 @@ class SessionStartTests(ResumeCase):
 
     def test_the_hook_names_nothing_while_the_heartbeat_is_fresh(self):
         self.start_a_manager()
-        self.write_beat(FRESH_SECONDS)
+        self.write_beat(FRESH_SECONDS, MANAGER_SESSION)
 
         self.assertEqual([], self.stopped_lines())
 
@@ -449,7 +496,7 @@ class SessionStartTests(ResumeCase):
     def test_the_hook_names_nothing_once_a_resumed_manager_beats(self):
         self.stop_the_host()
         self.next_printed()
-        self.script(HEARTBEAT, "beat")
+        self.beat_as(MANAGER_SESSION)
 
         self.assertEqual([], self.stopped_lines())
 

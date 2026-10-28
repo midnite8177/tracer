@@ -82,6 +82,34 @@ class SessionStartTests(unittest.TestCase):
         event = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd)}
         return self.start(json.dumps(event), self.not_a_repo, self.path)
 
+    def session_with_env_file(self, cwd: Path, env_file: Path, session_id: str) -> subprocess.CompletedProcess:
+        event = {"session_id": session_id, "hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd)}
+        env = {"PATH": self.path, "JIDOKA_HOME": str(self.home), "HOME": str(self.home),
+               "CLAUDE_ENV_FILE": str(env_file)}
+        return subprocess.run([str(LAUNCHER), str(HOOK)], input=json.dumps(event), capture_output=True, text=True,
+                              encoding="utf-8", env=env, cwd=self.not_a_repo)
+
+    def exported_by(self, env_file: Path) -> str:
+        """The value of JIDOKA_SESSION_ID in a shell that sources the env file."""
+        return subprocess.run(["sh", "-c", f". '{env_file}' && printf %s \"$JIDOKA_SESSION_ID\""],
+                              capture_output=True, text=True, encoding="utf-8").stdout
+
+    def test_a_session_start_exports_the_session_id_to_the_calls_the_session_makes(self):
+        env_file = Path(self.tmp.name) / "session-env.sh"
+
+        done = self.session_with_env_file(self.beads_repo, env_file, "7f3c-session")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("7f3c-session", self.exported_by(env_file))
+
+    def test_a_session_start_exports_the_session_id_in_a_repo_without_beads_too(self):
+        env_file = Path(self.tmp.name) / "plain-session-env.sh"
+
+        done = self.session_with_env_file(self.plain_repo, env_file, "plain-session")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("plain-session", self.exported_by(env_file))
+
     def printed_paths(self, stdout: str) -> dict:
         paths = {}
         for line in stdout.splitlines():

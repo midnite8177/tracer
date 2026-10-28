@@ -66,20 +66,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, TypedDict
 
+import lap_record
 import repo_settings
+from caps import metadata_of
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, env_as_git_user, run
+from epic_reader import BRANCH_KEY, EPIC_TYPE
 
 KEY_PREFIX = "rules."
 GUIDANCE_KEY = f"{KEY_PREFIX}guidance"
 COMMENT_HEADING = "Factory rules:"
-EPIC_TYPE = "epic"
 LAP_LIMIT = "lap_limit"
 COMMITS_ON_MAIN = ["one", "per_task"]
 EXTRA_COMMANDS = "extra_commands"
-LAP_BRANCH_PREFIX = "lap/"
-STAGE_KEY = "lap.stage"
-MERGE_STAGE = "merge"
-EPIC_BRANCH_KEY = "factory.branch"
 REBASE_STATES = ["rebase-merge", "rebase-apply"]
 HEADS_PREFIX = "refs/heads/"
 LOOKS_REFUSING = ["--output"]
@@ -146,10 +144,20 @@ SETTINGS: dict[str, tuple[Callable[[object], bool], str]] = {
     "commits_on_main": (lambda value: value in COMMITS_ON_MAIN, f"one of {', '.join(COMMITS_ON_MAIN)}"),
 }
 
-PRESETS: dict[str, dict[str, object]] = {
-    "bug-epic": {"discovered_bugs_into_epic": True, "commits_on_main": "one"},
-    "improvement-epic": {"lap_test_scope": "full", "discovered_bugs_into_epic": False,
-                         "commits_on_main": "per_task"},
+@dataclass(frozen=True)
+class Preset:
+    """A set of factory rules a human can start an epic from: its settings, and its guidance, or an empty string
+    when it has none."""
+    settings: dict[str, object]
+    guidance: str
+
+    def fields(self) -> dict:
+        return {"settings": self.settings, "guidance": self.guidance}
+
+
+PRESETS: dict[str, Preset] = {
+    "bug-epic": Preset({"discovered_bugs_into_epic": True, "commits_on_main": "per_task"}, ""),
+    "improvement-epic": Preset({}, "changes nothing a user sees"),
 }
 
 
@@ -187,7 +195,7 @@ def decode(stored: object) -> object:
 
 def of_epic(shown: dict) -> Rules:
     """The rules of the epic as bd show --json prints it; no settings and no guidance when it has none."""
-    metadata = shown.get("metadata") or {}
+    metadata = metadata_of(shown)
     settings: dict[str, object] = {}
     problems = []
     guidance = ""
@@ -279,6 +287,15 @@ def write_guidance(epic: str, text: str, main_tree: Path) -> bool:
     return True
 
 
+def write_preset(epic: str, preset: str, repo_limit: int, main_tree: Path) -> dict[str, object]:
+    """Writes the settings and the guidance that the preset holds; the settings it changed."""
+    chosen = PRESETS[preset]
+    changed = write_settings(epic, chosen.settings, repo_limit, main_tree)
+    if chosen.guidance:
+        write_guidance(epic, chosen.guidance, main_tree)
+    return changed
+
+
 def allow_extra_command(epic: str, command: str, home: Path, main_tree: Path) -> bool:
     """Adds the command to the epic's extra_commands; False when the epic already allows it."""
     held = of_epic(epic_to_write(epic, main_tree)).settings.get(EXTRA_COMMANDS, [])
@@ -315,16 +332,16 @@ def lap_commands(worktree: Path, home: Path, main_tree: Path) -> list[str | Gran
     """The built-in list's entries for the lap's stage, its additions, then the extra_commands of the epic that
     holds the lap's task."""
     branch = checked_out_or_rebasing_branch(worktree)
-    if not branch.startswith(LAP_BRANCH_PREFIX):
+    if not branch.startswith(lap_record.LAP_BRANCH_PREFIX):
         raise RulesError(f"{worktree} is not a lap worktree: its branch is {branch or 'unknown'}, not "
-                         f"{LAP_BRANCH_PREFIX}<task>")
-    task = bd_show(branch[len(LAP_BRANCH_PREFIX):], main_tree)
+                         f"{lap_record.LAP_BRANCH_PREFIX}<task>")
+    task = bd_show(branch[len(lap_record.LAP_BRANCH_PREFIX):], main_tree)
     epic = str(task.get("parent") or "") if task is not None else ""
     shown = epic_to_write(epic, main_tree) if epic else {}
     extra = of_epic(shown).settings.get(EXTRA_COMMANDS, []) if epic else []
-    stage = str(((task or {}).get("metadata") or {}).get(STAGE_KEY) or "")
-    epic_branch = str((shown.get("metadata") or {}).get(EPIC_BRANCH_KEY) or "")
-    granted = merge_grant(epic_branch) if stage == MERGE_STAGE and epic_branch else []
+    stage = lap_record.stage_of(metadata_of(task or {}))
+    epic_branch = str(metadata_of(shown).get(BRANCH_KEY) or "")
+    granted = merge_grant(epic_branch) if stage == lap_record.MERGE and epic_branch else []
     return [*granted, *repo_settings.built_in_commands(home), *(extra if isinstance(extra, list) else [])]
 
 
@@ -373,9 +390,12 @@ def main(argv: list[str]) -> int:
         elif args.mode == "guidance":
             printed = {"epic": args.epic, "changed": write_guidance(args.epic, sys.stdin.read(), main_tree)}
         else:
-            wanted = (PRESETS[args.preset] if args.mode == "preset"
-                      else dict(parsed_setting(argument) for argument in args.settings))
-            changed = write_settings(args.epic, wanted, repo_limit_of(home, main_tree), main_tree)
+            limit = repo_limit_of(home, main_tree)
+            if args.mode == "preset":
+                changed = write_preset(args.epic, args.preset, limit, main_tree)
+            else:
+                wanted = dict(parsed_setting(argument) for argument in args.settings)
+                changed = write_settings(args.epic, wanted, limit, main_tree)
             printed = {**shown_rules(args.epic, main_tree), "changed": changed}
     except (RulesError, CommandError, repo_settings.SettingsError, OSError) as error:
         print(f"rules: {error}", file=sys.stderr)

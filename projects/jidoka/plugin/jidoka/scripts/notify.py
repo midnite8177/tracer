@@ -53,13 +53,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import clock
+import gate
+import lap_record
 import park
 import pause
 import repo_settings
-import validation
-from bench import FACTORY_LABEL
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, env_as_factory, run
-from handoff import CLOSED, EPIC_TYPE, HandoffError, child_ids, shown_beads
+from caps import metadata_of
+from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_factory, run
+from epic_reader import EPIC_TYPE, EpicReadError, read_epic
+from epics import EpicsError, at_the_gate, epics_of, is_closed, is_running, labels_of, shown_or_refuse
 
 TASK_PARKED = "task-parked"
 EPIC_PARKED = "epic-parked"
@@ -87,7 +89,7 @@ FINGERPRINT_LENGTH = 12
 PARK_PREFIXES = (park.QUESTION_PREFIX, park.PARKED_PREFIX, park.BLOCKED_PREFIX)
 
 
-class NotifyError(Exception):
+class NotifyError(EpicsError):
     """A reason the script sends nothing, worded for the person who reads stderr."""
 
 
@@ -121,30 +123,6 @@ def digest(*parts: str) -> str:
 
 def shortened(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
-
-
-def shown_or_refuse(bead: str, main_tree: Path) -> dict:
-    shown = bd_show(bead, main_tree)
-    if shown is None:
-        raise NotifyError(f"bd show printed nothing usable for {bead}")
-    return shown
-
-
-def labels_of(shown: dict) -> list[str]:
-    return [str(label) for label in shown.get("labels") or []]
-
-
-def metadata_of(shown: dict) -> dict:
-    metadata = shown.get("metadata")
-    return metadata if isinstance(metadata, dict) else {}
-
-
-def is_closed(shown: dict) -> bool:
-    return shown.get("status") == CLOSED
-
-
-def at_the_gate(shown: dict) -> bool:
-    return metadata_of(shown).get(validation.GATE_STATE_KEY) == validation.WAITING
 
 
 def last_park(bead: str, main_tree: Path) -> tuple[str, str]:
@@ -192,18 +170,16 @@ def parked_epic(epic: str, main_tree: Path) -> Notice:
                   detail or "The epic waits on you.", fingerprint or "parked")
 
 
-def open_tasks(epic: str, main_tree: Path) -> list[dict]:
-    """The epic's tasks that are not closed, by id."""
-    held = shown_beads(child_ids(epic, main_tree), main_tree)
-    return sorted((bead for bead in held if bead.get("issue_type") != EPIC_TYPE and not is_closed(bead)),
-                  key=lambda bead: str(bead["id"]))
+def open_tasks(shown: dict, main_tree: Path) -> list[dict]:
+    """The tasks of the shown epic that are not closed, by id."""
+    return sorted(read_epic(shown, main_tree).open_task_beads, key=lambda bead: str(bead["id"]))
 
 
 def only_parked_tasks_left(epic: str, main_tree: Path) -> Notice:
     shown = epic_of(epic, main_tree)
     if is_closed(shown) or at_the_gate(shown):
         raise NothingToSend(f"{epic} is closed or at the acceptance gate")
-    tasks = open_tasks(epic, main_tree)
+    tasks = open_tasks(shown, main_tree)
     if not tasks or any(park.HUMAN_LABEL not in labels_of(task) for task in tasks):
         raise NothingToSend(f"{epic} has a task that is not parked")
     parks = {str(task["id"]): last_park(str(task["id"]), main_tree)[0] for task in tasks}
@@ -221,20 +197,20 @@ def at_acceptance_gate(epic: str, main_tree: Path) -> Notice:
     head = str(metadata_of(shown).get(VALIDATION_HEAD_KEY) or "")
     return Notice(ACCEPTANCE_GATE, epic, epic, f"Ready for acceptance: {shown.get('title') or epic}",
                   "The factory has finished its work on the epic. Merge it, send it back or drop it.",
-                  digest(validation.WAITING, head))
+                  digest(gate.WAITING, head))
 
 
 def stopped_with_work_left(epic: str, main_tree: Path) -> Notice:
     shown = epic_of(epic, main_tree)
     if is_closed(shown) or at_the_gate(shown):
         raise NothingToSend(f"{epic} is closed or at the acceptance gate, so it has no work left")
-    tasks = open_tasks(epic, main_tree)
+    tasks = open_tasks(shown, main_tree)
     if not tasks:
         raise NothingToSend(f"{epic} has no open task, so it has no work left")
     ids = [str(task["id"]) for task in tasks]
     return Notice(FACTORY_STOPPED, epic, epic, f"Factory stopped: {shown.get('title') or epic}",
                   f"{len(ids)} open tasks are left: {', '.join(ids)}. Start the factory again to carry on.",
-                  digest(*(f"{task['id']}:{metadata_of(task).get('lap.number') or ''}" for task in tasks)))
+                  digest(*(f"{task['id']}:{lap_record.number_of(metadata_of(task))}" for task in tasks)))
 
 
 def paused_on_the_human(epic: str, main_tree: Path) -> Notice:
@@ -251,36 +227,12 @@ def paused_on_the_human(epic: str, main_tree: Path) -> Notice:
                   digest(held.cause, str(held.since)))
 
 
-def epics_of(main_tree: Path) -> list[dict]:
-    """Every epic of the repo as bd shows it, by id."""
-    listing = run(["bd", "list", "--all", "--limit", "0", "--json"], main_tree, None)
-    try:
-        listed = json.loads(listing or "[]")
-    except ValueError as error:
-        raise NotifyError(f"bd list did not print JSON: {listing.strip()[:200]!r}") from error
-    ids = sorted(str(item["id"]) for item in listed
-                 if isinstance(item, dict) and item.get("id") and item.get("issue_type") == EPIC_TYPE)
-    return [shown_or_refuse(epic, main_tree) for epic in ids]
-
-
-def is_running(shown: dict) -> bool:
-    """True for an open epic the factory holds that is neither parked nor at the gate."""
-    labels = labels_of(shown)
-    return (FACTORY_LABEL in labels and park.HUMAN_LABEL not in labels and not is_closed(shown)
-            and not at_the_gate(shown))
-
-
-def running_epics(main_tree: Path) -> list[str]:
-    """The ids of the epics that run, by id."""
-    return [str(shown["id"]) for shown in epics_of(main_tree) if is_running(shown)]
-
-
 def running_epic(main_tree: Path) -> str:
     """The id of the first epic that runs, or raises NothingToSend."""
-    running = running_epics(main_tree)
-    if not running:
-        raise NothingToSend("no epic is running")
-    return running[0]
+    for shown in epics_of(main_tree):
+        if is_running(shown):
+            return str(shown["id"])
+    raise NothingToSend("no epic is running")
 
 
 def host_prompt(epic: str, main_tree: Path) -> Notice:
@@ -370,6 +322,20 @@ def notify(event: str, bead: str | None, home: Path, main_tree: Path) -> str:
     return f"jidoka: {notice.title}. {notice.text} ({notice.bead})"
 
 
+def announce(event: str, bead: str | None, home: Path, main_tree: Path, caller: str) -> None:
+    """Sends the notification and puts the line the host shows on stderr, with the caller's name in front of any
+    reason it was not sent.
+
+    Missing a notification loses nothing, so one that cannot be sent never fails the caller.
+    """
+    try:
+        print(notify(event, bead, home, main_tree), file=sys.stderr)
+    except NothingToSend as reason:
+        print(f"{caller}: no {event} notification: {reason}", file=sys.stderr)
+    except (EpicsError, EpicReadError, CommandError, OSError) as error:
+        print(f"{caller}: the {event} notification was not sent: {error}", file=sys.stderr)
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="notify.py", description="Tell the human that the factory waits on them.")
     parser.add_argument("event", choices=EVENTS)
@@ -382,7 +348,7 @@ def main(argv: list[str]) -> int:
     except NothingToSend as reason:
         print(f"notify: nothing to send: {reason}", file=sys.stderr)
         return 0
-    except (NotifyError, HandoffError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (EpicsError, EpicReadError, CommandError, repo_settings.SettingsError, OSError) as error:
         print(f"notify: {error}", file=sys.stderr)
         return 1
     print(line)

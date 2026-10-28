@@ -20,7 +20,7 @@ each command. A command's figures come from its output, as the targeted
 tests read it: dotnet test's summary lines and unittest's "Ran N tests" and
 "skipped=N". Output in neither shape counts no tests and no skips.
 
-Green puts the epic at the acceptance gate with one comment that starts with
+Green puts the epic at the acceptance gate, through gate.py, with one comment that starts with
 "Acceptance gate:" and lists the commits the epic branch holds that main
 lacks, the figures, the Tests removed table from the epic's `cleanup.removed`
 metadata when a test cleanup removed any test, the review's findings of low confidence from `review.low`, which
@@ -28,8 +28,8 @@ were never fixed, and each hand-run group with the command that runs it.
 Then it sets the epic's `gate.state` to waiting and adds the human label,
 last, so a labeled epic always has its comment.
 
-A red result takes `cleanup.state` and `tidy.state` off the epic, so the next
-pass starts with a test cleanup and a tidy again. Red files one task in the epic, with the failing commands and the end of
+A red result ends the pass through pass_ledger.py, so the next pass starts
+with a test cleanup and a tidy again. Red files one task in the epic, with the failing commands and the end of
 their output, the track simple and the area of the first failing command's
 app. The scheduler then opens its lap, and the next pass begins.
 
@@ -56,33 +56,28 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import git_exclude
+import caps
+import gate
 import holdouts
 import park
+import pass_ledger
 import private_docs
 import targeted_tests
 from bench import WORKTREE_FOLDER, hide_worktrees
-from commands import bd_show, capture, env_as_factory, head_of, run, run_test_command
-from handoff import TRACK
-from land import acquire_lock, edited_paths, merge_lock, release_lock
-from merge_gate import checked_out_branch
+from caps import metadata_of
+from commands import (SCRATCH_FOLDER, bd_show, env_as_factory, head_of, run, run_test_command, set_metadata,
+                      unset_metadata)
+from pass_support import (MAIN_BRANCH, PassError, count_of, file_task, move_epic_branch, park_epic, remove_worktree,
+                          shortened_title, tail_of, worktree_at)
 from repo_settings import full_suite_command
 
-GATE_STATE_KEY = "gate.state"
-WAITING = "waiting"
 HUMAN_LABEL = park.HUMAN_LABEL
-GATE_COMMENT_HEADING = "Acceptance gate:"
 WORKTREE_PREFIX = "validation-"
-MAIN_BRANCH = "main"
-OUTPUT_TAIL_LINES = 40
 DOTNET_SKIPPED = re.compile(r"[A-Za-z]+!\s+-\s+Failed:\s*\d+,\s*Passed:\s*\d+,\s*Skipped:\s*(\d+),\s*Total:\s*\d+")
 UNITTEST_SKIPPED = re.compile(r"^(?:OK|FAILED) \([^)]*\bskipped=(\d+)", re.MULTILINE)
 HAND_RUN_FIELDS = ("app", "name", "reason", "command")
 UNKNOWN_FIGURES = "no test count in its output"
-CLEANUP_STATE_KEY = "cleanup.state"
-TIDY_STATE_KEY = "tidy.state"
-REMOVED_KEY = "cleanup.removed"
-LOW_KEY = "review.low"
+TRIES_KEY = "validation.tries"
 RESULT_KEY = "validation.result"
 HEAD_KEY = "validation.head"
 RUNS_KEY = "validation.runs"
@@ -90,12 +85,10 @@ HOLDOUTS_KEY = "validation.holdouts"
 PENDING = "pending"
 PASS = "pass"
 FAIL = "fail"
-SCRATCH_FOLDER = ".scratch"
 HOLDOUTS_REPORT = "holdouts-report.json"
-TITLE_LIMIT = 80
 
 
-class ValidationError(Exception):
+class ValidationError(PassError):
     """A reason validation writes nothing more, worded for the person who reads stderr."""
 
 
@@ -251,92 +244,20 @@ def merged_worktree(epic: str, epic_head: str, home: Path, main_tree: Path) -> t
     return path, head
 
 
-def remove_worktree(path: Path, main_tree: Path) -> None:
-    capture(["git", "worktree", "remove", "--force", str(path)], main_tree, None)
-
-
-def move_epic_branch(branch: str, old: str, new: str, home: Path, main_tree: Path) -> None:
-    """Fast-forwards the epic branch from old to new under the merge lock, bringing the main checkout along."""
-    if old == new:
-        return
-    lock = merge_lock(home)
-    acquire_lock(lock)
-    try:
-        checked_out = checked_out_branch(main_tree) == branch
-        if checked_out:
-            edited = sorted(edited_paths(main_tree))
-            if edited:
-                raise ValidationError(f"the main checkout {main_tree} has {branch} checked out with uncommitted "
-                                      f"edits: {', '.join(edited)}. Commit or discard them, then run the "
-                                      "scheduler again")
-        done = capture(["git", "update-ref", f"refs/heads/{branch}", new, old], main_tree, None)
-        if done.returncode != 0:
-            raise ValidationError(f"{branch} moved from {old} while the suite ran, so validation changed "
-                                  f"nothing. Run the scheduler again: {done.stderr.strip()}")
-        if checked_out:
-            run(["git", "read-tree", "-m", "-u", old, new], main_tree, None)
-    finally:
-        release_lock(lock)
-
-
-def merged_commits(branch_head: str, main_tree: Path) -> list[str]:
-    """One line for each commit the epic branch holds that main lacks, merge commits left out, oldest first."""
-    listed = run(["git", "log", "--no-merges", "--reverse", "--format=%h %s", f"{MAIN_BRANCH}..{branch_head}"],
-                 main_tree, None)
-    return listed.splitlines()
-
-
 def figures_lines(validated: Validated) -> list[str]:
     return [f"Validation of {validated.head}: {validated.tests} tests, {validated.skipped} skipped, "
             f"{validated.seconds} s.",
             *(f"- {each.suite.app}: {each.suite.command}, {each.figures()}" for each in validated.runs)]
 
 
-def tests_removed_lines(shown: dict) -> list[str]:
-    """The gate comment's Tests removed table from the deletions the epic records, or no line when none."""
-    metadata = shown.get("metadata") if isinstance(shown.get("metadata"), dict) else {}
-    value = metadata.get(REMOVED_KEY)
-    if value in (None, ""):
+def hand_run_lines(hand_run: list[HandRunGroup]) -> list[str]:
+    """The lines that tell the human which tests validation leaves out and how to run each, or no line when none."""
+    if not hand_run:
         return []
-    try:
-        listed = json.loads(value) if isinstance(value, str) else value
-        rows = [f"| {each['test']} | {each['file']} | {each['covered_by']} |" for each in listed]
-    except (ValueError, KeyError, TypeError) as error:
-        raise ValidationError(f"the {REMOVED_KEY} metadata of the epic cannot be read: {error!r}") from error
-    if not rows:
-        return []
-    return ["", "Tests removed:", "| Test | File | Covered by |", "| --- | --- | --- |", *rows]
-
-
-def low_confidence_lines(shown: dict) -> list[str]:
-    """The gate comment's list of the review findings of low confidence, which no fix touched, or no line when
-    none."""
-    metadata = shown.get("metadata") if isinstance(shown.get("metadata"), dict) else {}
-    value = metadata.get(LOW_KEY)
-    if value in (None, ""):
-        return []
-    try:
-        listed = json.loads(value) if isinstance(value, str) else value
-        rows = [f"- {each['lane']}, {each['file']}:{each['line']}: {each['title']}. {each['note']}" for each in listed]
-    except (ValueError, KeyError, TypeError) as error:
-        raise ValidationError(f"the {LOW_KEY} metadata of the epic cannot be read: {error!r}") from error
-    if not rows:
-        return []
-    return ["", "Review findings of low confidence, which were never fixed:", *rows]
-
-
-def gate_comment(epic: str, branch: str, validated: Validated, hand_run: list[HandRunGroup], removed: list[str],
-                 main_tree: Path) -> str:
-    commits = merged_commits(validated.head, main_tree)
-    lines = [f"{GATE_COMMENT_HEADING} {epic} waits for the human, on the epic branch {branch} at {validated.head}.",
-             "", "Merged into the epic branch:", *(f"- {commit}" for commit in commits), "",
-             *figures_lines(validated), *removed]
-    if hand_run:
-        lines += ["", "Hand-run tests, which validation never runs. Run each one yourself before you trust the "
-                      "branch:"]
-        for group in hand_run:
-            lines += [f"- {group.app}, {group.name}: {group.reason}", f"  {group.command}"]
-    return "\n".join(lines)
+    lines = ["", "Hand-run tests, which validation never runs. Run each one yourself before you trust the branch:"]
+    for group in hand_run:
+        lines += [f"- {group.app}, {group.name}: {group.reason}", f"  {group.command}"]
+    return lines
 
 
 def runs_as_text(runs: list[CommandRun]) -> str:
@@ -358,29 +279,17 @@ def runs_of(value: object) -> list[CommandRun]:
 def record(epic: str, validated: Validated, main_tree: Path) -> None:
     env = env_as_factory()
     run(["bd", "comment", epic, "\n".join([validated.headline, *figures_lines(validated)])], main_tree, env)
-    waiting = ["--set-metadata", f"{HOLDOUTS_KEY}={PENDING}"] if validated.waiting is not None else []
-    again = (["--unset-metadata", CLEANUP_STATE_KEY, "--unset-metadata", TIDY_STATE_KEY]
-             if validated.result == FAIL else [])
-    run(["bd", "update", epic, "--set-metadata", f"{RESULT_KEY}={validated.result}",
-         "--set-metadata", f"{HEAD_KEY}={validated.head}",
-         "--set-metadata", f"validation.seconds={validated.seconds}",
-         "--set-metadata", f"validation.tests={validated.tests}",
-         "--set-metadata", f"validation.skipped={validated.skipped}",
-         "--set-metadata", f"{RUNS_KEY}={runs_as_text(validated.runs)}", *waiting, *again], main_tree, env)
+    waiting = set_metadata((HOLDOUTS_KEY, PENDING)) if validated.waiting is not None else []
+    run(["bd", "update", epic, *set_metadata((RESULT_KEY, validated.result), (HEAD_KEY, validated.head),
+                                             ("validation.seconds", validated.seconds),
+                                             ("validation.tests", validated.tests),
+                                             ("validation.skipped", validated.skipped),
+                                             (RUNS_KEY, runs_as_text(validated.runs))), *waiting], main_tree, env)
 
 
 def reach_the_gate(epic: str, branch: str, validated: Validated, hand_run: list[HandRunGroup],
                    main_tree: Path) -> None:
-    env = env_as_factory()
-    shown = bd_show(epic, main_tree)
-    removed = [*tests_removed_lines(shown), *low_confidence_lines(shown)] if shown is not None else []
-    run(["bd", "comment", epic, gate_comment(epic, branch, validated, hand_run, removed, main_tree)], main_tree, env)
-    run(["bd", "update", epic, "--set-metadata", f"{GATE_STATE_KEY}={WAITING}", f"--add-label={HUMAN_LABEL}"],
-        main_tree, env)
-
-
-def tail_of(output: str) -> str:
-    return "\n".join(output.strip().splitlines()[-OUTPUT_TAIL_LINES:])
+    gate.reach_the_gate(epic, branch, validated.head, figures_lines(validated), hand_run_lines(hand_run), main_tree)
 
 
 def failure_description(failed: list[CommandRun]) -> str:
@@ -403,55 +312,24 @@ def file_failure(epic: str, failed: list[CommandRun], main_tree: Path) -> str:
                      main_tree)
 
 
-def file_task(epic: str, title: str, description: str, area: str, main_tree: Path) -> str:
-    env = env_as_factory()
-    created = run(["bd", "create", "--title", title, "--type", "task", "--parent", epic, "--description",
-                   description, "--json"], main_tree, env)
-    try:
-        task = str(json.loads(created)["id"])
-    except (ValueError, KeyError, TypeError) as error:
-        raise ValidationError(f"bd create did not print the id of the task it made: {created.strip()[:200]!r}") \
-            from error
-    run(["bd", "update", task, "--set-metadata", f"lap.track={TRACK}", "--set-metadata", f"lap.area={area}"],
-        main_tree, env)
-    return task
-
-
 def awaits_holdouts(shown: dict) -> bool:
     """True when the epic's suite passed and the run of its holdouts has not been settled."""
-    metadata = shown.get("metadata")
-    return isinstance(metadata, dict) and metadata.get(HOLDOUTS_KEY) == PENDING
+    return metadata_of(shown).get(HOLDOUTS_KEY) == PENDING
 
 
 def worktree_of(epic: str, main_tree: Path) -> Path:
     return main_tree / WORKTREE_FOLDER / f"{WORKTREE_PREFIX}{epic}"
 
 
-def keep_scratch_folder(worktree: Path, main_tree: Path) -> None:
-    """Makes the worktree's scratch folder, which the repo's git exclude file hides from every git status."""
-    git_exclude.add(git_exclude.exclude_file(main_tree), [git_exclude.exclude_line(SCRATCH_FOLDER, True)])
-    (worktree / SCRATCH_FOLDER).mkdir(exist_ok=True)
-
-
 def holdouts_to_run(epic: str, shown: dict, home: Path, main_tree: Path) -> HoldoutsToRun:
     """The run of the epic's holdouts that its validation waits on, in a worktree cut again from the validated
     head when the folder is gone."""
-    metadata = shown.get("metadata") if isinstance(shown.get("metadata"), dict) else {}
-    head = str(metadata.get(HEAD_KEY) or "")
+    head = str(metadata_of(shown).get(HEAD_KEY) or "")
     path = worktree_of(epic, main_tree)
-    if not path.is_dir():
-        if not head:
-            raise ValidationError(f"{epic} waits on its holdouts but records no {HEAD_KEY} to test. Run its "
-                                  "validation again by taking the validation metadata off the epic")
-        capture(["git", "worktree", "prune"], main_tree, None)
-        hide_worktrees(main_tree)
-        run(["git", "worktree", "add", "-q", "--detach", str(path), head], main_tree, None)
-        try:
-            private_docs.share(main_tree, path.resolve(), home)
-        except private_docs.ClashError as error:
-            remove_worktree(path, main_tree)
-            raise ValidationError(str(error)) from error
-    keep_scratch_folder(path, main_tree)
+    if not head:
+        raise ValidationError(f"{epic} waits on its holdouts but records no {HEAD_KEY} to test. Run its "
+                              "validation again by taking the validation metadata off the epic")
+    worktree_at(path, head, home, main_tree)
     return HoldoutsToRun(epic, head, path, len(holdouts.of_epic(shown)))
 
 
@@ -475,8 +353,8 @@ def validate(epic: str, branch: str, settings: dict, home: Path, main_tree: Path
         raise
     waiting = None
     if epic_holdouts and all(each.passed for each in runs):
-        keep_scratch_folder(worktree, main_tree)
-        waiting = HoldoutsToRun(epic, merged_head, worktree, len(epic_holdouts))
+        worktree_at(worktree, merged_head, home, main_tree)
+        waiting =HoldoutsToRun(epic, merged_head, worktree, len(epic_holdouts))
     else:
         remove_worktree(worktree, main_tree)
     validated = Validated(merged_head, runs, [], waiting, 0)
@@ -486,8 +364,9 @@ def validate(epic: str, branch: str, settings: dict, home: Path, main_tree: Path
     if validated.green:
         reach_the_gate(epic, branch, validated, hand_run, main_tree)
         return validated
-    return Validated(merged_head, runs, [file_failure(epic, [each for each in runs if not each.passed], main_tree)],
-                     None, 0)
+    filed = file_failure(epic, [each for each in runs if not each.passed], main_tree)
+    pass_ledger.end_pass(epic, main_tree)
+    return Validated(merged_head, runs, [filed], None, 0)
 
 
 @dataclass(frozen=True)
@@ -539,10 +418,7 @@ def holdout_description(app: str, way_in: str, saw: str) -> str:
 
 
 def holdout_title(app: str, saw: str) -> str:
-    summary = saw.splitlines()[0]
-    if len(summary) > TITLE_LIMIT:
-        summary = f"{summary[:TITLE_LIMIT - 3].rstrip()}..."
-    return f"Fix what a user of {app} saw: {summary}"
+    return f"Fix what a user of {app} saw: {shortened_title(saw.splitlines()[0])}"
 
 
 def file_holdout_failure(epic: str, verdict: Verdict, settings: dict, main_tree: Path) -> str:
@@ -552,6 +428,30 @@ def file_holdout_failure(epic: str, verdict: Verdict, settings: dict, main_tree:
                    if isinstance(each, dict) and each.get("name") == app and each.get("way_in")), "its way in")
     return file_task(epic, holdout_title(app, verdict.saw), holdout_description(app, way_in, verdict.saw), app,
                      main_tree)
+
+
+def count_failed_run(epic: str, ended: str, why: str, main_tree: Path) -> bool:
+    """Counts a run of the holdouts that ended failed or cut off, and parks the epic at the try cap.
+
+    The park comment carries the worker's why. The count starts again at the park, so a human who takes the label off
+    gives the worker a new set of tries. Returns True when it parked the epic.
+    """
+    shown = bd_show(epic, main_tree)
+    if shown is None:
+        raise ValidationError(f"bd show printed nothing usable for {epic}")
+    if not awaits_holdouts(shown):
+        raise ValidationError(f"{epic} waits on no run of its holdouts, so nothing was written")
+    tries = count_of(shown, TRIES_KEY) + 1
+    if tries < caps.TRY_CAP:
+        env = env_as_factory()
+        run(["bd", "comment", epic, f"Holdouts run {tries} of {caps.TRY_CAP} {ended}: {why}. The worker starts "
+                                    "again."], main_tree, env)
+        run(["bd", "update", epic, *set_metadata((TRIES_KEY, tries))], main_tree, env)
+        return False
+    park_epic(epic, f"{park.PARKED_PREFIX}the try cap of {caps.TRY_CAP} is reached: the holdouts run {ended} {tries} "
+                    f"of {caps.TRY_CAP} times, the last time because {why}. Take the {HUMAN_LABEL} label off the "
+                    "epic to run it again.", {TRIES_KEY: str(caps.NONE_YET)}, main_tree)
+    return True
 
 
 def settle_holdouts(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Validated:
@@ -572,10 +472,11 @@ def settle_holdouts(epic: str, branch: str, settings: dict, home: Path, main_tre
     env = env_as_factory()
     run(["bd", "comment", epic, f"Holdouts: {len(verdicts) - len(red)} of {len(verdicts)} passed on {to_run.head}."
          + (f" The red ones are filed as {', '.join(filed)}." if filed else "")], main_tree, env)
-    run(["bd", "update", epic, "--set-metadata", f"{RESULT_KEY}={validated.result}",
-         "--unset-metadata", HOLDOUTS_KEY, *(["--unset-metadata", CLEANUP_STATE_KEY, "--unset-metadata", TIDY_STATE_KEY] if red else [])],
-        main_tree, env)
+    run(["bd", "update", epic, *set_metadata((RESULT_KEY, validated.result)),
+         *unset_metadata(HOLDOUTS_KEY, TRIES_KEY)], main_tree, env)
     remove_worktree(to_run.worktree, main_tree)
-    if not red:
+    if red:
+        pass_ledger.end_pass(epic, main_tree)
+    else:
         reach_the_gate(epic, branch, validated, hand_run, main_tree)
     return validated

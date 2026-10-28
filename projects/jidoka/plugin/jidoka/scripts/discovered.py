@@ -28,17 +28,16 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import lap_record
 from commands import env_as_factory, run
 
 DISCOVERED_REPORT = "discovered.json"
-BLOCKED = "blocked"
 BLOCKED_PREFIX = "Blocked: "
 DISCOVERED_FROM = "discovered-from"
 BLOCKS = "blocks"
 EPIC = "epic"
 OUTSIDE = "outside"
 PLACEMENTS = (BLOCKS, EPIC, OUTSIDE)
-TRACK = "simple"
 
 
 class DiscoveryError(Exception):
@@ -115,8 +114,7 @@ def file_finding(finding: Finding, found_in: str, area: str, epic: str, main_tre
     except (ValueError, KeyError, TypeError) as error:
         raise DiscoveryError(f"bd create did not print the new bead's id: {created.strip()[:200]!r}") from error
     if inside:
-        run(["bd", "update", bead, "--set-metadata", f"lap.area={area}", "--set-metadata", f"lap.track={TRACK}"],
-            main_tree, env)
+        run(["bd", "update", bead, *lap_record.assigning(lap_record.SIMPLE_TRACK, area)], main_tree, env)
     return Filed(bead, finding)
 
 
@@ -137,5 +135,5 @@ def block(task: str, tries: int, blockers: list[Filed], worktree: Path, branch: 
     run(["bd", "comment", task, f"{BLOCKED_PREFIX}the task cannot finish without {waiting}. The worktree {worktree} "
                                 f"and the branch {branch} keep the work. The task gets a new lap once "
                                 f"{'it' if len(blockers) == 1 else 'they'} merge."], main_tree, env)
-    run(["bd", "update", task, "--status=open", "--assignee=", "--set-metadata", f"lap.stage={BLOCKED}",
-         "--set-metadata", f"lap.tries={tries}"], main_tree, env)
+    run(["bd", "update", task, *lap_record.resting(lap_record.BLOCKED), *lap_record.counting_tries(tries)],
+        main_tree, env)

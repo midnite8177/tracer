@@ -8,6 +8,13 @@ function worktreeOf(prompt: string): string | undefined {
   return LAP_LINE.exec(firstLine)?.[1]
 }
 
+const CHECK_WORKERS = new Set(['validation', 'app-check'])
+
+/** True for the validation and app check workers' agent types, with or without the plugin's prefix. */
+function isCheckWorker(subagentType: string | undefined): boolean {
+  return subagentType !== undefined && CHECK_WORKERS.has(subagentType.replace(/^jidoka:/, ''))
+}
+
 const DRIVE = /^[A-Za-z]:/
 const HOST_ONLY = new Set(['ToolSearch', 'SendMessage', 'ListAgents', 'SubagentHandback'])
 const ASKS_LIVE = 'AskUserQuestion'
@@ -210,26 +217,71 @@ function entriesOf(value: unknown): ListEntry[] {
   })
 }
 
+/** The launcher that runs every jidoka script, in the plugin at `root`. */
+function launcherIn(root: string): string {
+  return `${root}/bin/jidoka-run`
+}
+
+type Printed = { exitCode: number; stdout: string }
+
 /**
- * Each app's test command and the repo's `worker_commands`, from the repo
- * settings that jidoka's own script shows for the worktree; none when the
- * script cannot show them.
+ * What jidoka's script `name` printed when the launcher ran it with `args` in
+ * `cwd`; undefined when the run itself failed.
  */
-async function repoCommands($: EngineInterface, worktree: string): Promise<string[]> {
+async function runScript(
+  $: EngineInterface,
+  name: string,
+  args: readonly string[],
+  cwd: string,
+): Promise<Printed | undefined> {
   const root = $.plugin.root
-  const argv = ['sh', `${root}/bin/jidoka-run`, `${root}/scripts/repo_settings.py`, 'show']
   try {
-    const shown = await $.process.run(argv, { cwd: worktree })
-    if (shown.exitCode !== 0) return []
-    const settings: unknown = JSON.parse(shown.stdout)
-    if (typeof settings !== 'object' || settings === null) return []
-    const { apps, worker_commands } = settings as Record<string, unknown>
-    const appList: unknown[] = Array.isArray(apps) ? apps : []
-    const tests = appList.map(app => (typeof app === 'object' && app !== null ? (app as Record<string, unknown>).test : undefined))
-    return [...textsOf(tests), ...textsOf(worker_commands)]
+    return await $.process.run(['sh', launcherIn(root), `${root}/scripts/${name}.py`, ...args], { cwd })
   } catch {
-    return []
+    return undefined
   }
+}
+
+/** The JSON in `text`, or undefined when it holds something else. */
+function jsonIn(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The repo settings that jidoka's own script shows for the worktree; empty
+ * when the script cannot show them.
+ */
+async function repoSettings($: EngineInterface, worktree: string): Promise<Record<string, unknown>> {
+  const shown = await runScript($, 'repo_settings', ['show'], worktree)
+  const settings = shown?.exitCode === 0 ? jsonIn(shown.stdout) : undefined
+  return typeof settings === 'object' && settings !== null ? (settings as Record<string, unknown>) : {}
+}
+
+/** The values the settings' apps hold under the named fields, app by app. */
+function appFields(settings: Record<string, unknown>, fields: readonly string[]): unknown[] {
+  const apps: unknown[] = Array.isArray(settings.apps) ? settings.apps : []
+  return apps.flatMap(app =>
+    typeof app === 'object' && app !== null ? fields.map(field => (app as Record<string, unknown>)[field]) : [],
+  )
+}
+
+/** Each app's test command and the repo's `worker_commands`. */
+function projectTests(settings: Record<string, unknown>): string[] {
+  return [...textsOf(appFields(settings, ['test'])), ...textsOf(settings.worker_commands)]
+}
+
+/**
+ * What a validation or app check worker may run besides the launcher on the
+ * holdouts script: the repo's `worker_commands` and each app's `build`, `run`
+ * and `way_in`. A value that holds several simple commands counts each of them.
+ */
+function checkCommands(settings: Record<string, unknown>): string[] {
+  const values = [...textsOf(appFields(settings, ['build', 'run', 'way_in'])), ...textsOf(settings.worker_commands)]
+  return values.flatMap(value => (simpleCommands(value) ?? []).map(words => words.join(' ')))
 }
 
 /**
@@ -238,37 +290,39 @@ async function repoCommands($: EngineInterface, worktree: string): Promise<strin
  * none when the script cannot print them.
  */
 async function grantedCommands($: EngineInterface, worktree: string): Promise<ListEntry[]> {
-  const root = $.plugin.root
-  const argv = ['sh', `${root}/bin/jidoka-run`, `${root}/scripts/rules.py`, 'lap-commands']
-  try {
-    const shown = await $.process.run(argv, { cwd: worktree })
-    return shown.exitCode === 0 ? entriesOf(JSON.parse(shown.stdout)) : []
-  } catch {
-    return []
-  }
-}
-
-async function listedCommands($: EngineInterface, worktree: string): Promise<ListEntry[]> {
-  return [...(await repoCommands($, worktree)), ...(await grantedCommands($, worktree))]
+  const shown = await runScript($, 'rules', ['lap-commands'], worktree)
+  return shown?.exitCode === 0 ? entriesOf(jsonIn(shown.stdout)) : []
 }
 
 /**
- * True when every simple command of `command` runs jidoka's launcher, by its
- * absolute path and through `sh` or not, on a script inside the plugin.
+ * The scripts that `command` runs, resolved, when every simple command of it
+ * runs jidoka's launcher, by its absolute path and through `sh` or not, on a
+ * script inside the plugin; undefined when any simple command runs anything
+ * else.
  */
-function runsJidokaScripts(command: string, pluginRoot: string): boolean {
+function jidokaScriptsIn(command: string, pluginRoot: string): string[] | undefined {
   const parts = simpleCommands(command)
-  const launcher = resolved(`${pluginRoot}/bin/jidoka-run`, '/')
-  if (parts === undefined || launcher === undefined) return false
-  return parts.every(words => {
+  const launcher = resolved(launcherIn(pluginRoot), '/')
+  if (parts === undefined || launcher === undefined) return undefined
+  const scripts: string[] = []
+  for (const words of parts) {
     const [program = '', script = ''] = words[0] === 'sh' ? words.slice(1) : words
-    return (
-      isAbsolute(program) &&
-      resolved(program, '/') === launcher &&
-      isAbsolute(script) &&
-      isInside(script, pluginRoot)
-    )
-  })
+    const path = isAbsolute(script) && isInside(script, pluginRoot) ? resolved(script, '/') : undefined
+    if (!isAbsolute(program) || resolved(program, '/') !== launcher || path === undefined) return undefined
+    scripts.push(path)
+  }
+  return scripts
+}
+
+function runsJidokaScripts(command: string, pluginRoot: string): boolean {
+  return jidokaScriptsIn(command, pluginRoot) !== undefined
+}
+
+/** True when every simple command of `command` runs jidoka's launcher on the holdouts script. */
+function runsHoldoutsScript(command: string, pluginRoot: string): boolean {
+  const holdouts = resolved(`${pluginRoot}/scripts/holdouts.py`, '/')
+  const scripts = jidokaScriptsIn(command, pluginRoot)
+  return holdouts !== undefined && scripts !== undefined && scripts.every(script => script === holdouts)
 }
 
 function commandOf(input: unknown): string {
@@ -277,12 +331,20 @@ function commandOf(input: unknown): string {
   return typeof command === 'string' ? command : ''
 }
 
-function offTheLists(call: string): { decision: 'deny'; reason: string } {
+/** What a worker of this kind can do about a call the lists refuse, in the words of its own stage. */
+const WAY_OUT: Record<LapWorker['kind'], { name: string; advice: string }> = {
+  lap: { name: 'lap workers', advice: 'park the task with a question that names this call' },
+  check: {
+    name: 'check workers',
+    advice: 'report the holdout you could not test as failed, saying that this call was denied',
+  },
+}
+
+function offTheLists(worker: LapWorker, call: string): { decision: 'deny'; reason: string } {
+  const { name, advice } = WAY_OUT[worker.kind]
   return {
     decision: 'deny',
-    reason:
-      `jidoka: ${call} is off jidoka's lists for lap workers. ` +
-      'Find another way, or park the task with a question that names this call.',
+    reason: `jidoka: ${call} is off jidoka's lists for ${name}. Find another way, or ${advice}.`,
   }
 }
 
@@ -310,10 +372,8 @@ async function lapOf($: EngineInterface, agentId: string): Promise<LapWorker | u
  * and a failure here never changes what the host asks.
  */
 async function notifyPermissionPrompt($: EngineInterface): Promise<void> {
-  const root = $.plugin.root
   try {
-    const cwd = await $.session.cwd()
-    await $.process.run(['sh', `${root}/bin/jidoka-run`, `${root}/scripts/notify.py`, 'permission-prompt'], { cwd })
+    await runScript($, 'notify', ['permission-prompt'], await $.session.cwd())
   } catch {
     return
   }
@@ -323,15 +383,15 @@ const HEARTBEAT_MS = 60_000
 let heartbeat: Timer | undefined
 
 /**
- * Tells jidoka's heartbeat script to beat, run in the host's own folder so
- * that it finds the repo whose epics run there. The script writes a beat only
- * for an epic that runs, and a failure here never reaches the host.
+ * Tells jidoka's heartbeat script to beat for this session, run in the host's
+ * own folder so that it finds the repo whose epics run there. The script
+ * renews only an epic that runs and that a manager of this session claimed,
+ * so a session that runs no manager renews nothing, and a failure here never
+ * reaches the host.
  */
 async function beat($: EngineInterface): Promise<void> {
-  const root = $.plugin.root
   try {
-    const cwd = await $.session.cwd()
-    await $.process.run(['sh', `${root}/bin/jidoka-run`, `${root}/scripts/heartbeat.py`, 'beat'], { cwd })
+    await runScript($, 'heartbeat', ['beat', '--session', await $.session.id()], await $.session.cwd())
   } catch {
     return
   }
@@ -370,27 +430,26 @@ function wakeIn(stdout: string): Wake | undefined {
 function cancelWake(): void {
   try {
     wake?.cancel()
-  } catch {
-    // a timer that is already gone needs no cancel
-  }
+  } catch {}
   wake = undefined
 }
 
 /**
- * Asks jidoka's wake script, run in the host's own folder, how long to wait
- * after the host's latest failed turn and what to say then. Where an epic
- * runs, a timer submits that prompt to the host, which would otherwise sit
- * idle after an API error for good; a later failure replaces the timer. The
- * host never learns of a failure here.
+ * Asks jidoka's wake script, run in the host's own folder and naming this
+ * session, how long to wait after the host's latest failed turn and what to
+ * say then. Where this session manages an epic, a timer submits that prompt
+ * to the host, which would otherwise sit idle after an API error for good; a
+ * later failure replaces the timer. A session that manages no epic, such as
+ * an advisor, wakes nobody. The host never learns of a failure here.
  */
-async function wakeAfterFailure($: EngineInterface): Promise<void> {
+async function wakeAfterFailure($: EngineInterface, error: unknown): Promise<void> {
   failedTurns++
-  const root = $.plugin.root
   try {
     const cwd = await $.session.cwd()
-    const argv = ['sh', `${root}/bin/jidoka-run`, `${root}/scripts/wake.py`, '--failures', String(failedTurns)]
-    const printed = await $.process.run(argv, { cwd })
-    const due = printed.exitCode === 0 ? wakeIn(printed.stdout) : undefined
+    const args = ['--failures', String(failedTurns), '--session', await $.session.id()]
+    if (typeof error === 'string') args.push('--error', error)
+    const printed = await runScript($, 'wake', args, cwd)
+    const due = printed?.exitCode === 0 ? wakeIn(printed.stdout) : undefined
     if (due === undefined) return
     cancelWake()
     wake = $.clock.after(due.seconds * SECOND_MS, () => {
@@ -409,7 +468,7 @@ export const register: Register = on => {
   })
 
   on('classic.StopFailure', async ($, e, next) => {
-    await wakeAfterFailure($)
+    await wakeAfterFailure($, (e as { error?: unknown }).error)
     return next(e)
   })
 
@@ -430,7 +489,10 @@ export const register: Register = on => {
     if (!isAbsolute(worktree)) {
       return { deny: `jidoka: the lap worktree ${worktree} is not an absolute path, so no lap worker started.` }
     }
-    const lap: LapWorker = { worktree, commands: await listedCommands($, worktree) }
+    const settings = await repoSettings($, worktree)
+    const lap: LapWorker = isCheckWorker(e.subagentType)
+      ? { kind: 'check', worktree, commands: checkCommands(settings) }
+      : { kind: 'lap', worktree, commands: [...projectTests(settings), ...(await grantedCommands($, worktree))] }
     await $.state.set(STARTING, { lap })
     try {
       const started = await next({ ...e, cwd: worktree })
@@ -456,8 +518,10 @@ export const register: Register = on => {
       return {
         decision: 'deny',
         reason:
-          'jidoka: a lap worker never asks live. End the stage with a question report in the scratch folder ' +
-          'and the outcome question.',
+          lap.kind === 'check'
+            ? 'jidoka: a check worker never asks live. Say what you could not test in your report.'
+            : 'jidoka: a lap worker never asks live. End the stage with a question report in the scratch folder ' +
+              'and the outcome question.',
       }
     }
     if (STARTS_WORKERS.has(e.tool)) {
@@ -482,9 +546,10 @@ export const register: Register = on => {
     if (e.isReadOnly === true) return { decision: 'allow' }
     if (e.tool === 'Bash') {
       const command = commandOf(e.input)
-      return isListed(command, lap.commands) ? { decision: 'allow' } : offTheLists(`\`${command}\``)
+      const isHoldouts = lap.kind === 'check' && runsHoldoutsScript(command, $.plugin.root)
+      return isHoldouts || isListed(command, lap.commands) ? { decision: 'allow' } : offTheLists(lap, `\`${command}\``)
     }
-    return offTheLists(e.tool)
+    return offTheLists(lap, e.tool)
   }).catch(($, e, next) =>
     e.agentId === undefined
       ? next(e)

@@ -13,10 +13,16 @@ winning over the jidoka rule it quotes, and lists none when it cannot read
 them. Last it names each epic the factory stopped on with work left, one line with the epic's title and id and
 the command that resumes it, and names none when it cannot read the epics. Anywhere else it prints nothing. A failure also prints nothing,
 because this hook must never keep a session from starting.
+
+In every repo it also appends `export JIDOKA_SESSION_ID=<the session's id>` to the env file in $CLAUDE_ENV_FILE,
+which Claude Code sources before each call the session makes, so that the scheduler can tell which session a
+manager runs in.
 """
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -73,11 +79,17 @@ def beads_folder_above(folder: Path) -> bool:
     return False
 
 
-def repo_settings():
-    """The settings script, imported inside start() so that a broken import prints nothing."""
+def scripts_on_path() -> None:
+    """Puts the plugin's scripts folder on the import path, so the scripts are imported inside the hook's functions
+    and a broken import prints nothing."""
     scripts = str(PLUGIN / "scripts")
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
+
+
+def repo_settings():
+    """The settings script."""
+    scripts_on_path()
     import repo_settings as script
     return script
 
@@ -156,6 +168,26 @@ def stopped_factories(main_tree: Path | None) -> str:
     return "".join(f"\n{epic.line()}\n" for epic in stopped)
 
 
+def export_session(raw: str) -> None:
+    """Exports the session's id to the calls the session makes, through the env file Claude Code names.
+
+    The scheduler records the id in the heartbeat of the epic its manager claims, so that no other session beats it.
+    Without an env file or an id there is nothing to export, and a failure here keeps nothing from starting.
+    """
+    try:
+        env_file = os.environ.get("CLAUDE_ENV_FILE")
+        event = json.loads(raw)
+        session = event.get("session_id") if isinstance(event, dict) else None
+        if not env_file or not isinstance(session, str) or not session:
+            return
+        scripts_on_path()
+        import heartbeat
+        with open(env_file, "a", encoding="utf-8") as file:
+            file.write(f"export {heartbeat.SESSION_VARIABLE}={shlex.quote(session)}\n")
+    except Exception:
+        return
+
+
 def start(raw: str) -> str:
     try:
         folder = session_folder(raw)
@@ -175,6 +207,7 @@ def main() -> int:
         raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
     except (OSError, ValueError):
         raw = ""
+    export_session(raw)
     text = start(raw)
     if text:
         sys.stdout.buffer.write(text.encode("utf-8"))

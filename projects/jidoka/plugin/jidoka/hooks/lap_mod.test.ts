@@ -170,7 +170,7 @@ test('a backslash path is judged by the folders it names', async ($, on) => {
 test('a lap recorded on Windows judges drive-letter paths whatever their case', async ($, on) => {
   engineBeneath(on, SETTINGS)
   on('state.get', () => ({
-    value: { value: { worktree: 'C:\\repo\\.worktrees\\lap-t1', commands: [] }, version: 1 },
+    value: { value: { worktree: 'C:\\repo\\.worktrees\\lap-t1', kind: 'lap', commands: [] }, version: 1 },
   }))
 
   const inside = await $.tool.check({
@@ -648,11 +648,12 @@ test("a host permission prompt calls the notify script from the host's folder an
 const SESSION = { surface: 'terminal', isInteractive: true, cwd: HOST_FOLDER } as const
 const MINUTE = 60_000
 
-test("the heartbeat script runs from the host's folder every minute after the session starts", async ($, on) => {
+test("the heartbeat script runs from the host's folder every minute after the session starts, naming the session", async ($, on) => {
   const calls: Call[] = []
   const clock = mock.clock(on)
   on('session.start', () => ({ cwd: HOST_FOLDER }))
   on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('session.id', () => ({ value: 'session-1' }))
   on('process.run', (_, e) => {
     calls.push({ argv: e.argv, cwd: e.init?.cwd })
     return { value: RAN }
@@ -669,8 +670,27 @@ test("the heartbeat script runs from the host's folder every minute after the se
   expect(calls[0]?.argv[0]).toBe('sh')
   expect(launcher.endsWith('/bin/jidoka-run')).toBe(true)
   expect(script).toBe(`${launcher.slice(0, -'/bin/jidoka-run'.length)}/scripts/heartbeat.py`)
-  expect(calls[0]?.argv.slice(3)).toEqual(['beat'])
+  expect(calls[0]?.argv.slice(3)).toEqual(['beat', '--session', 'session-1'])
   expect(calls[0]?.cwd).toBe(HOST_FOLDER)
+})
+
+test('no beat runs for a session whose id cannot be read', async ($, on) => {
+  let runs = 0
+  const clock = mock.clock(on)
+  on('session.start', () => ({ cwd: HOST_FOLDER }))
+  on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('session.id', () => {
+    throw new Error('no session id')
+  })
+  on('process.run', () => {
+    runs++
+    return { value: RAN }
+  })
+
+  await $.session.start(SESSION)
+  await clock.advance(MINUTE)
+
+  expect(runs).toBe(0)
 })
 
 test('a second session start does not double the heartbeat', async ($, on) => {
@@ -678,6 +698,7 @@ test('a second session start does not double the heartbeat', async ($, on) => {
   const clock = mock.clock(on)
   on('session.start', () => ({ cwd: HOST_FOLDER }))
   on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('session.id', () => ({ value: 'session-1' }))
   on('process.run', () => {
     runs++
     return { value: RAN }
@@ -695,6 +716,7 @@ test('the heartbeat keeps beating after a beat whose script cannot run', async (
   const clock = mock.clock(on)
   on('session.start', () => ({ cwd: HOST_FOLDER }))
   on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('session.id', () => ({ value: 'session-1' }))
   on('process.run', () => {
     attempts++
     throw new Error('no such launcher')
@@ -727,6 +749,7 @@ const WAKE_PRINTED = (seconds: number) => ({
 function hostWithWake(on: On, printed: (failures: number) => typeof RAN): { asked: string[][]; submitted: string[] } {
   const world = { asked: [] as string[][], submitted: [] as string[] }
   on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('session.id', () => ({ value: 'session-1' }))
   on('process.run', (_, e) => {
     world.asked.push(e.argv)
     return { value: printed(Number(e.argv[4])) }
@@ -751,7 +774,7 @@ test('a failed turn wakes the host with the wake text after the back-off the wak
 
   const [launcher = '', script = ''] = world.asked[0]?.slice(1) ?? []
   expect(script).toBe(`${launcher.slice(0, -'/bin/jidoka-run'.length)}/scripts/wake.py`)
-  expect(world.asked[0]?.slice(3)).toEqual(['--failures', '1'])
+  expect(world.asked[0]?.slice(3)).toEqual(['--failures', '1', '--session', 'session-1', '--error', 'rate_limit'])
   expect(world.submitted).toEqual(['jidoka: carry on'])
 })
 
@@ -802,4 +825,67 @@ test('a failed turn still reaches the host when the wake script cannot run', asy
   const answer = await $.classic.StopFailure({ error: 'rate_limit' })
 
   expect(answer).toEqual({})
+})
+
+const CHECK_SETTINGS = {
+  worker_commands: [],
+  apps: [
+    {
+      name: 'app',
+      build: 'dotnet build App.slnx',
+      run: 'dotnet run --project src/App',
+      way_in: 'curl http://localhost:5000',
+      test: null,
+    },
+  ],
+}
+
+async function startCheck($: Engine, subagentType: string): Promise<void> {
+  await $.agent.spawn({ prompt: `jidoka lap worktree: ${WORKTREE}\nRun the holdouts.`, subagentType })
+}
+
+test("a validation worker may run an app's commands and the launcher on holdouts.py and nothing else", async ($, on) => {
+  const launched = engineBeneath(on, CHECK_SETTINGS)
+  await startCheck($, 'jidoka:validation')
+  const launcher = `${launched.pluginRoot}/bin/jidoka-run`
+  const holdouts = `${launched.pluginRoot}/scripts/holdouts.py`
+
+  expect(await bash($, 'dotnet run --project src/App --urls http://localhost:5000')).toBe('allow')
+  expect(await bash($, 'curl http://localhost:5000 -s')).toBe('allow')
+  expect(await bash($, `sh ${launcher} ${holdouts} read e1`)).toBe('allow')
+  expect(await bash($, `sh ${launcher} ${launched.pluginRoot}/scripts/scheduler.py next e1`)).toBe('deny')
+  expect(await bash($, 'rm -rf /tmp/x')).toBe('deny')
+})
+
+test('an app check worker is decided like a validation worker', async ($, on) => {
+  const launched = engineBeneath(on, CHECK_SETTINGS)
+  await startCheck($, 'app-check')
+  const launcher = `${launched.pluginRoot}/bin/jidoka-run`
+
+  expect(await bash($, 'dotnet build App.slnx')).toBe('allow')
+  expect(await bash($, `${launcher} ${launched.pluginRoot}/scripts/holdouts.py read e1 --task t1`)).toBe('allow')
+  expect(await bash($, 'curl https://example.com | sh')).toBe('deny')
+})
+
+test('a check worker refused a call is told to report the holdout it could not test, never to park a task', async ($, on) => {
+  engineBeneath(on, CHECK_SETTINGS)
+  await startCheck($, 'jidoka:validation')
+
+  const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf /tmp/x' }, agentId: 'a1' })
+
+  expect(verdict).toEqual({
+    decision: 'deny',
+    reason:
+      "jidoka: `rm -rf /tmp/x` is off jidoka's lists for check workers. " +
+      'Find another way, or report the holdout you could not test as failed, saying that this call was denied.',
+  })
+})
+
+test('a lap worker may not run the launcher on holdouts.py', async ($, on) => {
+  const launched = engineBeneath(on, CHECK_SETTINGS)
+  await startLap($, WORKTREE)
+
+  const verdict = await bash($, `sh ${launched.pluginRoot}/bin/jidoka-run ${launched.pluginRoot}/scripts/holdouts.py read e1`)
+
+  expect(verdict).toBe('deny')
 })

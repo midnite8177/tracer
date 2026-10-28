@@ -23,10 +23,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import heartbeat
-import notify
+import lap_record
 import park
+from bench import FACTORY_LABEL
+from caps import metadata_of
 from commands import CommandError, bd_show, capture, head_of, run
-from handoff import EPIC_TYPE, child_ids, shown_beads
+from epic_reader import EPIC_TYPE, read_epic
+from epics import is_closed, is_running, labels_of
 from land import merge_lock
 from merge_gate import contains
 
@@ -35,7 +38,6 @@ INIT_PROCESS = 1
 LOCK_UNRECORDED_SECONDS = 60
 STOP_WAIT_SECONDS = 3.0
 STOP_POLL_SECONDS = 0.05
-LAP_STAGE_KEY = "lap.stage"
 
 
 @dataclass(frozen=True)
@@ -157,32 +159,27 @@ def prune_worktrees(main_tree: Path) -> None:
     run(["git", "worktree", "prune"], main_tree, None)
 
 
-def labels_of(bead: dict) -> list[str]:
-    return [str(label) for label in bead.get("labels") or []]
-
-
 def has_started(children: list[dict], home: Path, epic: str) -> bool:
     """True when the factory has run on the epic: a task holds a lap, or the epic has a heartbeat on record."""
-    held_a_lap = any((bead.get("metadata") or {}).get(LAP_STAGE_KEY) for bead in children)
+    held_a_lap = any(lap_record.stage_of(metadata_of(bead)) for bead in children)
     return held_a_lap or heartbeat.heartbeat_path(home, epic).is_file()
 
 
 def stopped_on(epic: dict, home: Path, main_tree: Path, now: int) -> StoppedEpic | None:
     epic_id = str(epic["id"])
-    if not notify.is_running(epic) or heartbeat.is_fresh(home, epic_id, now):
+    if not is_running(epic) or heartbeat.is_fresh(home, epic_id, now):
         return None
-    children = shown_beads(child_ids(epic_id, main_tree), main_tree)
-    open_tasks = [bead for bead in children
-                  if bead.get("issue_type") != EPIC_TYPE and not notify.is_closed(bead)]
+    held = read_epic(epic, main_tree)
+    open_tasks = [bead for bead in held.task_beads if not is_closed(bead)]
     waiting_on_a_restart = [bead for bead in open_tasks if park.HUMAN_LABEL not in labels_of(bead)]
-    if not waiting_on_a_restart or not has_started(children, home, epic_id):
+    if not waiting_on_a_restart or not has_started(list(held.children), home, epic_id):
         return None
     return StoppedEpic(epic_id, str(epic.get("title") or epic_id), len(open_tasks))
 
 
 def stopped_epics(home: Path, main_tree: Path, now: int) -> list[StoppedEpic]:
     """The epics the factory stopped on, by id."""
-    listing = run(["bd", "list", "--label", "factory", "--type", EPIC_TYPE, "--limit", "0", "--json"], main_tree, None)
+    listing = run(["bd", "list", "--label", FACTORY_LABEL, "--type", EPIC_TYPE, "--limit", "0", "--json"], main_tree, None)
     listed = json.loads(listing or "[]")
     ids = sorted(str(item["id"]) for item in listed if isinstance(item, dict) and item.get("id"))
     shown = [bd_show(epic, main_tree) for epic in ids]

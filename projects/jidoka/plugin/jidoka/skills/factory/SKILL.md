@@ -115,8 +115,11 @@ stop.
    `jidoka lap worktree: <worktree>`, with the action's absolute
    `worktree`; the lap mod knows a lap worker by that line alone, runs it
    in that worktree, and decides its every tool call. Then give it:
-   - the task as `bd show` printed it, with its `research brief:` comment
-     for a build on the full track;
+   - the task as `bd show` printed it. For a build on the full track, also
+     the research brief: `bd show` does not print comments, so run
+     `bd comments <task>`, find the `research brief:` comment, and paste its
+     text into the prompt. Never point the worker at `research-brief.md`,
+     which is gone by then, and the worker may not run `bd comments`;
    - when the action's `findings` is not null, a Spec check sent the diff
      back. Give the worker each finding's `kind` (`missing` work the task
      asks for, or `extra` work it does not), `file`, `line`, `bead` and
@@ -248,9 +251,11 @@ stop.
 
    An action whose `action` is `app-check` starts an app check worker with the
    Agent tool, in the background, with `subagent_type` `jidoka:app-check`, on
-   the route of the standard tier. It is not a lap worker, so its prompt has no
-   `jidoka lap worktree:` line, as with the validation worker. Its prompt holds
-   the action's `epic` (the top-level `epic`), `task`, `worktree`, `slot` and
+   the route of the standard tier. Its prompt's first line is
+   `jidoka lap worktree: <worktree>`, the action's `worktree`, so that the lap
+   mod decides its tool calls: it allows each app's `build`, `run` and `way_in`
+   and the launcher on the holdouts script, and denies the rest. Its prompt
+   holds the action's `epic` (the top-level `epic`), `task`, `worktree`, `slot` and
    `report`, each app's `name`, `build`, `run` and `way_in` from
    `repo settings show`, the repo settings' `slot_use`, and the absolute path
    of the holdouts script, `<plugin folder>/scripts/holdouts.py`, to run through
@@ -335,7 +340,11 @@ stop.
    An action whose `action` is `holdouts` has no task: the epic's full suite
    is green and its holdouts have not run. Start one worker with the Agent
    tool, in the background, with `subagent_type` `jidoka:validation`, on the
-   standard tier's route. Its prompt holds the action's `epic`, `worktree`
+   standard tier's route. Its prompt's first line is
+   `jidoka lap worktree: <worktree>`, the action's `worktree`, so that the lap
+   mod decides its tool calls: it allows each app's `build`, `run` and `way_in`
+   and the launcher on the holdouts script, and denies the rest. Its prompt
+   holds the action's `epic`, `worktree`
    and `report`, each app's `name`, `build`, `run` and `way_in` from
    `repo settings show`, and the absolute path of the holdouts script,
    `<plugin folder>/scripts/holdouts.py`, to run through the launcher. It
@@ -404,7 +413,7 @@ stop.
    `scheduler next` starts the worker again. A worker that fails or is cut off
    is not reported: write `<epic-id> fix ended: failed` and stop.
 
-   An epic that holds open tasks after its third review parks with a question
+   An epic that holds open tasks after its third pass parks with a question
    instead of a fourth pass, and the call that parks it opens no lap and
    sends the epic-parked notification. Go to step 6 as for any parked epic.
 
@@ -415,8 +424,11 @@ stop.
    `actions`. Write `<epic-id> holdouts ended: <validation.result>`. Exit 1
    means the report was refused; show stderr and stop, and the next
    `scheduler next` starts the worker again. A validation worker that fails
-   or is cut off is not reported: write `<epic-id> holdouts ended: failed`
-   and stop.
+   or is cut off is reported with `scheduler report-holdouts <epic-id>
+   --ended failed --why "<why>"` (the why cleaned as above; none when it
+   gave none) or `--ended cut-off`, which counts the run: the third parks
+   the epic with the why and notifies. Write `<epic-id> holdouts ended:
+   failed` and go on with the JSON it prints.
 
    A merge worker's reply is reported the same way. Write the worker's
    event line first. A report on done commits the build's work and runs the

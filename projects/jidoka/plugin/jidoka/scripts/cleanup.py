@@ -11,12 +11,13 @@ The worker deletes tests in the worktree, commits nothing, and lists every delet
 worktree's scratch folder: a JSON list of {"test", "file", "covered_by"}, where `covered_by` names the kept test or
 acceptance spec that covers the same behavior. `settle` takes that report. It refuses, and writes nothing, when the
 report is missing or unusable, when a deletion names no covering test or names a test that was itself deleted,
-when the worktree changed a path that is not a test the epic added or changed, or when the changed paths and the
-reported files differ. Otherwise it commits the change as one commit, "Test cleanup", fast-forwards the epic
+when the worktree changed a path that is not a test the epic added or changed, when the changed paths and the
+reported files differ, or when the worktree is gone or at another head than the worker started from, because a worktree
+cut again would hold none of the worker's deletions. Otherwise it commits the change as one commit, "Test cleanup", fast-forwards the epic
 branch to it under the merge lock, and with BEADS_ACTOR set to jidoka records on the epic `cleanup.state` (done)
 and `cleanup.removed`, every deletion of the epic's passes, and posts a comment that lists them. Validation clears
 `cleanup.state` when it ends red, so the next pass cleans again, and the gate comment's Tests removed table reads
-`cleanup.removed`, as validation.py describes.
+`cleanup.removed`.
 """
 from __future__ import annotations
 
@@ -24,19 +25,15 @@ import json
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-import git_exclude
-import merge_gate
-import private_docs
-from bench import WORKTREE_FOLDER, hide_worktrees
-from commands import bd_show, capture, env_as_factory, head_of, run
-from validation import CLEANUP_STATE_KEY as STATE_KEY
-from validation import MAIN_BRANCH, REMOVED_KEY, SCRATCH_FOLDER, move_epic_branch, remove_worktree
+import pass_support
+from caps import metadata_of
+from commands import bd_show, env_as_factory, run, set_metadata
+from pass_support import PassError, Stage, StageToRun
 
-DONE = "done"
+STATE_KEY = "cleanup.state"
+REMOVED_KEY = "cleanup.removed"
 ACTION = "test-cleanup"
 REPORT = "test-cleanup.json"
-WORKTREE_PREFIX = "cleanup-"
-COMMIT_MESSAGE = "Test cleanup"
 TEST_FOLDERS = ("test", "tests", "__tests__")
 TEST_NAME_PARTS = (".test.", ".spec.")
 TEST_FILE_ENDINGS = ("_test.py", "Tests.cs", "Test.cs", "_test.go")
@@ -44,7 +41,7 @@ TEST_FILE_PREFIXES = ("test_",)
 REPORT_FIELDS = ("test", "file", "covered_by")
 
 
-class CleanupError(Exception):
+class CleanupError(PassError):
     """A reason the cleanup writes nothing more, worded for the person who reads stderr."""
 
 
@@ -57,25 +54,6 @@ class Removal:
 
     def fields(self) -> dict:
         return {"test": self.test, "file": self.file, "covered_by": self.covered_by}
-
-
-@dataclass(frozen=True)
-class CleanupToRun:
-    """The cleanup a worker makes: the commit it starts from, its worktree, and the tests it may touch."""
-    epic: str
-    branch: str
-    head: str
-    worktree: Path
-    tests: list[str]
-
-    @property
-    def report(self) -> Path:
-        return self.worktree / SCRATCH_FOLDER / REPORT
-
-    def fields(self) -> dict:
-        return {"action": ACTION, "epic": self.epic, "branch": self.branch, "head": self.head,
-                "worktree": str(self.worktree), "scratch": str(self.report.parent), "report": str(self.report),
-                "tests": self.tests}
 
 
 @dataclass(frozen=True)
@@ -96,24 +74,14 @@ def is_test_path(path: str) -> bool:
             or name.endswith(TEST_FILE_ENDINGS) or any(part in name for part in TEST_NAME_PARTS))
 
 
-def worktree_of(epic: str, main_tree: Path) -> Path:
-    return main_tree / WORKTREE_FOLDER / f"{WORKTREE_PREFIX}{epic}"
-
-
-def epic_tests(branch_head: str, settings: dict, main_tree: Path) -> list[str]:
-    """The test files the epic added or changed, outside every acceptance folder, sorted."""
-    folders = merge_gate.protected_folders(settings)
-    listed = run(["git", "diff", "--name-only", "--diff-filter=AM", f"{MAIN_BRANCH}...{branch_head}"], main_tree,
-                 None).splitlines()
-    return sorted(path for path in listed if is_test_path(path)
-                  and not any(folder == PurePosixPath(path) or folder in PurePosixPath(path).parents
-                              for folder in folders))
+STAGE = Stage(name="test cleanup", action=ACTION, prefix="cleanup-", state_key=STATE_KEY,
+              commit_message="Test cleanup", allowed_kind="tests the epic added or changed", files_key="tests",
+              wants=is_test_path, report=REPORT, error=CleanupError)
 
 
 def removed_before(shown: dict) -> list[Removal]:
     """The deletions earlier passes recorded on the epic."""
-    metadata = shown.get("metadata") if isinstance(shown.get("metadata"), dict) else {}
-    value = metadata.get(REMOVED_KEY)
+    value = metadata_of(shown).get(REMOVED_KEY)
     if value in (None, ""):
         return []
     try:
@@ -123,37 +91,18 @@ def removed_before(shown: dict) -> list[Removal]:
         raise CleanupError(f"the {REMOVED_KEY} metadata of the epic cannot be read: {error!r}") from error
 
 
-def is_done(shown: dict) -> bool:
-    metadata = shown.get("metadata")
-    return isinstance(metadata, dict) and metadata.get(STATE_KEY) == DONE
+def removed_lines(shown: dict) -> list[str]:
+    """The gate comment's Tests removed table from the deletions the epic records, or no line when none."""
+    rows = [f"| {each.test} | {each.file} | {each.covered_by} |" for each in removed_before(shown)]
+    if not rows:
+        return []
+    return ["", "Tests removed:", "| Test | File | Covered by |", "| --- | --- | --- |", *rows]
 
 
-def to_run(epic: str, shown: dict, branch: str, settings: dict, home: Path, main_tree: Path) -> CleanupToRun | None:
+def to_run(epic: str, shown: dict, branch: str, settings: dict, home: Path, main_tree: Path) -> StageToRun | None:
     """The cleanup this pass still owes, or None when it is done or the epic holds no test to clean. The worktree is
     cut again from the epic branch's head when its folder is gone."""
-    if is_done(shown):
-        return None
-    head = head_of(f"refs/heads/{branch}", main_tree)
-    if head is None:
-        raise CleanupError(f"the epic branch {branch} does not exist")
-    tests = epic_tests(head, settings, main_tree)
-    if not tests:
-        return None
-    path = worktree_of(epic, main_tree)
-    if path.is_dir() and head_of("HEAD", path) != head:
-        remove_worktree(path, main_tree)
-    if not path.is_dir():
-        capture(["git", "worktree", "prune"], main_tree, None)
-        hide_worktrees(main_tree)
-        run(["git", "worktree", "add", "-q", "--detach", str(path), head], main_tree, None)
-        try:
-            private_docs.share(main_tree, path.resolve(), home)
-        except private_docs.ClashError as error:
-            remove_worktree(path, main_tree)
-            raise CleanupError(str(error)) from error
-    git_exclude.add(git_exclude.exclude_file(main_tree), [git_exclude.exclude_line(SCRATCH_FOLDER, True)])
-    (path / SCRATCH_FOLDER).mkdir(exist_ok=True)
-    return CleanupToRun(epic, branch, head, path, tests)
+    return pass_support.to_run(STAGE, epic, shown, branch, settings, home, main_tree)
 
 
 def removals_of(report: Path) -> list[Removal]:
@@ -179,43 +128,27 @@ def removals_of(report: Path) -> list[Removal]:
     return removals
 
 
-def changed_paths(worktree: Path) -> list[str]:
-    """Every path the worktree changed from its head, outside the scratch folder."""
-    env = env_as_factory()
-    run(["git", "add", "--all"], worktree, env)
-    run(["git", "reset", "--quiet", "--", SCRATCH_FOLDER], worktree, env)
-    return sorted(run(["git", "diff", "--cached", "--name-only"], worktree, env).splitlines())
-
-
 def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Cleaned:
     """Takes the cleanup worker's report: commits its deletions as one commit on the epic branch and records them."""
     shown = bd_show(epic, main_tree)
     if shown is None:
         raise CleanupError(f"bd show printed nothing usable for {epic}")
-    owed = to_run(epic, shown, branch, settings, home, main_tree)
-    if owed is None:
-        raise CleanupError(f"{epic} waits on no test cleanup, so nothing was written")
-    removals = removals_of(owed.report)
-    changed = changed_paths(owed.worktree)
-    stray = [path for path in changed if path not in owed.tests]
-    if stray:
-        raise CleanupError(f"the cleanup changed paths that are not tests the epic added or changed: "
-                           f"{', '.join(stray)}, so nothing was written")
+    found = pass_support.owed_in_worktree(STAGE, epic, shown, branch, settings, main_tree)
+    removals = removals_of(found.scratch / REPORT)
     reported = sorted({each.file for each in removals})
-    if reported != changed:
-        raise CleanupError(f"the cleanup report names the files {', '.join(reported) or 'none'} and the worktree "
-                           f"changed {', '.join(changed) or 'none'}, so nothing was written")
-    head = owed.head
-    if changed:
-        run(["git", "commit", "--quiet", "--message", COMMIT_MESSAGE], owed.worktree, env_as_factory())
-        head = head_of("HEAD", owed.worktree) or owed.head
-        move_epic_branch(branch, owed.head, head, home, main_tree)
-    remove_worktree(owed.worktree, main_tree)
+
+    def agrees_with_report(changed: list[str]) -> None:
+        if reported != changed:
+            raise CleanupError(f"the cleanup report names the files {', '.join(reported) or 'none'} and the "
+                               f"worktree changed {', '.join(changed) or 'none'}, so nothing was written")
+
+    head = pass_support.settle_worktree(found, agrees_with_report, home, main_tree).head
     kept = removed_before(shown) + removals
     env = env_as_factory()
     run(["bd", "comment", epic, comment_of(removals, head)], main_tree, env)
-    run(["bd", "update", epic, "--set-metadata", f"{STATE_KEY}={DONE}",
-         "--set-metadata", f"{REMOVED_KEY}={json.dumps([each.fields() for each in kept])}"], main_tree, env)
+    run(["bd", "update", epic, *set_metadata((STATE_KEY, pass_support.DONE),
+                                             (REMOVED_KEY, json.dumps([each.fields() for each in kept])))],
+        main_tree, env)
     return Cleaned(head, removals)
 
 

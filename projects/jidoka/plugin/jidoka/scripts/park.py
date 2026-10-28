@@ -2,7 +2,7 @@
 """Parks a lap's task on the human, and posts a worker's question when that is why.
 
 The scheduler imports it. A parked task is open and
-unassigned, carries the `human` label, and has `lap.stage` parked. Its
+unassigned, carries the `human` label, and rests at the parked stage. Its
 worktree and branch stay, and its lap holds no slot and no area, so the
 scheduler opens the next ready task's lap in the freed slot.
 
@@ -57,9 +57,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import lap_record
 import repo_settings
 import rules
-from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, CommandError, bd_show, env_as_factory, run
+from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, CommandError, bd_show, env_as_factory, run, set_metadata
 from discovered import BLOCKED_PREFIX
 
 QUESTION_PREFIX = "Question: "
@@ -67,7 +68,6 @@ PARKED_PREFIX = "Parked: "
 COMMENT = "comment"
 RECOMMENDATION = "recommendation"
 HUMAN_LABEL = "human"
-PARKED = "parked"
 QUESTION_REPORT = "question.json"
 OPTIONS_KEY = "question.options"
 RECOMMENDED_KEY = "question.recommended"
@@ -243,9 +243,8 @@ def park(task: str, tries: int, comment: str, metadata: list[tuple[str, str]], m
     """Comments on the task and ends its lap parked, under the actor jidoka."""
     env = env_as_factory()
     run(["bd", "comment", task, comment], main_tree, env)
-    written = [argument for key, value in metadata for argument in ("--set-metadata", f"{key}={value}")]
-    run(["bd", "update", task, "--status=open", "--assignee=", f"--add-label={HUMAN_LABEL}",
-         "--set-metadata", f"lap.stage={PARKED}", "--set-metadata", f"lap.tries={tries}", *written], main_tree, env)
+    run(["bd", "update", task, f"--add-label={HUMAN_LABEL}", *lap_record.resting(lap_record.PARKED),
+         *lap_record.counting_tries(tries), *set_metadata(*metadata)], main_tree, env)
 
 
 def park_on_question(task: str, tries: int, scratch: Path, worktree: Path, branch: str, main_tree: Path) -> None:

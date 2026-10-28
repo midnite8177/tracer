@@ -32,7 +32,7 @@ import clock
 import pause
 import repo_settings
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show
-from handoff import CLOSED, EPIC_TYPE, HandoffError, child_ids, shown_beads
+from epic_reader import CLOSED, EPIC_TYPE, EpicReadError, child_ids, shown_beads
 from park import HUMAN_LABEL
 
 UNPARKED = "unparked"
@@ -112,7 +112,7 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         change = watch(args.epic, args.interval, main_tree)
-    except (WatchError, HandoffError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (WatchError, EpicReadError, CommandError, repo_settings.SettingsError, OSError) as error:
         print(f"watch: {error}", file=sys.stderr)
         return 1
     print(json.dumps({"epic": args.epic, "event": change.event, "bead": change.bead}))

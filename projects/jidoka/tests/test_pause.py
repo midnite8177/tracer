@@ -13,8 +13,11 @@ import jidoka_fixture as fixture  # noqa: E402
 from test_stop import HUMAN, LAUNCHER, PLUGIN, RUN_TIMEOUT_SECONDS, SCHEDULER, StopCase  # noqa: E402
 
 WAKE = PLUGIN / "scripts" / "wake.py"
+STATUS = PLUGIN / "scripts" / "status.py"
 MINUTE = 60
 HOUR = 60 * MINUTE
+MANAGER_SESSION = "session-of-the-manager"
+ADVISOR_SESSION = "session-of-an-advisor"
 
 
 class PauseCase(StopCase):
@@ -24,11 +27,19 @@ class PauseCase(StopCase):
         super().setUp()
         self.t0 = int(time.time())
 
-    def at(self, seconds: int, script: Path, *args: str) -> subprocess.CompletedProcess:
+    def call(self, env: dict[str, str], script: Path, *args: str) -> subprocess.CompletedProcess:
+        """Runs a script as a call of the manager's session, with more variables in its environment."""
         return subprocess.run([str(LAUNCHER), str(script), *args], capture_output=True, text=True,
                               encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
-                                   "BEADS_ACTOR": HUMAN, "JIDOKA_NOW": str(self.t0 + seconds)})
+                                   "BEADS_ACTOR": HUMAN, "JIDOKA_SESSION_ID": MANAGER_SESSION, **env})
+
+    def script(self, script: Path, *args: str) -> subprocess.CompletedProcess:
+        return self.call({}, script, *args)
+
+    def at(self, seconds: int, script: Path, *args: str) -> subprocess.CompletedProcess:
+        """Runs a script as a call of the manager's session, on the clock t0 plus the seconds."""
+        return self.call({"JIDOKA_NOW": str(self.t0 + seconds)}, script, *args)
 
     def printed(self, done: subprocess.CompletedProcess) -> dict:
         self.assertEqual(0, done.returncode, done.stderr)
@@ -135,6 +146,28 @@ class AFactoryThatMeetsALimitTests(PauseCase):
         self.assertEqual("", self.pause_held())
 
 
+class StatusOfAPausedEpicTests(PauseCase):
+    def test_status_shows_the_cause_the_wait_left_and_the_retries_of_a_paused_epic(self):
+        [first, _] = self.open_two_laps()
+        self.report_trouble(0, first, "usage-limit")
+        retried = self.carry_on(5 * MINUTE)["actions"][0]["task"]
+        self.report_trouble(5 * MINUTE + 10, retried, "usage-limit")
+
+        done = self.at(5 * MINUTE + 70, STATUS)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("paused on a usage limit, 14m left, 1 retry", done.stdout)
+
+    def test_status_shows_no_pause_once_the_wait_is_over(self):
+        [first, _] = self.open_two_laps()
+        self.report_trouble(0, first, "usage-limit")
+
+        done = self.at(5 * MINUTE, STATUS)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("paused on", done.stdout)
+
+
 class APauseThatWaitsOnTheHumanTests(PauseCase):
     def trouble_then_message(self, cause: str) -> list[dict]:
         [first, _] = self.open_two_laps()
@@ -174,7 +207,7 @@ class APauseThatWaitsOnTheHumanTests(PauseCase):
 
 class WakingAPausedHostTests(PauseCase):
     def wake(self, failures: int) -> subprocess.CompletedProcess:
-        return self.at(0, WAKE, "--failures", str(failures))
+        return self.at(0, WAKE, "--failures", str(failures), "--session", MANAGER_SESSION)
 
     def test_the_wake_script_names_the_back_off_for_the_failure_and_the_prompt_that_carries_on(self):
         self.open_two_laps()
@@ -185,6 +218,48 @@ class WakingAPausedHostTests(PauseCase):
         self.assertEqual((self.epic, 5 * MINUTE, HOUR), (first["epic"], first["seconds"], fourth["seconds"]))
         self.assertIn("scheduler.py", first["text"])
         self.assertIn(f"carry-on {self.epic}", first["text"])
+
+    def wake_after(self, failures: int, error: str) -> subprocess.CompletedProcess:
+        return self.at(0, WAKE, "--failures", str(failures), "--session", MANAGER_SESSION, "--error", error)
+
+    def test_a_failed_turn_of_a_session_that_manages_no_epic_pauses_and_wakes_nothing(self):
+        self.open_two_laps()
+
+        done = self.at(0, WAKE, "--failures", "1", "--session", ADVISOR_SESSION, "--error", "billing_error")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("", done.stdout)
+        self.assertEqual("", self.pause_held())
+        self.assertEqual([], self.pushover.received)
+
+    def test_a_host_turn_that_ends_on_a_billing_error_pauses_the_epic_and_sends_one_notification(self):
+        self.open_two_laps()
+
+        woken = self.printed(self.wake_after(1, "billing_error"))
+        self.printed(self.wake_after(2, "billing_error"))
+
+        self.assertEqual(self.epic, woken["epic"])
+        self.assertEqual("billing", json.loads(self.pause_held())["cause"])
+        [message] = self.pushover.received
+        self.assertEqual("Factory paused: Take card payments", message["title"])
+        self.assertIn("billing error", message["message"])
+
+    def test_a_host_turn_that_ends_on_an_auth_failure_pauses_the_epic_and_sends_one_notification(self):
+        self.open_two_laps()
+
+        self.printed(self.wake_after(1, "authentication_failed"))
+
+        self.assertEqual("auth", json.loads(self.pause_held())["cause"])
+        [message] = self.pushover.received
+        self.assertIn("auth failure", message["message"])
+
+    def test_a_host_turn_that_ends_on_a_rate_limit_pauses_nothing_and_sends_nothing(self):
+        self.open_two_laps()
+
+        self.printed(self.wake_after(1, "rate_limit"))
+
+        self.assertEqual("", self.pause_held())
+        self.assertEqual([], self.pushover.received)
 
     def test_the_wake_script_prints_nothing_where_no_epic_runs(self):
         self.bd("update", self.epic, "--add-label", "human")

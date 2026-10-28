@@ -934,6 +934,18 @@ class MergeWorkerTests(SchedulerCase):
         self.assertEqual("1", str(self.metadata(lap.task)["lap.mergetries"]))
         self.assertTrue(any("does not hold" in text for text in self.texts(lap.task)))
 
+    def test_a_missing_question_report_from_the_merge_worker_counts_a_merge_try_and_no_build_try(self):
+        lap = self.conflicting_lap()
+        self.build_done(lap.epic, lap.task)
+
+        printed = self.report_printed(lap.epic, lap.task, "question")
+
+        self.assertEqual(["merge"], [action["action"] for action in printed["actions"]])
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("merge", "1", 0), (metadata["lap.stage"], str(metadata["lap.mergetries"]),
+                                             metadata["lap.tries"]))
+        self.assertTrue(any("the question could not be posted" in text for text in self.texts(lap.task)))
+
     def test_red_targeted_tests_after_the_merge_worker_count_a_merge_try_and_the_second_parks_the_task(self):
         lap = self.conflicting_lap()
         self.build_done(lap.epic, lap.task)
@@ -2104,16 +2116,25 @@ class FactoryRulesTests(SchedulerCase):
         self.assertEqual(["Factory rules: guidance set, 2 lines."],
                          [comment["text"] for comment in self.rule_comments(epic)])
 
-    def test_a_preset_sets_what_it_holds_and_the_improvement_epic_preset_runs_the_full_suite_in_a_lap(self):
+    def test_the_improvement_epic_preset_holds_the_guidance_that_it_changes_nothing_a_user_sees(self):
         epic = self.handed_off_epic(1)
 
         self.rules_set(epic, "lap_limit=1")
         done = self.rules("preset", epic, "improvement-epic")
 
         self.assertEqual(0, done.returncode, done.stderr)
-        settings = json.loads(done.stdout)["settings"]
-        self.assertEqual({"lap_limit": 1, "lap_test_scope": "full", "discovered_bugs_into_epic": False,
-                          "commits_on_main": "per_task"}, settings)
+        shown = json.loads(self.rules("show", epic).stdout)
+        self.assertEqual({"lap_limit": 1}, shown["settings"])
+        self.assertEqual("changes nothing a user sees", shown["guidance"])
+
+    def test_the_bug_epic_preset_files_discovered_bugs_into_the_epic_and_commits_once_per_task(self):
+        epic = self.handed_off_epic(1)
+
+        done = self.rules("preset", epic, "bug-epic")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        shown = json.loads(self.rules("show", epic).stdout)
+        self.assertEqual({"discovered_bugs_into_epic": True, "commits_on_main": "per_task"}, shown["settings"])
 
     def test_rules_on_a_task_are_refused(self):
         task = self.new_task_under(self.handed_off_epic(1))

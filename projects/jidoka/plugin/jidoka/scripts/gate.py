@@ -46,27 +46,33 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import cleanup
+import lap_record
 import private_docs
 import repo_settings
+import review
 from bench import FACTORY_LABEL, MAIN_REF, WORKTREE_FOLDER, hide_worktrees
+from caps import metadata_of
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, env_as_git_user, head_of, run,
                       worktree_list)
-from handoff import BRANCH_KEY, CLOSED, HandoffError, child_ids, shown_beads
+from epic_reader import BRANCH_KEY, CLOSED, EpicReadError, child_ids, shown_beads
 from holdouts import HOLDOUTS_KEY
 from land import (FULL_SUITE_FAILED_EXIT_CODE, PARTLY_LANDED_EXIT_CODE, WAITING_ON_EDITS_EXIT_CODE, FullSuiteFailed,
                   LandingError, LandingSettings, WaitingOnEdits, acquire_lock, attempt, landing_settings,
                   main_checkout, merge_lock, print_hand_run, refuse_bad_message, refuse_overlapping_edits,
                   release_lock, run_full_suite, subject)
 from merge_gate import contains
-from validation import GATE_STATE_KEY, HUMAN_LABEL, OUTPUT_TAIL_LINES, WAITING
+from park import HUMAN_LABEL
+from pass_support import MAIN_BRANCH, park_epic, remove_worktree, tail_of
 
+GATE_STATE_KEY = "gate.state"
+WAITING = "waiting"
+GATE_COMMENT_HEADING = "Acceptance gate:"
 DECISION_KEY = "gate.decision"
 LANDED_KEY = "gate.landed"
 VALIDATION_HEAD_KEY = "validation.head"
 MERGE = "merge"
 WORKTREE_PREFIX = "landing-"
-LAP_BRANCH_PREFIX = "lap/"
-LAP_BRANCH_KEY = "lap.branch"
 
 
 class GateError(Exception):
@@ -107,7 +113,7 @@ def epic_at_the_gate(epic: str, main_tree: Path) -> Epic:
     shown = bd_show(epic, main_tree)
     if shown is None:
         raise GateError(f"bd show printed nothing usable for {epic}")
-    metadata = shown.get("metadata") or {}
+    metadata = metadata_of(shown)
     labels = [str(label) for label in shown.get("labels") or []]
     found = Epic(epic, str(metadata.get(BRANCH_KEY) or ""), metadata, labels, shown.get("status") == CLOSED)
     if found.landed:
@@ -124,12 +130,25 @@ def epic_at_the_gate(epic: str, main_tree: Path) -> Epic:
     return found
 
 
-def tail_of(output: str) -> str:
-    return "\n".join(output.strip().splitlines()[-OUTPUT_TAIL_LINES:])
+def merged_commits(branch_head: str, main_tree: Path) -> list[str]:
+    """One line for each commit the epic branch holds that main lacks, merge commits left out, oldest first."""
+    listed = run(["git", "log", "--no-merges", "--reverse", "--format=%h %s", f"{MAIN_BRANCH}..{branch_head}"],
+                 main_tree, None)
+    return listed.splitlines()
 
 
-def remove_worktree(path: Path, main_tree: Path) -> None:
-    capture(["git", "worktree", "remove", "--force", str(path)], main_tree, None)
+def reach_the_gate(epic: str, branch: str, validated_head: str, figures: list[str], hand_run: list[str],
+                   main_tree: Path) -> None:
+    """Puts the epic at the acceptance gate: one comment that starts with the heading and lists the commits the epic
+    branch holds that main lacks, the validation's figures, the tests the test cleanup removed, the review's findings
+    of low confidence and the hand-run lines, then gate.state waiting and the human label, last, so a labeled epic
+    always has its comment."""
+    shown = bd_show(epic, main_tree)
+    notes = [*cleanup.removed_lines(shown), *review.low_confidence_lines(shown)] if shown is not None else []
+    lines = [f"{GATE_COMMENT_HEADING} {epic} waits for the human, on the epic branch {branch} at {validated_head}.",
+             "", "Merged into the epic branch:", *(f"- {commit}" for commit in merged_commits(validated_head, main_tree)),
+             "", *figures, *notes, *hand_run]
+    park_epic(epic, "\n".join(lines), {GATE_STATE_KEY: WAITING}, main_tree)
 
 
 def main_moved_since_validation(epic: Epic, main_tree: Path) -> bool:
@@ -198,9 +217,9 @@ def land_on_main(epic: Epic, message: str, settings: LandingSettings, home: Path
 def lap_branches(epic: Epic, main_tree: Path) -> list[str]:
     """The branch of every lap the epic's beads opened, from the lap metadata and the lap/<bead> naming."""
     ids = child_ids(epic.id, main_tree)
-    names = {f"{LAP_BRANCH_PREFIX}{bead}" for bead in ids}
+    names = {f"{lap_record.LAP_BRANCH_PREFIX}{bead}" for bead in ids}
     for bead in shown_beads(ids, main_tree):
-        recorded = (bead.get("metadata") or {}).get(LAP_BRANCH_KEY)
+        recorded = lap_record.branch_of(metadata_of(bead))
         if recorded:
             names.add(str(recorded))
     return sorted(names)
@@ -282,7 +301,7 @@ def main(argv: list[str]) -> int:
             print(f"gate: could not post the comment on {args.epic}: {error}", file=sys.stderr)
         print(f"gate: {back.comment}", file=sys.stderr)
         return back.exit_code
-    except (GateError, HandoffError, LandingError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (GateError, EpicReadError, LandingError, CommandError, repo_settings.SettingsError, OSError) as error:
         print(f"gate: {error}", file=sys.stderr)
         return 1
     print(landed.sha)

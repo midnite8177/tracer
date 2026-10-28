@@ -20,6 +20,8 @@ STATUS = PLUGIN / "scripts" / "status.py"
 RUN_TIMEOUT_SECONDS = 120
 HUMAN = "Pat Human"
 MINUTE = 60
+MANAGER_SESSION = "session-of-the-manager"
+OTHER_SESSION = "session-of-an-advisor"
 
 
 class StatusCase(unittest.TestCase):
@@ -72,10 +74,11 @@ class StatusCase(unittest.TestCase):
     def beat_file(self, epic: str) -> Path:
         return self.home / "heartbeat" / f"{epic}.json"
 
-    def write_beat(self, epic: str, seconds_ago: int) -> None:
+    def write_beat(self, epic: str, seconds_ago: int, session: str) -> None:
         path = self.beat_file(epic)
         path.parent.mkdir(exist_ok=True)
-        path.write_text(json.dumps({"epic": epic, "time": int(time.time()) - seconds_ago}), encoding="utf-8")
+        path.write_text(json.dumps({"epic": epic, "time": int(time.time()) - seconds_ago, "session": session}),
+                        encoding="utf-8")
 
     def status(self) -> str:
         done = self.script(STATUS)
@@ -86,32 +89,56 @@ class StatusCase(unittest.TestCase):
 class HeartbeatTests(StatusCase):
     def test_a_beat_renews_the_heartbeat_a_manager_claimed_for_an_epic_the_factory_runs(self):
         epic = self.new_epic("Take card payments", "factory")
-        self.write_beat(epic, MINUTE)
+        self.write_beat(epic, MINUTE, MANAGER_SESSION)
         before = int(time.time())
 
-        done = self.script(HEARTBEAT, "beat")
+        done = self.script(HEARTBEAT, "beat", "--session", MANAGER_SESSION)
 
         self.assertEqual(0, done.returncode, done.stderr)
         beat = json.loads(self.beat_file(epic).read_text(encoding="utf-8"))
         self.assertEqual(epic, beat["epic"])
+        self.assertEqual(MANAGER_SESSION, beat["session"])
         self.assertTrue(before <= beat["time"] <= int(time.time()), beat)
 
-    def test_a_beat_renews_one_heartbeat_for_each_claimed_epic(self):
+    def test_a_beat_renews_one_heartbeat_for_each_epic_the_session_claimed(self):
         first = self.new_epic("Take card payments", "factory")
         second = self.new_epic("Print receipts", "factory")
-        self.write_beat(first, MINUTE)
-        self.write_beat(second, MINUTE)
+        self.write_beat(first, MINUTE, MANAGER_SESSION)
+        self.write_beat(second, MINUTE, MANAGER_SESSION)
         before = int(time.time())
 
-        self.script(HEARTBEAT, "beat")
+        self.script(HEARTBEAT, "beat", "--session", MANAGER_SESSION)
 
         for epic in (first, second):
             self.assertGreaterEqual(json.loads(self.beat_file(epic).read_text(encoding="utf-8"))["time"], before)
 
+    def test_a_beat_renews_the_epics_of_its_own_session_and_leaves_the_epics_of_another(self):
+        mine = self.new_epic("Take card payments", "factory")
+        theirs = self.new_epic("Print receipts", "factory")
+        self.write_beat(mine, MINUTE, MANAGER_SESSION)
+        self.write_beat(theirs, MINUTE, OTHER_SESSION)
+        before = int(time.time())
+
+        self.script(HEARTBEAT, "beat", "--session", MANAGER_SESSION)
+
+        self.assertGreaterEqual(json.loads(self.beat_file(mine).read_text(encoding="utf-8"))["time"], before)
+        self.assertLess(json.loads(self.beat_file(theirs).read_text(encoding="utf-8"))["time"], before - 30)
+
+    def test_a_beat_renews_no_heartbeat_that_records_no_session(self):
+        epic = self.new_epic("Take card payments", "factory")
+        path = self.beat_file(epic)
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps({"epic": epic, "time": int(time.time()) - MINUTE}), encoding="utf-8")
+        before = path.read_text(encoding="utf-8")
+
+        self.script(HEARTBEAT, "beat", "--session", MANAGER_SESSION)
+
+        self.assertEqual(before, path.read_text(encoding="utf-8"))
+
     def test_a_beat_writes_no_heartbeat_for_an_epic_no_manager_has_claimed(self):
         self.new_epic("Handed off a minute ago", "factory")
 
-        done = self.script(HEARTBEAT, "beat")
+        done = self.script(HEARTBEAT, "beat", "--session", MANAGER_SESSION)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertFalse((self.home / "heartbeat").exists())
@@ -122,7 +149,7 @@ class HeartbeatTests(StatusCase):
         gated = self.new_epic("At the gate", "factory", "human")
         self.set_metadata(gated, gate_state="waiting")
 
-        done = self.script(HEARTBEAT, "beat")
+        done = self.script(HEARTBEAT, "beat", "--session", MANAGER_SESSION)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual([], list((self.home / "heartbeat").glob("*")) if (self.home / "heartbeat").exists() else [])
@@ -131,7 +158,7 @@ class HeartbeatTests(StatusCase):
         outside = self.root / "elsewhere"
         outside.mkdir()
 
-        done = subprocess.run([str(LAUNCHER), str(HEARTBEAT), "beat"], capture_output=True, text=True,
+        done = subprocess.run([str(LAUNCHER), str(HEARTBEAT), "beat", "--session", MANAGER_SESSION], capture_output=True, text=True,
                               encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=outside,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)})
 
@@ -148,7 +175,7 @@ class StatusTests(StatusCase):
                                  lap_started=str(now - 12 * MINUTE - 5))
         merging = self.new_task(epic, "Print the slip", lap_number="1", lap_stage="merge", lap_tries="0",
                                 lap_mergetries="1", lap_started=str(now - 31 * MINUTE))
-        self.write_beat(epic, 40)
+        self.write_beat(epic, 40, MANAGER_SESSION)
 
         output = self.status()
 
@@ -164,7 +191,7 @@ class StatusTests(StatusCase):
     def test_it_shows_the_age_of_the_epics_heartbeat(self):
         epic = self.new_epic("Take card payments", "factory")
         self.new_task(epic, "Read the card")
-        self.write_beat(epic, 5 * MINUTE + 10)
+        self.write_beat(epic, 5 * MINUTE + 10, MANAGER_SESSION)
 
         output = self.status()
 
@@ -195,6 +222,16 @@ class StatusTests(StatusCase):
         self.assertIn("no lap yet", rows[waiting])
         self.assertIn("merged", rows[merged])
         self.assertNotIn(" of ", rows[parked] + rows[blocked] + rows[waiting] + rows[merged])
+
+    def test_it_shows_no_clock_for_a_lap_a_stop_interrupted_though_it_keeps_its_start(self):
+        epic = self.new_epic("Take card payments", "factory")
+        interrupted = self.new_task(epic, "Read the card", lap_number="2", lap_stage="interrupted", lap_tries="1",
+                                    lap_started=str(int(time.time()) - 12 * MINUTE))
+
+        row = next(line for line in self.status().splitlines() if interrupted in line)
+
+        self.assertEqual(["2", "interrupted", "1/3"], row.split()[1:4])
+        self.assertNotIn(" of ", row)
 
     def test_it_names_an_epic_that_waits_on_the_human(self):
         parked = self.new_epic("Parked epic", "factory", "human")
