@@ -382,6 +382,24 @@ class RecordedSettingsTests(InstallerTestCase):
             "local": {"harness": "claude", "model": "sonnet", "version": "5.5", "effort": "medium"},
         }, settings["routes"])
 
+    def test_a_default_route_changed_in_routes_py_changes_what_the_installer_records_and_what_setup_proposes(self):
+        routes_py = self.repo / "plugin" / "jidoka" / "scripts" / "routes.py"
+        edited = routes_py.read_text(encoding="utf-8").replace('native("haiku", "5.5", "medium")',
+                                                              'native("opus", "5.5", "low")')
+        self.assertNotEqual(routes_py.read_text(encoding="utf-8"), edited)
+        routes_py.write_text(edited, encoding="utf-8", newline="\n")
+        fixture.git_commit_all(self.repo, "Change the light route")
+        changed = {"harness": "claude", "model": "opus", "version": "5.5", "effort": "low"}
+
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+        proposed = fixture.run_script(self.repo / "plugin" / "jidoka" / "scripts", "setup.py",
+                                      ["propose", "--jidoka-home", str(self.root / "another-home")],
+                                      fixture.script_env(self.bin, self.user_home))
+
+        self.assertEqual(0, proposed.returncode, proposed.stderr)
+        self.assertEqual(changed, self.settings()["routes"]["light"])
+        self.assertEqual(changed, json.loads(proposed.stdout)["routes"]["light"])
+
     def test_the_second_route_runs_in_claude_when_codex_is_not_on_the_path(self):
         self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
 
