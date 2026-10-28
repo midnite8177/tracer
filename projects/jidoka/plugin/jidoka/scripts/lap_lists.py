@@ -8,8 +8,11 @@ JSON list. The kind is the lap mod's kind of worker:
          the repo settings' `worker_commands`, then the merge worker's grants
          when the task is at the merge stage, then the built-in list's
          additions from <jidoka-home>/built_in_commands.json, then the
-         `extra_commands` of the epic that holds the task. The worktree must
-         be a lap worktree.
+         `extra_commands` of the epic that holds the task. A pass's test
+         cleanup, tidy, review or fix worker runs in a folder under the
+         main checkout's .worktrees named for its stage and its epic. There
+         the epic is the one the folder names, and there is no merge grant.
+         Any other folder names no epic.
   check  a validation or app check worker. Its list holds each app's `build`,
          `run` and `way_in` and the repo settings' `worker_commands`, each
          value whole. The lap mod splits a value into its simple commands, as
@@ -25,12 +28,16 @@ branch>`, `git rebase --abort` and `git -c core.editor=true rebase
 --continue` whole, `git add` of paths, and `git status`, `git diff` and
 `git log` without `--output`.
 
-Repo settings that are missing add no app or worker commands.
+Repo settings that are missing add no app or worker commands. The lap list is
+three parts, read one by one: the repo settings' commands, the built-in list,
+and the epic's commands, which are the merge grants and the epic's
+`extra_commands`. The script leaves out a part it cannot read, names it
+on stderr, and still prints the rest.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
 Exit codes:
-  0  success.
+  0  it printed the list, whole or with the parts that stderr names left out.
   1  it could not print the list, with the reason on stderr.
   2  a usage error.
 """
@@ -39,18 +46,25 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict
+from typing import Callable, TypedDict, TypeVar
 
+import cleanup
 import lap_record
 import repo_settings
+import review
 import rules
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, metadata_of
+import tidy
+from commands import COMMAND_TIMEOUT_SECONDS, WORKTREE_FOLDER, CommandError, metadata_of
 from epic_reader import recorded_branch
 
 LAP = "lap"
 CHECK = "check"
 LOOKS_REFUSING = ["--output"]
+PASS_PREFIXES = [cleanup.STAGE.prefix, tidy.STAGE.prefix, review.REVIEW_PREFIX, review.FIX_PREFIX]
+PART_ERRORS = (lap_record.NotALapWorktree, rules.RulesError, CommandError, repo_settings.SettingsError, OSError)
+Part = TypeVar("Part")
 
 
 class Grant(TypedDict):
@@ -86,14 +100,64 @@ def merge_grant(epic_branch: str) -> list[Grant]:
             *(RefusingGrant(command=command, then="words", refusing=LOOKS_REFUSING) for command in looks)]
 
 
-def lap_list(worktree: Path, home: Path, main_tree: Path, settings: dict) -> list[str | Grant]:
+@dataclass(frozen=True)
+class EpicPart:
+    """What the worktree's epic adds to a lap list: the merge worker's grants, and the epic's extra commands."""
+    granted: list[Grant]
+    extra: list[str]
+
+
+NO_EPIC_PART = EpicPart(granted=[], extra=[])
+
+
+def part_or(missing: str, fallback: Part, read: Callable[[], Part]) -> Part:
+    """The part as read; when it cannot be read, the fallback, with the part named on stderr."""
+    try:
+        return read()
+    except PART_ERRORS as error:
+        print(f"lap_lists: the list lacks {missing}: {error}", file=sys.stderr)
+        return fallback
+
+
+def pass_epic(worktree: Path, main_tree: Path) -> str:
+    """The epic a pass worktree's folder names, or an empty string for a folder that is no pass worktree."""
+    folder = worktree.resolve()
+    if folder.parent != (main_tree / WORKTREE_FOLDER).resolve():
+        return ""
+    for prefix in PASS_PREFIXES:
+        if folder.name.startswith(prefix) and len(folder.name) > len(prefix):
+            return folder.name[len(prefix):]
+    return ""
+
+
+def lap_epic_part(worktree: Path, main_tree: Path) -> EpicPart:
     task = lap_record.task_in_worktree(worktree, main_tree)
+    if not task:
+        raise CommandError(f"bd shows no task for the lap worktree {worktree}")
     epic = rules.epic_holding(task, main_tree)
     epic_branch = recorded_branch(epic)
     is_merging = lap_record.stage_of(metadata_of(task)) == lap_record.MERGE
     granted = merge_grant(epic_branch) if is_merging and epic_branch else []
-    return [*app_values(settings, ["test"]), *texts(settings.get("worker_commands")), *granted,
-            *repo_settings.built_in_commands(home), *rules.extra_commands_of(epic)]
+    return EpicPart(granted=granted, extra=rules.extra_commands_of(epic))
+
+
+def epic_part(worktree: Path, main_tree: Path) -> EpicPart:
+    epic = pass_epic(worktree, main_tree)
+    if not epic:
+        return lap_epic_part(worktree, main_tree)
+    return EpicPart(granted=[], extra=rules.extra_commands_of(rules.epic_to_write(epic, main_tree)))
+
+
+def repo_part(home: Path, main_tree: Path) -> list[str]:
+    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    return [*app_values(settings, ["test"]), *texts(settings.get("worker_commands"))]
+
+
+def lap_list(worktree: Path, home: Path, main_tree: Path) -> list[str | Grant]:
+    repo = part_or("the repo settings' commands", [], lambda: repo_part(home, main_tree))
+    built_in = part_or("the built-in list", [], lambda: repo_settings.built_in_commands(home))
+    epic = part_or("the epic's commands", NO_EPIC_PART, lambda: epic_part(worktree, main_tree))
+    return [*repo, *epic.granted, *built_in, *epic.extra]
 
 
 def check_list(settings: dict) -> list[str]:
@@ -109,9 +173,11 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         home = repo_settings.jidoka_home(args.jidoka_home)
-        settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
-        printed = lap_list(Path.cwd(), home, main_tree, settings) if args.kind == LAP else check_list(settings)
-    except (lap_record.NotALapWorktree, rules.RulesError, CommandError, repo_settings.SettingsError, OSError) as error:
+        if args.kind == LAP:
+            printed = lap_list(Path.cwd(), home, main_tree)
+        else:
+            printed = check_list(repo_settings.load(repo_settings.settings_path(home, main_tree)))
+    except PART_ERRORS as error:
         print(f"lap_lists: {error}", file=sys.stderr)
         return 1
     print(json.dumps(printed))
