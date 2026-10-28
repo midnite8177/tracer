@@ -501,7 +501,7 @@ is no try.
    nothing can run now: the epic is paused, parked, or holds only parked
    or blocked tasks. Write `<epic-id>: waiting`, then start the watcher
    in the background (`run_in_background: true`) with
-   `watch <epic-id>` and wait. It exits when a task is unparked, a task is
+   `watcher <epic-id>` and wait. It exits when a task is unparked, a task is
    added, a task merges, or the pause is over, and prints which. Then run
    `scheduler carry-on <epic-id> --jidoka-home ...`, which opens what fits,
    with no restart, and go on from step 4. A prompt that starts with
