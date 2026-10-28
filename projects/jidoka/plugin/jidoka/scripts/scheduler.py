@@ -77,10 +77,11 @@ commits what it left on the epic branch, and does what `carry-on` does:
                 the new `head` and the `removed` tests.
   tidy          tidy.py: a `tidy` action; `report-tidy <epic>`. It also holds `tidy`, the new `head` and the
                 `changed` files.
-  review        review.py: one `review` action for each lane; `report-review <epic>` takes the four reports at
-                once. It also holds `review`, the `head` it covered, the `fixes`, the `filed` tasks and the `low`
-                findings. A review with findings to fix leaves a `fix` action, which every call repeats until
-                `report-fix <epic>`; it also holds `fix`, the new `head`, the `changed` files and the `filed` tasks.
+  review        review.py: one `review` action for each lane that runs, the Design lane only on the epic's first
+                review; `report-review <epic>` takes their reports at once. It also holds `review`, the `head` it
+                covered, the `fixes`, the `filed` tasks, which are outside the epic, and the `low` findings. A
+                review with findings to fix leaves a `fix` action, which every call repeats until
+                `report-fix <epic>`; it also holds `fix`, the new `head` and the `changed` files.
                 An epic that holds open tasks after its third pass parks with a question instead of opening laps,
                 and sends the epic-parked notification; taking the human label off runs the next pass.
   validation    validation.py runs once the stages above owe nothing. Green leaves the epic at the acceptance gate,

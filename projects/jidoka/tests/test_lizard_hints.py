@@ -200,17 +200,17 @@ class DesignLaneHintsTests(test_review.ReviewCase):
         [gate] = self.gate_comments(epic)
         self.assertIn("Lizard hint", gate)
 
-    def test_the_design_lane_reads_every_module_the_epic_touched_even_after_a_later_pass_changed_one(self):
+    def test_a_function_a_later_pass_grows_gives_no_hint_because_only_the_first_review_has_the_design_lane(self):
         epic, printed = self.finish_epic_with_a_long_function()
-        moved = self.reviewed(printed, {"spec": [test_review.finding("Split the till module", "large", "high")]})
-        [task] = moved["review"]["filed"]
+        moved, task = self.red_validation(printed)
+        [lap] = [each for each in moved["actions"] if each.get("task") == task]
+        self.leave_in(Path(lap["worktree"]), "reader.py", branching("read", 9))
+        second = self.tidied(test_scheduler.SchedulerCase.build_done(self, epic, task))
 
-        second = self.next_pass_review(moved, task, "reader.txt")
+        again = self.reviewed(second, {})
 
-        self.assertEqual([["reader.txt"]] * 3, [self.lane(second, name)["files"]
-                                                for name in ("comments", "standards", "spec")])
-        self.assertEqual(["reader.txt", MODULE], self.lane(second, "design")["files"])
-        self.assertEqual([], self.lane(second, "design")["hints"])
+        self.assertNotIn("design", [each["lane"] for each in self.review_actions_of(second)])
+        self.assertEqual([], again["review"]["low"])
 
     def test_a_hint_is_not_fixed_nor_filed_as_a_task(self):
         epic, printed = self.finish_epic_with_a_long_function()

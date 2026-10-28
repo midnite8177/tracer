@@ -15,6 +15,7 @@ import test_validation  # noqa: E402
 
 BUILT_FILE = "till.txt"
 LANES = ["comments", "standards", "spec", "design"]
+DIFF_LANES = ["comments", "standards", "spec"]
 FIX_SUBJECT = "Review fixes"
 
 
@@ -68,6 +69,14 @@ class ReviewCase(test_validation.ValidationCase):
     def epic_log(self, epic: str) -> list[str]:
         branch = self.metadata(epic)["factory.branch"]
         return test_validation.git(self.repo, "log", "--format=%s", f"main..{branch}").splitlines()
+
+    def red_validation(self, printed: dict) -> tuple[dict, str]:
+        """Settles the review with no finding and a red full suite; returns the moves and the task validation filed
+        in the epic."""
+        self.queue_validation_exit_codes(printed["epic"], 1)
+        moved = self.reviewed(printed, {})
+        self.assertEqual("fail", moved["validation"]["result"])
+        return moved, moved["validation"]["filed"]
 
     def next_pass_review(self, printed: dict, task: str, new_file: str) -> dict:
         """Builds the filed task with a file of its own, merges it, and tidies; returns the moves that hold the
@@ -157,13 +166,13 @@ class FixWorkerTests(ReviewCase):
 
     def test_low_confidence_findings_are_never_fixed_nor_filed_and_the_gate_lists_them(self):
         epic, printed = self.finish_epic_at_the_review()
-        self.reviewed(printed, self.FINDINGS)
+        moved = self.reviewed(printed, self.FINDINGS)
 
         done = self.report_fix(epic)
 
         self.assertEqual(0, done.returncode, done.stderr)
         fixed = json.loads(done.stdout)
-        self.assertEqual(([], []), (fixed["fix"]["filed"], self.lap_actions(fixed)))
+        self.assertEqual(([], []), (moved["review"]["filed"], self.lap_actions(fixed)))
         [gate] = self.gate_comments(epic)
         self.assertIn("Unasked flag", gate)
         self.assertIn("Split the module", gate)
@@ -230,39 +239,69 @@ class FixWorkerTests(ReviewCase):
 class LargeFindingTests(ReviewCase):
     LARGE = {"spec": [finding("Split the till module", "large", "high")]}
 
-    def test_a_large_finding_becomes_a_task_in_the_epic_whose_lap_opens_and_no_validation_runs(self):
+    def assert_filed_outside(self, epic: str, task: str) -> None:
+        self.assertEqual((None, {("discovered-from", epic)}), (self.shown(task).get("parent"), self.links_of(task)))
+        self.assertNotIn(task, self.children_of(epic).values())
+        self.assertNotIn("lap.area", self.metadata(task))
+
+    def test_a_large_finding_is_filed_outside_the_epic_linked_discovered_from_it_and_validation_runs(self):
         epic, printed = self.finish_epic_at_the_review()
 
         moved = self.reviewed(printed, self.LARGE)
 
         [task] = moved["review"]["filed"]
-        shown = self.shown(task)
-        self.assertEqual(epic, shown["parent"])
-        self.assertIn("Split the till module", shown["title"])
-        self.assertEqual([task], [each["task"] for each in self.lap_actions(moved)])
-        self.assertIsNone(moved["validation"])
-        self.assertEqual([], self.validation_runs_of(epic))
+        self.assert_filed_outside(epic, task)
+        self.assertIn("Split the till module", self.shown(task)["title"])
+        self.assertIn(epic, self.shown(task)["description"])
+        self.assertEqual([], self.lap_actions(moved))
+        self.assertEqual("pass", moved["validation"]["result"])
 
-    def test_the_second_pass_reviews_only_the_diff_since_the_first_review(self):
+    def test_an_epic_whose_first_review_sizes_a_finding_large_goes_on_to_validation_after_the_fix(self):
+        epic, printed = self.finish_epic_at_the_review()
+        moved = self.reviewed(printed, {"comments": [finding("Echo", "small", "high")], **self.LARGE})
+        [task] = moved["review"]["filed"]
+        self.leave_in(Path(self.fix_action_of(moved)["worktree"]), BUILT_FILE, "total = 2\n")
+
+        done = self.report_fix(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        fixed = json.loads(done.stdout)
+        self.assertEqual(FIX_SUBJECT, self.epic_log(epic)[0])
+        self.assertEqual("pass", fixed["validation"]["result"])
+        self.assertEqual([], fixed["actions"])
+        self.assert_filed_outside(epic, task)
+        self.assertEqual("open", self.shown(task)["status"])
+
+
+class LaterReviewTests(ReviewCase):
+    def test_a_later_review_runs_only_the_diff_lanes_over_the_diff_since_the_last_review(self):
         epic, printed = self.finish_epic_at_the_review()
         first_head = self.review_actions_of(printed)[0]["head"]
-        moved = self.reviewed(printed, self.LARGE)
-        [task] = moved["review"]["filed"]
+        moved, task = self.red_validation(printed)
 
         second = self.next_pass_review(moved, task, "reader.txt")
 
         lanes = self.review_actions_of(second)
-        self.assertEqual(LANES, [each["lane"] for each in lanes])
-        self.assertEqual([first_head] * 4, [each["base"] for each in lanes])
-        self.assertEqual([["reader.txt"]] * 3 + [["reader.txt", BUILT_FILE]], [each["files"] for each in lanes])
+        self.assertEqual(DIFF_LANES, [each["lane"] for each in lanes])
+        self.assertEqual([first_head] * 3, [each["base"] for each in lanes])
+        self.assertEqual([["reader.txt"]] * 3, [each["files"] for each in lanes])
 
-    def test_the_second_pass_diff_holds_none_of_the_hunks_main_brought_in_by_a_merge(self):
+    def test_a_later_review_settles_on_the_reports_of_the_three_diff_lanes_and_validation_runs(self):
+        epic, printed = self.finish_epic_at_the_review()
+        moved, task = self.red_validation(printed)
+        second = self.next_pass_review(moved, task, "reader.txt")
+
+        again = self.reviewed(second, {})
+
+        self.assertEqual("pass", again["validation"]["result"])
+        self.assertIn("human", self.shown(epic)["labels"])
+
+    def test_a_later_review_diff_holds_none_of_the_hunks_main_brought_in_by_a_merge(self):
         shared = "".join(f"line {number}\n" for number in range(1, 9))
         self.commit_in(self.repo, "shared.txt", shared)
         epic, printed = self.finish_epic_at_the_review()
         branch = self.metadata(epic)["factory.branch"]
-        moved = self.reviewed(printed, self.LARGE)
-        [task] = moved["review"]["filed"]
+        moved, task = self.red_validation(printed)
         [lap] = [each for each in moved["actions"] if each.get("task") == task]
         self.leave_in(Path(lap["worktree"]), "shared.txt", shared.replace("line 1\n", "the epic's line\n"))
         self.tidied(test_scheduler.SchedulerCase.build_done(self, epic, task))
@@ -286,34 +325,18 @@ class LargeFindingTests(ReviewCase):
         test_validation.git(self.repo, "worktree", "remove", "--force", str(tree))
         test_validation.git(self.repo, "update-ref", f"refs/heads/{branch}", merged)
 
-    def test_a_large_finding_waits_for_the_fix_and_is_filed_when_the_fix_settles(self):
-        epic, printed = self.finish_epic_at_the_review()
-        moved = self.reviewed(printed, {"comments": [finding("Echo", "small", "high")], **self.LARGE})
-        self.assertEqual(([], []), (moved["review"]["filed"], self.lap_actions(moved)))
-
-        done = self.report_fix(epic)
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        fixed = json.loads(done.stdout)
-        [task] = fixed["fix"]["filed"]
-        self.assertEqual([task], [each["task"] for each in self.lap_actions(fixed)])
-        self.assertIsNone(fixed["validation"])
-        self.assertEqual(["fix"], [each["action"] for each in moved["actions"]])
-
 
 class PassCapTests(ReviewCase):
-    LARGE = LargeFindingTests.LARGE
-
-    def three_passes_each_with_a_large_finding(self) -> tuple[str, dict]:
+    def three_passes_each_with_a_red_validation(self) -> tuple[str, dict]:
         epic, printed = self.finish_epic_at_the_review()
         for number in range(2):
-            moved = self.reviewed(printed, self.LARGE)
-            [task] = moved["review"]["filed"]
+            moved, task = self.red_validation(printed)
             printed = self.next_pass_review(moved, task, f"pass-{number}.txt")
-        return epic, self.reviewed(printed, self.LARGE)
+        moved, _ = self.red_validation(printed)
+        return epic, moved
 
     def test_the_fourth_pass_parks_the_epic_with_a_question_and_opens_no_lap(self):
-        epic, moved = self.three_passes_each_with_a_large_finding()
+        epic, moved = self.three_passes_each_with_a_red_validation()
 
         self.assertEqual([], self.lap_actions(moved))
         self.assertIn("human", self.shown(epic)["labels"])
@@ -321,8 +344,8 @@ class PassCapTests(ReviewCase):
         self.assertNotIn("gate.state", self.metadata(epic))
 
     def test_taking_the_human_label_off_runs_the_fourth_pass(self):
-        epic, moved = self.three_passes_each_with_a_large_finding()
-        [task] = moved["review"]["filed"]
+        epic, moved = self.three_passes_each_with_a_red_validation()
+        task = moved["validation"]["filed"]
 
         fixture.run([self.bd, "label", "remove", epic, "human"], self.repo)
         again = self.next_printed(epic)
@@ -344,6 +367,17 @@ class EndOfPassTests(ReviewCase):
         self.assertEqual("1", str(metadata["review.passes"]))
         for key in ("tidy.state", "cleanup.state", "review.reviewed"):
             self.assertNotIn(key, metadata)
+
+    def test_a_reviewed_pass_that_reaches_the_gate_is_counted_once_and_leaves_no_review_flag(self):
+        epic, printed = self.finish_epic_at_the_review()
+
+        moved = self.reviewed(printed, {})
+
+        self.assertEqual("pass", moved["validation"]["result"])
+        metadata = self.metadata(epic)
+        self.assertEqual("1", str(metadata["review.passes"]))
+        self.assertNotIn("review.reviewed", metadata)
+        self.assertEqual("done", metadata["tidy.state"])
 
 
 class PassCapWithoutReviewTests(ReviewCase):
@@ -370,6 +404,17 @@ class PassCapWithoutReviewTests(ReviewCase):
         self.assertEqual([], self.lap_actions(printed))
         self.assertIn("human", self.shown(epic)["labels"])
         self.assertTrue(any(text.startswith("Question: ") and "3 passes" in text for text in self.texts(epic)))
+
+    def test_a_pass_with_no_reviewable_file_that_reaches_the_gate_is_counted(self):
+        self.commit_in(self.repo, "gone.txt", "old\n")
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: "till"})
+
+        printed = self.merge_the_open_task(epic, self.next_printed(epic), "gone.txt")
+
+        self.assertEqual("pass", printed["validation"]["result"])
+        self.assertEqual("1", str(self.metadata(epic)["review.passes"]))
 
 
 if __name__ == "__main__":

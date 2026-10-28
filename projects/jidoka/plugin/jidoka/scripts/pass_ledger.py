@@ -1,11 +1,14 @@
 """The count of an epic's passes, what ending a pass resets, and the cap on the count.
 
 Review, validation and the scheduler all act on the end of a pass, and none of them names a key of another stage.
-A pass ends in one of three places: a review that files its large findings, a red full suite and a red holdout.
-Each calls `end_pass`, which counts the pass once and takes the test cleanup's and the tidy's state off the epic, so
-the next pass starts with both again. A settled review counts its pass early, with `counted_by_review`, and flags it;
-`end_pass` then finds the flag, takes it off and counts nothing, so the one pass is never counted twice. An epic with
-no file to review has no review to count its pass, and `end_pass` counts it, so such an epic still reaches the cap.
+A pass ends red, at a red full suite or a red holdout, or clean, when the epic goes to the acceptance gate. A red end
+calls `end_pass`, which counts the pass once and takes the test cleanup's and the tidy's state off the epic, so the
+next pass starts with both again. A clean end calls `end_clean_pass`, which counts the pass the same way and leaves
+the test cleanup's and the tidy's state as they are. A settled review counts its pass early, with `counted_by_review`,
+and flags it; the pass's end then finds the flag, takes it off and counts nothing, so the one pass is never counted
+twice, and the next pass starts with no flag. A pass with no file to review has no review to count it, and its end
+counts it, so such an epic still reaches the cap. Only a red validation or a send back at the gate starts a pass past
+the first, because a review files its large findings outside the epic.
 
 The pass count is capped at three. An epic that holds open tasks after its third pass would start a fourth:
 `parks_at_the_cap` says so, and `park_at_the_cap` parks the epic with a question instead, and records the count in
@@ -37,18 +40,29 @@ def counted_by_review(shown: dict) -> list[str]:
     return set_metadata((PASSES_KEY, count_of(shown, PASSES_KEY) + 1), (REVIEWED_KEY, 1))
 
 
-def end_pass(epic: str, main_tree: Path) -> None:
-    """Ends the epic's pass: counts it unless its review already did, and takes the test cleanup's and the tidy's
-    state off the epic, so the next pass starts unreviewed, with a test cleanup and a tidy."""
+def counted_at_the_end(epic: str, main_tree: Path) -> list[str]:
+    """The metadata that counts the epic's pass at its end, unless its review already did, and then takes the
+    review's flag off, so the next pass starts unreviewed."""
     shown = bd_show(epic, main_tree)
     if shown is None:
         raise PassError(f"bd show printed nothing usable for {epic}")
     if metadata_of(shown).get(REVIEWED_KEY):
-        counted = unset_metadata(REVIEWED_KEY)
-    else:
-        counted = set_metadata((PASSES_KEY, count_of(shown, PASSES_KEY) + 1))
+        return unset_metadata(REVIEWED_KEY)
+    return set_metadata((PASSES_KEY, count_of(shown, PASSES_KEY) + 1))
+
+
+def end_pass(epic: str, main_tree: Path) -> None:
+    """Ends the epic's pass red: counts it, and takes the test cleanup's and the tidy's state off the epic, so the
+    next pass starts with a test cleanup and a tidy."""
+    counted = counted_at_the_end(epic, main_tree)
     run(["bd", "update", epic, *unset_metadata(cleanup.STATE_KEY, tidy.STATE_KEY), *counted], main_tree,
         env_as_factory())
+
+
+def end_clean_pass(epic: str, main_tree: Path) -> None:
+    """Ends the epic's pass clean, on its way to the acceptance gate: counts it, and leaves the test cleanup's and the
+    tidy's state as they are."""
+    run(["bd", "update", epic, *counted_at_the_end(epic, main_tree)], main_tree, env_as_factory())
 
 
 def parks_at_the_cap(shown: dict, has_open_tasks: bool) -> bool:

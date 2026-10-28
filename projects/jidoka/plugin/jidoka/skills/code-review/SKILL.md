@@ -23,8 +23,8 @@ worker, with no subagent, as step 5 describes it. Give every finding a size
 and a confidence:
 
 - **size**: `small` is a few lines in one place; `medium` is one function or
-  one file; `large` reshapes a module or spans files, and is a task of its
-  own.
+  one file; `large` reshapes a module or spans files, and becomes a task of its
+  own, outside the epic, for a bench or a later epic.
 - **confidence**: `high`, `medium` or `low`, as in step 6. It is a grade, not
   a question's percent. Mechanical findings are `high`.
 
@@ -33,7 +33,8 @@ Write the lane's findings to the report as a JSON list of `{"file", "line",
 and `note` says what it looks like here and the fix. Write `[]` when the lane
 finds nothing. Change no other file, and end with the count of findings.
 
-The **Design** lane differs. Its `files` are every module the epic touched, and
+The **Design** lane differs. The factory runs it on an epic's first review
+only. Its `files` are every module the epic touched, and
 it reads each one whole, not as a diff, with the code that calls it and the
 code it calls where the judgment needs them. Its catalog is Part 3 of
 `smells.md`: Ousterhout's red flags, `../codebase-design/SKILL.md`'s terms and

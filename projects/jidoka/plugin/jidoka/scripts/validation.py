@@ -20,7 +20,8 @@ each command. A command's figures come from its output, as the targeted
 tests read it: dotnet test's summary lines and unittest's "Ran N tests" and
 "skipped=N". Output in neither shape counts no tests and no skips.
 
-Green puts the epic at the acceptance gate, through gate.py, with one comment that starts with
+Green ends the pass clean through pass_ledger.py, and puts the epic at the acceptance gate, through gate.py, with
+one comment that starts with
 "Acceptance gate:" and lists the commits the epic branch holds that main
 lacks, the figures, the Tests removed table from the epic's `cleanup.removed`
 metadata when a test cleanup removed any test, the review's findings of low confidence from `review.low`, which
@@ -289,6 +290,7 @@ def record(epic: str, validated: Validated, main_tree: Path) -> None:
 
 def reach_the_gate(epic: str, branch: str, validated: Validated, hand_run: list[HandRunGroup],
                    main_tree: Path) -> None:
+    pass_ledger.end_clean_pass(epic, main_tree)
     gate.reach_the_gate(epic, branch, validated.head, figures_lines(validated), hand_run_lines(hand_run), main_tree)
 
 

@@ -118,9 +118,11 @@ _Avoid_: Feature branch, integration branch
 One trip of an epic through the factory: laps for its tasks, side by side
 where their dependencies allow, then the epic's own stages over all of its
 work. A pass ends clean, and the epic goes to the human for acceptance,
-or it ends with new tasks in the epic, and the next pass begins. An epic
-runs three passes at most: one that would start a fourth parks with a
-question, and each pass past the third asks again.
+or it ends with new tasks in the epic, and the next pass begins. Only a red
+validation or the human's send back at the acceptance gate puts new tasks in
+the epic, so only they start another pass. An epic runs three passes at
+most: one that would start a fourth parks with a question, and each pass
+past the third asks again.
 _Avoid_: Round, cycle, sweep, loop; "pass" for a stage
 
 **Stage**:
@@ -200,14 +202,15 @@ _Avoid_: Polish, comment pass, prose cleanup
 
 **Review**:
 The stage of a pass after the tidy, in which the Comments, Standards and
-Spec lanes each read the epic's diff, and the Design lane reads the modules
-the epic touched, in a worker of their own, side by side.
+Spec lanes each read the epic's diff, and on the epic's first review the
+Design lane reads the modules the epic touched, in a worker of their own,
+side by side.
 Each review finding names a file and line, a size (small, medium or large)
 and a confidence (high, medium or low, a grade unlike a question's percent).
 Findings of low confidence are never fixed and are listed at the acceptance
-gate; small and medium ones go to the fix worker; large ones become tasks in
-the epic for the next pass. A later pass reviews only what changed since
-the last review.
+gate; small and medium ones go to the fix worker; large ones become open
+tasks outside the epic, linked discovered-from to it, for a bench or a later
+epic. A later pass reviews only what changed since the last review.
 _Avoid_: Code review, audit, spec review
 
 **Fix worker**:
@@ -330,9 +333,11 @@ on the finding. A finding's sightings show how often its code is worked on.
 _Avoid_: Hit, vote, occurrence
 
 **Design lane**:
-The review lane of a pass that judges the design of every module the epic
-touched, each read whole rather than as a diff, against one catalog: smells.md
-with Ousterhout's red flags, codebase-design's terms and Farley's tells.
+The review lane that judges the design of every module the epic touched,
+each read whole rather than as a diff, against one catalog: smells.md with
+Ousterhout's red flags, codebase-design's terms and Farley's tells. It runs
+on the epic's first review only, because it finds a refactor in almost any
+code it reads, and a later pass that ran it again would never settle.
 _Avoid_: Architecture review, design review
 
 **Lizard hint**:

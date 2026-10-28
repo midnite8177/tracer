@@ -70,7 +70,7 @@ track's stages, which the scheduler calls for in order.
 | test-cleanup | the pass | deep |
 | tidy | the pass | local |
 | review (comments, standards and spec lanes) | the pass | standard |
-| review (design lane) | the pass | deep |
+| review (design lane, on the epic's first review) | the pass | deep |
 | fix | the pass | standard |
 
 The merge stage runs only when newer work on the epic branch conflicts with
@@ -303,9 +303,10 @@ stop.
    `<epic-id> tidy started: <files> files on <head>` with the count of the
    action's `files`.
 
-   Actions whose `action` is `review` come together, one for each lane
-   (`comments`, `standards`, `spec`, `design`), and have no task: the tidy is
-   done. Start one lap worker for each, side by side, on the standard tier's
+   Actions whose `action` is `review` come together, one for each lane that
+   runs, and have no task: the tidy is done. The `comments`, `standards` and
+   `spec` lanes run on every review, and the `design` lane only on the epic's
+   first review. Start one lap worker for each, side by side, on the standard tier's
    route, and the `design` lane's on the deep tier's route, each with the first line `jidoka lap worktree: <worktree>`, the action's
    `worktree`, which the lanes share. Each prompt holds the paths of the
    glossary and the house rules, the epic as `bd show` printed it with its
@@ -396,21 +397,21 @@ stop.
    A worker that fails or is cut off is not reported: write
    `<epic-id> tidy ended: failed` and stop.
 
-   Wait for all four review lane workers. When each ended with
+   Wait for every review lane worker you started. When each ended with
    `{"outcome": "done"}`, report them once, together, with
    `scheduler report-review <epic-id> --jidoka-home ...`, which prints the
-   same JSON as `next`: a `fix` action, laps for the tasks its large findings
-   filed, or the validation that follows. Write `<epic-id> review ended: done`.
+   same JSON as `next`: a `fix` action, or the validation that follows. The
+   review files its large findings as open tasks outside the epic, which no
+   lap of the epic takes. Write `<epic-id> review ended: done`.
    Exit 1 means the report was refused; show stderr and stop, and the next
    `scheduler next` starts the lanes again. When any lane fails or is cut off,
    report none: write `<epic-id> review ended: failed` and stop.
 
    A fix worker's reply that ends with `{"outcome": "done"}` is reported with
    `scheduler report-fix <epic-id> --jidoka-home ...`, which prints the same
-   JSON as `next`, with the laps of the tasks the large findings filed or the
-   validation that follows. Write `<epic-id> fix ended: done`. Exit 1 means
-   the report was refused; show stderr and stop, and the next
-   `scheduler next` starts the worker again. A worker that fails or is cut off
+   JSON as `next`, with the validation that follows. Write
+   `<epic-id> fix ended: done`. Exit 1 means the report was refused; show
+   stderr and stop, and the next `scheduler next` starts the worker again. A worker that fails or is cut off
    is not reported: write `<epic-id> fix ended: failed` and stop.
 
    An epic that holds open tasks after its third pass parks with a question
