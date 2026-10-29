@@ -8,6 +8,13 @@
     padding: var(--jidoka-space-4) var(--jidoka-space-5) var(--jidoka-space-6);
 }
 
+/* A window as narrow as a phone keeps its width for the page and not for the margins. */
+@media (max-width: 576px) {
+    .content {
+        padding: var(--jidoka-space-3) var(--jidoka-space-3) var(--jidoka-space-6);
+    }
+}
+
 #blazor-error-ui {
     background-color: var(--jidoka-attention-subtle);
     color: var(--jidoka-attention-fg);

@@ -486,8 +486,9 @@ _Avoid_: Provider, backend, adapter
 
 **Machine settings**:
 What install and setup record about one machine in jidoka's home: its
-Python, config dirs, routes, the default budget of an epic, the reserves
-and jidoka's source repo. They hold nothing about a repo.
+Python, config dirs, routes, the default budget of an epic, the reserves,
+jidoka's source repo and the jidoka-ui that the installer published, which
+the factory starts. They hold nothing about a repo.
 _Avoid_: Global config, user settings, preferences
 
 **Setup**:

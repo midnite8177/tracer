@@ -11,7 +11,7 @@ public class ProjectCatalogTests
     {
         using var temp = new TempDirectory();
         var repository = Repository(temp, "campfire");
-        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
+        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System), new NoOnboardedProjects());
 
         var result = await catalog.AddAsync(repository);
 
@@ -24,7 +24,7 @@ public class ProjectCatalogTests
     {
         using var temp = new TempDirectory();
         var notARepository = temp.CreateSubdirectory("plain-directory");
-        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
+        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System), new NoOnboardedProjects());
 
         var result = await catalog.AddAsync(notARepository);
 
@@ -38,7 +38,7 @@ public class ProjectCatalogTests
     {
         using var temp = new TempDirectory();
         var repository = Repository(temp, "campfire");
-        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
+        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System), new NoOnboardedProjects());
         await catalog.AddAsync(repository);
 
         var result = await catalog.AddAsync(repository + Path.DirectorySeparatorChar);
@@ -55,7 +55,7 @@ public class ProjectCatalogTests
         var repository = Repository(temp, "campfire");
         var bd = new FakeBd().Holds("ready --json");
         var store = new InMemoryProjectRegistryStore();
-        var catalog = new ProjectCatalog(store, new BdAdapter(bd, TimeProvider.System));
+        var catalog = new ProjectCatalog(store, new BdAdapter(bd, TimeProvider.System), new NoOnboardedProjects());
 
         var firstAdd = catalog.AddAsync(repository);
         var secondAdd = catalog.AddAsync(repository);
@@ -74,7 +74,7 @@ public class ProjectCatalogTests
         using var temp = new TempDirectory();
         var repository = Repository(temp, "campfire");
         var store = new InMemoryProjectRegistryStore { Busy = true };
-        var catalog = new ProjectCatalog(store, new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
+        var catalog = new ProjectCatalog(store, new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System), new NoOnboardedProjects());
 
         var result = await catalog.AddAsync(repository);
 
@@ -88,7 +88,7 @@ public class ProjectCatalogTests
     {
         using var temp = new TempDirectory();
         var repository = Repository(temp, "campfire");
-        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
+        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System), new NoOnboardedProjects());
         await catalog.AddAsync(repository);
 
         var found = catalog.Find(ProjectPath.From(repository + Path.DirectorySeparatorChar));
@@ -109,7 +109,7 @@ public class ProjectCatalogTests
         using var temp = new TempDirectory();
         var repository = Repository(temp, "campfire");
         var bd = new FakeBd().Fails("ready --json", "no beads database found in this directory");
-        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(bd, TimeProvider.System));
+        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(bd, TimeProvider.System), new NoOnboardedProjects());
 
         var result = await catalog.AddAsync(repository);
 
@@ -122,7 +122,7 @@ public class ProjectCatalogTests
     public async Task GivesOneEntryForEachProjectAndMarksNoNameThatOneProjectAloneCarries()
     {
         using var temp = new TempDirectory();
-        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
+        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System), new NoOnboardedProjects());
         await catalog.AddAsync(Repository(temp, "campfire"));
         await catalog.AddAsync(Repository(temp, "widgets"));
 
@@ -136,7 +136,7 @@ public class ProjectCatalogTests
     public async Task MarksBothEntriesWhenTwoProjectsCarryTheSameDirectoryName()
     {
         using var temp = new TempDirectory();
-        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
+        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System), new NoOnboardedProjects());
         await catalog.AddAsync(Repository(temp, Path.Combine("one", "campfire")));
         await catalog.AddAsync(Repository(temp, Path.Combine("two", "campfire")));
         await catalog.AddAsync(Repository(temp, "widgets"));
@@ -150,7 +150,7 @@ public class ProjectCatalogTests
     public async Task ShowsTheWholePathOfAMarkedEntryAndTheDirectoryNameOfEveryOtherOne()
     {
         using var temp = new TempDirectory();
-        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
+        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System), new NoOnboardedProjects());
         var shared = Repository(temp, Path.Combine("one", "campfire"));
         await catalog.AddAsync(shared);
         await catalog.AddAsync(Repository(temp, Path.Combine("two", "campfire")));
@@ -166,7 +166,7 @@ public class ProjectCatalogTests
     public async Task MarksTwoNamesThatDifferInTheirCaseAloneAsOneName()
     {
         using var temp = new TempDirectory();
-        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System));
+        var catalog = new ProjectCatalog(new InMemoryProjectRegistryStore(), new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System), new NoOnboardedProjects());
         await catalog.AddAsync(Repository(temp, Path.Combine("one", "Campfire")));
         await catalog.AddAsync(Repository(temp, Path.Combine("two", "campfire")));
 

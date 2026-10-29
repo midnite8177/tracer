@@ -79,6 +79,22 @@ public sealed class TopBarMarkupTests : BunitContext
         Assert.Equal("doctor", TheLinkOf(bar, "Doctor"));
     }
 
+    [Fact]
+    public void LeadsTheFactoryLinkToTheFactoryView()
+    {
+        var bar = Render<TopBar>();
+
+        Assert.Equal("factory", TheLinkOf(bar, "Factory"));
+    }
+
+    [Fact]
+    public void LeadsTheSpendLinkToTheSpendView()
+    {
+        var bar = Render<TopBar>();
+
+        Assert.Equal("spend", TheLinkOf(bar, "Spend"));
+    }
+
     private static string? TheBoardLinkOf(IRenderedComponent<TopBar> bar) => TheLinkOf(bar, "Board");
 
     private static string? TheLinkOf(IRenderedComponent<TopBar> bar, string words) =>

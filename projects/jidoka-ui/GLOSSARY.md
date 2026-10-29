@@ -77,7 +77,7 @@ _Avoid_: Small code, dim id, secondary machine text
 The small control beside machine text that puts that text on the clipboard.
 It marks the one text that a person pressed it for last, so a page of many
 ids says which one the clipboard holds. The browser session holds the mark,
-thus one text carries it at a time. The mark carries the copy outcome, and
+so one text carries it at a time. The mark carries the copy outcome, and
 the button draws a check for a copy that landed and a warning icon for one
 that reached no clipboard. A press that reached no clipboard also puts the
 copy reason beside the button.
@@ -216,7 +216,8 @@ _Avoid_: Header, navbar, sidebar, nav menu, chrome
 
 **Project picker**:
 The control in the top bar that names the active project and switches it.
-It shows one entry for each project of the registry, and a pick is a switch.
+It shows one entry for each project of the registry and each onboarded
+project, and a pick is a switch.
 On a page that shows one project, a pick walks to the address of the picked
 project. On a page that belongs to no project, it makes that project active
 and stays where the person stands.
@@ -250,14 +251,18 @@ _Avoid_: Settings, configuration, project list
 
 **Onboarded project**:
 A project that the app lists because jidoka onboarded it, which it reads
-from jidoka's machine settings beside the registry. It appears wherever a
-project of the registry appears. The app never writes jidoka's settings,
-so only jidoka takes one off the list.
+from jidoka's repo settings beside the registry, one file for each repo,
+which name the repo's main worktree. It appears wherever a project of the
+registry appears, after the registry's own projects, and once when the
+registry holds it too. A repo whose folder has no `.beads/` directory is
+not listed. The app never writes jidoka's settings, so only jidoka takes
+one off the list, and the app refuses to add one to the registry.
 _Avoid_: Imported project, jidoka repo
 
 **Project catalog**:
-The registry together with the rules that guard an addition. The catalog
-adds a project; the registry only holds one.
+The registry and the onboarded projects together, with the rules that
+guard an addition. The catalog adds a project and lists every project;
+the registry only holds the ones that a person added.
 _Avoid_: Manager, service
 
 **Active project**:
@@ -279,10 +284,10 @@ so it stays where it stands.
 _Avoid_: Change, pick, selection, restore
 
 **Project entry**:
-One project of the registry, as the project picker shows it: the project
+One project of the catalog, as the project picker shows it: the project
 path, the directory name, and a mark that says another project carries the
 same directory name. The catalog sets the mark, because it is a fact about
-the registry and not about the one project. The picker shows the project
+the whole list and not about the one project. The picker shows the project
 path of a marked entry, because a name that two projects carry names
 neither of them.
 _Avoid_: Item, option, choice, row
@@ -360,7 +365,7 @@ _Avoid_: Click, mouse event, gesture, selection
 **Pressable row**:
 The row that answers a row press. It holds where the press went down, it
 reads the drag, and it hands the release to the view that drew it. The
-board and the needs-you view both draw one, thus a change to what a press
+board and the needs-you view both draw one, so a change to what a press
 means edits one place. The cells inside it belong to the view.
 _Avoid_: Row component, clickable row, table row
 
@@ -385,7 +390,7 @@ The tab that the app opens beside this one, for a release that asks for
 it. A row of the board and a row of the needs-you view are table rows and
 not links, so the browser has nothing of its own to open and the app asks
 it. The page that the person stands on stays as it is, with its filter,
-its selection and its collapsed rows, thus a person reads a bead and
+its selection and its collapsed rows, so a person reads a bead and
 returns to the same page. A browser can refuse to open the tab, and the
 person then stays where they are.
 _Avoid_: Popup, window, second tab, background tab
@@ -534,7 +539,7 @@ expects an answer, and a write that answers before that moment carries
 none. A row of a bulk plan is the exception and carries it at once,
 because the person pressed commit and is already waiting. The control refuses a further press from the press itself, and not
 from the moment the mark stands, so no write runs twice. The mark stays
-long enough to read, thus a write that answers just after it stands does
+long enough to read, so a write that answers just after it stands does
 not blink it off the screen. It says that a press is still going and
 nothing about what the write did.
 _Avoid_: Spinner, loading, busy, saving, progress
@@ -581,8 +586,11 @@ _Avoid_: Delete, remove, unlink, break
 
 **Comment**:
 One entry of the work journal of a bead, with its author and the moment
-that the author wrote it. bd holds the comments behind a command of their
-own, so no bead in a list carries them.
+that the author wrote it. The text is markdown, so a list reads as a list
+and a text diagram in a fenced block keeps every space. A line break
+inside a paragraph stays a line break, because its author lays the
+comment out line by line. bd holds the comments behind a command of their own, so no bead in a
+list carries them.
 _Avoid_: Note, message, log entry
 
 **Quick create**:
@@ -700,7 +708,7 @@ file beside the projects, so it outlasts the app. It belongs to the one
 project that the person saved it in, because an epic id and a label mean
 nothing in another project, and one project and one name together hold one
 filter.
-_Avoid_: Bookmark, view, favourite
+_Avoid_: Bookmark, view, favorite
 
 **Needs-you view**:
 Every bead that waits on a person, from every project of the registry, in
@@ -721,15 +729,44 @@ _Avoid_: Failed project, offline project, error
 
 **jidoka page**:
 A web page that jidoka wrote for one bead, which the app serves at an
-address of its own beside that bead and fills with its own controls. Once
+address of its own beside that bead and fills with its own controls. The
+file sits in jidoka's home, in the folder named for the repository that
+holds the bead, and the app only reads it. It is one of three kinds: the
+question page of a task, the gate page of an epic and the handoff page of
+an epic. The detail page of a bead links to each page that sits beside it.
+The app draws the page inside an element of its own, with the stylesheet of
+the page scoped to that element, so the page restyles nothing else. Once
 the bead has moved on, the page stays readable and its controls stop
 working, because the bead wins.
 _Avoid_: Explainer, report, page alone
 
+**Slot**:
+An element that a jidoka page marks with `data-jidoka-slot`, where the app
+draws a control. The name in the attribute says which control: `answer-panel`
+takes the answer panel, and `decide-panel` takes the gate box. A slot that the
+app has no control for keeps the placeholder text that the page wrote in it.
+_Avoid_: Placeholder, hole, mount point
+
+**Moved on**:
+The state of a bead that no longer waits on what a jidoka page asks. For a
+question page it means the bead lost the human label or closed. For a gate
+page it means the epic no longer waits at the acceptance gate. The page
+then draws its controls grayed and taking no press, and says so. It
+stands on the bead as `bd` shows it, so a reload, a press that answered and
+an agent that took the label off all give it.
+_Avoid_: Stale, expired, answered, disabled
+
 **Answer panel**:
 The control the app draws for a question that jidoka asked on a bead, from
-the options and the recommendation that the bead carries. The same panel
-appears on the detail page, in the needs-you view and in a jidoka page.
+the options and the recommendation that the bead carries in its metadata.
+It stands only while the bead carries the human label, because the metadata
+keeps the question after the answer. A press on an option answers: the app
+comments the option on the bead through `bd`, then takes the human label
+off, and it posts the comment once even when the label comes off on a
+second press. The panel reads no jidoka page, so it works for a bead that
+has none. The same panel appears on the detail page, in the needs-you view
+and in the answer-panel slot of a question page. On a question page whose
+bead has moved on, the panel shows its options grayed.
 _Avoid_: Reply box, answer form
 
 **Factory view**:
@@ -737,20 +774,97 @@ Every epic that jidoka's factory holds, from every project of the
 registry, in one list, each with the lap of every bead it holds.
 _Avoid_: Dashboard, status page, pipeline view
 
+**Task table**:
+The table of the beads that one factory epic holds, which the factory view
+draws under each epic and the detail page of that epic draws as well. Each
+row is a bead that is not an epic, with its lap, its stage and its tries, read
+from the bead's metadata. Here the word task is jidoka's: a bead inside an
+epic that the factory holds. A closed row reads merged when it held a lap; an
+open row with no lap reads no lap yet. The tries count against the cap of the
+stage, three for every stage but the merge and two for the merge. An epic
+that carries the `factory` label has a task table, open or closed, and the
+factory view lists only the open ones. Its state is running, parked when it
+carries the `human` label, or at the acceptance gate.
+_Avoid_: Lap list, task list, pipeline
+
+**Factory watch**:
+The part of the app that follows the factory of every project in the
+registry, whichever page is open, and raises browser notifications. It
+reads the record that jidoka's notify script keeps on each factory epic,
+one entry for each event that jidoka sent, and the heartbeat files in
+jidoka's home. What stands when it first reads a project raises nothing,
+because jidoka told the person already. It checks again after each change
+of a project and every thirty seconds, because a heartbeat is a file and
+changes nothing under `.beads`.
+_Avoid_: Notifier, monitor, poller
+
+**Browser notification**:
+One message that the app asks the browser to show, for an event that jidoka
+sent or for a stale heartbeat. An event raises one: a task parked, an epic
+parked, only parked tasks left, the acceptance gate, a stopped factory, a
+paused factory, or a permission prompt of the host. A new fingerprint under
+the same event is a new event. A press on the message opens the bead's page.
+The browser lets a page show one only after the person pressed a button to
+allow it, so the layout offers that button while the browser has not been
+asked. Unrelated to a report of a write.
+_Avoid_: Alert, push, toast
+
+**Stale heartbeat**:
+The heartbeat of a running factory epic that is older than ninety seconds,
+a beat and a half. The factory watch warns once for it and stays quiet until
+the heartbeat has been fresh again, so each stopped host gives one warning.
+An epic with no heartbeat file, one that a person or the acceptance gate
+holds, and a heartbeat that was already stale when the app first read the
+project raise no warning.
+_Avoid_: Dead host, timeout, missed beat
+
 **Spend view**:
 What jidoka's workers cost, from jidoka's ledger, across every project:
-spend by week, then each epic with its cost, its merged tasks and its cost
-per merged task, grouped by tier, model, effort or track. A figure priced
-at list price on a subscription carries a ≈, so that it never reads as a
-bill.
+the weeks that hold a run, then for one week the cost per merged task and
+each epic with its total, its merged tasks and its breakdown. The person
+groups the cost by tier, model, effort or track, and the week and the
+grouping live in the address. The app opens the ledger read-only and never
+writes it, because jidoka's scripts are its only writer. A merged task is a
+closed bead that held a lap, as the task table reads it. The cost per merged
+task of a group is the dollars of the runs of merged tasks in that group,
+divided by the merged tasks that have such a run, so a task that ran on two
+models counts once for each. A run that belongs to no task, such as a
+pass worker or a request of a manager, counts in the epic and in no cost per
+merged task. A week starts on a Monday, in UTC. The figures are dollars at
+list price, not a bill, and the page says so; a run whose model had no listed
+price adds nothing and is counted aloud.
 _Avoid_: Cost page, billing, usage
 
 **Rules box**:
 The press-to-edit box on an epic's detail page that shows the epic's
-factory rules. Each setting is a picker whose choices jidoka's rules
-script lists, and Save runs that script, which can refuse a value and say
-why.
+factory rules. Only an open epic that carries the `factory` label has one,
+because jidoka's keys exist only there. Each setting is a picker whose
+choices jidoka's rules script lists, and Save runs that script, which can
+refuse a value and say why.
 _Avoid_: Settings panel, config editor
+
+**Gate box**:
+The box on the detail page of an epic that waits at the acceptance gate. It
+holds the gate's decisions as buttons: Merge, which takes the commit message
+that lands the epic on main, and Drop, which asks once before it closes the
+epic without landing it. Each press runs jidoka's gate script through the
+jidoka adapter, and the script's refusal comes back in its own words. The
+epic stops waiting once a decision lands, so the box leaves the detail page
+with the epic's gate state. The box also fills the decide-panel slot of the
+gate page, where it grays once the epic has moved on. It has no Send back
+button, because the send-back worker drafts the proposals in the acceptance
+session.
+_Avoid_: Decision panel, gate form, merge bar
+
+**Gate items box**:
+The box beside the gate box that holds the gate's small decisions. Wrong
+sits beside each numbered assumption and asks for a reason first, Restore
+beside each test that the test cleanup removed, and Keep and Close beside
+each open bead found outside the epic. The gate script lists the three
+(`gate.py items`), because it numbers the assumptions and finds the beads,
+and each press runs the same script. A list with no entry draws no heading,
+and the box reads the lists again after a press.
+_Avoid_: Findings panel, assumptions table
 
 ### Freshness
 

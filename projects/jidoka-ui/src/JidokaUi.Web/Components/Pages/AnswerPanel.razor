@@ -1,0 +1,143 @@
+@*
+    The question that jidoka asked on a bead, drawn from the options in the metadata of
+    that bead. A press on an option answers. It comments the option on the bead, and then
+    takes the human label off, because the label coming off is what gives the task its
+    next lap. The panel reads no page of jidoka, so it works for a bead that has none.
+*@
+
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Boards
+@using JidokaUi.Core.Projects
+@inherits CapabilityAware
+
+<section class="bead-box answer-panel @(MovedOn ? "answer-moved-on" : string.Empty)" aria-label="Question">
+    @if (MovedOn)
+    {
+        <p class="answer-title">This question has moved on</p>
+        <p class="answer-moved-on-note">The bead has moved on, so these answers do nothing.</p>
+    }
+    else
+    {
+        <p class="answer-title">A question waits on you</p>
+    }
+
+    @if (Probed && Refusal.Length > 0)
+    {
+        <p class="text-danger bead-message answer-refusal">@Refusal</p>
+    }
+
+    <ul class="answer-options" aria-label="Answers">
+        @foreach (var option in Question.Options)
+        {
+            <li class="answer-option @(Question.Recommends(option) ? "answer-recommended" : string.Empty)">
+                <button type="button"
+                        class="btn btn-sm @(Question.Recommends(option) ? "btn-primary" : "btn-outline-primary") answer-press"
+                        disabled="@(!CanAnswer(option))"
+                        aria-busy="@AriaBusy"
+                        @onclick="() => AnswerAsync(option)">@option.Name</button>
+                <span class="answer-confidence">@option.Confidence%</span>
+                @if (Question.Recommends(option))
+                {
+                    <span class="answer-recommended-mark pill-chip">Recommended</span>
+                }
+            </li>
+        }
+    </ul>
+
+    <BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
+
+    @if (!Probed)
+    {
+        <ProbePending />
+    }
+</section>
+
+@code {
+    /// <summary>The bead that the question was asked on.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>The options and the recommendation that the bead carries.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadQuestion Question { get; set; }
+
+    /// <summary>
+    /// True when the bead no longer waits on this question, because it lost the human label or
+    /// closed. The panel then shows its options grayed and takes no press, because the bead wins.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required bool MovedOn { get; set; }
+
+    /// <summary>Runs after the answer landed, so that the page reads the bead again.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    private static readonly BeadLabel TheHumanLabel = BeadLabelFor(Bead.HumanLabel);
+
+    private QuestionOption? commented;
+    private BeadQuestion? lastRead;
+
+    protected override ProjectPath OfProject => Address.Project;
+
+    protected override string WhenWritten => "The answer is on the bead and the human label is off.";
+
+    protected override void OnParametersSet()
+    {
+        if (Abandoned && !ReferenceEquals(Question, lastRead))
+        {
+            ForgetTheLastWrite();
+        }
+
+        lastRead = Question;
+    }
+
+    private string Refusal
+    {
+        get
+        {
+            var comment = Why(UiVerbs.AddAComment);
+            return comment.Length > 0 ? comment : Why(UiVerbs.LabelABead);
+        }
+    }
+
+    private bool CanAnswer(QuestionOption option) =>
+        !MovedOn
+        && Probed
+        && Refusal.Length == 0
+        && !Writing
+        && !Abandoned
+        && (commented is null || commented == option);
+
+    private Task AnswerAsync(QuestionOption option) =>
+        WriteAsync(() => AnswerWithAsync(option), OnWritten);
+
+    private async Task<BdWriteOutcome> AnswerWithAsync(QuestionOption option)
+    {
+        if (commented is null)
+        {
+            var comment = await Bd.CommentAsync(Address, option.Name);
+            if (!comment.Wrote)
+            {
+                return comment;
+            }
+
+            commented = option;
+        }
+
+        var removal = await Bd.RemoveLabelAsync(Address, TheHumanLabel);
+        return removal.Wrote
+            ? removal
+            : removal with
+            {
+                Message = $"The answer \"{option.Name}\" is on the bead, but the human label is still on. {removal.Message}",
+            };
+    }
+
+    private static BeadLabel BeadLabelFor(string word) =>
+        BeadLabel.TryFrom(word, out var label)
+            ? label
+            : throw new InvalidOperationException("The human label is a word.");
+}

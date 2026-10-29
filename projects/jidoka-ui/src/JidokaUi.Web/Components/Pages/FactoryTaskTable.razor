@@ -1,0 +1,46 @@
+@*
+    The task table of an epic that the factory holds, with one row for each task and
+    its lap, its stage and its tries. The factory view and the page of the epic
+    both draw it, so a task reads the same on either.
+*@
+
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Boards
+@using JidokaUi.Core.Factory
+@using JidokaUi.Core.Projects
+
+<table class="table table-sm align-middle factory-tasks">
+    <thead>
+        <tr>
+            <th>Task</th>
+            <th>Id</th>
+            <th>Lap</th>
+            <th>Stage</th>
+            <th>Tries</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var task in Tasks)
+        {
+            <tr class="factory-task">
+                <td><a href="@BeadPageAddress.Of(new BeadAddress(Project, task.Id))">@task.Title</a></td>
+                <td><BeadId Id="@task.Id" Quiet="true" /></td>
+                <td class="factory-lap">@task.Lap</td>
+                <td class="factory-stage">@task.Stage</td>
+                <td class="factory-tries">@task.Tries</td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    /// <summary>The project that holds the epic and its tasks, which a link to a task names.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required ProjectPath Project { get; set; }
+
+    /// <summary>The tasks of the epic, in the order the table draws them.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required IReadOnlyList<TaskLap> Tasks { get; set; }
+}

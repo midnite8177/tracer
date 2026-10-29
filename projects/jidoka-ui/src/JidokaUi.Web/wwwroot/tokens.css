@@ -52,6 +52,12 @@
     */
     --jidoka-focus-ring-width: 0.25rem;
 
+    /*
+        The least height of a press that a fingertip must hit on a phone,
+        44 pixels, the size Apple's guidelines give a touch target.
+    */
+    --jidoka-touch-target: 2.75rem;
+
     --jidoka-top-bar-height: 3.5rem;
     --jidoka-board-row-height: 2.25rem;
 

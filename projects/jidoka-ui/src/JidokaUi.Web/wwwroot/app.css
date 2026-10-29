@@ -97,7 +97,20 @@ h1:focus {
     border-left: var(--jidoka-space-1) solid var(--jidoka-danger-emphasis);
     border-radius: 0 var(--jidoka-radius) var(--jidoka-radius) 0;
     color: var(--jidoka-danger-fg);
+    margin-bottom: var(--jidoka-space-3);
     padding: var(--jidoka-space-2) var(--jidoka-space-3);
+}
+
+/* A short label on a ground of its own, in a pill, beside the text it names. */
+.pill-chip {
+    background-color: var(--jidoka-canvas-inset);
+    border: 1px solid var(--jidoka-border);
+    border-radius: var(--jidoka-radius-pill);
+    color: var(--jidoka-fg-muted);
+    display: inline-block;
+    font-size: var(--jidoka-text-small);
+    padding: 0 var(--jidoka-space-2);
+    white-space: nowrap;
 }
 
 /*
@@ -188,11 +201,6 @@ h2 {
     margin-bottom: var(--jidoka-space-1);
 }
 
-.bead-comment-text {
-    white-space: pre-wrap;
-}
-
-/* The controls that write to the bead. */
 .bead-writes {
     margin-top: var(--jidoka-space-3);
 }
@@ -338,7 +346,6 @@ textarea.bead-prose-editor {
     }
 }
 
-/* One fact box of the strip: a heading and one fact under it. */
 .bead-fact {
     border: 1px solid var(--jidoka-border);
     border-radius: var(--jidoka-radius);
@@ -386,7 +393,6 @@ textarea.bead-prose-editor {
     display: flex;
     flex-direction: column;
     gap: var(--jidoka-space-1);
-    /* Without these the backdrop covers the entries, and a pick only closes the picker. */
     position: relative;
     z-index: var(--jidoka-layer-picker);
 }
@@ -642,4 +648,35 @@ textarea.bead-prose-editor {
 .bead-status-stored,
 .bead-status-unknown {
     color: var(--jidoka-fg-muted);
+}
+
+/*
+    The way back from a jidoka page to its bead, above the page.
+*/
+.served-page-bar {
+    margin-bottom: var(--jidoka-space-3);
+}
+
+/*
+    The element that holds a jidoka page. The stylesheet of the page is nested in this
+    class, so it reaches nothing outside it.
+*/
+.jidoka-page {
+    max-width: 62rem;
+}
+
+/*
+    A control of the app in a slot that a page marks, once the bead has moved on. The
+    options stay readable and take no press, and the gray says that they do nothing.
+*/
+.answer-moved-on,
+.gate-moved-on {
+    filter: grayscale(1);
+    opacity: 0.6;
+}
+
+.answer-moved-on-note,
+.gate-moved-on-note {
+    color: var(--jidoka-fg-muted);
+    margin: 0 0 var(--jidoka-space-2);
 }

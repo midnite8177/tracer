@@ -40,6 +40,41 @@ class GateDecisionsCase(test_gate.GateCase):
     def decide(self, *args: str):
         return self.launch(GATE, *args)
 
+    def file_of_tests(self, task: str) -> str:
+        return f"tests/test_{task.replace('.', '_').replace('-', '_')}.py"
+
+    def removal(self, test: str, file: str) -> dict:
+        return {"test": test, "file": file, "covered_by": "test_total"}
+
+    def at_the_gate_after_a_cleanup(self) -> tuple[str, str, str]:
+        """An epic at the gate whose test cleanup removed two of the three tests its task added to one file; returns
+        the epic, its epic branch and the test file."""
+        return self.at_the_gate_after_cleaning(ONE_TEST, ["test_total_again", "test_total_once_more"], "test_total")
+
+    def at_the_gate_after_a_cleanup_that_deleted_the_file(self) -> tuple[str, str, str]:
+        """An epic at the gate whose test cleanup deleted the test file its task added, all three tests of it."""
+        return self.at_the_gate_after_cleaning(None, ["test_total", "test_total_again", "test_total_once_more"],
+                                               "specs/acceptance/till.feature")
+
+    def at_the_gate_after_cleaning(self, left: str | None, removed: list[str],
+                                   covered_by: str) -> tuple[str, str, str]:
+        epic, task, action = self.handed_off()
+        file = self.file_of_tests(task)
+        self.leave_in(Path(action["worktree"]), file, THREE_TESTS)
+        printed = self.report_printed(epic, task, "done", "--app", "shop", "--filter", "test_card")
+        [cleaning] = [each for each in printed["actions"] if each["action"] == "test-cleanup"]
+        if left is None:
+            (Path(cleaning["worktree"]) / file).unlink()
+        else:
+            self.leave_in(Path(cleaning["worktree"]), file, left)
+        Path(cleaning["report"]).write_text(json.dumps([{"test": test, "file": file, "covered_by": covered_by}
+                                                        for test in removed]), encoding="utf-8")
+        done = self.launch(test_scheduler.SCHEDULER, "report-cleanup", epic)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.settle_tidy_and_review(json.loads(done.stdout))
+        self.assertEqual("waiting", self.metadata(epic).get("gate.state"))
+        return epic, self.metadata(epic)["factory.branch"], file
+
 
 class TheGateCommentListsTheItemsTests(GateDecisionsCase):
     def test_the_gate_comment_numbers_each_assumption_under_the_task_whose_worker_made_it(self):
@@ -173,41 +208,6 @@ class KeepingOrClosingAFindingTests(GateDecisionsCase):
 
 
 class RestoringARemovedTestTests(GateDecisionsCase):
-    def file_of_tests(self, task: str) -> str:
-        return f"tests/test_{task.replace('.', '_').replace('-', '_')}.py"
-
-    def removal(self, test: str, file: str) -> dict:
-        return {"test": test, "file": file, "covered_by": "test_total"}
-
-    def at_the_gate_after_a_cleanup(self) -> tuple[str, str, str]:
-        """An epic at the gate whose test cleanup removed two of the three tests its task added to one file; returns
-        the epic, its epic branch and the test file."""
-        return self.at_the_gate_after_cleaning(ONE_TEST, ["test_total_again", "test_total_once_more"], "test_total")
-
-    def at_the_gate_after_a_cleanup_that_deleted_the_file(self) -> tuple[str, str, str]:
-        """An epic at the gate whose test cleanup deleted the test file its task added, all three tests of it."""
-        return self.at_the_gate_after_cleaning(None, ["test_total", "test_total_again", "test_total_once_more"],
-                                               "specs/acceptance/till.feature")
-
-    def at_the_gate_after_cleaning(self, left: str | None, removed: list[str],
-                                   covered_by: str) -> tuple[str, str, str]:
-        epic, task, action = self.handed_off()
-        file = self.file_of_tests(task)
-        self.leave_in(Path(action["worktree"]), file, THREE_TESTS)
-        printed = self.report_printed(epic, task, "done", "--app", "shop", "--filter", "test_card")
-        [cleaning] = [each for each in printed["actions"] if each["action"] == "test-cleanup"]
-        if left is None:
-            (Path(cleaning["worktree"]) / file).unlink()
-        else:
-            self.leave_in(Path(cleaning["worktree"]), file, left)
-        Path(cleaning["report"]).write_text(json.dumps([{"test": test, "file": file, "covered_by": covered_by}
-                                                        for test in removed]), encoding="utf-8")
-        done = self.launch(test_scheduler.SCHEDULER, "report-cleanup", epic)
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.settle_tidy_and_review(json.loads(done.stdout))
-        self.assertEqual("waiting", self.metadata(epic).get("gate.state"))
-        return epic, self.metadata(epic)["factory.branch"], file
-
     def test_restoring_a_removed_test_puts_only_that_test_back_on_the_epic_branch_as_a_commit_of_its_own(self):
         epic, branch, file = self.at_the_gate_after_a_cleanup()
         before = git(self.repo, "rev-parse", branch)
@@ -265,6 +265,73 @@ class RestoringARemovedTestTests(GateDecisionsCase):
         self.assertIn("test_total", done.stderr)
         self.assertEqual(before, git(self.repo, "rev-parse", branch))
         self.assertEqual(2, len(json.loads(self.metadata(epic)["cleanup.removed"])))
+
+class ReadingTheGateItemsTests(GateDecisionsCase):
+    """The `items` mode, which prints as JSON what the human's small decisions name, and writes nothing."""
+
+    def items(self, epic: str) -> dict:
+        done = self.decide("items", epic)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_items_list_each_test_the_cleanup_removed_with_its_file_and_the_test_that_covers_it(self):
+        epic, _, file = self.at_the_gate_after_a_cleanup()
+
+        printed = self.items(epic)
+
+        self.assertEqual([self.removal("test_total_again", file), self.removal("test_total_once_more", file)],
+                         printed["removed"])
+
+    def test_items_number_each_assumption_as_the_gate_comment_does_with_the_bead_that_made_it(self):
+        epic, task, _ = self.handed_off()
+        self.comment(epic, "assumption: the epic's own")
+        self.comment(task, f"assumption: {ASSUMPTION}")
+        self.build_done(epic, task)
+
+        printed = self.items(epic)
+
+        self.assertEqual(epic, printed["epic"])
+        self.assertEqual([{"number": 1, "bead": epic, "title": self.shown(epic)["title"], "text": "the epic's own"},
+                          {"number": 2, "bead": task, "title": self.shown(task)["title"], "text": ASSUMPTION}],
+                         printed["assumptions"])
+
+    def test_items_list_each_open_bead_found_outside_the_epic_and_where_it_was_found(self):
+        epic, task, _ = self.handed_off()
+        found = self.create("Round the tax the same way", "--type=task", "--deps", f"discovered-from:{task}")
+        self.create("Paint the shop", "--type=task")
+        self.build_done(epic, task)
+
+        printed = self.items(epic)
+
+        self.assertEqual([{"bead": found, "title": "Round the tax the same way", "found_in": task}],
+                         printed["outside"])
+
+    def test_items_are_empty_lists_when_the_gate_has_nothing_to_list(self):
+        epic, task, _ = self.handed_off()
+        self.build_done(epic, task)
+
+        printed = self.items(epic)
+
+        self.assertEqual(([], [], []), (printed["assumptions"], printed["removed"], printed["outside"]))
+
+    def test_items_write_nothing(self):
+        epic, task, _ = self.handed_off()
+        self.comment(task, f"assumption: {ASSUMPTION}")
+        self.build_done(epic, task)
+        before = (self.texts(epic), self.texts(task), self.metadata(epic))
+
+        self.items(epic)
+
+        self.assertEqual(before, (self.texts(epic), self.texts(task), self.metadata(epic)))
+
+    def test_items_of_an_epic_that_does_not_wait_at_the_gate_are_refused(self):
+        epic, task, _ = self.handed_off()
+        self.comment(task, f"assumption: {ASSUMPTION}")
+
+        done = self.decide("items", epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("acceptance gate", done.stderr)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,133 @@
+@*
+    The factory rules of an epic. Each setting is a picker whose choices come from jidoka's
+    rules script, and Save runs that script, which checks every value and posts one line on the
+    epic for each change. The page never writes a rule itself, and a value the script refuses
+    comes back in the script's own words.
+*@
+
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Boards
+@using JidokaUi.Core.Jidoka
+@inherits JidokaWriteAware
+
+<section class="bead-box rules-box" aria-label="Factory rules">
+    <h2 class="h4 bead-section">Factory rules</h2>
+
+    @if (read is null)
+    {
+        <p class="rules-reading">The app is asking jidoka's rules script for the settings…</p>
+    }
+    else if (read is Read<IReadOnlyList<RuleSetting>>.Unread unread)
+    {
+        <p class="text-danger bead-message rules-unread">@unread.Reason</p>
+    }
+    else if (read is Read<IReadOnlyList<RuleSetting>>.Given { Value: var settings })
+    {
+        @foreach (var setting in settings)
+        {
+            <div class="rules-setting mb-2">
+                <label class="form-label machine-text" for="rule-@setting.Name">@setting.Name</label>
+                <select id="rule-@setting.Name"
+                        class="form-select form-select-sm rules-pick"
+                        disabled="@Writing"
+                        value="@PickOf(setting)"
+                        @onchange="change => Pick(setting, change.Value?.ToString() ?? string.Empty)">
+                    @if (setting.Value is null)
+                    {
+                        <option value="">not set</option>
+                    }
+                    @foreach (var choice in ChoicesOf(setting))
+                    {
+                        <option value="@choice.Text">@choice.Text</option>
+                    }
+                </select>
+            </div>
+        }
+
+        <button type="button"
+                class="btn btn-sm btn-primary rules-save"
+                disabled="@(Writing || ChangesOf(settings).Count == 0)"
+                aria-busy="@(Writing ? "true" : "false")"
+                @onclick="() => SaveAsync(settings)">Save</button>
+    }
+
+    <BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
+</section>
+
+@code {
+    /// <summary>The epic whose rules the box shows.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>Runs after Save wrote, so that the page reads the epic and its new comments again.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    private Read<IReadOnlyList<RuleSetting>>? read;
+    private readonly Dictionary<string, string> picks = new(StringComparer.Ordinal);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (StartsReading(Address))
+        {
+            await ReadTheChoices();
+        }
+    }
+
+    private async Task ReadTheChoices()
+    {
+        var asked = Address;
+        var answer = await Jidoka.RuleChoicesAsync(asked);
+        if (!IsStillReading(asked))
+        {
+            return;
+        }
+
+        picks.Clear();
+        read = answer;
+    }
+
+    private static IEnumerable<RuleValue> ChoicesOf(RuleSetting setting) =>
+        setting.Value is { } held && !setting.Choices.Any(choice => choice.Json == held.Json)
+            ? setting.Choices.Prepend(held)
+            : setting.Choices;
+
+    private string PickOf(RuleSetting setting) =>
+        picks.TryGetValue(setting.Name, out var picked) ? picked : setting.Value?.Text ?? string.Empty;
+
+    private void Pick(RuleSetting setting, string text) => picks[setting.Name] = text;
+
+    private List<RuleChange> ChangesOf(IReadOnlyList<RuleSetting> settings)
+    {
+        var changes = new List<RuleChange>();
+        foreach (var setting in settings)
+        {
+            var picked = ChoicesOf(setting).FirstOrDefault(choice => choice.Text == PickOf(setting));
+            if (picked is not null && !setting.Holds(picked))
+            {
+                changes.Add(new RuleChange(setting.Name, picked));
+            }
+        }
+
+        return changes;
+    }
+
+    private async Task SaveAsync(IReadOnlyList<RuleSetting> settings)
+    {
+        var changes = ChangesOf(settings);
+        if (changes.Count == 0)
+        {
+            return;
+        }
+
+        var outcome = await WriteAsync(
+            () => Jidoka.SetRulesAsync(Address, changes),
+            _ => "jidoka's rules script saved the rules and posted a line on the epic for each change.");
+        if (outcome is { Wrote: true })
+        {
+            await ReadTheChoices();
+            await OnWritten.InvokeAsync();
+        }
+    }
+}

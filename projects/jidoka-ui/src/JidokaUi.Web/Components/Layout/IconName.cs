@@ -5,6 +5,8 @@ public enum IconName
 {
     Board,
     NeedsYou,
+    Factory,
+    Spend,
     Doctor,
     Projects,
     Add,

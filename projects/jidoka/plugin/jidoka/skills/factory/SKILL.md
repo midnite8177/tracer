@@ -20,6 +20,7 @@ The scripts, run from inside the repo:
 - route: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/route.py"`
 - repo settings: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py"`
 - watcher: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/watch.py"`
+- jidoka-ui: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/ui.py"`
 
 The skill folder is the directory that holds this SKILL.md. Write every
 path as one absolute path with the `../..` resolved, so the launcher is
@@ -37,6 +38,9 @@ The manager writes exactly one line in this session per event, and nothing
 between events: no plans, no narration, no summary of a worker's reply, no
 echo of a script's output. The events and their lines:
 
+- jidoka-ui already answered: `jidoka-ui: answering at <address>`
+- jidoka-ui started: `jidoka-ui started: <address>`
+- jidoka-ui is down: `jidoka-ui down: <why>`
 - a lap's research brief started: `<task> research started: lap <lap>, slot <slot>, <tier> tier on <model>`
 - a lap's build started: `<task> build started: lap <lap>, slot <slot>, <tier> tier on <model>`
 - a lap's app check started: `<task> app-check started: lap <lap>, slot <slot>, <tier> tier on <model>`
@@ -107,7 +111,15 @@ is no try.
 1. **Check.** Run `factory check`. Exit 1 means this session cannot run
    lap workers under the lap mod. Its message names the config dir that
    lacks jidoka, or says to start a new session. Show it verbatim and
-   stop. Exit 0 prints one line; show it.
+   stop. Exit 0 prints one line; show it. Then run
+   `jidoka-ui start --jidoka-home ... --wait 60`. It starts jidoka-ui when
+   its address does not answer, so the human can answer questions from the
+   board and the phone, and returns once the address answers. It prints one
+   JSON object whose `state` is `answering`, `started`, `not installed` or
+   `failed`. Write the jidoka-ui event line for it: `answering` and
+   `started` with its `address`, and the other two as down with the first
+   line of its `why`. Exit 1 is no refusal: the factory runs without
+   jidoka-ui, so go on.
 2. **Route and settings.** Run `bench route standard --jidoka-home ...`,
    then `bench route deep --jidoka-home ...`, then `repo settings show`. Keep each app's `name`, `test` and
    `test_target` for the workers' prompts. Run `bench route light` too the
@@ -201,7 +213,7 @@ is no try.
      those words through unslop. A worker asks only when the bead, the
      epic, the glossary and the ADRs do not settle the choice, and its
      recommendation is below 90% or costly to reverse. Otherwise it makes
-     the choice, records it in its notes as an assumption, and goes on: a
+     the choice, records it in its notes as an assumption, and goes on. A
      question that only confirms the design parks a task for nothing.
 
      A permission question is the question about a denied call that has no

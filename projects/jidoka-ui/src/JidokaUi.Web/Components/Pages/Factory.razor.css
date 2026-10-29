@@ -1,0 +1,14 @@
+.factory-path {
+    font-size: var(--jidoka-text-small);
+    font-weight: normal;
+    margin-left: var(--jidoka-space-2);
+}
+
+.factory-epic {
+    margin-bottom: var(--jidoka-space-4);
+}
+
+/* What holds the epic, as a chip beside its title. */
+.factory-state {
+    font-weight: normal;
+}

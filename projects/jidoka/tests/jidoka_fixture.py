@@ -3,7 +3,7 @@
 A checkout is a temporary git repo holding copies of install.py, release.py
 and plugin/. The claude, codex and bd stand-ins are small executables in a
 bin folder that becomes the whole PATH, so a test decides which tools exist.
-The claude and codex stand-ins append one JSON line per call to a log file.
+The claude, codex and dotnet stand-ins append one JSON line per call to a log file.
 
 A fake beads workspace is a store of fake_bd.py, the bd stand-in that the
 tests of the scripts that read and write beads put first on the PATH,
@@ -326,6 +326,41 @@ def write_codex(path: Path, log: Path, state: Path, fail_on: str) -> None:
         "else:",
         "    refuse('the fake codex does not know this command')",
         "state.write_text(json.dumps(marketplaces), encoding='utf-8')",
+        ""]))
+
+
+def write_dotnet(path: Path, log: Path) -> None:
+    """Writes a dotnet that logs its arguments, its folder and JIDOKA_HOME.
+
+    `publish <project> ... --output <folder>` writes JidokaUi.Web.dll into the folder, with a copy of the project file
+    beside it. `<app> --port <port>` prints a line and answers HTTP on that port of the loopback until it is killed,
+    as a published jidoka-ui does.
+    """
+    write_executable(path, "\n".join([
+        f"#!{sys.executable}",
+        "import http.server, json, os, shutil, sys",
+        "from pathlib import Path",
+        "argv = sys.argv[1:]",
+        f"with open({str(log)!r}, 'a', encoding='utf-8') as fh:",
+        "    fh.write(json.dumps({'tool': 'dotnet', 'argv': argv, 'cwd': os.getcwd(), "
+        "'jidoka_home': os.environ.get('JIDOKA_HOME')}) + '\\n')",
+        "if argv[:1] == ['publish']:",
+        "    output = Path(argv[argv.index('--output') + 1])",
+        "    output.mkdir(parents=True, exist_ok=True)",
+        "    (output / 'JidokaUi.Web.dll').write_text('published\\n', encoding='utf-8')",
+        "    shutil.copy(argv[1], output / Path(argv[1]).name)",
+        "    sys.exit(0)",
+        "port = int(argv[argv.index('--port') + 1])",
+        "class Answer(http.server.BaseHTTPRequestHandler):",
+        "    def do_GET(self):",
+        "        self.send_response(200)",
+        "        self.end_headers()",
+        "        self.wfile.write(b'jidoka-ui\\n')",
+        "    def log_message(self, format, *args):",
+        "        pass",
+        "server = http.server.HTTPServer(('127.0.0.1', port), Answer)",
+        "print('listening', flush=True)",
+        "server.serve_forever()",
         ""]))
 
 

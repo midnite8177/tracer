@@ -1,0 +1,162 @@
+@page "/spend"
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Boards
+@using JidokaUi.Core.Spend
+@inject SpendReader Reader
+@inject NavigationManager Navigation
+@inject TimeProvider Clock
+
+<PageTitle>Spend</PageTitle>
+
+<h1>Spend</h1>
+
+<p class="text-muted">
+    What the factory spent in each week, from jidoka's ledger, priced in dollars at list price. The app reads the
+    ledger and never writes it.
+</p>
+
+@if (view is null)
+{
+    <p>The app is reading the ledger…</p>
+}
+else
+{
+    @foreach (var reason in view.Reasons)
+    {
+        <p class="failure-message">@reason</p>
+    }
+
+    <nav class="spend-choices" aria-label="Week">
+        <strong>Week</strong>
+        @foreach (var week in WeeksToOffer(view))
+        {
+            <a class="spend-choice" href="@SpendAddress.Of(week.Start, view.By)"
+               aria-current="@(week.Start == view.Week ? "page" : null)">
+                @SpendAddress.DayText(week.Start)
+                <span class="text-muted">@SpendMoney.Text(week.Dollars)</span>
+            </a>
+        }
+    </nav>
+
+    <nav class="spend-choices" aria-label="Group by">
+        <strong>Group by</strong>
+        @foreach (var by in Enum.GetValues<SpendGrouping>())
+        {
+            <a class="spend-choice" href="@SpendAddress.Of(view.Week, by)"
+               aria-current="@(by == view.By ? "page" : null)">@by.Word()</a>
+        }
+    </nav>
+
+    @if (view.UnpricedRuns > 0)
+    {
+        <p class="text-muted spend-unpriced">
+            @view.UnpricedRuns run@(view.UnpricedRuns == 1 ? "" : "s") of this week had a model with no listed price and
+            add no dollars.
+        </p>
+    }
+
+    <h2>Cost per merged task, by @view.By.Word()</h2>
+
+    @if (view.PerMergedTask.Count == 0)
+    {
+        <p class="text-muted spend-none">No merged task has a run in the week of @SpendAddress.DayText(view.Week).</p>
+    }
+    else
+    {
+        <table class="table table-sm align-middle spend-per-task">
+            <thead>
+                <tr>
+                    <th>@view.By.Word()</th>
+                    <th>Merged tasks</th>
+                    <th>Dollars</th>
+                    <th>Per merged task</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var group in view.PerMergedTask)
+                {
+                    <tr class="spend-group">
+                        <td class="spend-name">@group.Group</td>
+                        <td class="spend-tasks">@group.MergedTasks</td>
+                        <td class="spend-dollars">@SpendMoney.Text(group.Dollars)</td>
+                        <td class="spend-per">@SpendMoney.Text(group.DollarsPerTask)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <h2>By epic</h2>
+
+    @if (view.Epics.Count == 0)
+    {
+        <p class="text-muted spend-none">The ledger holds no run in the week of @SpendAddress.DayText(view.Week).</p>
+    }
+
+    @foreach (var epic in view.Epics)
+    {
+        <section class="spend-epic">
+            <h3 class="h5">
+                @if (epic.Project is { } project)
+                {
+                    <a href="@BeadPageAddress.Of(new BeadAddress(project, epic.Id))">@epic.Title</a>
+                    <BeadId Id="@epic.Id" Quiet="true" />
+                }
+                else
+                {
+                    @epic.Title
+                }
+                <span class="spend-total">@SpendMoney.Text(epic.Dollars)</span>
+            </h3>
+            <p class="text-muted spend-merged">@MergedWords(epic)</p>
+            <table class="table table-sm align-middle spend-breakdown">
+                <thead>
+                    <tr>
+                        <th>@view.By.Word()</th>
+                        <th>Dollars</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var group in epic.Breakdown)
+                    {
+                        <tr class="spend-group">
+                            <td class="spend-name">@group.Group</td>
+                            <td class="spend-dollars">@SpendMoney.Text(group.Dollars)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+    }
+}
+
+@code {
+    // Blazor sets the parameters of a page again when its query changes only if the page takes a
+    // parameter from the query. The page reads the address itself, so these values are never read.
+    [SupplyParameterFromQuery(Name = SpendAddress.WeekQueryName)]
+    public string? Week { get; set; }
+
+    [SupplyParameterFromQuery(Name = SpendAddress.GroupQueryName)]
+    public string? By { get; set; }
+
+    private SpendView? view;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var week = SpendAddress.WeekIn(Navigation.Uri) ?? SpendReader.WeekOf(Clock.GetUtcNow());
+        var by = SpendAddress.GroupingIn(Navigation.Uri) ?? SpendGrouping.Tier;
+        view = await Reader.ReadAsync(week, by);
+    }
+
+    private static string MergedWords(EpicSpend epic) =>
+        epic.DollarsPerMergedTask is { } per
+            ? $"{epic.MergedTasks} merged task{(epic.MergedTasks == 1 ? "" : "s")}, {SpendMoney.Text(per)} per merged task"
+            : "No task of this epic merged in the week.";
+
+    // The weeks that hold a run, and the week on view when it holds none, so the choice never
+    // lacks the week that the page shows.
+    private static IEnumerable<WeekSpend> WeeksToOffer(SpendView shown) =>
+        shown.Weeks.Any(week => week.Start == shown.Week)
+            ? shown.Weeks
+            : [.. shown.Weeks.Append(new WeekSpend(shown.Week, 0m, 0)).OrderByDescending(week => week.Start)];
+}

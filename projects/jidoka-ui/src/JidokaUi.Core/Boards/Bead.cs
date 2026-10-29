@@ -7,6 +7,7 @@ namespace JidokaUi.Core.Boards;
 /// <param name="Priority">The priority number, or null when the bead states none.</param>
 /// <param name="ParentId">The id of the epic that holds this bead, or an empty string.</param>
 /// <param name="Blockers">The ids of the beads that must close before this one, as its own edges name them.</param>
+/// <param name="Metadata">The metadata keys of this bead as text, which jidoka writes and the app only reads.</param>
 public sealed record Bead(
     string Id,
     string Title,
@@ -18,18 +19,21 @@ public sealed record Bead(
     BeadProse Prose,
     IReadOnlyList<string> Blockers,
     string Status,
-    string CloseReason)
+    string CloseReason,
+    IReadOnlyDictionary<string, string> Metadata)
 {
     /// <summary>The label that marks a bead as one that waits on a person.</summary>
     public const string HumanLabel = "human";
+
+    /// <summary>The question that jidoka asked on this bead, read from its metadata, or null when it asked none.</summary>
+    public BeadQuestion? Question { get; } = BeadQuestion.From(Metadata);
 
     /// <summary>True when this bead states a priority of its own.</summary>
     public bool HasPriority => Priority is not null;
 
     /// <summary>
-    /// A priority as text: the number alone, which the board draws and a part of the board filter
-    /// names. The board and the filter bar read the same rule, so one press and one control name a
-    /// priority the same way.
+    /// A priority as text, the number alone. The board and the filter bar both use this rule, so
+    /// they name a priority the same way.
     /// </summary>
     public static string PriorityAsText(long priority) => priority.ToString(CultureInfo.InvariantCulture);
 
@@ -66,13 +70,18 @@ public sealed record Bead(
 
     public bool NeedsYou => Labels.Contains(HumanLabel, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// The question that waits for an answer, or null. The metadata keeps the question after the
+    /// answer, so only a bead that still carries the human label has one to answer.
+    /// </summary>
+    public BeadQuestion? QuestionToAnswer => NeedsYou ? Question : null;
+
     /// <summary>A close reason belongs to a closed bead, so an open bead never shows one.</summary>
     public bool HasCloseReason => IsClosed && CloseReason.Length > 0;
 
     // The edge types with which a version of bd states that an epic holds a bead.
     private static readonly string[] ParentEdgeTypes = ["parent-child", "parent"];
 
-    // The edge type with which bd states that one bead must close before another.
     private const string BlocksEdgeType = "blocks";
 
     public static Bead From(BeadRecord record)
@@ -92,7 +101,8 @@ public sealed record Bead(
                 record.Text(BeadFields.Candidates("notes"))),
             TargetsOf(edges, BlocksEdgeType),
             record.Text(BeadFields.Candidates("status")),
-            record.Text(BeadFields.Candidates("close-reason")));
+            record.Text(BeadFields.Candidates("close-reason")),
+            record.TextsByName(BeadFields.MetadataNames));
     }
 
     // The epic that holds this bead. Some versions of bd name it in a field of its own, and others

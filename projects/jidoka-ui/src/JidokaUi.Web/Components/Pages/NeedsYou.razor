@@ -1,6 +1,7 @@
 @page "/needs-you"
 @using JidokaUi.Core.Beads
 @using JidokaUi.Core.Boards
+@using JidokaUi.Core.Jidoka
 @using JidokaUi.Core.Look
 @using JidokaUi.Core.Projects
 @inject NeedsYouReader Reader
@@ -47,7 +48,7 @@ else
             <span class="text-muted machine-text needs-you-path">@project.Project.Value</span>
         </h2>
 
-        <table class="table table-sm table-hover align-middle">
+        <table class="table table-sm table-hover align-middle needs-you-table">
             <thead>
                 <tr>
                     <th>Title</th>
@@ -63,23 +64,31 @@ else
                 {
                     var address = new BeadAddress(project.Project, bead.Id);
                     <PressableRow Class="needs-you-row" Style="@null" OnOpen="up => Open(address, up)">
-                        <td>
+                        <td class="needs-you-title-cell">
                             <RowTitle Class="needs-you-title btn btn-link p-0 align-baseline"
                                       Address="@BeadPageAddress.Of(address)"
                                       Tooltip="@null"
                                       Text="@bead.Title" />
                         </td>
-                        <td><span class="machine-text needs-you-project-chip">@project.Project.DirectoryName</span></td>
-                        <td><BeadId Id="@bead.Id" Quiet="true" /></td>
-                        <td>@bead.Type</td>
-                        <td>@(bead.HasPriority ? $"p{bead.PriorityText}" : "—")</td>
-                        <td>
+                        <td class="needs-you-project-cell"><span class="machine-text needs-you-project-chip pill-chip">@project.Project.DirectoryName</span></td>
+                        <td class="needs-you-fact"><BeadId Id="@bead.Id" Quiet="true" /></td>
+                        <td class="needs-you-fact">@bead.Type</td>
+                        <td class="needs-you-fact">@(bead.HasPriority ? $"p{bead.PriorityText}" : "—")</td>
+                        <td class="needs-you-fact">
                             @foreach (var label in bead.Labels)
                             {
                                 <span class="badge text-bg-light me-1">@label</span>
                             }
                         </td>
                     </PressableRow>
+                    @if (JidokaParts.Of(bead).Question is { } question)
+                    {
+                        <tr class="needs-you-answer">
+                            <td class="needs-you-answer-cell" colspan="6">
+                                <AnswerPanel @key="address" Address="address" Question="question" MovedOn="false" />
+                            </td>
+                        </tr>
+                    }
                 }
             </tbody>
         </table>
@@ -99,8 +108,6 @@ else
 
     public void Dispose() => Backlogs.Changed -= OnBacklogChanged;
 
-    // Reads the project that changed again. Every other project keeps the beads that this view
-    // already holds, so a write in one repository costs no run of bd in the others.
     private void OnBacklogChanged(BacklogChange change) => _ = InvokeAsync(() => Reread(change.Project));
 
     private async Task Reread(ProjectPath project)
@@ -114,9 +121,6 @@ else
         StateHasChanged();
     }
 
-    // Opens the bead that a press on a row asks for. A press that leads nowhere reads the projects
-    // again and says why, because the registry lost that project after this view read it. It clears
-    // the answer of an older press, so two messages never stack.
     private async Task Open(BeadAddress bead, MouseEventArgs release)
     {
         var destination = BeadDestination.Of(Catalog, bead);

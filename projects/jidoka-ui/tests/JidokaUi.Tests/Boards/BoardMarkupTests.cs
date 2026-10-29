@@ -25,16 +25,12 @@ public sealed class BoardMarkupTests : BunitContext
     private const string OneBead =
         """[{"id": "x-1", "title": "First", "issue_type": "task", "priority": 2, "status": "open"}]""";
 
-    // One bead that states a Demo line, so no row of that board carries a no-demo marker.
     private const string OneBeadWithADemoLine =
         """
         [{"id": "x-1", "title": "First", "issue_type": "task", "priority": 2, "status": "open",
           "description": "## Demo\n\nRead the board."}]
         """;
 
-    // Two beads that differ in every fact a press can set: the type, the priority, the labels and
-    // the Demo line. A press on one of them therefore takes one bead off the board and keeps the
-    // other.
     private const string TwoBeads =
         """
         [{"id": "x-1", "title": "First", "issue_type": "task", "priority": 2, "status": "open",
@@ -43,7 +39,6 @@ public sealed class BoardMarkupTests : BunitContext
           "labels": ["docs"]}]
         """;
 
-    // What a re-read of TwoBeads gives back once x-1 leaves the default view, as a defer does.
     private const string TwoBeadsWithTheFirstDeferred =
         """
         [{"id": "x-2", "title": "Second", "issue_type": "bug", "priority": 3, "status": "open",
@@ -464,7 +459,6 @@ public sealed class BoardMarkupTests : BunitContext
 
         bd.Answers(TheCreateOfANewBead, "x-2\n");
 
-        // Moving the clock before this render leaves the floor timer unset, and the mark never hides.
         board.WaitForAssertion(() => Assert.Equal("false", board.Find("button.btn-primary").GetAttribute("aria-busy")));
         Assert.Single(board.FindAll(".working-mark"));
 
@@ -539,14 +533,12 @@ public sealed class BoardMarkupTests : BunitContext
 
         bd.Answers("defer x-1", string.Empty);
 
-        // Moving the clock before this render leaves the floor timer unset, and the mark never hides.
         board.WaitForAssertion(() => Assert.Equal("written", board.Find(".board-bulk-row-word").TextContent));
         Assert.Single(board.FindAll(".working-mark"));
 
         clock.Advance(WorkingMark.Floor);
 
         board.WaitForAssertion(() => Assert.Empty(board.FindAll(".working-mark")));
-        // The mark clears once bd writes the row; the commit ends later, when the close button draws.
         board.WaitForAssertion(() => Assert.Single(board.FindAll("#bulk-close")));
         Assert.Single(board.FindAll(".board-bulk-plan"));
 
@@ -598,7 +590,6 @@ public sealed class BoardMarkupTests : BunitContext
             StringComparison.Ordinal));
     }
 
-    // The modifier keys that ask a browser for a new tab on a link.
     public enum NewTabKey
     {
         Meta,
@@ -914,8 +905,6 @@ public sealed class BoardMarkupTests : BunitContext
     private string TheAddressOfTheOneBead =>
         $"bead/x-1?project={Uri.EscapeDataString(ProjectPath.From(directory.Path).Value)}";
 
-    // The filter press of one kind, on the row whose word it names. A press carries the word that a
-    // person reads, so the test asks for it the way that person would.
     private static IElement ThePress(IRenderedComponent<BoardPage> board, string kind, string word) =>
         board.FindAll($"a.board-filter-press-{kind}").Single(press => press.TextContent == word);
 
@@ -931,15 +920,12 @@ public sealed class BoardMarkupTests : BunitContext
         public static ABacklog OfBeadsAlone(string beads) => new(beads, "[]", "[]");
     }
 
-    // The board of these beads, as the browser draws it at this address. The address carries the
-    // filter, so a test states the one that the board opens on.
     private IRenderedComponent<BoardPage> TheBoardOf(string beads, string address) =>
         TheBoardOf(ABacklog.OfBeadsAlone(beads), address, that => { });
 
     private IRenderedComponent<BoardPage> TheBoardOf(ABacklog backlog, string address) =>
         TheBoardOf(backlog, address, that => { });
 
-    // The board of these beads, with its bd scripted further before the first render.
     private IRenderedComponent<BoardPage> TheBoardOf(string beads, string address, Action<FakeBd> configure) =>
         TheBoardOf(ABacklog.OfBeadsAlone(beads), address, configure);
 
@@ -956,7 +942,7 @@ public sealed class BoardMarkupTests : BunitContext
         configure(bd);
         var adapter = new BdAdapter(bd, clock);
         cache = new BacklogCache(new BacklogReader(adapter), adapter);
-        var catalog = new ProjectCatalog(store, adapter);
+        var catalog = new ProjectCatalog(store, adapter, new NoOnboardedProjects());
         var selection = new ActiveProjectSelection(catalog);
         selection.Select(project);
 

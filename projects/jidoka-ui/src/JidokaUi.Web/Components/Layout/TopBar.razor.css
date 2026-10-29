@@ -97,3 +97,20 @@
     border-radius: 50%;
     background-color: var(--jidoka-attention-fg);
 }
+
+/*
+    A window as narrow as a phone. The five nav links do not fit on one line,
+    so they wrap, and the bar no longer sticks to the top, because a bar of
+    three lines would cover a third of the page.
+*/
+@media (max-width: 576px) {
+    .top-bar {
+        position: static;
+        gap: var(--jidoka-space-2);
+        padding: var(--jidoka-space-2) var(--jidoka-space-3);
+    }
+
+    .top-bar-nav {
+        flex-wrap: wrap;
+    }
+}

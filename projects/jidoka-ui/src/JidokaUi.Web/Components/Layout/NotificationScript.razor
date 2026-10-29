@@ -1,0 +1,36 @@
+@using JidokaUi.Core.Notifications
+
+@*
+    The one way that the app reaches the notifications of the browser.
+
+    A browser lets a page ask for permission only inside a press, so the ask is
+    a call of its own and the show never asks. A notification carries a tag, so
+    a second open tab that shows the same one replaces it and the person sees it
+    once. A press on a notification brings the window forward and opens the
+    page that the notification names.
+*@
+
+<script>
+    window["@NotificationCall.Holder"] = {
+        "@NotificationCall.Permission": function () {
+            return "Notification" in window ? Notification.permission : "unsupported";
+        },
+        "@NotificationCall.Request": async function () {
+            if (!("Notification" in window)) {
+                return "unsupported";
+            }
+            return await Notification.requestPermission();
+        },
+        "@NotificationCall.Show": function (tag, title, body, address) {
+            if (!("Notification" in window) || Notification.permission !== "granted") {
+                return;
+            }
+            var shown = new Notification(title, { body: body, tag: tag });
+            shown.onclick = function () {
+                window.focus();
+                window.location.assign(address);
+                shown.close();
+            };
+        }
+    };
+</script>

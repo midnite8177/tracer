@@ -36,5 +36,6 @@ public sealed class BeadMarkdownTests
     public void RendersNothingForATextThatIsEmpty()
     {
         Assert.Equal(string.Empty, BeadMarkdown.ToHtml(string.Empty));
+        Assert.Equal(string.Empty, BeadMarkdown.ToCommentHtml(string.Empty));
     }
 }

@@ -43,6 +43,24 @@ public sealed class BeadRecord
             ? [.. value.EnumerateArray().Where(IsObject).Select(Of).Select(EdgeOf)]
             : [];
 
+    /// <summary>
+    /// The members of one object field, each as text, or an empty map when this bead has no such field.
+    /// A member that is a string gives its characters, and any other member gives the JSON it holds, so a
+    /// reader that wants an array or a number out of it parses the text itself.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> TextsByName(IReadOnlyList<string> candidateNames)
+    {
+        if (!TryFirst(candidateNames, JsonValueKind.Object, out var value))
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        return value.EnumerateObject().ToDictionary(
+            member => member.Name,
+            member => JsonText.Of(member.Value),
+            StringComparer.Ordinal);
+    }
+
     private static bool IsObject(JsonElement element) => element.ValueKind == JsonValueKind.Object;
 
     // One edge is a record of its own, so it reads its two fields through the same walk of the

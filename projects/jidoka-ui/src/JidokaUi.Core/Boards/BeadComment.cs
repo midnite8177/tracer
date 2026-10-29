@@ -14,6 +14,9 @@ public sealed record BeadComment(string Author, string Text, DateTimeOffset? At,
     // How the detail page writes a moment. A moment that the app could not read stands as bd printed it.
     private const string Format = "yyyy-MM-dd HH:mm";
 
+    /// <summary>The text of the comment as HTML. Raw HTML in the text is escaped.</summary>
+    public string Html => BeadMarkdown.ToCommentHtml(Text);
+
     public string Timestamp =>
         At is { } moment ? moment.ToLocalTime().ToString(Format, CultureInfo.InvariantCulture) : RawTimestamp;
 

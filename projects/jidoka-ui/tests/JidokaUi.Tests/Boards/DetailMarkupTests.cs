@@ -20,9 +20,6 @@ public sealed class DetailMarkupTests : BunitContext
 
     private readonly TwoProjects projects = new();
 
-    // A bead with every fact that the fact strip states, so that one page shows every box. The
-    // show of the bead and the backlog beside it name the same record, thus neither drifts from
-    // the other.
     private const string TheRecordOfThatBead =
         """
         {"id": "b-7", "title": "Pick a hosting plan", "issue_type": "task", "priority": 2,
@@ -32,24 +29,18 @@ public sealed class DetailMarkupTests : BunitContext
          "dependencies": [{"id": "b-9", "dependency_type": "blocks"}]}
         """;
 
-    // The bead that blocks it, so that the Blocked by list holds one bead. It carries a label that
-    // the bead of every fact lacks, so the labels picker offers one to put on.
     private const string TheRecordOfItsBlocker =
         """
         {"id": "b-9", "title": "Choose a registrar", "issue_type": "task", "status": "open",
          "labels": ["docs"]}
         """;
 
-    // The bead that waits for it, so that the Blocks list holds one bead. It carries a label that the
-    // bead of every fact lacks.
     private const string TheRecordOfItsDependent =
         """
         {"id": "b-10", "title": "Launch the site", "issue_type": "feature", "status": "open",
          "labels": ["ops"], "dependencies": [{"id": "b-7", "dependency_type": "blocks"}]}
         """;
 
-    // A bead that names nothing beside its title and its description: no blocker, no dependent, no
-    // held bead, no acceptance criteria and no notes. It is the leaf bead, which is the common one.
     private const string TheBareRecord =
         """
         {"id": "b-7", "title": "Pick a hosting plan", "issue_type": "task", "priority": 2,
@@ -58,10 +49,8 @@ public sealed class DetailMarkupTests : BunitContext
 
     private const string TheBareBead = $"[{TheBareRecord}]";
 
-    // The backlog that holds the bare bead, and one epic that a picker could offer.
     private const string TheBacklogOfTheBareBead = $"[{TheRecordOfASecondEpic}, {TheBareRecord}]";
 
-    // The bare bead as bd shows it when one bead blocks it and nothing else names it.
     private const string TheBareBeadWithABlocker =
         """
         [{"id": "b-7", "title": "Pick a hosting plan", "issue_type": "task", "priority": 2,
@@ -83,7 +72,6 @@ public sealed class DetailMarkupTests : BunitContext
           "notes": "The vendor answers slowly."}]
         """;
 
-    // A bead that states no prose at all, so that the description box says it has none.
     private const string TheBeadOfNoProseAtAll =
         """
         [{"id": "b-7", "title": "Pick a hosting plan", "issue_type": "task", "priority": 2,
@@ -99,15 +87,19 @@ public sealed class DetailMarkupTests : BunitContext
     private const string TheBacklogOfABeadWithAHeldBead =
         $"[{TheBareRecord}, {TheRecordOfADeeperBead}]";
 
-    // The epic that holds that bead. It states its acceptance criteria and carries notes, so that
-    // its page draws every prose box and the order of the boxes is the one a person reads.
     private const string TheRecordOfItsEpic =
         """
         {"id": "b-1", "title": "Ship the site", "issue_type": "epic", "status": "in_progress",
          "acceptance_criteria": "The site answers.", "notes": "The vendor answers slowly."}
         """;
 
-    // A second epic, so that the epic picker offers one that does not hold this bead.
+    private const string TheRecordOfItsFactoryEpic =
+        """
+        {"id": "b-1", "title": "Ship the site", "issue_type": "epic", "status": "in_progress",
+         "labels": ["factory"],
+         "acceptance_criteria": "The site answers.", "notes": "The vendor answers slowly."}
+        """;
+
     private const string TheRecordOfASecondEpic =
         """{"id": "b-2", "title": "Choose the vendor", "issue_type": "epic", "status": "open"}""";
 
@@ -127,14 +119,12 @@ public sealed class DetailMarkupTests : BunitContext
         $"[{TheRecordOfItsEpic}, {TheRecordOfASecondEpic}, {TheRecordOfThatBead}, "
         + $"{TheRecordOfItsBlocker}, {TheRecordOfItsDependent}]";
 
-    // A closed bead that the same epic holds, so that the held beads box has one of each.
     private const string TheRecordOfAClosedHeldBead =
         """
         {"id": "b-8", "title": "Register the domain name", "issue_type": "chore", "priority": 1,
          "status": "closed", "parent": "b-1"}
         """;
 
-    // A bead that the bead of every fact holds, one level below the epic.
     private const string TheRecordOfADeeperBead =
         """
         {"id": "b-7-1", "title": "Read the two plans", "issue_type": "task", "priority": 2,
@@ -244,13 +234,17 @@ public sealed class DetailMarkupTests : BunitContext
     }
 
     [Fact]
-    public void DrawsTheHeldBeadsOfAnEpicInABoxBetweenTheDescriptionAndTheDependencies()
+    public void DrawsTheFactoryRulesAndTheHeldBeadsOfAnEpicInBoxesBetweenTheDescriptionAndTheDependencies()
     {
-        var page = ThePageOfTheEpic();
+        var page = TheDetailPageOf(
+            "b-1",
+            $"[{TheRecordOfItsFactoryEpic}]",
+            "[]",
+            $"[{TheRecordOfItsFactoryEpic}, {TheRecordOfThatBead}, {TheRecordOfAClosedHeldBead}, {TheRecordOfADeeperBead}]");
 
         var boxes = page.FindAll(".bead-prose-column .bead-box");
         Assert.Equal(
-            ["Description", "Held beads", "Dependencies", "Acceptance criteria", "Notes", "Comments"],
+            ["Description", "Factory rules", "Tasks", "Held beads", "Dependencies", "Acceptance criteria", "Notes", "Comments"],
             boxes.Select(box => TheOneIn("h2", box).TextContent.Trim()));
     }
 
@@ -467,7 +461,6 @@ public sealed class DetailMarkupTests : BunitContext
 
         projects.Bd.Answers(TheCreateOfTheNewBead, "b-1.1\n");
 
-        // Moving the clock before this render leaves the floor timer unset, and the mark never hides.
         page.WaitForAssertion(() => Assert.Single(page.FindAll(".bead-held-add")));
         Assert.Single(page.FindAll(".working-mark"));
 
@@ -1020,11 +1013,46 @@ public sealed class DetailMarkupTests : BunitContext
         var page = ThePageOfTheBead(TheBeadWithEveryFact, TheComments);
 
         var comments = page.FindAll(".bead-box .bead-comment");
-        Assert.Equal(["Read the two plans again."], comments.Select(one => TheOneIn(".bead-comment-text", one).TextContent));
+        Assert.Equal(["Read the two plans again."], comments.Select(one => TheOneIn(".bead-comment-text", one).TextContent.Trim()));
         var parts = page.FindAll(".bead-prose-column .bead-box")[^1].Children;
         var lastComment = parts.ToList().FindLastIndex(part => part.ClassList.Contains("bead-comment"));
         var box = parts.ToList().FindIndex(part => part.QuerySelector("#write-comment") is not null);
         Assert.True(lastComment >= 0 && lastComment < box);
+    }
+
+    [Fact]
+    public void RendersTheMarkdownOfACommentAsAListAndKeepsTheLayoutOfADiagram()
+    {
+        const string question =
+            """[{"text": "Which way?\n\n- the board\n- the page\n\n```\n+-----+\n|  a  |-->  b\n+-----+\n```", "author": "jidoka", "created_at": "2026-09-07T10:00:00Z"}]""";
+
+        var page = ThePageOfTheBead(TheBeadWithEveryFact, question);
+
+        var text = TheOneIn(".bead-comment-text", page.Find(".bead-comment"));
+        Assert.Equal(["the board", "the page"], text.QuerySelectorAll("li").Select(item => item.TextContent));
+        Assert.Equal("+-----+\n|  a  |-->  b\n+-----+\n", text.QuerySelector("pre code")?.TextContent);
+    }
+
+    [Fact]
+    public void KeepsTheLinesOfAPlainTextCommentApart()
+    {
+        const string plain =
+            """[{"text": "First line\nSecond line", "author": "jidoka", "created_at": "2026-09-07T10:00:00Z"}]""";
+
+        var page = ThePageOfTheBead(TheBeadWithEveryFact, plain);
+
+        Assert.Single(TheOneIn(".bead-comment-text", page.Find(".bead-comment")).QuerySelectorAll("br"));
+    }
+
+    [Fact]
+    public void DoesNotLetAScriptInACommentReachTheBrowser()
+    {
+        const string hostile =
+            """[{"text": "<script>alert(1)</script>", "author": "x", "created_at": "2026-09-07T10:00:00Z"}]""";
+
+        var page = ThePageOfTheBead(TheBeadWithEveryFact, hostile);
+
+        Assert.Empty(page.FindAll(".bead-comment script"));
     }
 
     [Fact]
@@ -2542,7 +2570,6 @@ public sealed class DetailMarkupTests : BunitContext
         Assert.Contains("update b-7 --parent ", projects.Bd.Invocations);
     }
 
-    // Throws so that no assertion reads past a value that is absent.
     private static IElement TheOneIn(string selector, IElement within) =>
         within.QuerySelector(selector) is { } found
             ? found
@@ -2551,7 +2578,6 @@ public sealed class DetailMarkupTests : BunitContext
     private static string TheWordsOf(IElement entry) =>
         TheOneIn(".bead-fact-words", entry).TextContent.Trim();
 
-    // The elements that the page asked the browser to move the keyboard to, in order.
     private IReadOnlyList<string> TheFocused() =>
     [
         .. JSInterop.Invocations
@@ -2561,7 +2587,6 @@ public sealed class DetailMarkupTests : BunitContext
                 : throw new InvalidOperationException("A focus call named no element.")),
     ];
 
-    // The name that the browser knows this element by, which a move of the keyboard names.
     private static string TheReferenceOf(IElement element) =>
         element.Attributes
             .First(attribute =>
@@ -2600,9 +2625,6 @@ public sealed class DetailMarkupTests : BunitContext
         page.FindAll(".bead-fact-picker .bead-fact-choice")
             .Single(entry => string.Equals(TheWordsOf(entry), text, StringComparison.Ordinal));
 
-    // The detail page of the bead that carries every fact, read from a bd that takes every write of
-    // one bead. The write of the priority changes what a later read of the bead gives back, as a
-    // real bd does, so the page can show what it read after the write.
     private IRenderedComponent<DetailPage> ThePageOfTheBeadThatBdWrites()
     {
         projects.Bd
@@ -2636,9 +2658,6 @@ public sealed class DetailMarkupTests : BunitContext
         return ThePageOfTheBead(TheBeadWithEveryFact, "[]");
     }
 
-    // The detail page of that bead, read from a bd that updates a status but has no close. The
-    // status control needs three commands of bd, so a bd that lacks one of them can answer no
-    // question that the control asks.
     private IRenderedComponent<DetailPage> ThePageOfTheBeadThatBdCannotClose()
     {
         projects.Bd
@@ -2666,8 +2685,6 @@ public sealed class DetailMarkupTests : BunitContext
         return ThePageOfTheBead(TheBeadWithEveryFact, "[]");
     }
 
-    // The detail page of that bead, closed, read from a bd that takes every write of one bead, so
-    // that a test presses the status of a bead which a person can reopen.
     private IRenderedComponent<DetailPage> ThePageOfTheClosedBeadThatBdWrites()
     {
         projects.Bd
@@ -2676,8 +2693,6 @@ public sealed class DetailMarkupTests : BunitContext
         return ThePageOfTheBead(TheClosedBead, "[]");
     }
 
-    // The bead as bd gives it back after one write, which changes one field and leaves the rest.
-    // Each caller states every field, so the one it moved stands out against its neighbours.
     private static string TheBeadBdGivesBack(
         string title,
         string type,
@@ -2743,8 +2758,6 @@ public sealed class DetailMarkupTests : BunitContext
     private static string TheBeadAtPriorityOne =>
         TheBeadBdGivesBack("Pick a hosting plan", "task", 1, ["human"]);
 
-    // The detail page of the bead that carries every fact, read from a bd that cuts either edge of
-    // it. bd names the blocked bead first, so the two directions name the pair in opposite orders.
     private IRenderedComponent<DetailPage> ThePageOfTheBeadWhoseEdgesBdCuts()
     {
         projects.Bd
@@ -2762,8 +2775,6 @@ public sealed class DetailMarkupTests : BunitContext
                 .Single(row =>
                     string.Equals(row.QuerySelector(".bead-row-title")?.TextContent.Trim(), title, StringComparison.Ordinal)));
 
-    // The detail page of the bare bead, read from a bd that takes every write of one bead, so that
-    // the press of each line is one a person can use.
     private IRenderedComponent<DetailPage> ThePageOfTheBareBead()
     {
         projects.Bd
@@ -2777,13 +2788,9 @@ public sealed class DetailMarkupTests : BunitContext
     private IRenderedComponent<DetailPage> ThePageOfTheBeadWithEveryFact() =>
         ThePageOfTheBead(TheBeadWithEveryFact, "[]");
 
-    // The detail page of one bead of the second project, with these comments on it.
     private IRenderedComponent<DetailPage> ThePageOfTheBead(string bead, string comments) =>
         TheDetailPageOf("b-7", bead, comments, TheBacklogOfThatBead);
 
-    // The detail page of one bead of the second project, read from a bd that shows that bead, its
-    // comments and this backlog. The show and the backlog travel together, so neither drifts from
-    // the other.
     private IRenderedComponent<DetailPage> TheDetailPageOf(
         string id,
         string bead,
@@ -2799,8 +2806,6 @@ public sealed class DetailMarkupTests : BunitContext
         return TheRenderedDetailPageOf(id);
     }
 
-    // The detail page of one bead of the second project, rendered against the bd that the test has
-    // already scripted, at the address which names that project.
     private IRenderedComponent<DetailPage> TheRenderedDetailPageOf(string id)
     {
         projects.RegisterOn(Services);
@@ -2811,9 +2816,6 @@ public sealed class DetailMarkupTests : BunitContext
         return Render<DetailPage>(parameters => parameters.Add(page => page.Id, id));
     }
 
-    // The detail page of the bare bead in a project whose backlog bd cannot read. Without the
-    // backlog the app knows neither direction of the dependencies nor the beads that this one
-    // holds, so no line may say that the bead names none of them.
     private IRenderedComponent<DetailPage> ThePageOfABeadWhoseBacklogBdCannotRead()
     {
         projects.Bd
@@ -2825,8 +2827,6 @@ public sealed class DetailMarkupTests : BunitContext
         return TheRenderedDetailPageOf("b-7");
     }
 
-    // The bare bead in a project whose backlog bd cannot read, from a bd that takes the three
-    // commands behind the status box and nothing else.
     private IRenderedComponent<DetailPage> ThePageOfABeadWhoseBacklogBdCannotReadAndThatBdWrites()
     {
         projects.Bd
@@ -2838,8 +2838,6 @@ public sealed class DetailMarkupTests : BunitContext
         return ThePageOfABeadWhoseBacklogBdCannotRead();
     }
 
-    // The detail page of a bead that bd will not show. The show that failed is the one read this
-    // page makes, because the reader asks for no backlog once it has no bead.
     private IRenderedComponent<DetailPage> ThePageOfABeadThatBdWillNotShow()
     {
         projects.Bd.Fails("show b-7 --json", "issue not found: b-7");
@@ -2847,8 +2845,6 @@ public sealed class DetailMarkupTests : BunitContext
         return TheRenderedDetailPageOf("b-7");
     }
 
-    // The detail page of a bead whose comments bd will not give. The bead and the backlog read as
-    // they always do, so the page differs from a healthy one in the comments box alone.
     private IRenderedComponent<DetailPage> ThePageOfABeadWhoseCommentsBdCannotRead()
     {
         projects.Bd
@@ -2860,8 +2856,6 @@ public sealed class DetailMarkupTests : BunitContext
         return TheRenderedDetailPageOf("b-7");
     }
 
-    // The detail page of the epic that holds the bead of every fact, a closed bead, and, one level
-    // further down, a bead of its own.
     private IRenderedComponent<DetailPage> ThePageOfTheEpic() =>
         TheDetailPageOf("b-1", $"[{TheRecordOfItsEpic}]", "[]", TheBacklogOfTheEpic);
 

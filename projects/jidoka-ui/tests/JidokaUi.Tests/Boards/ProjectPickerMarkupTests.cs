@@ -26,6 +26,19 @@ public sealed class ProjectPickerMarkupTests : BunitContext
     }
 
     [Fact]
+    public void OffersARepoThatJidokaOnboardedBesideTheProjectsOfTheRegistry()
+    {
+        var onboarded = projects.Onboarded("onboarded");
+        projects.Selection.Select(projects.First);
+
+        var bar = Render<TopBar>();
+
+        Assert.Equal(
+            [projects.First.Value, projects.Second.Value, onboarded.Value],
+            bar.FindAll("select.project-picker option").Select(option => option.GetAttribute("value")));
+    }
+
+    [Fact]
     public void StaysOnTheNeedsYouViewAndLeadsTheBoardAndDoctorLinksToThePickedProject()
     {
         projects.Selection.Select(projects.Second);

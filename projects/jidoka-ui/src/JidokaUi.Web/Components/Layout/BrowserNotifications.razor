@@ -1,0 +1,66 @@
+@using JidokaUi.Core.Notifications
+@using Microsoft.JSInterop
+@inject FactoryWatch Watch
+@inject IJSRuntime Js
+@implements IDisposable
+
+@*
+    Shows this tab the notifications that the factory watch raises, and asks the
+    person once for the permission that the browser needs to show them.
+
+    The ask stands only while the browser has not been asked. A browser that
+    granted, refused or has no notifications at all gets no line, because
+    nothing the person can press here changes that.
+*@
+
+@if (permission == NotificationCall.Default)
+{
+    <div class="notifications-ask" role="status">
+        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="AskAsync">
+            Turn on browser notifications
+        </button>
+        <span class="text-muted">
+            The browser then tells you when the factory waits on you or its heartbeat goes stale.
+        </span>
+    </div>
+}
+
+@code {
+    private string permission = string.Empty;
+
+    protected override void OnInitialized() => Watch.Raised += OnRaised;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            permission = await Js.InvokeAsync<string>(NotificationCall.Name(NotificationCall.Permission));
+            StateHasChanged();
+        }
+    }
+
+    private async Task AskAsync()
+    {
+        permission = await Js.InvokeAsync<string>(NotificationCall.Name(NotificationCall.Request));
+    }
+
+    private void OnRaised(BrowserNotification notification) => _ = InvokeAsync(() => ShowAsync(notification));
+
+    private async Task ShowAsync(BrowserNotification notification)
+    {
+        try
+        {
+            await Js.InvokeVoidAsync(
+                NotificationCall.Name(NotificationCall.Show),
+                notification.Tag,
+                notification.Title,
+                notification.Body,
+                notification.Address);
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
+
+    public void Dispose() => Watch.Raised -= OnRaised;
+}

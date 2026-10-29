@@ -6,7 +6,7 @@ namespace JidokaUi.Tests.Boards;
 public static class ABead
 {
     public static Bead Called(string id, string title) =>
-        new(id, title, "task", 2, string.Empty, [], string.Empty, BeadProse.None, [], "open", string.Empty);
+        new(id, title, "task", 2, string.Empty, [], string.Empty, BeadProse.None, [], "open", string.Empty, new Dictionary<string, string>());
 
     public static Bead Epic(string id, string title) => Called(id, title) with { Type = "epic" };
 

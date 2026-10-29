@@ -481,6 +481,120 @@ class RecordedSettingsTests(InstallerTestCase):
         self.assertTrue((self.user_home / ".jidoka" / "python").is_file())
 
 
+FAILING_PUBLISH = "\n".join([
+    f"#!{sys.executable}",
+    "import sys",
+    "print('error CS1002: ; expected', file=sys.stderr)",
+    "sys.exit(1)",
+    ""])
+
+
+class JidokaUiPublishTests(InstallerTestCase):
+    """A checkout that holds jidoka-ui beside jidoka, as the repo does, and a fake dotnet on the PATH."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.repo / "projects" / "jidoka-ui" / "src" / "JidokaUi.Web" / "JidokaUi.Web.csproj"
+        self.project.parent.mkdir(parents=True)
+        self.project.write_text("<Project Sdk=\"Microsoft.NET.Sdk.Web\" />\n", encoding="utf-8")
+        fixture.git_commit_all(self.repo, "Add jidoka-ui")
+        self.bin.mkdir()
+        self.dotnet = self.bin / "dotnet"
+        fixture.write_dotnet(self.dotnet, self.log)
+
+    def published_folder(self) -> Path:
+        tree = fixture.run(["git", "rev-parse", "HEAD:projects/jidoka-ui"], self.repo).strip()
+        return self.home.resolve() / "ui" / tree
+
+    def publishes(self) -> list:
+        return [call["argv"] for call in self.calls("dotnet") if call["argv"][:1] == ["publish"]]
+
+    def edit_the_project(self) -> None:
+        self.project.write_text("<Project Sdk=\"Microsoft.NET.Sdk.Web\"><!-- edited --></Project>\n", encoding="utf-8")
+
+    def test_records_where_jidoka_ui_is_published_so_the_factory_can_start_it(self):
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        app = self.published_folder() / "JidokaUi.Web.dll"
+        self.assertTrue(app.is_file())
+        self.assertEqual({"dotnet": str(self.dotnet), "app": str(app), "port": 5099}, self.settings()["ui"])
+        self.assertIn(str(self.published_folder()), done.stdout)
+
+    def test_publishes_the_web_project_in_release(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        [publish] = self.publishes()
+        self.assertTrue(publish[1].endswith("src/JidokaUi.Web/JidokaUi.Web.csproj"), publish)
+        self.assertEqual(["--configuration", "Release"], publish[2:4])
+
+    def test_an_uncommitted_edit_to_jidoka_ui_never_reaches_what_is_published(self):
+        committed = self.project.read_text(encoding="utf-8")
+        self.edit_the_project()
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(committed, (self.published_folder() / "JidokaUi.Web.csproj").read_text(encoding="utf-8"))
+
+    def test_running_again_at_the_same_jidoka_ui_content_publishes_nothing_new(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+        recorded = self.settings()["ui"]
+        self.log.unlink()
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([], self.publishes())
+        self.assertEqual(recorded, self.settings()["ui"])
+
+    def test_a_committed_change_to_jidoka_ui_is_published_to_a_folder_of_its_own_and_the_first_stays(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+        first = self.published_folder()
+        self.edit_the_project()
+        fixture.git_commit_all(self.repo, "Edit jidoka-ui")
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        second = self.published_folder()
+        self.assertNotEqual(first, second)
+        self.assertTrue((first / "JidokaUi.Web.dll").is_file())
+        self.assertEqual(str(second / "JidokaUi.Web.dll"), self.settings()["ui"]["app"])
+
+    def test_without_dotnet_the_install_goes_on_and_says_jidoka_ui_was_not_published(self):
+        self.dotnet.unlink()
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("jidoka-ui was not published", done.stdout)
+        self.assertIn("dotnet", done.stdout)
+        self.assertNotIn("ui", self.settings())
+
+    def test_a_run_without_dotnet_keeps_the_jidoka_ui_an_earlier_run_published(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+        recorded = self.settings()["ui"]
+        self.dotnet.unlink()
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(recorded, self.settings()["ui"])
+
+    def test_a_failing_publish_stops_the_run_names_the_command_and_leaves_no_half_published_folder(self):
+        fixture.write_executable(self.dotnet, FAILING_PUBLISH)
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("dotnet publish", done.stderr)
+        self.assertIn("CS1002", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertEqual([], list((self.home / "ui").iterdir()))
+        self.assertFalse((self.home / "settings.json").exists())
+
+
 class ScriptedTerminal:
     """A person at the keyboard who gives the answers in order, and keeps what each prompt said and whether it hid the typing."""
 

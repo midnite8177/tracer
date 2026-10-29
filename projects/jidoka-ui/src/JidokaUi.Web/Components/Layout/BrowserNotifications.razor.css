@@ -1,0 +1,10 @@
+.notifications-ask {
+    align-items: center;
+    background-color: var(--jidoka-canvas-subtle);
+    border-bottom: 1px solid var(--jidoka-border-muted);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: var(--jidoka-text-quiet);
+    gap: var(--jidoka-space-3);
+    padding: var(--jidoka-space-2) var(--jidoka-space-5);
+}

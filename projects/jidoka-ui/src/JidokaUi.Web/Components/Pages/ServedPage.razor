@@ -1,0 +1,198 @@
+@*
+    A jidoka page, served beside its bead. The file is the one that jidoka's script wrote, drawn
+    inside an element of its own so that its stylesheet reaches nothing else. The app fills each
+    slot that the file marks with the control the slot names: the answer panel, and the gate box
+    for Merge and Drop. A bead that has moved on grays the control, because the bead wins over
+    the page.
+*@
+
+@page "/jidoka-page/{Kind}/{Id}"
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Boards
+@using JidokaUi.Core.Factory
+@using JidokaUi.Core.Jidoka
+@using JidokaUi.Core.Projects
+@inject JidokaPages Pages
+@inject BdAdapter Bd
+@inject BacklogCache Backlogs
+@inject ProjectWatchers Watchers
+@inject ActiveProjectSelection Selection
+@inject NavigationManager Navigation
+@inherits ProjectPage
+@implements IDisposable
+
+<PageTitle>@TheTitleOfThisPage</PageTitle>
+
+@if (!JidokaPageKinds.TryFrom(Kind, out _))
+{
+    <p class="text-danger bead-message served-page-missing">jidoka writes no page of the kind "@Kind".</p>
+}
+else if (TheProject.Addressed is AddressedProject.Lost lostProject)
+{
+    <p class="text-danger bead-message">@lostProject.Reason</p>
+}
+else if (TheProject.Addressed is AddressedProject.Unnamed)
+{
+    <p>@NoActiveProject.Ask A page of jidoka sits beside a bead of the active project.</p>
+    <a class="btn btn-primary" href="">Go to the projects</a>
+}
+else if (TheProjectOnTheScreen is { } project)
+{
+    var address = new BeadAddress(project, Id);
+
+    <div class="served-page-bar">
+        <a href="@BeadPageAddress.Of(address)">← Back to <span class="machine-text">@Id</span></a>
+    </div>
+
+    @if (document is null)
+    {
+        <p class="served-page-missing">jidoka has written no @Kind page for <span class="machine-text">@Id</span>.</p>
+    }
+    else
+    {
+        @if (whyNoBead is { } why)
+        {
+            <p class="text-danger bead-message">@why</p>
+        }
+
+        <style class="jidoka-page-style">@((MarkupString)document.Style)</style>
+        <div class="jidoka-page">
+            @foreach (var part in document.Parts)
+            {
+                @if (part is PageSlot { Name: AnswerSlot } slot && bead is { } shown)
+                {
+                    <div class="jidoka-slot" data-jidoka-slot="@slot.Name">
+                        @if (shown.Question is { } question)
+                        {
+                            <AnswerPanel @key="address"
+                                         Address="address"
+                                         Question="question"
+                                         MovedOn="JidokaParts.Of(shown).QuestionMovedOn"
+                                         OnWritten="ReadForThePerson" />
+                        }
+                        else
+                        {
+                            <p class="answer-moved-on-note">The bead holds no open question, so it has moved on.</p>
+                        }
+                    </div>
+                }
+                else if (part is PageSlot { Name: DecideSlot } decideSlot && bead is { } decided)
+                {
+                    <div class="jidoka-slot" data-jidoka-slot="@decideSlot.Name">
+                        <GateBox @key="address"
+                                 Address="address"
+                                 MovedOn="JidokaParts.Of(decided).GateMovedOn"
+                                 OnWritten="ReadForThePerson" />
+                    </div>
+                }
+                else
+                {
+                    @((MarkupString)part.Html)
+                }
+            }
+        </div>
+    }
+}
+
+@code {
+    private const string AnswerSlot = "answer-panel";
+    private const string DecideSlot = "decide-panel";
+
+    /// <summary>The word of the kind of page, as the router hands it from the address.</summary>
+    [Parameter]
+    public string Kind { get; set; } = string.Empty;
+
+    /// <summary>The id of the bead that the page sits beside, as the router hands it from the address.</summary>
+    [Parameter]
+    public string Id { get; set; } = string.Empty;
+
+    private PageProject? theProject;
+    private BeadAddress? theBeadRead;
+    private JidokaPageDocument? document;
+    private Bead? bead;
+    private string? whyNoBead;
+    private int latestRead;
+
+    private string TheTitleOfThisPage =>
+        document is { Title.Length: > 0 } ? document.Title : Id;
+
+    // Built once, at first use, because Blazor injects the services it takes after the constructor runs.
+    private PageProject TheProject =>
+        theProject ??= new PageProject(
+            Navigation,
+            Selection,
+            $"{ServedPageAddress.Root}/{Kind}",
+            "that holds the bead of this page",
+            project => AddressOfThisPageIn(project));
+
+    private ProjectPath? TheProjectOnTheScreen => TheProject.OnTheScreen;
+
+    protected override void OnInitialized() =>
+        FollowTheBacklog(Backlogs, TheProject, TakeTheChange);
+
+    public void Dispose() => StopFollowingTheBacklog();
+
+    private string AddressOfThisPageIn(ProjectPath project) =>
+        JidokaPageKinds.TryFrom(Kind, out var kind)
+            ? ServedPageAddress.Of(kind, new BeadAddress(project, Id))
+            : BeadPageAddress.Of(new BeadAddress(project, Id));
+
+    // A change that a write of the app raised reads nothing. The panel that wrote reads the bead
+    // again itself, and the project watcher reports the same write to every page.
+    private Task TakeTheChange(BacklogChange change) =>
+        change.Kind is BacklogChangeKind.Watch ? Read() : Task.CompletedTask;
+
+    protected override async Task ShowTheAddressAsync()
+    {
+        if (!JidokaPageKinds.TryFrom(Kind, out _) || TheProject.TakeTheAddressOf(Id) is AddressChange.Elsewhere)
+        {
+            return;
+        }
+
+        if (TheProjectOnTheScreen is not { } project)
+        {
+            theBeadRead = null;
+            document = null;
+            bead = null;
+            return;
+        }
+
+        Watchers.Watch(project);
+        var address = new BeadAddress(project, Id);
+        if (address.Equals(theBeadRead))
+        {
+            return;
+        }
+
+        theBeadRead = address;
+        await Read();
+    }
+
+    private Task ReadForThePerson() => Read();
+
+    // Reads the file and the bead again. The bead wins over the page, so the answer to the newest
+    // read is the only one that lands. A bead that bd would not give leaves the page readable and
+    // draws no control, because a control for a bead the app cannot read could answer a question
+    // that it moved on from.
+    private async Task Read()
+    {
+        if (theBeadRead is not { } address || !JidokaPageKinds.TryFrom(Kind, out var kind))
+        {
+            return;
+        }
+
+        var thisRead = ++latestRead;
+        document = Pages.Read(kind, address) is { } page ? JidokaPageDocument.Parse(page.Html) : null;
+        var shown = await Bd.ShowAsync(address);
+        if (thisRead != latestRead || !address.Equals(theBeadRead))
+        {
+            return;
+        }
+
+        bead = shown is { Answered: true, Records.Count: > 0 } ? Bead.From(shown.Records[0]) : null;
+        whyNoBead = !shown.Answered ? shown.Message
+            : bead is null ? $"This project has no bead {Id}."
+            : null;
+        StateHasChanged();
+    }
+}

@@ -8,23 +8,51 @@
     margin-left: var(--jidoka-space-2);
 }
 
-/* A project that did not answer stands out, as one more failure message. */
-.failure-message {
-    margin-bottom: var(--jidoka-space-3);
-}
+@media (max-width: 576px) {
+    .needs-you-path {
+        display: block;
+        margin-left: 0;
+        overflow-wrap: anywhere;
+    }
 
-/*
-    The project of one row, as a chip. The rows of many repositories run
-    together in one table, so the project must read at a glance and not as one
-    more word in a line of prose.
-*/
-.needs-you-project-chip {
-    display: inline-block;
-    background-color: var(--jidoka-canvas-inset);
-    border: 1px solid var(--jidoka-border);
-    border-radius: var(--jidoka-radius-pill);
-    color: var(--jidoka-fg-muted);
-    font-size: var(--jidoka-text-small);
-    padding: 0 var(--jidoka-space-2);
-    white-space: nowrap;
+    .needs-you-table,
+    .needs-you-table tbody {
+        display: block;
+    }
+
+    .needs-you-table thead {
+        display: none;
+    }
+
+    .needs-you-table ::deep tr {
+        display: block;
+        border-bottom: 1px solid var(--jidoka-border);
+        padding: var(--jidoka-space-2) 0;
+    }
+
+    .needs-you-table ::deep tr:has(+ .needs-you-answer) {
+        border-bottom-width: 0;
+        padding-bottom: 0;
+    }
+
+    .needs-you-table td {
+        border-bottom-width: 0;
+    }
+
+    .needs-you-title-cell,
+    .needs-you-answer-cell {
+        display: block;
+    }
+
+    .needs-you-title-cell ::deep .needs-you-title {
+        text-align: start;
+    }
+
+    .needs-you-fact {
+        display: inline-block;
+    }
+
+    .needs-you-project-cell {
+        display: none;
+    }
 }

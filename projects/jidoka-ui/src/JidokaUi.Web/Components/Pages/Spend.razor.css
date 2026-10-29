@@ -1,0 +1,36 @@
+.spend-choices {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--jidoka-space-2);
+    margin-bottom: var(--jidoka-space-3);
+}
+
+.spend-choice {
+    border: 1px solid var(--jidoka-border);
+    border-radius: var(--jidoka-radius-pill);
+    padding: 0 var(--jidoka-space-2);
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.spend-choice[aria-current="page"] {
+    background-color: var(--jidoka-canvas-inset);
+    font-weight: bold;
+}
+
+.spend-epic {
+    margin-bottom: var(--jidoka-space-4);
+}
+
+.spend-total {
+    color: var(--jidoka-fg-muted);
+    font-weight: normal;
+    margin-left: var(--jidoka-space-2);
+}
+
+.spend-dollars,
+.spend-per,
+.spend-tasks {
+    font-variant-numeric: tabular-nums;
+}

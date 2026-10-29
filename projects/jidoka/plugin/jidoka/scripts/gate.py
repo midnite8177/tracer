@@ -39,6 +39,12 @@ does not wait there or that landed. Each is written as the git user.
 comment numbers the assumptions, and the script posts the assumption and the
 human's reason on the bead that recorded it.
 
+`items <epic>` writes nothing. It prints, as JSON, what wrong, restore, keep-finding and close-finding name, for an epic that waits at the
+gate: `assumptions`, each with its `number` in the gate comment, the `bead` that recorded it, that bead's `title` and
+its `text`; `removed`, each test the test cleanup removed, with its `file` and the test or spec that covers it
+(`covered_by`); and `outside`, each open bead found outside the epic, with its `title` and the bead it was found in
+(`found_in`). The epic is refused as the decisions refuse it.
+
 `restore <epic> <test> [--file <file>]` puts a test that the test cleanup
 removed back on the epic branch as one commit of its own, takes it out of the
 epic's cleanup.removed and posts a comment that names the commit, as
@@ -119,6 +125,7 @@ LANDED_KEY = "gate.landed"
 MERGE = "merge"
 WRONG = "wrong"
 RESTORE = "restore"
+ITEMS = "items"
 KEEP_FINDING = "keep-finding"
 CLOSE_FINDING = "close-finding"
 SEND_BACK = "send-back"
@@ -369,6 +376,19 @@ def epic_waiting(epic_id: str, main_tree: Path) -> EpicAtTheGate:
     return epic
 
 
+def shown_items(epic_id: str, main_tree: Path) -> str:
+    """The assumptions, the removed tests and the beads found outside the epic, as JSON, for the decisions that name
+    them."""
+    epic = epic_waiting(epic_id, main_tree)
+    return json.dumps({
+        "epic": epic.id,
+        "assumptions": [{"number": number, "bead": each.bead, "title": each.title, "text": each.text}
+                        for number, each in enumerate(assumptions_of(epic.id, epic.title, main_tree), 1)],
+        "removed": [each.fields() for each in cleanup.removed_before(read_bead(epic.id, main_tree))],
+        "outside": [{"bead": each.bead, "title": each.title, "found_in": each.found_in}
+                    for each in outside_of(epic.id, main_tree)]})
+
+
 def mark_wrong(epic_id: str, number: int, why: str, main_tree: Path) -> str:
     """Posts the human's word that the assumption the gate numbers so is wrong, on the bead that made it."""
     epic = epic_waiting(epic_id, main_tree)
@@ -454,6 +474,8 @@ def decide(args: argparse.Namespace, home: Path, main_tree: Path) -> str:
         return send_epic_back(args.epic, args.note, Path(args.proposals), main_tree)
     if args.mode == DROP:
         return drop_epic(args.epic, main_tree)
+    if args.mode == ITEMS:
+        return shown_items(args.epic, main_tree)
     if args.mode == WRONG:
         return mark_wrong(args.epic, args.number, args.why, main_tree)
     if args.mode == KEEP_FINDING:
@@ -482,6 +504,8 @@ def parsed_arguments(argv: list[str]) -> argparse.Namespace:
     merging = modes.add_parser(MERGE, help="land the epic on local main as one commit")
     merging.add_argument("epic")
     merging.add_argument("--message", required=True, help="the commit message, which names no bead")
+    listing = modes.add_parser(ITEMS, help="print the assumptions, removed tests and findings the decisions name")
+    listing.add_argument("epic")
     wrong = modes.add_parser(WRONG, help="mark an assumption the gate comment lists wrong")
     wrong.add_argument("epic")
     wrong.add_argument("number", type=int, help="the assumption's number in the gate comment")
@@ -503,7 +527,7 @@ def parsed_arguments(argv: list[str]) -> argparse.Namespace:
                                                                  "for each note")
     dropping = modes.add_parser(DROP, help="close the epic without landing it and keep its epic branch")
     dropping.add_argument("epic")
-    for mode in (merging, wrong, restoring, keeping, closing, sending_back, dropping):
+    for mode in (merging, listing, wrong, restoring, keeping, closing, sending_back, dropping):
         mode.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     return parser.parse_args(argv)
 

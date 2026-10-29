@@ -18,7 +18,7 @@ public sealed class AddProjectMarkupTests : BunitContext
         var repository = temp.CreateSubdirectory("campfire");
         Directory.CreateDirectory(Path.Combine(repository, ".beads"));
         var store = new InMemoryProjectRegistryStore { Busy = true };
-        Services.AddSingleton(new ProjectCatalog(store, new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System)));
+        Services.AddSingleton(new ProjectCatalog(store, new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System), new NoOnboardedProjects()));
         var page = Render<AddProjectPage>();
         page.Find("input[aria-label='Path']").Input(repository);
         page.FindAll("button").Single(button => button.TextContent == "Go").Click();
@@ -38,7 +38,8 @@ public sealed class AddProjectMarkupTests : BunitContext
         temp.CreateSubdirectory("not-a-project");
         Services.AddSingleton(new ProjectCatalog(
             new InMemoryProjectRegistryStore(),
-            new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System)));
+            new BdAdapter(FakeBd.ThatAnswersReady(), TimeProvider.System),
+            new NoOnboardedProjects()));
         var page = Render<AddProjectPage>();
 
         page.Find("input[aria-label='Path']").Input(temp.Path);

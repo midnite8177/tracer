@@ -1,0 +1,34 @@
+.answer-title {
+    font-weight: 600;
+    margin-bottom: var(--jidoka-space-2);
+}
+
+.answer-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--jidoka-space-2);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.answer-option {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--jidoka-space-2);
+}
+
+.answer-confidence {
+    color: var(--jidoka-fg-muted);
+    font-size: var(--jidoka-text-small);
+}
+
+@media (max-width: 576px) {
+    .answer-press {
+        flex: 1 1 100%;
+        min-height: var(--jidoka-touch-target);
+        font-size: var(--jidoka-text-body);
+        text-align: start;
+    }
+}

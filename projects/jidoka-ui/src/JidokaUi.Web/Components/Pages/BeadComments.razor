@@ -30,7 +30,7 @@ else if (Detail.Comments is AReadOfTheComments.Given { Value: var told })
                 <strong>@(comment.Author.Length > 0 ? comment.Author : "somebody")</strong>
                 @comment.Timestamp
             </div>
-            <div class="bead-comment-text">@comment.Text</div>
+            <div class="bead-prose bead-comment-text">@(new MarkupString(comment.Html))</div>
         </div>
     }
 }
@@ -74,8 +74,6 @@ else if (Detail.Comments is AReadOfTheComments.Given { Value: var told })
 
     protected override ProjectPath OfProject => Address.Project;
 
-    // The box unlocks once the page reads the bead again, whatever caused that read: bd may still
-    // land the abandoned comment on its own, and a second press before then would post it twice.
     protected override void OnParametersSet()
     {
         if (Abandoned && !ReferenceEquals(Detail, lastRead))

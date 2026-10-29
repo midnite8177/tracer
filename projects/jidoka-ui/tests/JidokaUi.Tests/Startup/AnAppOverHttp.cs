@@ -30,14 +30,24 @@ public sealed class AnAppOverHttp : WebApplicationFactory<JidokaUi.Web.Component
             var store = new InMemoryProjectRegistryStore();
             store.Hold(new ProjectRegistry(Projects, []));
 
-            // Without the stand-in below, every test run opens a browser tab on the machine.
             services.RemoveAll<IStartupBrowser>();
             services.RemoveAll<IBdProcess>();
             services.RemoveAll<IProjectRegistryStore>();
+            services.RemoveAll<IStartupFactoryWatch>();
+            services.RemoveAll<IOnboardedProjects>();
+            services.AddSingleton<IOnboardedProjects>(new NoOnboardedProjects());
             services.AddSingleton<IStartupBrowser>(new NoBrowser());
+            services.AddSingleton<IStartupFactoryWatch>(new NoFactoryWatch());
             services.AddSingleton<IBdProcess>(Bd);
             services.AddSingleton<IProjectRegistryStore>(store);
         });
+    }
+
+    private sealed class NoFactoryWatch : IStartupFactoryWatch
+    {
+        public void Start()
+        {
+        }
     }
 
     private sealed class NoBrowser : IStartupBrowser

@@ -89,6 +89,12 @@ public static class BeadFields
         ["blocked_by", "blockers", "blocked_by_ids"];
 
     /// <summary>
+    /// The names that a version of bd can give the metadata of a bead, which jidoka fills. It is not a
+    /// field the doctor page reports, because a bead sets it only when jidoka wrote some.
+    /// </summary>
+    public static IReadOnlyList<string> MetadataNames { get; } = ["metadata"];
+
+    /// <summary>
     /// The count of comments on a bead. This is not a field the UI shows; the probe reads it to find
     /// a bead that has comments to learn the names from.
     /// </summary>

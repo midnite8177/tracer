@@ -30,6 +30,10 @@ A value is JSON, or else the text itself. A setting already at its value
 writes nothing and posts nothing. It prints the epic, the settings it
 changed and all the settings.
 
+`choices <epic>` prints, as JSON, each setting that a person picks from a short list, with its choices and the value
+the epic holds, null when it holds none: lap_test_scope, lap_limit, discovered_bugs_into_epic and commits_on_main. The
+lap limit's choices are the whole numbers below the repo settings' own, none when that is one or zero.
+
 `guidance <epic>` reads the guidance as text on stdin and stores it in place
 of any the epic held.
 
@@ -146,7 +150,7 @@ class Rules:
     guidance: str
 
     def lap_limit_under(self, repo_limit: int) -> int:
-        """The most laps of the epic at once: the repo's limit, or the epic's own when that is lower."""
+        """The most laps of the epic at once. It is the repo's limit, or the epic's own when that is lower."""
         own = self.settings.get(LAP_LIMIT)
         return min(repo_limit, own) if is_whole(own) else repo_limit
 
@@ -311,6 +315,20 @@ def shown_rules(epic: str, main_tree: Path) -> dict:
     return {"epic": epic, "settings": rules.settings, "guidance": rules.guidance}
 
 
+def pickable_choices(repo_limit: int) -> dict[str, list]:
+    """The settings that take one of a short list, each with the values a person can pick."""
+    return {"lap_test_scope": list(repo_settings.TEST_SCOPES),
+            LAP_LIMIT: list(range(1, repo_limit)),
+            "discovered_bugs_into_epic": [True, False],
+            "commits_on_main": list(COMMITS_ON_MAIN)}
+
+
+def shown_choices(epic: str, repo_limit: int, main_tree: Path) -> dict:
+    held = of_epic(epic_to_write(epic, main_tree)).settings
+    return {"epic": epic, "settings": [{"name": name, "choices": choices, "value": held.get(name)}
+                                       for name, choices in pickable_choices(repo_limit).items()]}
+
+
 def parsed_setting(argument: str) -> tuple[str, object]:
     name, separator, text = argument.partition("=")
     if not (separator and name.strip()):
@@ -335,6 +353,7 @@ def main(argv: list[str]) -> int:
     modes.add_parser("show", parents=[shared], help="print the epic's settings and guidance")
     setting = modes.add_parser("set", parents=[shared], help="change settings, one comment on the epic for each")
     setting.add_argument("settings", nargs="+", metavar="NAME=VALUE")
+    modes.add_parser("choices", parents=[shared], help="print the settings a person picks from a list")
     modes.add_parser("guidance", parents=[shared], help="store the guidance on stdin")
     presetting = modes.add_parser("preset", parents=[shared], help="set what a preset holds")
     presetting.add_argument("preset", choices=sorted(PRESETS))
@@ -348,6 +367,8 @@ def main(argv: list[str]) -> int:
             printed = lap_commands(Path.cwd(), main_tree)
         elif args.mode == "show":
             printed = shown_rules(args.epic, main_tree)
+        elif args.mode == "choices":
+            printed = shown_choices(args.epic, repo_limit_of(home, main_tree), main_tree)
         elif args.mode == "guidance":
             printed = {"epic": args.epic, "changed": write_guidance(args.epic, sys.stdin.read(), main_tree)}
         else:

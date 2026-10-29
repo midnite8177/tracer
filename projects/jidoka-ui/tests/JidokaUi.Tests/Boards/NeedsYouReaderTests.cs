@@ -123,7 +123,6 @@ public sealed class NeedsYouReaderTests
         Assert.Equal(1, bd.Runs(First.Value, ListCommand));
     }
 
-    // Every bead that the view shows, with the project that holds it, in the order it shows them.
     private static IEnumerable<(ProjectPath Project, string Title)> TitlesWithTheirProjects(NeedsYouView view) =>
         view.Projects.SelectMany(project => project.Beads.Select(bead => (project.Project, bead.Title)));
 
@@ -140,7 +139,7 @@ public sealed class NeedsYouReaderTests
         store.Hold(ProjectRegistry.Empty with { Projects = [.. projects] });
         var adapter = new BdAdapter(bd, TimeProvider.System);
         return new NeedsYouReader(
-            new ProjectCatalog(store, adapter),
+            new ProjectCatalog(store, adapter, new NoOnboardedProjects()),
             new BacklogCache(new BacklogReader(adapter), adapter));
     }
 }

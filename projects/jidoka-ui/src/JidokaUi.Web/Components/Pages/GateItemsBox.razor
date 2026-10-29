@@ -1,0 +1,172 @@
+@*
+    The small decisions of the acceptance gate, on the page of an epic that waits there: Wrong
+    beside each numbered assumption, Restore beside each test that the cleanup removed, and Keep
+    and Close beside each bead found outside the epic. The gate script lists the three, because it
+    numbers the assumptions and finds the beads, and each press runs the same script, which checks
+    the choice and writes it. The page writes nothing itself.
+*@
+
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Boards
+@using JidokaUi.Core.Jidoka
+@inherits JidokaWriteAware
+
+@if (read is Read<GateItems>.Unread unread)
+{
+    <section class="bead-box gate-items-box" aria-label="Small decisions of the acceptance gate">
+        <p class="text-danger bead-message gate-items-unread">@unread.Reason</p>
+    </section>
+}
+else if (read is Read<GateItems>.Given { Value: var items } && (items.Assumptions.Count + items.RemovedTests.Count + items.FoundOutside.Count > 0 || WriteMessage is not null))
+{
+    <section class="bead-box gate-items-box" aria-label="Small decisions of the acceptance gate">
+        @if (items.Assumptions.Count > 0)
+        {
+            <h2 class="h4 bead-section">Assumptions</h2>
+            @foreach (var assumption in items.Assumptions)
+            {
+                <div class="gate-assumption mb-2">
+                    <span class="gate-assumption-number">@assumption.Number.</span>
+                    <span class="machine-text">@assumption.Bead</span>
+                    @assumption.Title: @assumption.Text
+                    @if (wrongNumber == assumption.Number)
+                    {
+                        <div class="gate-wrong-ask mt-1">
+                            <label class="form-label" for="gate-wrong-why">Why is it wrong?</label>
+                            <input id="gate-wrong-why"
+                                   class="form-control form-control-sm gate-wrong-why"
+                                   type="text"
+                                   @bind="why"
+                                   @bind:event="oninput" />
+                            <button type="button"
+                                    class="btn btn-sm btn-danger gate-wrong-send"
+                                    disabled="@(Writing || why.Trim().Length == 0)"
+                                    aria-busy="@AriaBusy"
+                                    @onclick="() => WrongAsync(assumption.Number)">Mark it wrong</button>
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-secondary gate-wrong-cancel"
+                                    @onclick="StopAskingWhy">Never mind</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <button type="button"
+                                class="btn btn-sm btn-outline-danger gate-wrong"
+                                disabled="@Writing"
+                                @onclick="() => AskWhy(assumption.Number)">Wrong</button>
+                    }
+                </div>
+            }
+        }
+
+        @if (items.RemovedTests.Count > 0)
+        {
+            <h2 class="h4 bead-section">Tests removed</h2>
+            @foreach (var removed in items.RemovedTests)
+            {
+                <div class="gate-removed-test mb-2">
+                    <span class="machine-text">@removed.Test</span> from <span class="machine-text">@removed.File</span>,
+                    covered by <span class="machine-text">@removed.CoveredBy</span>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-primary gate-restore"
+                            disabled="@Writing"
+                            aria-busy="@AriaBusy"
+                            @onclick="() => DecideAsync(GateDecision.Restore(removed.Test, removed.File), RestoredMessage)">Restore</button>
+                </div>
+            }
+        }
+
+        @if (items.FoundOutside.Count > 0)
+        {
+            <h2 class="h4 bead-section">Found outside the epic</h2>
+            @foreach (var found in items.FoundOutside)
+            {
+                <div class="gate-finding mb-2">
+                    <span class="machine-text">@found.Bead</span> @found.Title, found in <span class="machine-text">@found.FoundIn</span>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-primary gate-keep"
+                            disabled="@Writing"
+                            aria-busy="@AriaBusy"
+                            @onclick="() => DecideAsync(GateDecision.KeepFinding(found.Bead), TheScriptsLine)">Keep</button>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-danger gate-close"
+                            disabled="@Writing"
+                            aria-busy="@AriaBusy"
+                            @onclick="() => DecideAsync(GateDecision.CloseFinding(found.Bead), TheScriptsLine)">Close</button>
+                </div>
+            }
+        }
+
+        <BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
+    </section>
+}
+
+@code {
+    /// <summary>The epic that waits at the gate.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>Runs after a decision, so that the page reads the epic again.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    private Read<GateItems>? read;
+    private int? wrongNumber;
+    private string why = string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (StartsReading(Address))
+        {
+            await ReadTheItems();
+        }
+    }
+
+    private async Task ReadTheItems()
+    {
+        var asked = Address;
+        var answer = await Jidoka.GateItemsAsync(asked);
+        if (IsStillReading(asked))
+        {
+            read = answer;
+        }
+    }
+
+    private static string TheScriptsLine(JidokaWriteOutcome outcome) => outcome.Output;
+
+    private static string RestoredMessage(JidokaWriteOutcome outcome) =>
+        outcome.Output.Length > 0
+            ? $"The test is back on the epic branch in the commit {outcome.Output}. The merge runs the full suite again."
+            : "The test is back on the epic branch. The merge runs the full suite again.";
+
+    private void AskWhy(int number)
+    {
+        wrongNumber = number;
+        why = string.Empty;
+    }
+
+    private void StopAskingWhy() => wrongNumber = null;
+
+    private Task WrongAsync(int number) =>
+        DecideAsync(GateDecision.Wrong(number, why.Trim()), TheScriptsLine);
+
+    private async Task DecideAsync(GateDecision decision, Func<JidokaWriteOutcome, string> whenWritten)
+    {
+        if (await WriteAsync(() => Jidoka.DecideAsync(Address, decision), whenWritten) is not { } outcome)
+        {
+            return;
+        }
+
+        if (outcome.Wrote)
+        {
+            wrongNumber = null;
+        }
+
+        if (!outcome.GaveUp)
+        {
+            await ReadTheItems();
+            await OnWritten.InvokeAsync();
+        }
+    }
+}

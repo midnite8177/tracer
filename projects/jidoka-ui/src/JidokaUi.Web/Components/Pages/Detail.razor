@@ -1,11 +1,14 @@
 @page "/bead/{Id}"
 @using JidokaUi.Core.Beads
 @using JidokaUi.Core.Boards
+@using JidokaUi.Core.Factory
+@using JidokaUi.Core.Jidoka
 @using JidokaUi.Core.Projects
 @using AReadOfTheBacklog = JidokaUi.Core.Boards.Read<JidokaUi.Core.Boards.BacklogFacts>
 @using AReadOfTheBead = JidokaUi.Core.Boards.Read<JidokaUi.Core.Boards.BeadDetail>
 @inject BeadDetailReader Details
 @inject BacklogCache Backlogs
+@inject JidokaPages Pages
 @inject ProjectWatchers Watchers
 @inject ActiveProjectSelection Selection
 @inject SwitchAddress Switches
@@ -40,6 +43,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
 {
     var bead = new BeadAddress(project, detail.Bead.Id);
     var facts = detail.BacklogFacts;
+    var parts = JidokaParts.Of(detail.Bead);
 
     <BeadHead Id="@detail.Bead.Id" Project="project">
         <Title>
@@ -66,7 +70,6 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
 
     <ReReadMark Rereading="reads.Rereading">
         <div class="bead-columns">
-            @* Without the key, a walk to another bead keeps the rows, and an open picker carries its unsaved ticks onto that bead. *@
             <BeadFactStrip @key="bead"
                            Address="bead"
                            Detail="detail"
@@ -75,6 +78,29 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
                            OnWritten="ReadForThePerson" />
 
             <div class="bead-prose-column">
+                @if (parts.Question is { } question)
+                {
+                    <AnswerPanel @key="bead" Address="bead" Question="question" MovedOn="false" OnWritten="ReadForThePerson" />
+                }
+
+                @if (parts.WaitsAtTheGate)
+                {
+                    <GateBox @key="(nameof(GateBox), bead)" Address="bead" MovedOn="false" OnWritten="ReadForThePerson" />
+                    <GateItemsBox @key="(nameof(GateItemsBox), bead)" Address="bead" OnWritten="ReadForThePerson" />
+                }
+
+                @if (Pages.KindsBeside(bead) is { Count: > 0 } kinds)
+                {
+                    <p class="jidoka-page-links">
+                        jidoka wrote
+                        @foreach (var kind in kinds)
+                        {
+                            <a class="jidoka-page-link" href="@ServedPageAddress.Of(kind, bead)">the @kind.Word() page</a>
+                        }
+                        for this bead.
+                    </p>
+                }
+
                 @if (detail.Bead.HasCloseReason)
                 {
                     <section class="bead-box bead-close-reason">
@@ -89,8 +115,21 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
                                          OnWritten="ReadForThePerson" />
                 </section>
 
+                @if (parts.TakesRules)
+                {
+                    <RulesBox @key="(nameof(RulesBox), bead)" Address="bead" OnWritten="ReadForThePerson" />
+                }
+
                 @if (facts is AReadOfTheBacklog.Given { Value: var answered })
                 {
+                    @if (FactoryEpic.Of(read.Backlog, detail.Bead) is { Tasks.Count: > 0 } factoryEpic)
+                    {
+                        <section class="bead-box bead-factory-tasks">
+                            <h2 class="h4 bead-section">Tasks</h2>
+                            <FactoryTaskTable Project="project" Tasks="factoryEpic.Tasks" />
+                        </section>
+                    }
+
                     @if (answered.Held.Count > 0)
                     {
                         <section class="bead-box">
@@ -147,17 +186,13 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
     private const string TheBeadIsFromBefore = "The bead on the screen is the one from before.";
     private const string TheBacklogIsFromBefore = "The backlog on the screen is the one from before.";
 
-    // Why the page shows what an earlier read gave, and which part of the page that is.
     private sealed record FromBefore(string Why, string What);
 
-    // A read whose backlog bd would not give, with the backlog on the screen in its place, and the
-    // reason bd gave.
     private sealed record BacklogFromBefore(BeadDetailRead Read, string Why);
 
     private string TheTitleOfThisPage =>
         read?.Detail is AReadOfTheBead.Given { Value: var detail } ? detail.Bead.Title : Id;
 
-    // Built once, at first use, because Blazor injects the services it takes after the constructor runs.
     private PageProject TheProject =>
         theProject ??= new PageProject(
             Navigation, Selection, BeadPageAddress.Page, "that holds this bead", TheAddressOfThisBeadIn);
@@ -167,8 +202,6 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
     protected override void OnInitialized()
     {
         FollowTheBacklog(Backlogs, TheProject, TakeTheChange);
-        // The id of a bead names nothing outside the project that holds it, so a switch walks to the
-        // board of the picked project instead of to this id in it.
         switchWalk = Switches.WalkTo(BoardFilterAddress.OfEverythingIn);
     }
 
@@ -180,13 +213,9 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
         switchWalk?.Dispose();
     }
 
-    // A change that a write of the app raised reads nothing: the page that wrote reads the bead again
-    // itself, and the project watcher reports the same write to every page.
     private Task TakeTheChange(BacklogChange change) =>
         change.Kind is BacklogChangeKind.Watch ? ReadForTheProjectWatcher() : Task.CompletedTask;
 
-    // A change that arrives while a read of the project watcher runs waits for it, and then the page
-    // reads once, so a burst of changes costs two reads and not one for each change.
     private async Task ReadForTheProjectWatcher()
     {
         if (watcherReading)
@@ -212,11 +241,6 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
         }
     }
 
-    // Reads the bead when the address names a bead other than the one the page last began to read:
-    // another id, or the same id in another project. The rewrite of an address that names no
-    // project takes the address a second time, and that take finds the bead it began to read.
-    // An address that names no project the page can read clears the page, and no answer to an
-    // earlier read lands on it.
     protected override async Task ShowTheAddressAsync()
     {
         if (TheProject.TakeTheAddressOf(Id) is AddressChange.Elsewhere)
@@ -242,8 +266,6 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
         await ReadTheBead();
     }
 
-    // Reads this bead from the start. The page drops what it showed and says that it reads, until
-    // this read answers or a read of the project watcher that began after it lands first.
     private async Task ReadTheBead()
     {
         read = null;
@@ -255,9 +277,6 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
 
     private Task ReadForThePerson() => Read(ReadCause.ThePerson);
 
-    // A failed read keeps the bead only when bd gave up or no person asked for the read, because
-    // the bead on the screen is then a better answer than the failure. See ADR 0015 and the Re-read
-    // entry of GLOSSARY.md.
     private string? WhyTheBeadStays(BeadDetailRead fresh, ReadCause cause)
     {
         if (fresh.Detail is not AReadOfTheBead.Unread { Reason: var reason })
@@ -278,9 +297,6 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
         return cause is ReadCause.TheProjectWatcher ? reason : null;
     }
 
-    // A read of the project watcher that got the bead and no backlog takes the bead and keeps the
-    // backlog on the screen, because no person asked for the read and the pickers still offer the
-    // epics and the labels of that backlog.
     private BacklogFromBefore? TheBacklogThatStays(BeadDetailRead fresh, ReadCause cause)
     {
         if (cause is not ReadCause.TheProjectWatcher)

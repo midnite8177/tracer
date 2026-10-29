@@ -1,10 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using JidokaUi.Core.Beads;
 using JidokaUi.Core.Boards;
+using JidokaUi.Core.Jidoka;
 using JidokaUi.Core.Look;
 using JidokaUi.Core.Projects;
 using JidokaUi.Tests;
 using JidokaUi.Tests.Beads;
+using JidokaUi.Tests.Jidoka;
 using JidokaUi.Tests.Projects;
 using JidokaUi.Web.Components.Pages;
 
@@ -29,8 +31,37 @@ public sealed class TwoProjects : IDisposable
         Adapter = new BdAdapter(Bd, Clock);
         Backlogs = new BacklogCache(new BacklogReader(Adapter), Adapter);
         Watchers = new ProjectWatchers(Backlogs, WriteReports);
-        Catalog = new ProjectCatalog(Store, Adapter);
+        JidokaHome = directory.CreateSubdirectory("jidoka-home");
+        Catalog = new ProjectCatalog(Store, Adapter, new OnboardedProjectFiles(new JidokaHome(JidokaHome)));
         Selection = new ActiveProjectSelection(Catalog);
+        AnInstallOfJidoka(JidokaHome);
+        Pages = new JidokaPages(new JidokaHome(JidokaHome));
+        JidokaAdapter = new JidokaAdapter(Jidoka, Adapter, new JidokaHome(JidokaHome), Clock);
+    }
+
+    /// <summary>The program that starts jidoka's scripts, which a test scripts by command line.</summary>
+    public FakeJidoka Jidoka { get; } = new();
+
+    /// <summary>The adapter over <see cref="Jidoka"/>, which finds the install under <see cref="JidokaHome"/>.</summary>
+    public JidokaAdapter JidokaAdapter { get; }
+
+    private static void AnInstallOfJidoka(string home)
+    {
+        File.WriteAllText(Path.Combine(home, "settings.json"), """{"python": "/opt/python3"}""");
+        Directory.CreateDirectory(Path.Combine(home, "plugins", "0.1.2", "jidoka", "scripts"));
+    }
+
+    /// <summary>A repo with a beads directory that jidoka has onboarded, as its repo settings say.</summary>
+    public ProjectPath Onboarded(string name)
+    {
+        var repository = directory.CreateSubdirectory(name);
+        Directory.CreateDirectory(Path.Combine(repository, ".beads"));
+        var settingsFolder = Path.Combine(JidokaHome, "repos");
+        Directory.CreateDirectory(settingsFolder);
+        File.WriteAllText(
+            Path.Combine(settingsFolder, $"{name}-1a2b3c4d.json"),
+            System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { ["main_worktree"] = repository }));
+        return ProjectPath.From(repository);
     }
 
     public ProjectPath First { get; }
@@ -53,6 +84,18 @@ public sealed class TwoProjects : IDisposable
 
     public ActiveProjectSelection Selection { get; }
 
+    /// <summary>The folder that stands for jidoka's home, which holds the pages a test writes.</summary>
+    public string JidokaHome { get; }
+
+    public JidokaPages Pages { get; }
+
+    /// <summary>Writes the page of a kind beside a bead of the second project, as jidoka's script would.</summary>
+    public void WritesAPage(JidokaPageKind kind, string id, string html)
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(JidokaHome, "pages", Second.DirectoryName)).FullName;
+        File.WriteAllText(Path.Combine(folder, $"{kind.Word()}-{id}.html"), html);
+    }
+
     /// <summary>The clock that a working mark and a re-read mark read, which a test moves by hand.</summary>
     public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
 
@@ -68,6 +111,8 @@ public sealed class TwoProjects : IDisposable
         services.AddSingleton(Watchers);
         services.AddSingleton(Catalog);
         services.AddSingleton(Selection);
+        services.AddSingleton(Pages);
+        services.AddSingleton(JidokaAdapter);
         services.AddSingleton(new CopyFeedback());
         services.AddSingleton<TimeProvider>(Clock);
         services.AddScoped<BeadOpener>();

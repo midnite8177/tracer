@@ -1,0 +1,111 @@
+@*
+    The decisions of the acceptance gate on the page of an epic that waits there: Merge, with
+    the commit message that lands the epic on main, and Drop. Each press runs jidoka's gate
+    script, which checks the epic and writes the decision. The page writes nothing itself,
+    because the script is the one writer of the gate's keys.
+*@
+
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Jidoka
+@inherits JidokaWriteAware
+
+<section class="bead-box gate-box @(MovedOn ? "gate-moved-on" : string.Empty)" aria-label="Acceptance gate">
+    <h2 class="h4 bead-section">Acceptance gate</h2>
+    @if (MovedOn)
+    {
+        <p class="gate-moved-on-note">This epic no longer waits on your decision, so these buttons do nothing.</p>
+    }
+    else
+    {
+        <p>This epic waits on your decision.</p>
+    }
+
+    <div class="mb-2">
+        <label class="form-label" for="gate-message">Commit message</label>
+        <input id="gate-message"
+               class="form-control form-control-sm gate-message"
+               type="text"
+               disabled="@MovedOn"
+               @bind="message"
+               @bind:event="oninput" />
+        <div class="form-text">One commit lands on main. Word it in the style of the log, and name no bead.</div>
+    </div>
+
+    <div class="gate-presses">
+        <button type="button"
+                class="btn btn-sm btn-primary gate-merge"
+                disabled="@(MovedOn || Writing || message.Trim().Length == 0)"
+                aria-busy="@AriaBusy"
+                @onclick="MergeAsync">Merge</button>
+
+        @if (askingToDrop)
+        {
+            <span class="gate-drop-ask">
+                Close this epic without landing it? Its epic branch stays.
+                <button type="button"
+                        class="btn btn-sm btn-danger gate-drop-confirm"
+                        disabled="@(MovedOn || Writing)"
+                        aria-busy="@AriaBusy"
+                        @onclick="DropAsync">Drop it</button>
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary gate-drop-cancel"
+                        @onclick="() => askingToDrop = false">Keep it</button>
+            </span>
+        }
+        else
+        {
+            <button type="button"
+                    class="btn btn-sm btn-outline-danger gate-drop"
+                    disabled="@(MovedOn || Writing)"
+                    @onclick="() => askingToDrop = true">Drop</button>
+        }
+    </div>
+
+    <BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
+</section>
+
+@code {
+    /// <summary>The epic that waits at the gate.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required BeadAddress Address { get; set; }
+
+    /// <summary>
+    /// True when the epic no longer waits at the gate, because a decision landed or it closed. The
+    /// box then shows its buttons grayed and takes no press, because the epic wins.
+    /// </summary>
+    [Parameter]
+    [EditorRequired]
+    public required bool MovedOn { get; set; }
+
+    /// <summary>Runs after a decision, so that the page reads the epic again.</summary>
+    [Parameter]
+    public EventCallback OnWritten { get; set; }
+
+    private string message = string.Empty;
+    private bool askingToDrop;
+
+    private Task MergeAsync() =>
+        DecideAsync(GateDecision.Merge(message.Trim()), outcome =>
+            outcome.Output.Length > 0 ? $"The epic landed on main as {outcome.Output}." : "The epic landed on main.");
+
+    private Task DropAsync() =>
+        DecideAsync(GateDecision.Drop(), outcome => outcome.Output.Length > 0 ? outcome.Output : "The epic is dropped.");
+
+    private async Task DecideAsync(GateDecision decision, Func<JidokaWriteOutcome, string> whenWritten)
+    {
+        if (await WriteAsync(() => Jidoka.DecideAsync(Address, decision), whenWritten) is not { } outcome)
+        {
+            return;
+        }
+
+        askingToDrop = false;
+
+        // A merge that stopped halfway has already changed the epic, so the page reads it again
+        // whatever the script said, unless the app stopped waiting and knows nothing yet.
+        if (!outcome.GaveUp)
+        {
+            await OnWritten.InvokeAsync();
+        }
+    }
+}

@@ -2,9 +2,9 @@
 
 A local web UI for the browse and triage of
 [beads](https://github.com/gastownhall/beads) issues. Beads is a
-command-line issue tracker. It has no UI, so bulk work — a re-label, a
-close with a reason, a defer, a move into an epic — costs one command per
-issue. jidoka-ui makes that work comfortable.
+command-line issue tracker. It has no UI, so bulk work, a re-label, a
+close with a reason, a defer, a move into an epic, costs one command per
+issue. jidoka-ui does that work on many issues at once.
 
 The app is a Blazor Server app on .NET 10. You run one copy per machine,
 not one per repository, and it opens in your browser. It binds
@@ -57,12 +57,32 @@ phone, open `http://<the address of this machine>:5099`, or the port that
 `--port` named. Every page shows a marker while LAN mode holds. See
 [ADR 0003](docs/adr/0003-localhost-by-default.md).
 
+At home, reach the board from your phone through Tailscale instead, which
+keeps the app on the loopback and needs no `--listen`:
+
+```bash
+tailscale serve --bg 5099
+```
+
+Open the address that `tailscale serve` prints on a phone in the same
+tailnet. The needs-you view and the answer panel fit a window 390 pixels
+wide. Give the same address to jidoka's installer when it asks where
+jidoka-ui answers, so that each Pushover message links to it.
+
+jidoka's installer publishes the app to `~/.jidoka/ui/` when `dotnet` is on
+its PATH, and `/jidoka:factory` starts that copy when nothing answers on
+port 5099.
+
 ## What it does today
 
 - **The project registry.** You add a repository from inside the app. A
   directory browser finds it, and two checks guard the addition: the
   `.beads/` directory must exist, and `bd` must answer in that directory.
   A failure names the check that failed.
+- **Onboarded projects.** Every repo that jidoka onboarded on this
+  machine is in the list with no second step. The app reads jidoka's repo
+  settings, `repos/*.json` in jidoka's home, and never writes them. A repo
+  whose folder has no `.beads/` directory is left out.
 - **The registry file.** The list lives in your user configuration
   directory, at `jidoka-ui/projects.json`. No repository carries your
   personal list. When that file does not exist, the app copies
@@ -109,11 +129,12 @@ phone, open `http://<the address of this machine>:5099`, or the port that
   two columns. A prose column carries the description, the acceptance
   criteria and the notes as rendered markdown, the beads that block it and
   the beads that it blocks with their titles, the comments with their
-  timestamps, and the close reason of a closed bead as its first box. A fact
+  timestamps as rendered markdown (a text diagram in a fenced block keeps
+  its layout), and the close reason of a closed bead as its first box. A fact
   strip beside it carries the five short facts: the status, the priority,
   the type, the labels and the epic, each in a bordered box. The strip
   states each fact once. Press the status, the priority or the type there and
-  pick the new one: the row becomes the picker, the pick writes at once, and
+  pick the new one. The row becomes the picker, the pick writes at once, and
   the row then reads the value that `bd` holds. The status picker offers the
   four stored statuses and marks the one the bead is in, so one question
   covers the three verbs of `bd`: a pick of closed asks why the work ended
@@ -132,7 +153,7 @@ phone, open `http://<the address of this machine>:5099`, or the port that
   neither of. Each line carries a press for each thing it names, and one press adds
   that thing. A bead with no description keeps its box and says so in the
   danger color, because a bead without a description needs one.
-  Raw HTML in a bead never reaches the browser — see
+  Raw HTML in a bead never reaches the browser. See
   [ADR 0004](docs/adr/0004-a-markdown-library-renders-the-prose-of-a-bead.md).
 - **Triage on one bead.** The detail page writes. Press the title and fix a
   word in the one-line box that opens; the head of the page shows the new
@@ -207,6 +228,62 @@ phone, open `http://<the address of this machine>:5099`, or the port that
   bead opens in a new tab on its own project, while this view stays where
   it is. A project whose `bd` does not answer is named with its reason, so
   it hides none of the others.
+- **Answer a question of jidoka.** A bead that jidoka parked on a question
+  carries its options and its recommendation in its metadata. The detail
+  page shows them in a panel at the head of the prose column, and the
+  needs-you view shows the same panel under the row. Press an option and
+  the app comments it on the bead and takes the `human` label off, both
+  through `bd`. The panel needs no jidoka page.
+- **The factory view.** One page lists every epic that jidoka's factory
+  holds, from every project of your registry, in groups by project. Each epic
+  shows its state and a table of its tasks with the lap, the stage and the
+  tries of each, read from the metadata that jidoka writes on the bead. The
+  page of a factory epic shows the same table. A project whose `bd` does not
+  answer is named with its reason, so it hides none of the others.
+- **The spend view.** `/spend` reads jidoka's ledger, `ledger.sqlite` under
+  its home, and shows what the factory spent in a week: the cost per merged
+  task grouped by tier, model, effort or track, and each epic with its total
+  and its breakdown. Pick the week and the grouping with the links on the page,
+  or in the address, as in `/spend?week=2026-10-19&by=model`. The dollars are
+  list prices from the ledger. The app opens the ledger read-only and never
+  writes it. A merged task is a closed bead that held a lap, so the page asks
+  `bd` of each project, and names a project whose `bd` does not answer.
+- **Pages of jidoka, beside their beads.** The pages that jidoka writes under
+  its home (`~/.jidoka`, or the folder that `JIDOKA_HOME` names) open at
+  `/jidoka-page/<kind>/<bead id>?project=...`. The detail page links to each
+  page that sits beside the bead. The app draws the answer panel in the slot
+  that a question page marks. Once the bead has lost the human label or
+  closed, a reload shows the panel grayed and taking no press, because the
+  bead wins over the page. A slot that the app has no control for keeps the
+  words that the page wrote in it.
+- **Browser notifications.** While the app runs, it follows the factory of
+  every project in your registry, and an open tab shows one browser
+  notification for each event that jidoka sends about an epic: a task or an
+  epic parked, only parked tasks left, the acceptance gate, a stopped or a
+  paused factory, and a permission prompt of the host. It also warns once
+  when the heartbeat of a running epic goes stale, which means the host that
+  runs the factory stopped. A press on a notification opens the page of the
+  bead. The browser asks permission only after a press, so the page offers a
+  "Turn on browser notifications" button until you answer. A browser shows
+  notifications only on `localhost` or a secure connection, so LAN mode
+  shows none. The app finds jidoka's files under its home, as it finds the
+  pages of jidoka.
+- **The gate and the factory rules, on the page of an epic.** An epic that
+  waits at the acceptance gate shows a gate box. Type the commit message and
+  press Merge, or press Drop and confirm. Beside it, the gate items box has
+  Wrong beside each numbered assumption (it asks for a reason), Restore
+  beside each test that the test cleanup removed, and Keep and Close beside
+  each bead found outside the epic. The app draws no Send back, because the
+  send-back worker drafts its proposals in the acceptance session. Each press
+  runs jidoka's gate script, which checks the epic, writes the decision and
+  says why when it refuses. An open epic that carries the `factory` label
+  also shows a rules box: one picker for each setting that jidoka's rules
+  script lists, with the choices that it gives. Save runs that script, and
+  the script's one-line comment appears on the epic. The app
+  writes none of jidoka's keys through `bd`. It starts jidoka's scripts with
+  the Python that jidoka's settings name, found under `~/.jidoka` or the
+  folder that `JIDOKA_HOME` names. See
+  [ADR 0018](docs/adr/0018-jidokas-keys-are-written-only-through-jidokas-scripts.md).
 - **LAN mode.** The `--listen` flag binds every interface instead of the
   loopback interface, so you read the board on your phone. Without the
   flag no other machine reaches the app. The flag adds no password, thus

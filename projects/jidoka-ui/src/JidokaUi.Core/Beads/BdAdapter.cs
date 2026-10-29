@@ -58,8 +58,6 @@ public sealed class BdAdapter
         }
     }
 
-    // The projects to name now that a run ended: none while another run is still open, so that two
-    // runs at once name each project once between them.
     private IReadOnlyList<ProjectPath> EndOfARun()
     {
         lock (gathering)
@@ -75,6 +73,12 @@ public sealed class BdAdapter
             return projects;
         }
     }
+
+    /// <summary>
+    /// Names a project that a script of jidoka changed. The script writes through bd itself, so the
+    /// adapter never saw the write, and a listener that follows <see cref="Wrote"/> still learns of it.
+    /// </summary>
+    public void NameAWriteOf(ProjectPath project) => NameTheProjectOrHoldItForTheRun(project);
 
     private void NameTheProjectOrHoldItForTheRun(ProjectPath project)
     {
@@ -106,7 +110,6 @@ public sealed class BdAdapter
                 $"bd {string.Join(' ', arguments)} answered with something that is not JSON.");
     }
 
-    // Every plain read shares this wait limit and this outcome shape.
     private async Task<BdOutcome> OutcomeOfAsync(string workingDirectory, IReadOnlyList<string> arguments)
     {
         var result = await RunOrGiveUpAsync(workingDirectory, arguments);
@@ -370,8 +373,6 @@ public sealed class BdAdapter
     public Task<BdWriteOutcome> DeferAsync(BeadAddress bead) =>
         WriteAsync(bead, UiVerbs.DeferABead, ["defer", bead.Id]);
 
-    // Runs one write, after the capabilities say that this bd offers it. The check is the same one
-    // that disables the button, so a write that slips past the UI still fails as a message.
     private async Task<BdWriteOutcome> WriteAsync(
         BeadAddress bead,
         UiVerb verb,
@@ -423,12 +424,8 @@ public sealed class BdAdapter
         return CapabilityProbe.From(version, help, commandHelp, beads, comments);
     }
 
-    // What one run of the probe stands in as, once it gives up on bd. The wait limit still applies
-    // here, so the probe reports what this bd cannot do instead of asking forever.
     private static readonly BdResult GaveUpOnTheProbe = new(-1, string.Empty, AbandonedReadMessage);
 
-    // Reads the comments of one sampled bead, to learn the names that this bd gives a comment.
-    // A bead in the sample carries no comment, so the probe asks for them on their own.
     private async Task<BdComments> CommentsOfOneBeadAsync(
         ProjectPath project,
         IReadOnlyList<BeadRecord> sample)
@@ -458,7 +455,6 @@ public sealed class BdAdapter
     private async Task<IReadOnlyList<BeadRecord>> SampleAsync(ProjectPath project) =>
         (await ListAsync(project)).Records;
 
-    // A bead with no comment teaches the probe no name, so the most commented bead wins.
     private static string IdOfTheBeadWithTheMostComments(IReadOnlyList<BeadRecord> sample) =>
         sample
             .Where(bead => bead.Text(BeadFields.IdNames).Length > 0)

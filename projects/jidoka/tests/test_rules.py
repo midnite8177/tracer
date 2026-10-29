@@ -68,6 +68,28 @@ class FactoryRulesTests(test_scheduler.SchedulerCase):
         self.assertEqual({}, printed["changed"])
         self.assertEqual(1, len(self.rule_comments(epic)))
 
+    def test_choices_list_each_pickable_setting_with_its_choices_and_the_value_the_epic_holds(self):
+        epic = self.handed_off_epic(1)
+        self.rules_set(epic, "commits_on_main=per_task")
+
+        done = self.rules("choices", epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({"epic": epic, "settings": [
+            {"name": "lap_test_scope", "choices": ["targeted", "full"], "value": None},
+            {"name": "lap_limit", "choices": list(range(1, LAP_LIMIT)), "value": None},
+            {"name": "discovered_bugs_into_epic", "choices": [True, False], "value": None},
+            {"name": "commits_on_main", "choices": ["one", "per_task"], "value": "per_task"}]},
+            json.loads(done.stdout))
+
+    def test_choices_on_a_task_are_refused(self):
+        task = self.new_task_under(self.handed_off_epic(1))
+
+        done = self.rules("choices", task)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(f"{task} is a task, not an epic", done.stderr)
+
     def test_guidance_is_stored_whole_and_its_comment_gives_its_size_not_its_text(self):
         epic = self.handed_off_epic(1)
         text = "Prefer small functions.\nName a test for its behavior.\n"

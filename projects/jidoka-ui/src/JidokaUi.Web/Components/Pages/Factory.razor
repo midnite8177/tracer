@@ -1,0 +1,93 @@
+@page "/factory"
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Boards
+@using JidokaUi.Core.Factory
+@using JidokaUi.Core.Projects
+@inject FactoryReader Reader
+@inject BacklogCache Backlogs
+@inject ProjectWatchers Watchers
+@implements IDisposable
+
+<PageTitle>Factory</PageTitle>
+
+<h1>Factory</h1>
+
+<p class="text-muted">Every epic that the factory holds, in all of your projects, with the lap of each task.</p>
+
+@if (view is null)
+{
+    <p>The app is reading the epics of your projects…</p>
+}
+else
+{
+    @foreach (var unread in view.Projects.Where(project => project.IsUnread))
+    {
+        <p class="failure-message">
+            <strong>@unread.Project.DirectoryName</strong>, @unread.Reason
+        </p>
+    }
+
+    @if (view.IsEmpty)
+    {
+        <p class="text-muted">The factory holds no epic.</p>
+    }
+
+    @foreach (var project in view.Projects.Where(project => project.Epics.Count > 0))
+    {
+        <h2>
+            @project.Project.DirectoryName
+            <span class="text-muted machine-text factory-path">@project.Project.Value</span>
+        </h2>
+
+        @foreach (var held in project.Epics)
+        {
+            <section class="factory-epic">
+                <h3 class="h5">
+                    <a href="@BeadPageAddress.Of(new BeadAddress(project.Project, held.Epic.Id))">@held.Epic.Title</a>
+                    <BeadId Id="@held.Epic.Id" Quiet="true" />
+                    <span class="factory-state pill-chip">@held.State.Words()</span>
+                </h3>
+
+                @if (held.Tasks.Count == 0)
+                {
+                    <p class="text-muted">This epic holds no task.</p>
+                }
+                else
+                {
+                    <FactoryTaskTable Project="project.Project" Tasks="held.Tasks" />
+                }
+            </section>
+        }
+    }
+}
+
+@code {
+    private FactoryView? view;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Backlogs.Changed += OnBacklogChanged;
+        view = await Reader.ReadAsync();
+        foreach (var project in view.Projects)
+        {
+            Watchers.Watch(project.Project);
+        }
+    }
+
+    public void Dispose() => Backlogs.Changed -= OnBacklogChanged;
+
+    // Reads the project that changed again. Every other project keeps the epics that this view
+    // already holds, so a write in one repository costs no run of bd in the others.
+    private void OnBacklogChanged(BacklogChange change) => _ = InvokeAsync(() => Reread(change.Project));
+
+    private async Task Reread(ProjectPath project)
+    {
+        if (view is null)
+        {
+            return;
+        }
+
+        view = view.With(await Reader.ReadAsync(project));
+        StateHasChanged();
+    }
+}
