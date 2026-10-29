@@ -1064,12 +1064,15 @@ test('a manager request whose ledger script cannot run still reaches the host', 
 const NOW_MS = 1_790_000_000_000
 const USAGE_FILE = '/home/t/.jidoka/usage/claude.json'
 
-/** The usage the host reports for the account it runs on, in the shape of the SDK's usage call. */
+/** The usage the host reports for the account it runs on, in the shape the engine's `$.session.usage()` answers. */
 function usageAt(fiveHour: number, sevenDay: number): unknown {
   return {
-    rate_limits_available: true,
-    five_hour: { utilization: fiveHour, resets_at: '1970-01-01T01:00:00Z' },
-    seven_day: { utilization: sevenDay, resets_at: '1970-01-02T00:00:00Z' },
+    startedAt: NOW_MS - 60_000,
+    context: { tokens: 20_000, window: 200_000, percent: 10 },
+    rateLimits: [
+      { kind: 'five_hour', percentUsed: fiveHour, resetsAt: '1970-01-01T01:00:00Z' },
+      { kind: 'seven_day', percentUsed: sevenDay, resetsAt: '1970-01-02T00:00:00Z' },
+    ],
   }
 }
 
@@ -1137,12 +1140,39 @@ test("a call of another of jidoka's scripts reads no usage", async ($, on) => {
 })
 
 test('an account with no usage windows leaves a reading with none', async ($, on) => {
-  const world = managerCalling(on, () => ({ rate_limits_available: false, five_hour: null, seven_day: null }), true)
+  const world = managerCalling(
+    on,
+    () => ({ startedAt: NOW_MS - 60_000, context: { window: 200_000 }, rateLimits: [] }),
+    true,
+  )
   await startLap($, WORKTREE)
 
   await callScript(world, $, 'scheduler.py')
 
   expect(sumsAt(world.files, USAGE_FILE)).toEqual({ read_at: NOW_MS / 1000 })
+})
+
+test('a rate-limit window with no reset time is left out of the reading', async ($, on) => {
+  const world = managerCalling(
+    on,
+    () => ({
+      startedAt: NOW_MS - 60_000,
+      context: { window: 200_000 },
+      rateLimits: [
+        { kind: 'five_hour', percentUsed: 91 },
+        { kind: 'seven_day', percentUsed: 40, resetsAt: '1970-01-02T00:00:00Z' },
+      ],
+    }),
+    true,
+  )
+  await startLap($, WORKTREE)
+
+  await callScript(world, $, 'scheduler.py')
+
+  expect(sumsAt(world.files, USAGE_FILE)).toEqual({
+    read_at: NOW_MS / 1000,
+    seven_day: { used_percent: 40, resets_at: 86400 },
+  })
 })
 
 test('a usage call that fails leaves a reading with no windows and still lets the scheduler run', async ($, on) => {

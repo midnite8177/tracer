@@ -558,13 +558,17 @@ type UsageWindow = { used_percent: number; resets_at: number }
 /** What the account's usage looked like when the manager called the scheduler; a window the account lacks is left out. */
 type UsageReading = { read_at: number; five_hour?: UsageWindow; seven_day?: UsageWindow }
 
-/** The window in `value`, a usage entry with `utilization` and an ISO `resets_at`; undefined for anything else, such as the null of an account that has none. */
-function usageWindowIn(value: unknown): UsageWindow | undefined {
-  if (typeof value !== 'object' || value === null) return undefined
-  const { utilization, resets_at } = value as Record<string, unknown>
-  const resets = typeof resets_at === 'string' ? Date.parse(resets_at) : Number.NaN
-  if (typeof utilization !== 'number' || Number.isNaN(resets)) return undefined
-  return { used_percent: utilization, resets_at: Math.floor(resets / SECOND_MS) }
+/** The window of `kind` in `rateLimits`, the engine's list of entries with a `kind`, a `percentUsed` and an ISO `resetsAt`; undefined when no entry of that kind has both. */
+function usageWindowIn(rateLimits: unknown, kind: string): UsageWindow | undefined {
+  if (!Array.isArray(rateLimits)) return undefined
+  const entry: unknown = rateLimits.find(
+    (limit: unknown) => typeof limit === 'object' && limit !== null && (limit as Record<string, unknown>).kind === kind,
+  )
+  if (typeof entry !== 'object' || entry === null) return undefined
+  const { percentUsed, resetsAt } = entry as Record<string, unknown>
+  const resets = typeof resetsAt === 'string' ? Date.parse(resetsAt) : Number.NaN
+  if (typeof percentUsed !== 'number' || Number.isNaN(resets)) return undefined
+  return { used_percent: percentUsed, resets_at: Math.floor(resets / SECOND_MS) }
 }
 
 /** True when every simple command of `command` runs jidoka's launcher on a script inside the plugin and one of them runs the scheduler. */
@@ -575,20 +579,23 @@ function runsScheduler(command: string, pluginRoot: string): boolean {
 
 /**
  * Writes the usage windows of the account the host runs on to
- * `<jidoka home>/usage/claude.json`, where the scheduler reads them. It runs on
- * every call of the scheduler, so the file always shows the account as it is
- * now. An account with no windows, or a usage call that fails, leaves a
- * reading with none, and a failed write is lost without telling the host.
+ * `<jidoka home>/usage/claude.json`, where the scheduler reads them. The windows
+ * are the `five_hour` and `seven_day` entries of the `rateLimits` that
+ * `$.session.usage()` answers. It runs on every call of the scheduler, so the
+ * file always shows the account as it is now. An account with no windows, or a
+ * usage call that fails, leaves a reading with none, and a failed write is lost
+ * without telling the host.
  */
 async function recordUsage($: EngineInterface): Promise<void> {
   try {
     const home = await jidokaHome($)
     if (home === undefined) return
     const usage: unknown = await $.session.usage().catch(() => undefined)
-    const windows = typeof usage === 'object' && usage !== null ? (usage as Record<string, unknown>) : {}
+    const rateLimits: unknown =
+      typeof usage === 'object' && usage !== null ? (usage as Record<string, unknown>).rateLimits : undefined
     const reading: UsageReading = { read_at: Math.floor((await $.clock.now()) / SECOND_MS) }
-    const fiveHour = usageWindowIn(windows.five_hour)
-    const sevenDay = usageWindowIn(windows.seven_day)
+    const fiveHour = usageWindowIn(rateLimits, 'five_hour')
+    const sevenDay = usageWindowIn(rateLimits, 'seven_day')
     if (fiveHour !== undefined) reading.five_hour = fiveHour
     if (sevenDay !== undefined) reading.seven_day = sevenDay
     await $.fs.write(`${home}/${USAGE_FOLDER}/${ACCOUNT}.json`, `${JSON.stringify(reading)}\n`)
