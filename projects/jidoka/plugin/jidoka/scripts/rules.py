@@ -16,7 +16,9 @@ The settings:
   passes                     the most passes, a whole number above zero.
   discovered_bugs_into_epic  true to file a bug a lap finds inside the epic.
   extra_commands             a list of commands a worker may run.
-  tier_routes                an object of tier names to route names.
+  tier_routes                an object of tier names to route names. A route name `codex`,
+                             or starting `codex-`, is refused for a tier that has a
+                             stage which writes.
   stage_tiers                an object of stage names to tier names.
   budget                     the most the epic may spend, in dollars above zero.
   reserves                   an object of account names to a share above 0 and
@@ -63,6 +65,7 @@ from typing import Callable
 
 import lap_record
 import repo_settings
+import routes
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_git_user, metadata_of, parent_of, run
 from epic_reader import NotAnEpic, shown_epic
 
@@ -205,7 +208,19 @@ def of_epic(shown: dict) -> Rules:
     return Rules(settings, guidance)
 
 
-def problems_in(wanted: dict[str, object], repo_limit: int) -> list[str]:
+def codex_route_problems(wanted: dict[str, object], held: dict[str, object]) -> list[str]:
+    """The tiers that the routes and stage tiers, as the change would leave them, put on codex while a stage on
+    them writes. A setting the change leaves out keeps the value the epic holds."""
+    tier_routes = wanted.get("tier_routes", held.get("tier_routes", {}))
+    stage_tiers = wanted.get("stage_tiers", held.get("stage_tiers", {}))
+    if not (isinstance(tier_routes, dict) and isinstance(stage_tiers, dict)):
+        return []
+    refusals = (routes.codex_refusal(tier, stage_tiers) for tier, route in tier_routes.items()
+                if routes.runs_on_codex(route))
+    return [f"tier_routes: {refusal}" for refusal in refusals if refusal]
+
+
+def problems_in(wanted: dict[str, object], repo_limit: int, held: dict[str, object]) -> list[str]:
     problems = []
     for name, value in wanted.items():
         if name not in SETTINGS:
@@ -218,6 +233,8 @@ def problems_in(wanted: dict[str, object], repo_limit: int) -> list[str]:
         elif name == LAP_LIMIT and value >= repo_limit:
             problems.append(f"{LAP_LIMIT} must be below the repo's {repo_limit}, because an epic can only go "
                             f"lower, not {encode(value)}")
+    if not problems and ("tier_routes" in wanted or "stage_tiers" in wanted):
+        problems.extend(codex_route_problems(wanted, held))
     return problems
 
 
@@ -239,11 +256,11 @@ def write_settings(epic: str, wanted: dict[str, object], repo_limit: int, main_t
     Returns the settings it changed.
     """
     shown = epic_to_write(epic, main_tree)
-    problems = problems_in(wanted, repo_limit)
+    held = of_epic(shown).settings
+    problems = problems_in(wanted, repo_limit, held)
     if problems:
         raise RulesError(f"the factory rules of {epic} were not changed:\n"
                          + "\n".join(f"  {problem}" for problem in problems))
-    held = of_epic(shown).settings
     env = env_as_git_user(main_tree)
     changed: dict[str, object] = {}
     for name, value in wanted.items():

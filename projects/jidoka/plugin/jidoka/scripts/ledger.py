@@ -14,8 +14,8 @@ over all the worker's steps: `input_tokens`, `output_tokens`, `cache_read_input_
 `cache_creation_input_tokens`. The scheduler records a run when a worker's report comes in, naming the agent
 id the manager got when it started the worker. A report that names no agent writes its row with no tokens. The
 workers of an epic's pass (the test cleanup, the tidy, each review lane, the fix and the validation) belong to no task,
-so their rows have no task and the stage's name. Both go through `record_run`, which takes the worker, where the run
-belongs and the outcome; `record_run_or_say` is the call that never fails, for the scheduler.
+so their rows have no task and the stage's name. Both go through `record_run_or_say`, which takes the worker, where the
+run belongs and the outcome, and never fails. A run that a script measured itself goes through `record_ran_or_say`.
 
 After each row the epic's metadata gets `spend.dollars`, the sum of the dollars of its rows in the repo, because the
 scheduler reads only beads when it checks the budget.
@@ -248,9 +248,9 @@ def keep_total(home: Path, repo: str, epic: str, main_tree: Path) -> float:
 
 @dataclass(frozen=True)
 class Ran:
-    """What a worker run is priced from: the tokens it used, the model that ran, and the harness and effort of the
-    route its tier names."""
-    used: Used
+    """What a worker run is priced from: the tokens it used, the one model they are priced at and the row names, and
+    the harness and effort of the route its tier names."""
+    tokens: Tokens
     harness: str | None
     model: str | None
     effort: str | None
@@ -260,7 +260,7 @@ def ran_by(home: Path, worker: Worker) -> Ran:
     """The run of the worker. The model is the one its steps ran on, else the route's of its tier."""
     used = tokens_of(home, worker.agent)
     route = route_of(home, worker.tier)
-    return Ran(used, text_or_none(route.get("harness")), used.model or text_or_none(route.get("model")),
+    return Ran(used.tokens, text_or_none(route.get("harness")), used.model or text_or_none(route.get("model")),
                text_or_none(route.get("effort")))
 
 
@@ -273,25 +273,33 @@ def append(home: Path, main_tree: Path, epic: str, row: Row) -> float:
         raise LedgerError(str(error)) from error
 
 
-def record_run(home: Path, main_tree: Path, epic: str, where: Where, worker: Worker, outcome: str, now: int) -> float:
-    """Writes the row of a worker that has ended and returns the epic's running total."""
-    ran = ran_by(home, worker)
+def record_ran(home: Path, main_tree: Path, epic: str, where: Where, worker: Worker, ran: Ran, outcome: str,
+               now: int) -> float:
+    """Writes the row of a worker that has ended, from a run the caller measured itself, and returns the epic's
+    running total."""
     return append(home, main_tree, epic, Row(
         at=now, repo=str(main_tree), epic=epic, task=where.task, lap=where.lap, stage=where.stage,
         try_number=where.try_number, track=where.track, tier=worker.tier, harness=ran.harness, model=ran.model,
-        effort=ran.effort, agent=worker.agent, used=ran.used.tokens,
-        dollars=price_pages.dollars(home, ran.used.model, ran.used.tokens), wall_seconds=where.wall_seconds,
+        effort=ran.effort, agent=worker.agent, used=ran.tokens,
+        dollars=price_pages.dollars(home, ran.model, ran.tokens), wall_seconds=where.wall_seconds,
         outcome=outcome))
+
+
+def record_ran_or_say(home: Path, main_tree: Path, epic: str, where: Where, worker: Worker, ran: Ran, outcome: str,
+                      now: int) -> None:
+    """Writes the row of a run the caller measured. A ledger that cannot take the row is a line on stderr, never a
+    failure."""
+    try:
+        record_ran(home, main_tree, epic, where, worker, ran, outcome, now)
+    except LedgerError as error:
+        print(f"ledger: took no row for the {where.stage} of {where.task or epic}: {error}", file=sys.stderr)
 
 
 def record_run_or_say(home: Path, main_tree: Path, epic: str, where: Where, worker: Worker, outcome: str,
                       now: int) -> None:
     """Writes the row of a worker that has ended. A ledger that cannot take the row is a line on stderr, never a
     failure, because the report of the worker must settle whatever the ledger does."""
-    try:
-        record_run(home, main_tree, epic, where, worker, outcome, now)
-    except LedgerError as error:
-        print(f"ledger: took no row for the {where.stage} of {where.task or epic}: {error}", file=sys.stderr)
+    record_ran_or_say(home, main_tree, epic, where, worker, ran_by(home, worker), outcome, now)
 
 
 def epic_claimed_by(home: Path, session: str) -> str | None:

@@ -43,6 +43,46 @@ NATIVE_ROUTES: dict[str, dict] = {
 HOST_OWN_ROUTE = native(None, None, None)
 
 
+# The stages that change files, each with the tier the factory skill's Stages and tiers table runs it on. A test
+# compares the two.
+WRITING_STAGE_TIERS: tuple[tuple[str, str], ...] = (
+    ("build", "standard"),
+    ("build", "deep"),
+    ("merge", "deep"),
+    ("test-cleanup", "deep"),
+    ("tidy", "local"),
+    ("fix", "standard"),
+)
+
+
+def writing_stages_on(tier: str, stage_tiers: dict[str, str]) -> list[str]:
+    """The stages that change files and run on the tier. Each stage runs on the tier the factory skill gives it,
+    except a stage the epic's stage_tiers moves, which runs on the tier named there."""
+    stages: list[str] = []
+    for stage, default_tier in WRITING_STAGE_TIERS:
+        if stage_tiers.get(stage, default_tier) == tier and stage not in stages:
+            stages.append(stage)
+    return stages
+
+
+def codex_refusal(tier: str, stage_tiers: dict[str, str]) -> str | None:
+    """Why a codex route cannot serve the tier, or None when it can. codex exec runs read-only review only, so a tier
+    takes it only while no stage that writes runs on the tier."""
+    writing = writing_stages_on(tier, stage_tiers)
+    if not writing:
+        return None
+    return (f"codex exec runs read-only review only, so the {tier} tier cannot run on {CODEX_HARNESS}: "
+            f"{', '.join(writing)} write on it")
+
+
+def runs_on_codex(route: object) -> bool:
+    """Whether a route is on codex: a route object by its harness, and a route name by its start, so `codex` and
+    `codex-<anything>` are on codex."""
+    if isinstance(route, dict):
+        return route.get("harness") == CODEX_HARNESS
+    return isinstance(route, str) and (route == CODEX_HARNESS or route.startswith(f"{CODEX_HARNESS}-"))
+
+
 class RouteError(Exception):
     """Settings that cannot answer a question about a route, worded for the person who reads stderr."""
 

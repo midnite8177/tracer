@@ -8,7 +8,35 @@ sys.path.insert(0, str(HERE))
 
 import test_scheduler  # noqa: E402
 
+sys.path.insert(0, str(test_scheduler.PLUGIN / "scripts"))
+
+import routes  # noqa: E402
+
 LAP_LIMIT = test_scheduler.LAP_LIMIT
+FACTORY_SKILL = test_scheduler.PLUGIN / "skills" / "factory" / "SKILL.md"
+STAGES_THAT_ONLY_READ = ("research", "app-check", "spec-check", "review")
+
+
+def stage_tier_rows(skill: str) -> set[tuple[str, str]]:
+    """The (stage, tier) pairs of the factory skill's Stages and tiers table."""
+    rows = [[cell.strip() for cell in line.strip().strip("|").split("|")] for line in skill.splitlines()
+            if line.startswith("|")]
+    start = rows.index(["Stage", "Track", "Tier"]) + 2
+    table = []
+    for row in rows[start:]:
+        if len(row) != 3:
+            break
+        table.append((row[0], row[2]))
+    return set(table)
+
+
+class TheStagesThatWriteMatchTheFactorySkillTests(unittest.TestCase):
+    def test_the_stages_that_write_are_the_rows_of_the_skills_table_that_are_not_read_only(self):
+        table = stage_tier_rows(FACTORY_SKILL.read_text(encoding="utf-8"))
+
+        writing = {(stage, tier) for stage, tier in table if not stage.startswith(STAGES_THAT_ONLY_READ)}
+
+        self.assertEqual(set(routes.WRITING_STAGE_TIERS), writing)
 
 
 class FactoryRulesTests(test_scheduler.SchedulerCase):
@@ -34,6 +62,48 @@ class FactoryRulesTests(test_scheduler.SchedulerCase):
         self.assertIn("colour is not a setting", done.stderr)
         self.assertEqual([], self.rule_comments(epic))
         self.assertNotIn("rules.lap_limit", self.metadata(epic))
+
+    def test_a_codex_route_for_a_tier_whose_stages_write_is_refused_and_writes_nothing(self):
+        epic = self.handed_off_epic(1)
+
+        done = self.rules("set", epic, 'tier_routes={"deep":"codex"}')
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("deep", done.stderr)
+        self.assertIn("codex exec runs read-only review only", done.stderr)
+        for stage in ("build", "merge", "test-cleanup"):
+            self.assertIn(stage, done.stderr)
+        self.assertEqual([], self.rule_comments(epic))
+        self.assertNotIn("rules.tier_routes", self.metadata(epic))
+
+    def test_a_stage_moved_onto_a_tier_with_a_codex_route_makes_that_tier_refused(self):
+        epic = self.handed_off_epic(1)
+        self.rules_set(epic, 'tier_routes={"light":"codex"}')
+
+        done = self.rules("set", epic, 'stage_tiers={"fix":"light"}')
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("light", done.stderr)
+        self.assertIn("fix", done.stderr)
+        self.assertNotIn("rules.stage_tiers", self.metadata(epic))
+
+    def test_a_stage_that_writes_moved_onto_the_second_tier_is_refused_beside_its_codex_route(self):
+        epic = self.handed_off_epic(1)
+
+        done = self.rules("set", epic, 'tier_routes={"second":"codex"}', 'stage_tiers={"build":"second"}')
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("second", done.stderr)
+        self.assertIn("build", done.stderr)
+        self.assertNotIn("rules.tier_routes", self.metadata(epic))
+
+    def test_a_codex_route_for_the_second_tier_is_accepted(self):
+        epic = self.handed_off_epic(1)
+
+        self.rules_set(epic, 'tier_routes={"second":"codex"}')
+
+        shown = json.loads(self.rules("show", epic).stdout)
+        self.assertEqual({"second": "codex"}, shown["settings"]["tier_routes"])
 
     def test_every_setting_is_stored_and_shown_with_one_comment_each(self):
         epic = self.handed_off_epic(1)

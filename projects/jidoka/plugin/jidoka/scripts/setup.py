@@ -17,7 +17,8 @@
 
 `write --confirmed` reads a JSON object on stdin with `routes`, `budget` and `reserves`, the proposal as the human
 confirmed or edited it, checks all three before it writes any, and puts them into <jidoka-home>/settings.json. Every
-other key of the settings stays as it is, and the routes replace the stored ones whole. The flag is required: the
+other key of the settings stays as it is, and the routes replace the stored ones whole. A route on codex is refused
+for a tier that has a stage which writes, because codex exec runs read-only review only. The flag is required: the
 manager passes it only after the human said yes. A proposal that fails a check is refused and nothing is written.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
@@ -80,6 +81,9 @@ def check_route(tier: str, route: object) -> None:
     for field in ("model", "version", "effort"):
         if route.get(field) is not None and not rules.is_text(route[field]):
             raise SetupError(f"the {field} of the route of the tier {tier!r} must be text or null")
+    refusal = routes.codex_refusal(tier, {}) if routes.runs_on_codex(route) else None
+    if refusal:
+        raise SetupError(refusal)
 
 
 def check(confirmed: object) -> dict:

@@ -18,6 +18,7 @@ The scripts, run from inside the repo:
 - scheduler: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/scheduler.py"`
 - bench: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/bench.py"`
 - route: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/route.py"`
+- codex lane: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/codex_lane.py"`
 - repo settings: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py"`
 - watcher: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/watch.py"`
 - T3 waker: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_wake.py"`
@@ -75,7 +76,8 @@ track's stages, which the scheduler calls for in order.
 | merge | simple or full | deep |
 | test-cleanup | the pass | deep |
 | tidy | the pass | local |
-| review (comments, standards and spec lanes) | the pass | standard |
+| review (comments and standards lanes) | the pass | standard |
+| review (spec lane) | the pass | second |
 | review (design lane, on the epic's first review) | the pass | deep |
 | fix | the pass | standard |
 
@@ -107,6 +109,16 @@ prompt, and write the event line with that route's model. When it prints
 report it to the scheduler as the worker's outcome says. The failed route
 is no try.
 
+The second tier's route can be codex. Its one stage is the review's Spec
+lane, and the manager runs that lane with the codex lane script instead of
+an agent, as the review paragraph of step 4 says. A failed codex lane is
+a failure of a route that is not the host's own: run `route fallback` for
+it as above, with the epic as the bead, `review` as the stage, `second` as
+the tier and the lane action's `head` as the mark, and start the lane's
+worker again on the printed route. A second tier whose route is already
+native has nothing to fall back to, and a rerun that fails is the lane's
+own failure.
+
 ## Steps
 
 1. **Check.** Run `factory check`. Exit 1 means this session cannot run
@@ -124,7 +136,8 @@ is no try.
 2. **Route and settings.** Run `bench route standard --jidoka-home ...`,
    then `bench route deep --jidoka-home ...`, then `repo settings show`. Keep each app's `name`, `test` and
    `test_target` for the workers' prompts. Run `bench route light` too the
-   first time an action's `track` is `full`.
+   first time an action's `track` is `full`, and `bench route second` the
+   first time the actions hold a `review`.
 3. **Next.** Run `scheduler next <epic-id> --jidoka-home ...`. Exit 1 means
    it refused and wrote nothing; stderr lists every reason. Show it and
    stop. A refusal because the epic already has a manager means its
@@ -371,8 +384,11 @@ is no try.
    Actions whose `action` is `review` come together, one for each lane that
    runs, and have no task: the tidy is done. The `comments`, `standards` and
    `spec` lanes run on every review, and the `design` lane only on the epic's
-   first review. Start one lap worker for each, side by side, on the standard tier's
-   route, and the `design` lane's on the deep tier's route, each with the first line `jidoka lap worktree: <worktree>`, the action's
+   first review. Start one lap worker for each, side by side. The `comments` and
+   `standards` lanes run on the standard tier's route, the `design` lane on the
+   deep tier's route, and the `spec` lane on the second tier's route, from
+   `bench route second`. Each worker has the first line
+   `jidoka lap worktree: <worktree>`, the action's
    `worktree`, which the lanes share. Each prompt holds the paths of the
    glossary and the house rules, the epic as `bd show` printed it with its
    tasks' titles, and these limits: it works only in the worktree, changes no
@@ -388,6 +404,22 @@ is no try.
    `{"outcome": "done"}` or `{"outcome": "failed", "why": "<one line>"}`.
    Write the event line `<epic-id> review started: <lane> lane, <files> files
    on <base>..<head>` for each.
+
+   When the second tier's route has the harness `codex`, the `spec` lane is
+   no agent. Run `codex lane <epic-id> --worktree <worktree> --report
+   <report> --base <base> --head <head> --file <file> ... --doc <path> ...
+   --jidoka-home ...` in the background (`run_in_background: true`), with the
+   action's own `epic`, `worktree`, `report`, `base` and `head`, one `--file`
+   for each of its `files`, and one `--doc` for the glossary and for each
+   file of the house rules. The script starts `codex exec` in a read-only
+   sandbox in that worktree, stops it at the stage's wall clock, writes the
+   lane's report from codex's last message, and records the lane's ledger row
+   with harness codex and codex's tokens. It exits 0 when the report is
+   written. Any other exit, a usage limit included, is the route failing:
+   run `route fallback` for it as above, and start the `spec` lane as an
+   agent on the printed route, with the prompt the other lanes get. Write the
+   lane's event line with `codex` for the model, and a second line when the
+   lane reruns, with the printed route's model.
 
    An action whose `action` is `fix` has no task: the review left findings to
    fix. Start one lap worker on the standard tier's route, with the first
@@ -460,7 +492,11 @@ is no try.
    of the tidy ends with one `--worker <agent id> local` for each batch, and
    the report of the review with one `--worker` for each lane. The ledger prices
    each run from the tokens the lap mod summed under its agent id, and
-   writes it with no task.
+   writes it with no task. A `spec` lane that ran in codex has no agent id,
+   and its script wrote its row, so the review's report names no `--worker`
+   for it. A `spec` lane that reran as an agent after the fallback is named
+   with the tier `deep`, whose route is the same native Opus, so that its row
+   does not read as codex.
 
    A test cleanup worker's reply that ends with `{"outcome": "done"}` is
    reported with `scheduler report-cleanup <epic-id> --jidoka-home ...`, which

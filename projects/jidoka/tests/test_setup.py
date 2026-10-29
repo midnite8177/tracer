@@ -234,6 +234,19 @@ class WriteTests(SetupCase):
         self.assertIn("deep", done.stderr)
         self.assertEqual(["python"], self.home_files())
 
+    def test_a_codex_route_on_a_tier_whose_stages_write_is_refused_and_nothing_is_written(self):
+        before = self.record_installer_settings()
+        bad = {**self.CONFIRMED, "routes": {**self.CONFIRMED["routes"], "deep": CODEX}}
+
+        done = self.confirm(bad)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("deep", done.stderr)
+        self.assertIn("codex exec runs read-only review only", done.stderr)
+        for stage in ("build", "merge", "test-cleanup"):
+            self.assertIn(stage, done.stderr)
+        self.assertEqual(before, (self.home / "settings.json").read_bytes())
+
     def test_a_proposal_that_is_not_json_is_refused(self):
         done = self.setup_script("write", "--confirmed", stdin="not json")
 
