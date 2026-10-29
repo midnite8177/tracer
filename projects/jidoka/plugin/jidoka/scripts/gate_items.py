@@ -1,5 +1,6 @@
-"""The items the acceptance gate lists for the human beside the commits and figures: the assumptions, the public API
-changes and the open beads found outside the epic.
+"""The gate comment, and the items it lists for the human beside the commits and figures: the assumptions, the public
+API changes and the open beads found outside the epic. `reach_the_gate` writes the comment and puts the epic at the
+gate; the validation calls it, and the gate page lists the same commits through `merged_commits`.
 
 An assumption and a public API change are comments on the epic or one of its children. A comment that starts with
 `assumption:` is an assumption, as bench work posts one, and a comment that starts with `public API change:` names a
@@ -15,10 +16,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from commands import bd_comments, bd_list
+import cleanup
+import review
+from commands import bd_comments, bd_list, bd_show, run
 from epic_reader import child_ids, shown_beads
 from epic_task import DISCOVERED_FROM
+from epics import GATE_STATE_KEY, WAITING
+from pass_support import MAIN_BRANCH, park_epic
 
+GATE_COMMENT_HEADING = "Acceptance gate:"
 ASSUMPTION_PREFIX = "assumption:"
 API_CHANGE_PREFIX = "public API change:"
 CLOSED = "closed"
@@ -55,13 +61,18 @@ class GateItems:
         lines: list[str] = []
         if self.assumptions:
             lines += ["", "Assumptions:", *(f"{number}. {each.row()}" for number, each in
-                                             enumerate(self.assumptions, 1))]
+                                             numbered(self.assumptions))]
         if self.api_changes:
             lines += ["", "Public API changes:", *(f"- {each.row()}" for each in self.api_changes)]
         if self.outside:
             lines += ["", "Found outside the epic, still open:",
                       *(f"- {each.bead} {each.title}, found in {each.found_in}" for each in self.outside)]
         return lines
+
+
+def numbered(assumptions: list[Noted]) -> list[tuple[int, Noted]]:
+    """The assumptions with the number the gate gives each, from 1, which the human names in `wrong`."""
+    return list(enumerate(assumptions, 1))
 
 
 def noted(bead: str, title: str, comments: list[dict], prefix: str) -> list[Noted]:
@@ -96,9 +107,19 @@ def notes_of(epic: str, title: str, children: list[str], main_tree: Path) -> tup
     return assumptions, api_changes
 
 
-def assumptions_of(epic: str, title: str, main_tree: Path) -> list[Noted]:
-    """The assumptions on the epic and its children; the gate numbers them from 1 in this order."""
-    return notes_of(epic, title, child_ids(epic, main_tree), main_tree)[0]
+def numbered_assumptions(epic: str, title: str, main_tree: Path) -> list[tuple[int, Noted]]:
+    """The assumptions on the epic and its children, each with the number the gate comment gives it."""
+    return numbered(notes_of(epic, title, child_ids(epic, main_tree), main_tree)[0])
+
+
+def assumption(epic: str, title: str, number: int, main_tree: Path, error: type[Exception]) -> Noted:
+    """The assumption the gate comment numbers so; raises the caller's error when the epic has none with that number."""
+    listed = numbered_assumptions(epic, title, main_tree)
+    for each_number, each in listed:
+        if each_number == number:
+            return each
+    raise error(f"{epic} has {len(listed)} assumption{'' if len(listed) == 1 else 's'}, so there is no assumption "
+                f"{number}")
 
 
 def outside_of(epic: str, main_tree: Path) -> list[FoundOutside]:
@@ -110,3 +131,26 @@ def gate_items(epic: str, title: str, main_tree: Path) -> GateItems:
     children = child_ids(epic, main_tree)
     assumptions, api_changes = notes_of(epic, title, children, main_tree)
     return GateItems(assumptions, api_changes, found_outside(epic, children, main_tree))
+
+
+def merged_commits(branch_head: str, main_tree: Path) -> list[str]:
+    """One line for each commit the epic branch holds that main lacks, merge commits left out, oldest first."""
+    listed = run(["git", "log", "--no-merges", "--reverse", "--format=%h %s", f"{MAIN_BRANCH}..{branch_head}"],
+                 main_tree, None)
+    return listed.splitlines()
+
+
+def reach_the_gate(epic: str, branch: str, validated_head: str, figures: list[str], hand_run: list[str],
+                   main_tree: Path) -> None:
+    """Puts the epic at the acceptance gate: one comment that starts with the heading and lists the commits the epic
+    branch holds that main lacks, the validation's figures, the tests the test cleanup removed, the review's findings
+    of low confidence, the assumptions, the public API changes, the open beads found outside the epic and the
+    hand-run lines, then gate.state waiting and the human label, last, so a labeled epic always has its comment."""
+    shown = bd_show(epic, main_tree)
+    notes = [*cleanup.removed_lines(shown), *review.low_confidence_lines(shown),
+             *gate_items(epic, str(shown.get("title") or ""), main_tree).lines()] if shown is not None else []
+    lines = [f"{GATE_COMMENT_HEADING} {epic} waits for the human, on the epic branch {branch} at {validated_head}.",
+             "", "Merged into the epic branch:", *(f"- {commit}" for commit in merged_commits(validated_head, main_tree)),
+             "", *figures, *notes, *hand_run,
+             "", f"/jidoka:accept {epic} writes the review guide page and takes the human's choice."]
+    park_epic(epic, "\n".join(lines), {GATE_STATE_KEY: WAITING}, main_tree)

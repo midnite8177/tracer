@@ -24,7 +24,7 @@ to each run.
 
 1. **Show the gate.** `bd show <epic-id>` and `bd comments <epic-id>`.
    The epic must carry the `human` label and await acceptance, as the
-   gate script's `awaits_acceptance` reads it: `gate.state=waiting`, or
+   `acceptance.py`'s `awaits_acceptance` reads it: `gate.state=waiting`, or
    the question the pass cap asks while the epic holds open tasks. If it
    does not, say so and stop. Restate the epic's title, the commits the
    latest "Acceptance gate:" comment lists, and the validation figures.

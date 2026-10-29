@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """The page that sits beside the handoff comment on an epic.
 
-handoff.py imports it. A page is one self-contained HTML file in `<jidoka-home>/pages/<repo>/handoff-<epic>.html`,
-never in the repo, and a later handoff of the same epic replaces it. The look is the stylesheet of the explain skill,
-inlined; the parts are listed in that skill's SKILL.md. Every word comes from the table and the rules the handoff
-writes, and is escaped here. The handoff comment holds the same table in plain text, so the page can fall behind it and
-the bead still wins.
+handoff.py imports it. The page shows the table of the epic's tasks and the epic's factory rules. Every word comes from
+the table and the rules the handoff writes, and is escaped here. The handoff comment holds the same table in plain
+text, so the page can fall behind it and the bead still wins. page.py says where a page lives and how it looks.
 """
 from __future__ import annotations
 
@@ -13,8 +11,9 @@ from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 
-import question_page
+import page as shared
 
+KIND = "handoff"
 NO_RULES = "The epic sets no factory rules, so the repo settings apply."
 
 
@@ -43,10 +42,6 @@ class HandoffPage:
     guidance: str
 
 
-def page_path(home: Path, main_tree: Path, epic: str) -> Path:
-    return home / question_page.PAGES_FOLDER / main_tree.name / f"handoff-{epic}.html"
-
-
 def row_html(row: Row) -> str:
     cells = (f"{row.task} {row.title}", row.track, row.why, row.area, str(row.holdouts), row.state)
     return "<tr>" + "".join(f"<td>{escape(cell)}</td>" for cell in cells) + "</tr>"
@@ -73,21 +68,12 @@ def rules_html(page: HandoffPage) -> str:
     return "\n".join(part for part in (settings_html(page), guidance) if part)
 
 
-def render(page: HandoffPage, stylesheet: str) -> str:
-    return (f'<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
-            f'<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-            f'<title>Handoff: {escape(page.title)}</title>\n<style>\n{stylesheet}</style>\n</head>\n<body>\n'
-            f'<header>\n<p>Handoff of {escape(page.epic)} on {escape(page.branch)}</p>\n'
-            f'<h1>{escape(page.title)}</h1>\n</header>\n'
-            f'<section class="tasks">\n<h2>The tasks</h2>\n{tasks_table(page)}\n</section>\n'
-            f'<section class="rules">\n<h2>The factory rules</h2>\n{rules_html(page)}\n</section>\n'
-            f'</body>\n</html>\n')
+def body(page: HandoffPage) -> str:
+    return (shared.section("The tasks", tasks_table(page), "tasks")
+            + shared.section("The factory rules", rules_html(page), "rules"))
 
 
 def write(page: HandoffPage, home: Path, main_tree: Path) -> Path:
     """Writes the page and returns its path; raises OSError when the stylesheet cannot be read or the file written."""
-    stylesheet = question_page.STYLESHEET.read_text(encoding="utf-8")
-    path = page_path(home, main_tree, page.epic)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render(page, stylesheet), encoding="utf-8")
-    return path
+    head = shared.PageHead(KIND, page.epic, "Handoff", f"Handoff of {page.epic} on {page.branch}", page.title)
+    return shared.write(head, body(page), home, main_tree)

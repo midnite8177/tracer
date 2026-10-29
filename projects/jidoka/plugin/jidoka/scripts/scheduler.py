@@ -91,9 +91,9 @@ left on the epic branch, prints the stage's fields under its key, and does what 
   test cleanup  cleanup.py: `report-cleanup <epic>`.
   tidy          tidy.py: `report-tidy <epic>`.
   review        review.py: `report-review <epic>`, then `report-fix <epic>` when the review leaves a `fix` action.
-  validation    validation.py: runs once the stages above owe nothing. An epic that holds holdouts ends with a
-                holdouts action until holdouts_run.py takes `report-holdouts <epic> [--ended failed|cut-off]
-                [--why <why>]`.
+  validation    holdouts_run.py `validate`, which runs validation.py once the stages above owe nothing. An epic that
+                holds holdouts ends with a holdouts action until holdouts_run.py takes
+                `report-holdouts <epic> [--ended failed|cut-off] [--why <why>]`.
 Each of these report modes, `report-holdouts` included, takes `--worker <agent id> <tier> [done|failed|cut-off]` once
 for each worker it reports, and the review reports one for each lane. The call writes a ledger row for each, with no
 task and the stage's name (`test-cleanup`, `tidy`, `review`, `fix` or `holdouts`), before it settles the stage, so a
@@ -203,7 +203,6 @@ import reserves
 import resume
 import rules
 import spec_check
-import validation
 from bench import BenchError, Workspace, make_worktree
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, SCRATCH_FOLDER, CommandError,
                       NotAWholeNumber, bd_comments, env_as_factory, is_labeled_for_human, labels_of, metadata_of,
@@ -273,7 +272,7 @@ def scheduler_problems(epic: Epic, settings: dict, main_tree: Path) -> list[str]
 
 
 def is_parked(epic: Epic) -> bool:
-    """The human's brake: the epic carries the human label, so no stage starts and no lap opens."""
+    """The epic carries the human label, the human's brake, so no stage starts and no lap opens."""
     return state_of(epic.shown).labeled_for_human
 
 
@@ -290,7 +289,7 @@ def has_work_to_wait_for(epic: Epic) -> bool:
 
 
 def first_stage(task: str, track: str, main_tree: Path) -> str:
-    """The stage a new lap starts at: the research brief on the full track while the task has none, else the build."""
+    """The stage a new lap starts at, the research brief on the full track while the task has none, else the build."""
     if track == FULL_TRACK and not any(str(comment.get("text") or "").startswith(BRIEF_PREFIX)
                                        for comment in bd_comments(task, main_tree)):
         return RESEARCH
@@ -446,7 +445,7 @@ class PassState:
     """What settling the epic's own state left: the epic as bd shows it now, the validation this call ran, the holdouts
     the epic waits on, and the pass stage's actions."""
     epic: Epic
-    validated: validation.Validated | None
+    validated: pass_stages.Settled | None
     holdouts_run: holdouts_run.HoldoutsToRun | None
     pass_actions: list[dict]
 
@@ -504,7 +503,7 @@ def parking_of(epic: Epic, reading: reserves.Reading | None, now: int, home: Pat
 def settle_epic(epic: Epic, settings: dict, home: Path, main_tree: Path) -> PassState:
     """Settles the epic's own state: the pass it owes, the pass cap, and the holdouts it waits on. The epic is read
     again after each step that writes on it."""
-    ran = pass_stages.PassRun([], None, None)
+    ran = pass_stages.PassRun([], None)
     if gate_guard.is_unlabeled_at_the_gate(epic.shown):
         gate_guard.park_again(epic.id, main_tree)
         epic = checked_epic(epic.id, settings, main_tree)

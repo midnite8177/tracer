@@ -7,8 +7,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import jidoka_fixture as fixture  # noqa: E402
-import test_scheduler  # noqa: E402
+import jidoka_fixture as fixture
+import test_scheduler
 
 DESIGN_SCRIPT = test_scheduler.PLUGIN / "scripts" / "design_findings.py"
 
@@ -56,6 +56,14 @@ class DesignFindingsTests(test_scheduler.SchedulerCase):
         self.assertNotIn("parent", self.shown(filed["bead"]))
         self.assertEqual("open", bead["status"])
         self.assertIn("till.py", bead["title"])
+
+    def test_a_problem_met_again_keeps_the_link_to_the_epic_that_filed_it(self):
+        first, second = self.new_epic(), self.new_epic()
+        [filed] = self.settled(first, problem("Discounts are applied after tax"))
+
+        self.settled(second, problem("Discounts are applied after tax"))
+
+        self.assertEqual({("discovered-from", first)}, self.links_of(filed["bead"]))
 
     def test_two_problems_become_two_beads(self):
         epic = self.new_epic()

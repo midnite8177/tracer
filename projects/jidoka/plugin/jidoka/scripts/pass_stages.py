@@ -16,7 +16,6 @@ import cleanup
 import holdouts_run
 import review
 import tidy
-import validation
 from epic_reader import Epic
 from epics import state_of
 
@@ -72,8 +71,11 @@ class PassRun:
     """What a finished epic's pass did in one call: the actions of the stage it still owes, or else the validation it
     ran and the run of the holdouts that validation left waiting."""
     actions: list[dict]
-    validated: validation.Validated | None
-    holdouts: holdouts_run.HoldoutsToRun | None
+    validated: holdouts_run.ValidationResult | None
+
+    @property
+    def holdouts(self) -> holdouts_run.HoldoutsToRun | None:
+        return self.validated.to_run if self.validated is not None else None
 
 
 def run_pass(epic: Epic, settings: dict, home: Path, main_tree: Path) -> PassRun:
@@ -81,9 +83,8 @@ def run_pass(epic: Epic, settings: dict, home: Path, main_tree: Path) -> PassRun
     validation."""
     actions = pass_stage_actions(epic, settings, home, main_tree)
     if actions:
-        return PassRun(actions, None, None)
-    validated = validation.validate(epic.id, epic.branch, settings, home, main_tree)
-    return PassRun([], validated, holdouts_run.waiting_on(epic.id, validated))
+        return PassRun(actions, None)
+    return PassRun([], holdouts_run.validate(epic.id, epic.branch, settings, home, main_tree))
 
 
 def holdouts_owed(epic: Epic, home: Path, main_tree: Path) -> holdouts_run.HoldoutsToRun | None:

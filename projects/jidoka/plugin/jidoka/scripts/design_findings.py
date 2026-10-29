@@ -11,9 +11,10 @@ the epic's review met in code the epic did not write, and prints a JSON list of 
 
 A design finding is a bead outside every epic, a task labeled `design`, one for each problem. A problem is named by its
 file and its title, ignoring case and spacing, which the finding keeps in its `design.problem` metadata. A problem with
-no open design finding becomes a new one. A problem that has one gets a sighting: a comment on the finding that names
-the epic and the line, so the finding's comments are its sightings, the first one written when the finding is filed.
-A report that names one problem twice counts one sighting. Everything is written to bd with BEADS_ACTOR set to jidoka.
+no open design finding becomes a new one, linked discovered-from to the epic whose review filed it. A problem that has
+one gets a sighting: a comment on the finding that names the epic and the line, so the finding's comments are its
+sightings, the first one written when the finding is filed. A report that names one problem twice counts one sighting.
+Everything is written to bd with BEADS_ACTOR set to jidoka.
 
 Exit codes:
   0  the report was settled.
@@ -36,6 +37,7 @@ from report_text import ReportError, listed_report, located_texts, shortened_tit
 
 DESIGN_LABEL = "design"
 PROBLEM_KEY = "design.problem"
+KEY_SEPARATOR = "::"
 SIGHTING_PREFIX = "Sighting: "
 
 
@@ -53,7 +55,12 @@ class Problem:
 
     @property
     def key(self) -> str:
-        return f"{self.file}::{' '.join(self.title.lower().split())}"
+        return f"{self.file}{KEY_SEPARATOR}{' '.join(self.title.lower().split())}"
+
+    @staticmethod
+    def file_of(key: str) -> str:
+        """The file a problem key names."""
+        return key.split(KEY_SEPARATOR, 1)[0]
 
     @property
     def bead_title(self) -> str:
@@ -82,6 +89,18 @@ class Settled:
                 "sightings": self.sightings}
 
 
+@dataclass(frozen=True)
+class OpenFinding:
+    """An open design finding: its bead, the file and title of its problem, and how many sightings it has."""
+    bead: str
+    file: str
+    title: str
+    sightings: int
+
+    def fields(self) -> dict:
+        return {"bead": self.bead, "file": self.file, "title": self.title, "sightings": self.sightings}
+
+
 def problem_of(value: object, number: int) -> Problem:
     texts, line = located_texts(value, f"finding {number} of the report", "a file, line, title and note")
     return Problem(texts["file"], line, texts["title"], texts["note"])
@@ -107,25 +126,24 @@ def open_findings(main_tree: Path) -> dict[str, str]:
     return {key: str(bead["id"]) for key, bead in open_beads(main_tree)}
 
 
-def ranked_findings(files: list[str], main_tree: Path) -> list[dict]:
+def ranked_findings(files: list[str], main_tree: Path) -> list[OpenFinding]:
     """The open design findings about the files, or about any file when none is named, the most sighted first."""
     ranked = []
     for key, bead in open_beads(main_tree):
-        file = key.split("::", 1)[0]
+        file = Problem.file_of(key)
         if files and file not in files:
             continue
         bead_id = str(bead["id"])
-        ranked.append({"bead": bead_id, "file": file, "title": str(bead.get("title", "")),
-                       "sightings": sightings_of(bead_id, main_tree)})
-    return sorted(ranked, key=lambda each: (-each["sightings"], each["bead"]))
+        ranked.append(OpenFinding(bead_id, file, str(bead.get("title", "")), sightings_of(bead_id, main_tree)))
+    return sorted(ranked, key=lambda each: (-each.sightings, each.bead))
 
 
 def sightings_of(bead: str, main_tree: Path) -> int:
     return sum(1 for each in bd_comments(bead, main_tree) if str(each.get("text", "")).startswith(SIGHTING_PREFIX))
 
 
-def file_finding(problem: Problem, main_tree: Path) -> str:
-    bead = file_outside(problem.bead_title, problem.description(), None, [DESIGN_LABEL], main_tree)
+def file_finding(epic: str, problem: Problem, main_tree: Path) -> str:
+    bead = file_outside(problem.bead_title, problem.description(), epic, [DESIGN_LABEL], main_tree)
     run(["bd", "update", bead, "--set-metadata", f"{PROBLEM_KEY}={problem.key}"], main_tree, env_as_factory())
     return bead
 
@@ -138,7 +156,7 @@ def settle(epic: str, problems: list[Problem], main_tree: Path) -> list[Settled]
         bead = held.get(problem.key)
         is_new = bead is None
         if bead is None:
-            bead = file_finding(problem, main_tree)
+            bead = file_finding(epic, problem, main_tree)
         run(["bd", "comment", bead, problem.sighting(epic)], main_tree, env_as_factory())
         settled.append(Settled(bead, problem, is_new, sightings_of(bead, main_tree)))
     return settled
@@ -151,7 +169,7 @@ def print_open(files: list[str]) -> int:
     except (repo_settings.SettingsError, CommandError, OSError) as error:
         print(f"design_findings: {error}", file=sys.stderr)
         return 1
-    print(json.dumps(ranked, indent=2))
+    print(json.dumps([each.fields() for each in ranked], indent=2))
     return 0
 
 

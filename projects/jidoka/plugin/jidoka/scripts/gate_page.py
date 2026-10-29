@@ -3,10 +3,10 @@
 
 `gate_page.py <epic> --guide <file>` writes one self-contained HTML file, `<jidoka-home>/pages/<repo>/gate-<epic>.html`,
 never in the repo, and prints its path. A later run for the same epic replaces it. The epic must be open, await
-acceptance (`gate.awaits_acceptance`: `gate.state` waiting, or parked at the pass cap with open tasks) and record an
-epic branch that exists. The look is the stylesheet of the explain skill, inlined, and the parts are listed in that
-skill's SKILL.md. The gate comment holds the record in plain text, so the page can fall behind it and the bead still
-wins.
+acceptance (`acceptance.awaits_acceptance`: `gate.state` waiting, or parked at the pass cap with open tasks) and
+record an epic branch that exists. The look is the stylesheet of the explain skill, inlined, and the parts are listed
+in that skill's SKILL.md. The gate comment holds the record in plain text, so the page can fall behind it and the bead
+still wins.
 
 The guide is a JSON object the worker of the gate writes: `in_short`, a non-empty string, and optional `before` and
 `after`, strings that show an example before and after the epic; `how`, a list of short steps that explain how the
@@ -41,19 +41,18 @@ import cleanup
 import design_findings
 import diff_view
 import gate_items
-import question_page
+import page as shared
 import repo_settings
 import review
 import validation
+from acceptance import branch_and_head_at_the_gate, branch_moved_since_validation, main_moved_since_validation
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, metadata_of, read_bead, run, worktree_list
-from epic_branch import required_head
-from epic_reader import EPIC_TYPE, EpicReadError, recorded_branch, validated_head
-from epics import is_closed
-from gate import awaits_acceptance, branch_moved_since_validation, main_moved_since_validation, merged_commits
+from epic_reader import EpicReadError, validated_head
 from land import changed_paths, edited_paths, main_checkout
 from pass_support import MAIN_BRANCH, PassError
 from worktrees import stage_worktree
 
+KIND = "gate"
 DECIDE_SLOT = "decide-panel"
 WORKTREE_PREFIX = "gate-"
 
@@ -103,16 +102,12 @@ class GatePage:
     checkout: Checkout
     apps: tuple[AppCommands, ...]
     items: gate_items.GateItems
-    open_findings: tuple[dict, ...]
+    open_findings: tuple[design_findings.OpenFinding, ...]
     low_findings: tuple[review.Finding, ...]
     removals: tuple[cleanup.Removal, ...]
     hand_run: tuple[validation.HandRunGroup, ...]
     cost: tuple[str, ...]
     danger: tuple[str, ...]
-
-
-def page_path(home: Path, main_tree: Path, epic: str) -> Path:
-    return home / question_page.PAGES_FOLDER / main_tree.name / f"gate-{epic}.html"
 
 
 def texts_of(value: object, name: str) -> tuple[str, ...]:
@@ -146,20 +141,6 @@ def read_guide(path: Path) -> Guide:
     return Guide(in_short, text_of(data.get("before"), "before"), text_of(data.get("after"), "after"),
                  texts_of(data.get("how"), "how"), texts_of(data.get("steps"), "steps"),
                  texts_of(data.get("unchecked"), "unchecked"))
-
-
-def epic_waiting_at_the_gate(epic: str, main_tree: Path) -> tuple[dict, str, str]:
-    """The epic's bead, its epic branch and the head of that branch; raises GatePageError when the epic does not await
-    acceptance, as the gate script reads it."""
-    shown = read_bead(epic, main_tree)
-    if shown.get("issue_type") != EPIC_TYPE:
-        raise GatePageError(f"{epic} is not an epic")
-    if is_closed(shown) or not awaits_acceptance(shown, main_tree):
-        raise GatePageError(f"{epic} does not wait at the acceptance gate, so it has no gate page")
-    branch = recorded_branch(shown)
-    if not branch:
-        raise GatePageError(f"{epic} records no epic branch")
-    return shown, branch, required_head(branch, main_tree, GatePageError)
 
 
 def changed_files(head: str, main_tree: Path) -> tuple[diff_view.FileDiff, ...]:
@@ -240,12 +221,13 @@ def cost_lines(shown: dict) -> tuple[str, ...]:
 
 def gather(epic: str, guide: Guide, home: Path, main_tree: Path) -> GatePage:
     """Reads everything the page shows; raises GatePageError when the epic does not wait at the gate."""
-    shown, branch, head = epic_waiting_at_the_gate(epic, main_tree)
+    shown = read_bead(epic, main_tree)
+    branch, head = branch_and_head_at_the_gate(epic, shown, main_tree, GatePageError)
     files = changed_files(head, main_tree)
     settings = settings_of(home, main_tree)
     findings = design_findings.ranked_findings([each.path for each in files], main_tree)
     return GatePage(epic, str(shown.get("title") or epic), branch, head, guide,
-                    tuple(merged_commits(head, main_tree)), files, evidence_lines(shown),
+                    tuple(gate_items.merged_commits(head, main_tree)), files, evidence_lines(shown),
                     checkout_of(epic, branch, main_tree), apps_of(settings),
                     gate_items.gate_items(epic, str(shown.get("title") or ""), main_tree), tuple(findings),
                     tuple(review.stored_findings(shown, review.LOW_KEY)), tuple(cleanup.removed_before(shown)),
@@ -259,11 +241,6 @@ def paragraph(text: str) -> str:
 
 def bullets(items: tuple[str, ...] | list[str]) -> str:
     return "<ul>\n" + "\n".join(f"<li>{escape(each)}</li>" for each in items) + "\n</ul>"
-
-
-def section(title: str, body: str, css: str) -> str:
-    kind = f' class="{css}"' if css else ""
-    return f"<section{kind}>\n<h2>{escape(title)}</h2>\n{body}\n</section>\n"
 
 
 def example(label: str, text: str) -> str:
@@ -281,7 +258,7 @@ def before_and_after(guide: Guide) -> str:
 def how_it_works(guide: Guide) -> str:
     if not guide.how:
         return paragraph("The worker gave no steps.")
-    return question_page.diagram(guide.how, "How the change works, step by step")
+    return shared.diagram(guide.how, "How the change works, step by step")
 
 
 def file_html(file: diff_view.FileDiff) -> str:
@@ -351,7 +328,7 @@ def design_findings_html(page: GatePage) -> str:
     parts = []
     if page.open_findings:
         parts.append("<h3>Open in the files the epic changed</h3>\n" + bullets(
-            [f"{each['bead']} {each['file']}: {each['title']} (sightings: {each['sightings']})"
+            [f"{each.bead} {each.file}: {each.title} (sightings: {each.sightings})"
              for each in page.open_findings]))
     if page.low_findings:
         parts.append("<h3>Review findings of low confidence, never fixed</h3>\n" + bullets(
@@ -379,14 +356,13 @@ def unchecked(page: GatePage) -> str:
 
 
 def decide() -> str:
-    return (f'<section class="answer-slot" data-jidoka-slot="{DECIDE_SLOT}">\n<h2>Decide</h2>\n'
-            "<p>jidoka-ui draws Merge and Drop here. Send back runs in /jidoka:accept. "
-            "The bead holds the gate comment in plain text.</p>\n"
-            "</section>\n")
+    return shared.slot(DECIDE_SLOT, "Decide", "jidoka-ui draws Merge and Drop here. Send back runs in /jidoka:accept. "
+                                              "The bead holds the gate comment in plain text.")
 
 
-def render(page: GatePage, stylesheet: str) -> str:
-    body = "".join([
+def body(page: GatePage) -> str:
+    section = shared.section
+    return "".join([
         section("In short", paragraph(page.guide.in_short), "in-short"),
         section("Before and after", before_and_after(page.guide), ""),
         section("How it works", how_it_works(page.guide), "why"),
@@ -399,20 +375,13 @@ def render(page: GatePage, stylesheet: str) -> str:
         section("Cost", bullets(page.cost), ""),
         section("Merge danger", bullets(page.danger), ""),
         decide()])
-    return (f'<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
-            f'<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-            f'<title>Acceptance gate: {escape(page.title)}</title>\n<style>\n{stylesheet}</style>\n</head>\n<body>\n'
-            f'<header>\n<p>Acceptance gate for {escape(page.epic)} on {escape(page.branch)} at '
-            f'{escape(page.head[:12])}</p>\n<h1>{escape(page.title)}</h1>\n</header>\n{body}</body>\n</html>\n')
 
 
 def write(page: GatePage, home: Path, main_tree: Path) -> Path:
     """Writes the page and returns its path; raises OSError when the stylesheet cannot be read or the file written."""
-    stylesheet = question_page.STYLESHEET.read_text(encoding="utf-8")
-    path = page_path(home, main_tree, page.epic)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render(page, stylesheet), encoding="utf-8")
-    return path
+    byline = f"Acceptance gate for {page.epic} on {page.branch} at {page.head[:12]}"
+    head = shared.PageHead(KIND, page.epic, "Acceptance gate", byline, page.title)
+    return shared.write(head, body(page), home, main_tree)
 
 
 def main(argv: list[str]) -> int:

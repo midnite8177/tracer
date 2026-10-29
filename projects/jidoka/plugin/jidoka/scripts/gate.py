@@ -20,7 +20,7 @@ comment on the epic with the failing commands, leaves the epic at the gate
 and changes nothing else. A rebuild that conflicts with main does the same.
 
 Uncommitted edits in main's checkout that touch files the epic changed make
-the script wait: it prints the files and exits 3 before it changes anything,
+the script wait. It prints the files and exits 3 before it changes anything,
 and running it again once the edits are gone goes on. It fast-forwards
 local main with git merge --ff-only. It never pushes.
 
@@ -97,29 +97,26 @@ import gate_send_back
 import lap_record
 import pass_ledger
 import repo_settings
-import review
 import rules
-from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, MAIN_REF, CommandError, bd_show, capture,
+from acceptance import branch_and_head_at_the_gate, moved_since_validation
+from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, MAIN_REF, CommandError, capture,
                       env_as_git_user, labels_of, metadata_of, read_bead, run, set_metadata, unset_metadata,
                       worktree_list)
 from epic_branch import branch_head, required_head
-from epic_reader import (BRANCH_KEY, EPIC_TYPE, EpicReadError, child_ids, read_epic, recorded_branch, shown_beads,
-                         validated_head)
-from epics import GATE_STATE_KEY, WAITING, at_the_gate, is_closed
-from gate_items import assumptions_of, gate_items, outside_of
+from epic_reader import EpicReadError, child_ids, recorded_branch, shown_beads
+from epics import GATE_STATE_KEY, is_closed
+from gate_items import assumption, numbered_assumptions, outside_of
 from holdouts import HOLDOUTS_KEY
 from land import (FULL_SUITE_FAILED_EXIT_CODE, PARTLY_LANDED_EXIT_CODE, WAITING_ON_EDITS_EXIT_CODE, FullSuiteFailed,
                   LandingError, LandingSettings, WaitingOnEdits, acquire_lock, attempt, landing_settings,
                   main_checkout, merge_lock, print_hand_run, refuse_bad_message, refuse_overlapping_edits,
                   release_lock, run_full_suite, subject)
-from merge_gate import contains
 from open_tasks import move_open_tasks
-from pass_support import MAIN_BRANCH, PassError, park_epic
+from pass_support import PassError
 from report_text import tail_of
 from task_commits import commit_per_task
 from worktrees import cut_detached, remove_worktree, stage_worktree
 
-GATE_COMMENT_HEADING = "Acceptance gate:"
 DECISION_KEY = "gate.decision"
 LANDED_KEY = "gate.landed"
 MERGE = "merge"
@@ -171,17 +168,6 @@ class Landed:
     failed_steps: list[str]
 
 
-def is_parked_at_the_cap(shown: dict, main_tree: Path) -> bool:
-    """True when the epic waits on the question the pass cap asks and still holds open tasks."""
-    return pass_ledger.asked_at_the_cap(shown) and bool(read_epic(shown, main_tree).tasks)
-
-
-def awaits_acceptance(shown: dict, main_tree: Path) -> bool:
-    """True when the human can accept the epic: it waits at the gate, or it is parked at the pass cap with open tasks.
-    The gate script, the gate page and the accept skill all ask this one question."""
-    return at_the_gate(shown) or is_parked_at_the_cap(shown, main_tree)
-
-
 def epic_at_the_gate(epic: str, main_tree: Path) -> EpicAtTheGate:
     shown = read_bead(epic, main_tree)
     labels = labels_of(shown)
@@ -189,57 +175,11 @@ def epic_at_the_gate(epic: str, main_tree: Path) -> EpicAtTheGate:
                           is_closed(shown), rules.of_epic(shown).commits_on_main)
     if found.landed:
         return found
-    if shown.get("issue_type") != EPIC_TYPE:
-        raise GateError(f"{epic} is not an epic")
-    if FACTORY_LABEL not in labels or HUMAN_LABEL not in labels or not awaits_acceptance(shown, main_tree):
-        raise GateError(f"{epic} does not wait at the acceptance gate or at the pass cap: it needs the "
-                        f"{FACTORY_LABEL} and {HUMAN_LABEL} labels and either {GATE_STATE_KEY}={WAITING} or the "
-                        "question the pass cap asks, with open tasks")
-    if not found.branch:
-        raise GateError(f"{epic} records no epic branch as its {BRANCH_KEY} metadata")
-    required_head(found.branch, main_tree, GateError)
+    branch_and_head_at_the_gate(epic, shown, main_tree, GateError)
+    if FACTORY_LABEL not in labels or HUMAN_LABEL not in labels:
+        raise GateError(f"{epic} does not wait at the acceptance gate: it needs the {FACTORY_LABEL} and "
+                        f"{HUMAN_LABEL} labels")
     return found
-
-
-def merged_commits(branch_head: str, main_tree: Path) -> list[str]:
-    """One line for each commit the epic branch holds that main lacks, merge commits left out, oldest first."""
-    listed = run(["git", "log", "--no-merges", "--reverse", "--format=%h %s", f"{MAIN_BRANCH}..{branch_head}"],
-                 main_tree, None)
-    return listed.splitlines()
-
-
-def reach_the_gate(epic: str, branch: str, validated_head: str, figures: list[str], hand_run: list[str],
-                   main_tree: Path) -> None:
-    """Puts the epic at the acceptance gate: one comment that starts with the heading and lists the commits the epic
-    branch holds that main lacks, the validation's figures, the tests the test cleanup removed, the review's findings
-    of low confidence, the assumptions, the public API changes, the open beads found outside the epic and the
-    hand-run lines, then gate.state waiting and the human label, last, so a labeled epic always has its comment."""
-    shown = bd_show(epic, main_tree)
-    notes = [*cleanup.removed_lines(shown), *review.low_confidence_lines(shown),
-             *gate_items(epic, str(shown.get("title") or ""), main_tree).lines()] if shown is not None else []
-    lines = [f"{GATE_COMMENT_HEADING} {epic} waits for the human, on the epic branch {branch} at {validated_head}.",
-             "", "Merged into the epic branch:", *(f"- {commit}" for commit in merged_commits(validated_head, main_tree)),
-             "", *figures, *notes, *hand_run,
-             "", f"/jidoka:accept {epic} writes the review guide page and takes the human's choice."]
-    park_epic(epic, "\n".join(lines), {GATE_STATE_KEY: WAITING}, main_tree)
-
-
-def main_moved_since_validation(metadata: dict, main_tree: Path) -> bool:
-    """True when main holds a commit that the commit validation checked lacks, or when no validation is recorded."""
-    validated = validated_head(metadata)
-    return not validated or not contains(MAIN_REF, validated, main_tree)
-
-
-def branch_moved_since_validation(metadata: dict, branch: str, main_tree: Path) -> bool:
-    """True when the epic branch moved past the commit validation checked, as a restored test moves it."""
-    return branch_head(branch, main_tree) != validated_head(metadata)
-
-
-def moved_since_validation(metadata: dict, branch: str, main_tree: Path) -> bool:
-    """True when the merge runs the full suite again: main moved, the epic branch moved, or no validation is
-    recorded."""
-    return main_moved_since_validation(metadata, main_tree) or branch_moved_since_validation(metadata, branch,
-                                                                                            main_tree)
 
 
 def rebuild_on_main(epic: EpicAtTheGate, message: str, home: Path, main_tree: Path) -> tuple[Path, str]:
@@ -383,7 +323,7 @@ def shown_items(epic_id: str, main_tree: Path) -> str:
     return json.dumps({
         "epic": epic.id,
         "assumptions": [{"number": number, "bead": each.bead, "title": each.title, "text": each.text}
-                        for number, each in enumerate(assumptions_of(epic.id, epic.title, main_tree), 1)],
+                        for number, each in numbered_assumptions(epic.id, epic.title, main_tree)],
         "removed": [each.fields() for each in cleanup.removed_before(read_bead(epic.id, main_tree))],
         "outside": [{"bead": each.bead, "title": each.title, "found_in": each.found_in}
                     for each in outside_of(epic.id, main_tree)]})
@@ -392,11 +332,7 @@ def shown_items(epic_id: str, main_tree: Path) -> str:
 def mark_wrong(epic_id: str, number: int, why: str, main_tree: Path) -> str:
     """Posts the human's word that the assumption the gate numbers so is wrong, on the bead that made it."""
     epic = epic_waiting(epic_id, main_tree)
-    listed = assumptions_of(epic.id, epic.title, main_tree)
-    if not 1 <= number <= len(listed):
-        raise GateError(f"{epic.id} has {len(listed)} assumption{'' if len(listed) == 1 else 's'}, so there is no "
-                        f"assumption {number}")
-    chosen = listed[number - 1]
+    chosen = assumption(epic.id, epic.title, number, main_tree, GateError)
     run(["bd", "comment", chosen.bead, f"{WRONG_PREFIX}{chosen.text}\n\n{why}"], main_tree,
         env_as_git_user(main_tree))
     return f"Assumption {number} of {epic.id} is marked wrong on {chosen.bead}."

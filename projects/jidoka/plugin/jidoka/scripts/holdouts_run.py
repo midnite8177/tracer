@@ -1,8 +1,10 @@
 """The run of an epic's holdouts, which follows a green full suite, and the settling of its report.
 
-The scheduler calls it. When validation.py leaves an epic with `validation.holdouts` pending, the epic is not at
-the gate. Its validation worktree stays, and the scheduler hands the run of its holdouts to a worker of the
-validation agent type, which makes it against the app built from that worktree. The worker lists, in
+The scheduler calls `validate` to validate an epic. When the epic holds holdouts and its suite is green, `validate`
+sets `validation.holdouts` and `validation.result` to pending, and the epic is not at the gate. Only this module
+writes the pending state and the result of the holdouts. The validation worktree stays, and the scheduler hands the
+run of the holdouts to a worker of the validation agent type, which makes it against the app built from that
+worktree. The worker lists, in
 `.scratch/holdouts-report.json` of the worktree, one entry for every holdout, numbered from 1 in the order
 `holdouts.py read` prints them: {"holdout", "verdict" (pass or fail), "saw"}. `saw` says what a user saw, never the
 holdout's scenario or steps, and a report whose `saw` holds a scenario is refused.
@@ -30,7 +32,7 @@ from commands import (HUMAN_LABEL, NONE_YET, SCRATCH_FOLDER, env_as_factory, met
                       unset_metadata)
 from epic_reader import VALIDATED_HEAD_KEY, validated_head
 from epic_task import NewTask, file_task
-from epics import HOLDOUTS_PENDING_KEY, awaits_holdouts
+from epics import HOLDOUTS_PENDING_KEY, PENDING, awaits_holdouts
 from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, count_of, park_epic, worktree_at
 from report_text import shortened_title
@@ -39,6 +41,7 @@ from worktrees import remove_worktree
 
 TRIES_KEY = "validation.tries"
 HOLDOUTS_REPORT = "holdouts-report.json"
+WAITING_HEADLINE = "Validation passed the full suite, and its holdouts run next."
 
 
 @dataclass(frozen=True)
@@ -67,11 +70,40 @@ class Verdict:
     saw: str
 
 
-def waiting_on(epic: str, validated: validation.Validated) -> HoldoutsToRun | None:
-    """The run of the holdouts that a validation left waiting, or None when it kept no worktree for one."""
-    if validated.kept is None:
-        return None
-    return HoldoutsToRun(epic, validated.head, validated.kept.path, validated.kept.holdouts)
+@dataclass(frozen=True)
+class ValidationResult:
+    """What validating an epic left, as the scheduler prints it: the commit validated, each command's run, the tasks
+    filed, and the run of the holdouts when one is owed. The result is fail when the suite or a holdout ended red,
+    pending while the run of the holdouts is owed, and pass otherwise."""
+    failed: bool
+    head: str
+    runs: list[validation.CommandRun]
+    filed: list[str]
+    to_run: HoldoutsToRun | None
+
+    @property
+    def result(self) -> str:
+        if self.failed:
+            return FAIL
+        return PENDING if self.to_run is not None else PASS
+
+    def fields(self) -> dict:
+        return validation.fields_of(self.result, self.head, self.runs, self.filed)
+
+
+def validate(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> ValidationResult:
+    """Validates the epic. An epic with holdouts whose suite is green keeps its worktree, does not reach the gate and
+    waits for its holdouts to run; any other epic is settled as validation settles it."""
+    listed = holdouts.read(epic, main_tree)
+    suite = validation.run_suite(epic, branch, settings, home, main_tree, bool(listed))
+    if suite.kept is None:
+        settled = validation.settle(epic, branch, suite, main_tree)
+        return ValidationResult(settled.result == FAIL, settled.head, settled.runs, settled.filed, None)
+    validated = suite.validated
+    validation.record(epic, validated, WAITING_HEADLINE, PENDING, set_metadata((HOLDOUTS_PENDING_KEY, PENDING)),
+                      main_tree)
+    return ValidationResult(False, validated.head, validated.runs, [],
+                            HoldoutsToRun(epic, validated.head, suite.kept, len(listed)))
 
 
 def holdouts_to_run(epic: str, shown: dict, home: Path, main_tree: Path) -> HoldoutsToRun:
@@ -159,7 +191,7 @@ def count_failed_run(epic: str, ended: str, why: str, main_tree: Path) -> bool:
         set_metadata((TRIES_KEY, tries)), main_tree)
 
 
-def settle_holdouts(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> validation.Validated:
+def settle_holdouts(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> ValidationResult:
     """Takes the validation worker's report on the epic's holdouts: the gate when all are green, and one task in
     the epic for each red one."""
     shown = read_bead(epic, main_tree)
@@ -170,16 +202,17 @@ def settle_holdouts(epic: str, branch: str, settings: dict, home: Path, main_tre
     verdicts = verdicts_of(to_run.report, holdouts.of_epic(shown))
     red = [verdict for verdict in verdicts if not verdict.passed]
     filed = [file_holdout_failure(epic, verdict, settings, main_tree) for verdict in red]
-    validated = validation.Validated(to_run.head, validation.runs_of(metadata_of(shown).get(RUNS_KEY)), filed, None,
-                                     len(red))
+    runs = validation.runs_of(metadata_of(shown).get(RUNS_KEY))
+    settled = ValidationResult(bool(red), to_run.head, runs, filed, None)
     env = env_as_factory()
     run(["bd", "comment", epic, f"Holdouts: {len(verdicts) - len(red)} of {len(verdicts)} passed on {to_run.head}."
          + (f" The red ones are filed as {', '.join(filed)}." if filed else "")], main_tree, env)
-    run(["bd", "update", epic, *set_metadata((RESULT_KEY, validated.result)),
+    run(["bd", "update", epic, *set_metadata((RESULT_KEY, settled.result)),
          *unset_metadata(HOLDOUTS_PENDING_KEY, TRIES_KEY)], main_tree, env)
     remove_worktree(to_run.worktree, main_tree)
     if red:
         pass_ledger.end_pass(epic, main_tree)
     else:
-        validation.reach_the_gate(epic, branch, validated, hand_run, main_tree)
-    return validated
+        validation.reach_the_gate(epic, branch, to_run.head, validation.figures_lines(to_run.head, runs), hand_run,
+                                  main_tree)
+    return settled
