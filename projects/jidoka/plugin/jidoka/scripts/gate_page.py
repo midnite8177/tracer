@@ -19,7 +19,7 @@ branch changes from main, and each file opens its real diff in a unified or a sp
 validation figures, the worktree of the epic branch, each app's build and run commands and the guide's steps.
 Assumptions are numbered as the gate comment numbers them, and list the public API changes and the beads found outside
 the epic after them, all read by gate_items.py. Decide marks `data-jidoka-slot="decide-panel"`, where jidoka-ui draws
-Merge and Send back.
+Merge and Drop. Send back runs in /jidoka:accept.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
@@ -380,7 +380,8 @@ def unchecked(page: GatePage) -> str:
 
 def decide() -> str:
     return (f'<section class="answer-slot" data-jidoka-slot="{DECIDE_SLOT}">\n<h2>Decide</h2>\n'
-            "<p>jidoka-ui draws Merge and Send back here. The bead holds the gate comment in plain text.</p>\n"
+            "<p>jidoka-ui draws Merge and Drop here. Send back runs in /jidoka:accept. "
+            "The bead holds the gate comment in plain text.</p>\n"
             "</section>\n")
 
 

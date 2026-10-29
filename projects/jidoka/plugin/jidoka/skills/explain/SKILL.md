@@ -83,8 +83,9 @@ the rest from git, bd and the repo settings.
     that main and the epic both changed, and uncommitted edits in the main
     checkout over files the epic changed.
 12. **Decide.** An empty section with the attribute
-    `data-jidoka-slot="decide-panel"`. jidoka-ui draws Merge and Send back
-    there, because a file on disk cannot write to a bead.
+    `data-jidoka-slot="decide-panel"`. jidoka-ui draws Merge and Drop
+    there, because a file on disk cannot write to a bead. Send back runs
+    in `/jidoka:accept`.
 
 ## Parts of a handoff page
 

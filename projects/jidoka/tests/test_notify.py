@@ -316,6 +316,16 @@ class EpicEventTests(NotifyCase):
         self.assertEqual(self.link_to(epic), message["url"])
         self.assertEqual([f"acceptance-gate:{epic}"], list(self.notified(epic)))
 
+    def test_the_gate_notification_names_accept_as_the_place_to_send_the_epic_back(self):
+        self.configure_pushover()
+        epic = self.new_epic("factory", "human")
+        self.bd("update", epic, "--set-metadata", "gate.state=waiting", "--set-metadata", "validation.head=abc123")
+
+        self.notify("acceptance-gate", epic)
+
+        [message] = self.sent_to_pushover()
+        self.assertIn("/jidoka:accept", message["message"])
+
     def test_the_epic_at_the_acceptance_gate_is_announced_again_when_validation_checked_another_head(self):
         self.configure_pushover()
         epic = self.new_epic("factory", "human")

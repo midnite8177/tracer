@@ -430,6 +430,15 @@ class DecideTests(GatePageCase):
         self.assertEqual(1, html.count('data-jidoka-slot="decide-panel"'))
         self.assertIn('<section class="answer-slot" data-jidoka-slot="decide-panel">\n<h2>Decide</h2>', html)
 
+    def test_the_decide_placeholder_names_merge_and_drop_and_says_send_back_runs_in_accept(self):
+        epic, *_ = self.epic_with_changes()
+
+        html = self.page_for(epic)
+
+        self.assertIn("jidoka-ui draws Merge and Drop here.", html)
+        self.assertIn("/jidoka:accept", html)
+        self.assertNotIn("Merge and Send back", html)
+
 
 class RefusalTests(GatePageCase):
     def test_an_epic_that_does_not_wait_at_the_gate_gets_no_page(self):

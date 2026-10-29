@@ -189,7 +189,8 @@ def at_acceptance_gate(epic: str, main_tree: Path) -> Notice:
         raise NothingToSend(f"{epic} is not at the acceptance gate")
     head = validated_head(metadata_of(shown))
     return Notice(ACCEPTANCE_GATE, epic, epic, f"Ready for acceptance: {shown.get('title') or epic}",
-                  "The factory has finished its work on the epic. Merge it, send it back or drop it.",
+                  "The factory has finished its work on the epic. Merge it or drop it, "
+                  "or send it back with /jidoka:accept.",
                   digest(WAITING, head))
 
 
