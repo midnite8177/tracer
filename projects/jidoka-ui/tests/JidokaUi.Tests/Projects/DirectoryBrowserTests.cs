@@ -3,7 +3,7 @@ using JidokaUi.Core.Projects;
 
 namespace JidokaUi.Tests.Projects;
 
-public class DirectoryBrowserTests
+public sealed class DirectoryBrowserTests
 {
     [Fact]
     public void ListsTheSubdirectoriesInNameOrder()

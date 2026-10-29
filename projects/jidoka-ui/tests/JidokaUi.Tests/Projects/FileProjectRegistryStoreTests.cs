@@ -4,7 +4,7 @@ using JidokaUi.Tests.Boards;
 
 namespace JidokaUi.Tests.Projects;
 
-public class FileProjectRegistryStoreTests
+public sealed class FileProjectRegistryStoreTests
 {
     [Fact]
     public void LoadsBackTheProjectsThatItSaved()

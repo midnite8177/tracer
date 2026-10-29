@@ -2,7 +2,7 @@ using JidokaUi.Core.Projects;
 
 namespace JidokaUi.Tests.Projects;
 
-public class RegistryFilePathTests
+public sealed class RegistryFilePathTests
 {
     [Fact]
     public void PutsTheRegistryFileInAnApplicationDirectoryUnderTheUserConfigurationDirectory()

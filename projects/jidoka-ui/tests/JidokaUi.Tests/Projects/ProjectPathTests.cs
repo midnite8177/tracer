@@ -2,7 +2,7 @@ using JidokaUi.Core.Projects;
 
 namespace JidokaUi.Tests.Projects;
 
-public class ProjectPathTests
+public sealed class ProjectPathTests
 {
     [Fact]
     public void TreatsAPathWithATrailingSeparatorAsTheSamePath()

@@ -4,7 +4,7 @@ using JidokaUi.Tests.Beads;
 
 namespace JidokaUi.Tests.Projects;
 
-public class ProjectCatalogTests
+public sealed class ProjectCatalogTests
 {
     [Fact]
     public async Task AddsAValidatedProjectAndListsIt()

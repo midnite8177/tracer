@@ -2,7 +2,7 @@ using JidokaUi.Core.Projects;
 
 namespace JidokaUi.Tests.Projects;
 
-public class ProjectPathValidatorTests
+public sealed class ProjectPathValidatorTests
 {
     [Fact]
     public void AcceptsADirectoryThatContainsABeadsDirectory()

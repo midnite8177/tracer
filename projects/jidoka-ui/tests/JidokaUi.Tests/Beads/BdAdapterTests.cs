@@ -4,7 +4,7 @@ using JidokaUi.Tests;
 
 namespace JidokaUi.Tests.Beads;
 
-public class BdAdapterTests
+public sealed class BdAdapterTests
 {
     private static readonly ProjectPath Project = ProjectPath.From(Path.GetTempPath());
 
