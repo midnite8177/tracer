@@ -7,8 +7,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import jidoka_fixture as fixture
-import test_scheduler
+import jidoka_fixture as fixture  # noqa: E402
+import test_scheduler  # noqa: E402
 
 DESIGN_SCRIPT = test_scheduler.PLUGIN / "scripts" / "design_findings.py"
 
