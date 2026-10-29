@@ -21,9 +21,10 @@ The script checks that the bead is in the state the event names, so a caller tha
 does not hold sends nothing. A notification points at one bead: the task for task-parked, the first parked
 task for only-parked-left, and the epic otherwise. Each one is delivered three ways. It prints one line,
 which the host shows. It records itself in the epic's `notification` metadata, a JSON object from
-`<event>:<bead>` to a fingerprint of the state it announced, and it sends nothing for an event whose
-fingerprint the object already holds, so a park is announced once and a later park of the same task is a
-new one. And it sends a Pushover message where this machine has Pushover keys, with a link to the bead in
+`<event>:<bead>` to an object with the `fingerprint` of the state it announced and the `title` and `text` it
+said, which jidoka-ui shows as they stand, and it sends nothing for an event whose fingerprint the object
+already holds (an entry is an object with a `fingerprint` field, or the bare fingerprint string), so a park
+is announced once and a later park of the same task is a new one. And it sends a Pushover message where this machine has Pushover keys, with a link to the bead in
 jidoka-ui.
 
 The Pushover keys live in <jidoka-home>/pushover.json, which install.py writes: `user_key` and `app_token`,
@@ -247,23 +248,35 @@ def notice_for(event: str, bead: str | None, main_tree: Path) -> Notice:
     return makers[event](bead, main_tree)
 
 
-def sent_so_far(epic: dict) -> dict[str, str]:
+def sent_so_far(epic: dict) -> dict[str, object]:
     held = metadata_of(epic).get(NOTIFICATION_KEY)
     if isinstance(held, str):
         try:
             held = json.loads(held)
         except ValueError:
             held = {}
-    return {str(key): str(value) for key, value in held.items()} if isinstance(held, dict) else {}
+    return {str(key): value for key, value in held.items()} if isinstance(held, dict) else {}
+
+
+def fingerprint_of(entry: object) -> str:
+    """The fingerprint an entry of the epic's key holds: the `fingerprint` field of an object, or the entry itself
+    when it is a bare fingerprint string."""
+    return str(entry.get("fingerprint")) if isinstance(entry, dict) else str(entry)
+
+
+def entry_of(notice: Notice) -> dict[str, str]:
+    """What the epic's key records for a notice: the fingerprint that tells one state from the next, and the title
+    and text that jidoka-ui shows, so that the app words nothing itself."""
+    return {"fingerprint": notice.fingerprint, "title": notice.title, "text": notice.text}
 
 
 def record(notice: Notice, main_tree: Path) -> None:
     """Writes the notice into the epic's key; raises NothingToSend when the key already holds its fingerprint."""
     sent = sent_so_far(read_bead(notice.epic, main_tree))
     name = f"{notice.event}:{notice.bead}"
-    if sent.get(name) == notice.fingerprint:
+    if name in sent and fingerprint_of(sent[name]) == notice.fingerprint:
         raise NothingToSend(f"{notice.event} on {notice.bead} was already sent")
-    written = json.dumps({**sent, name: notice.fingerprint}, sort_keys=True)
+    written = json.dumps({**sent, name: entry_of(notice)}, sort_keys=True)
     run(["bd", "update", notice.epic, "--set-metadata", f"{NOTIFICATION_KEY}={written}"], main_tree,
         env_as_factory())
 

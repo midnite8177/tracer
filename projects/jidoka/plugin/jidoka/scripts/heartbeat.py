@@ -2,8 +2,9 @@
 """Writes the heartbeat of each epic the factory runs, and reads it back for the status script.
 
 The scheduler writes <jidoka-home>/heartbeat/<epic>.json on each call of a manager, a JSON object with `epic`,
-`time`, the second of the beat since the epoch, and `session`, the id of the session the manager runs in (null
-when the call did not know it): that call claims the epic. `heartbeat.py beat --session <id>` is what the lap
+`time`, the second of the beat since the epoch, `session`, the id of the session the manager runs in (null
+when the call did not know it), and `fresh_seconds`, how old the beat may be and still count as fresh. The call
+that records a session claims the epic. `heartbeat.py beat --session <id>` is what the lap
 mod runs once a minute from the host's folder, naming its own session. It renews the heartbeat of each epic the
 factory runs (an open epic with the `factory` label that is neither parked nor at the gate) whose heartbeat is
 fresh and records that session, and writes nothing for any other. A session that claimed no epic, such as an
@@ -50,7 +51,8 @@ def write_beat(home: Path, epic: str, now: int, session: str | None) -> None:
     path = heartbeat_path(home, epic)
     path.parent.mkdir(parents=True, exist_ok=True)
     scratch = path.with_suffix(".json.tmp")
-    scratch.write_text(json.dumps({"epic": epic, "time": now, "session": session}), encoding="utf-8")
+    beat = {"epic": epic, "time": now, "session": session, "fresh_seconds": FRESH_SECONDS}
+    scratch.write_text(json.dumps(beat), encoding="utf-8")
     os.replace(scratch, path)
 
 

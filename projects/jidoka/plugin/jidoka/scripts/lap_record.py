@@ -66,6 +66,8 @@ TEST_FAILURES_KEY = "lap.testfailures"
 STARTED_KEY = "lap.started"
 SEND_BACKS_KEY = "lap.sendbacks"
 MERGE_TRIES_KEY = "lap.mergetries"
+TRY_CAP_KEY = "lap.trycap"
+MERGE_TRY_CAP_KEY = "lap.mergetrycap"
 MERGE_BASE_KEY = "lap.mergebase"
 MERGE_WHY_KEY = "lap.mergewhy"
 CUTOFFS_KEY_PREFIX = "lap.cutoffs."
@@ -283,14 +285,16 @@ def cutoffs_key(stage: str) -> str:
 def opening(lap: Lap) -> list[str]:
     """The arguments of the `bd update` that opens the lap: the task is in progress under the factory's actor, and
     every record of the lap holds the value the lap starts with. A full-track lap starts with no Spec check result
-    from an earlier lap; its findings stay, because the build the lap starts is the one that answers them."""
+    from an earlier lap; its findings stay, because the build the lap starts is the one that answers them. The record
+    carries the two try caps beside the tries, so that jidoka-ui shows the caps and holds no copy of them."""
     clearing = clearing_spec_pass() if lap.track == FULL_TRACK else []
     return ["--status=in_progress", f"--assignee={FACTORY_ACTOR}",
             *set_metadata((NUMBER_KEY, lap.number), (STAGE_KEY, lap.stage), (TRIES_KEY, lap.tries),
                           (WORKSPACE_KEY, lap.worktree), (SLOT_KEY, lap.slot), (BRANCH_KEY, lap.branch),
                           (STARTED_KEY, lap.started), (cutoffs_key(lap.stage), lap.cutoffs),
                           (SEND_BACKS_KEY, lap.send_backs), (MERGE_TRIES_KEY, lap.merge_tries),
-                          (TEST_FAILURES_KEY, lap.test_failures)),
+                          (TEST_FAILURES_KEY, lap.test_failures), (TRY_CAP_KEY, caps.TRY_CAP),
+                          (MERGE_TRY_CAP_KEY, caps.MERGE_TRY_CAP)),
             *clearing]
 
 

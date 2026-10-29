@@ -100,6 +100,16 @@ class HeartbeatTests(StatusCase):
         self.assertEqual(MANAGER_SESSION, beat["session"])
         self.assertTrue(before <= beat["time"] <= int(time.time()), beat)
 
+    def test_a_beat_records_how_old_a_heartbeat_may_be_and_stay_fresh(self):
+        epic = self.new_epic("Take card payments", "factory")
+        self.write_beat(epic, MINUTE, MANAGER_SESSION)
+
+        done = self.script(HEARTBEAT, "beat", "--session", MANAGER_SESSION)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        beat = json.loads(self.beat_file(epic).read_text(encoding="utf-8"))
+        self.assertEqual(90, beat["fresh_seconds"])
+
     def test_a_beat_renews_one_heartbeat_for_each_epic_the_session_claimed(self):
         first = self.new_epic("Take card payments", "factory")
         second = self.new_epic("Print receipts", "factory")

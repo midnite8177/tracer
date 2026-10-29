@@ -22,7 +22,7 @@ public sealed class FactoryMarkupTests : BunitContext
         [
           {"id": "b", "title": "The site", "issue_type": "epic", "status": "in_progress", "labels": ["factory"]},
           {"id": "b.1", "title": "Pick a hosting plan", "issue_type": "task", "status": "in_progress", "parent": "b",
-           "metadata": {"lap.number": 2, "lap.stage": "build", "lap.tries": 1, "lap.mergetries": 0}},
+           "metadata": {"lap.number": 2, "lap.stage": "build", "lap.tries": 1, "lap.trycap": 3, "lap.mergetries": 0, "lap.mergetrycap": 2}},
           {"id": "b.2", "title": "Launch the site", "issue_type": "task", "status": "open", "parent": "b"}
         ]
         """;

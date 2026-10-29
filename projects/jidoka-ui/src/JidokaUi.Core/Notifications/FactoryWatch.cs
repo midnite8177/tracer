@@ -131,9 +131,9 @@ public sealed class FactoryWatch : IDisposable
         var staleNow = new Dictionary<(ProjectPath, string), (FactoryEpic Epic, TimeSpan Age)>();
         foreach (var held in factory.Epics.Where(epic => epic.IsRunning))
         {
-            if (heartbeats.AgeOf(held.Epic.Id, now) is { } age && Heartbeats.IsStale(age))
+            if (heartbeats.BeatOf(held.Epic.Id, now) is { IsStale: true } beat)
             {
-                staleNow[(factory.Project, held.Epic.Id)] = (held, age);
+                staleNow[(factory.Project, held.Epic.Id)] = (held, beat.Age);
             }
         }
 

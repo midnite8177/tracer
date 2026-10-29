@@ -400,7 +400,7 @@ first call writes it with the id of the host session it runs in, and the lap
 mod of that session rewrites it every minute while the host lives. A beat
 from any other session open in the repo writes nothing. It holds the second
 of the last beat, so a heartbeat that stops getting younger shows a stopped
-factory. An epic handed off with no manager
+factory. It holds the limit of a fresh beat too, so jidoka-ui reads the limit and keeps no copy. An epic handed off with no manager
 has none.
 _Avoid_: Pulse, ping, keep-alive
 

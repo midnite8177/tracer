@@ -27,13 +27,13 @@ public enum TaskOutcome
 /// <param name="Lap">The number of the lap, or a dash when the task never held one.</param>
 /// <param name="Outcome">Where the lap stands.</param>
 /// <param name="Stage">The stage of the lap, merged for a closed task that held a lap, or no lap yet.</param>
-/// <param name="Tries">The tries the lap used against the cap of its stage, or a dash for a task at rest.</param>
+/// <param name="Tries">
+/// The tries the lap used against the cap that jidoka recorded for its stage, only the tries when jidoka
+/// recorded no cap, or a dash for a task at rest.
+/// </param>
 public sealed record TaskLap(string Id, string Title, string Lap, TaskOutcome Outcome, string Stage, string Tries)
 {
     private const string NoValue = "-";
-    private const string MergeStage = "merge";
-    private const int TryCap = 3;
-    private const int MergeTryCap = 2;
 
     /// <summary>True when the task is closed and held a lap, so its lap ended at the merge gate.</summary>
     public bool IsMerged => Outcome == TaskOutcome.Merged;
@@ -61,9 +61,8 @@ public sealed record TaskLap(string Id, string Title, string Lap, TaskOutcome Ou
 
     private static string TriesOf(RecordedLap recorded)
     {
-        var merging = recorded.Stage == MergeStage;
-        var used = merging ? recorded.MergeTries : recorded.Tries;
-        return $"{(used.Length > 0 ? used : "0")}/{(merging ? MergeTryCap : TryCap)}";
+        var tries = recorded.TriesAtStage.Length > 0 ? recorded.TriesAtStage : "0";
+        return recorded.CapAtStage.Length > 0 ? $"{tries}/{recorded.CapAtStage}" : tries;
     }
 }
 

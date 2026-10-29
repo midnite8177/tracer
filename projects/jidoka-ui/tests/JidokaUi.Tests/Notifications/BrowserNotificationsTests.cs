@@ -83,7 +83,8 @@ public sealed class BrowserNotificationsTests : BunitContext
             """
             [
               {"id": "a", "title": "The parser", "issue_type": "epic", "status": "open", "labels": ["factory"],
-               "metadata": {"notification": {"acceptance-gate:a": "g1"}}}
+               "metadata": {"notification": {"acceptance-gate:a":
+                 {"fingerprint": "g1", "title": "Ready for acceptance: The parser", "text": "Merge it."}}}}
             ]
             """);
         projects.Backlogs.InvalidateFromWatch(projects.First);

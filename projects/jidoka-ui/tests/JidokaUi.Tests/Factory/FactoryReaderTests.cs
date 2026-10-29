@@ -55,9 +55,11 @@ public sealed class FactoryReaderTests
             [
               {"id": "a", "title": "The parser", "issue_type": "epic", "status": "open", "labels": ["factory"]},
               {"id": "a.1", "title": "Read the header", "issue_type": "task", "status": "in_progress", "parent": "a",
-               "metadata": {"lap.number": 2, "lap.stage": "build", "lap.tries": 1, "lap.mergetries": 0}},
+               "metadata": {"lap.number": 2, "lap.stage": "build", "lap.tries": 1, "lap.trycap": 7,
+                            "lap.mergetries": 0, "lap.mergetrycap": 6}},
               {"id": "a.2", "title": "Join the rows", "issue_type": "task", "status": "in_progress", "parent": "a",
-               "metadata": {"lap.number": 1, "lap.stage": "merge", "lap.tries": 2, "lap.mergetries": 1}}
+               "metadata": {"lap.number": 1, "lap.stage": "merge", "lap.tries": 2, "lap.trycap": 7,
+                            "lap.mergetries": 1, "lap.mergetrycap": 6}}
             ]
             """,
             "[]");
@@ -66,8 +68,29 @@ public sealed class FactoryReaderTests
 
         var tasks = Assert.Single(view.Projects[0].Epics).Tasks;
         Assert.Equal(
-            [("a.1", "2", "build", "1/3"), ("a.2", "1", "merge", "1/2")],
+            [("a.1", "2", "build", "1/7"), ("a.2", "1", "merge", "1/6")],
             tasks.Select(task => (task.Id, task.Lap, task.Stage, task.Tries)));
+    }
+
+    [Fact]
+    public async Task ShowsOnlyTheTriesUsedWhenTheLapRecordsNoCapForItsStage()
+    {
+        var bd = ABdThatAnswersBoth(
+            """
+            [
+              {"id": "a", "title": "The parser", "issue_type": "epic", "status": "open", "labels": ["factory"]},
+              {"id": "a.1", "title": "Read the header", "issue_type": "task", "status": "in_progress", "parent": "a",
+               "metadata": {"lap.number": 2, "lap.stage": "build", "lap.tries": 1}},
+              {"id": "a.2", "title": "Join the rows", "issue_type": "task", "status": "in_progress", "parent": "a",
+               "metadata": {"lap.number": 1, "lap.stage": "merge", "lap.tries": 2, "lap.trycap": 7}}
+            ]
+            """,
+            "[]");
+
+        var view = await ReaderOver(bd, First, Second).ReadAsync();
+
+        var tasks = Assert.Single(view.Projects[0].Epics).Tasks;
+        Assert.Equal(["1", "0"], tasks.Select(task => task.Tries));
     }
 
     [Fact]

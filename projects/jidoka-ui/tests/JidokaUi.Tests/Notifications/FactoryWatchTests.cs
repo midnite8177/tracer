@@ -69,22 +69,16 @@ public sealed class FactoryWatchTests : IDisposable
             parked.Address);
     }
 
-    [Theory]
-    [InlineData("task-parked:a.1", "Task parked: Read the header")]
-    [InlineData("epic-parked:a", "Epic parked: The parser")]
-    [InlineData("only-parked-left:a.1", "Only parked tasks left: The parser")]
-    [InlineData("acceptance-gate:a", "Ready for acceptance: The parser")]
-    [InlineData("factory-stopped:a", "Factory stopped: The parser")]
-    [InlineData("factory-paused:a", "Factory paused: The parser")]
-    public async Task RaisesOneNotificationForEachEventThatJidokaSends(string recorded, string title)
+    [Fact]
+    public async Task ShowsTheHeadlineAndTheSentenceThatJidokaRecordedWhateverTheyAre()
     {
-        Lists(atHome, EpicThatRecorded("{}"));
         await watch.CheckAsync();
 
-        Lists(atHome, EpicThatRecorded($$"""{"{{recorded}}": "f1"}"""));
+        Lists(atHome, EpicThatRecorded($$"""{"task-parked:a.1": {{Entry("f1", "Wording from jidoka", "Its own sentence.")}}}"""));
         await watch.CheckAsync();
 
-        Assert.Equal([title], raised.Select(notification => notification.Title));
+        var notification = Assert.Single(raised);
+        Assert.Equal(("Wording from jidoka", "Its own sentence."), (notification.Title, notification.Body));
     }
 
     [Fact]
@@ -121,34 +115,12 @@ public sealed class FactoryWatchTests : IDisposable
         await watch.CheckAsync();
 
         Lists(atHome, ParkedTask("f1"));
-        Lists(atWork, EpicThatRecorded("""{"acceptance-gate:a": "g1"}"""));
+        Lists(atWork, EpicThatRecorded($$"""{"acceptance-gate:a": {{Entry("g1", "Ready for acceptance: The parser", "Merge it.")}}}"""));
         await watch.CheckAsync();
 
         Assert.Equal(
             ["Ready for acceptance: The parser", "Task parked: Read the header"],
             raised.Select(notification => notification.Title).Order(StringComparer.Ordinal));
-    }
-
-    [Fact]
-    public async Task ReadsARecordThatBdPrintsAsTheTextOfAnObject()
-    {
-        await watch.CheckAsync();
-
-        Lists(atHome, EpicThatRecorded("\"{\\\"epic-parked:a\\\": \\\"f1\\\"}\""));
-        await watch.CheckAsync();
-
-        Assert.Equal(["Epic parked: The parser"], raised.Select(notification => notification.Title));
-    }
-
-    [Fact]
-    public async Task RaisesNothingForARecordThatIsNoObject()
-    {
-        await watch.CheckAsync();
-
-        Lists(atHome, EpicThatRecorded("\"not a record\""));
-        await watch.CheckAsync();
-
-        Assert.Empty(raised);
     }
 
     [Fact]
@@ -168,7 +140,7 @@ public sealed class FactoryWatchTests : IDisposable
     public async Task WarnsOnceWhenTheHeartbeatOfARunningEpicTurnsStale()
     {
         Lists(atHome, RunningEpic());
-        BeatsNow("a");
+        BeatsNow("a", 90);
         await watch.CheckAsync();
 
         clock.Advance(TimeSpan.FromSeconds(91));
@@ -182,15 +154,28 @@ public sealed class FactoryWatchTests : IDisposable
     }
 
     [Fact]
+    public async Task WarnsWhenTheHeartbeatIsOlderThanTheLimitItsFileNamesWhateverThatLimitIs()
+    {
+        Lists(atHome, RunningEpic());
+        BeatsNow("a", 20);
+        await watch.CheckAsync();
+
+        clock.Advance(TimeSpan.FromSeconds(21));
+        await watch.CheckAsync();
+
+        Assert.Equal("Heartbeat stale: The parser", Assert.Single(raised).Title);
+    }
+
+    [Fact]
     public async Task WarnsAgainInTheNextStaleSpellAfterTheHeartbeatWasFresh()
     {
         Lists(atHome, RunningEpic());
-        BeatsNow("a");
+        BeatsNow("a", 90);
         await watch.CheckAsync();
         clock.Advance(TimeSpan.FromSeconds(91));
         await watch.CheckAsync();
 
-        BeatsNow("a");
+        BeatsNow("a", 90);
         await watch.CheckAsync();
         clock.Advance(TimeSpan.FromSeconds(91));
         await watch.CheckAsync();
@@ -203,7 +188,7 @@ public sealed class FactoryWatchTests : IDisposable
     public async Task WarnsOfNothingWhileTheHeartbeatIsNoOlderThanAMinuteAndAHalf()
     {
         Lists(atHome, RunningEpic());
-        BeatsNow("a");
+        BeatsNow("a", 90);
         await watch.CheckAsync();
 
         clock.Advance(TimeSpan.FromSeconds(90));
@@ -230,7 +215,7 @@ public sealed class FactoryWatchTests : IDisposable
     public async Task WarnsOfNothingForAnEpicThatAPersonOrTheGateHolds(string labels, string metadata)
     {
         Lists(atHome, $$"""[{"id": "a", "title": "The parser", "issue_type": "epic", "status": "open", "labels": {{labels}}, "metadata": {{metadata}}}]""");
-        BeatsNow("a");
+        BeatsNow("a", 90);
         await watch.CheckAsync();
 
         clock.Advance(TimeSpan.FromMinutes(10));
@@ -243,7 +228,7 @@ public sealed class FactoryWatchTests : IDisposable
     public async Task WarnsOfNothingForAHeartbeatThatWasStaleBeforeTheAppFirstReadTheProject()
     {
         Lists(atHome, RunningEpic());
-        BeatsNow("a");
+        BeatsNow("a", 90);
         clock.Advance(TimeSpan.FromMinutes(10));
 
         await watch.CheckAsync();
@@ -258,7 +243,7 @@ public sealed class FactoryWatchTests : IDisposable
         var warned = new TaskCompletionSource<BrowserNotification>(TaskCreationOptions.RunContinuationsAsynchronously);
         watch.Raised += notification => warned.TrySetResult(notification);
         Lists(atHome, RunningEpic());
-        BeatsNow("a");
+        BeatsNow("a", 90);
         await watch.CheckAsync();
         watch.Start();
 
@@ -279,14 +264,19 @@ public sealed class FactoryWatchTests : IDisposable
         backlogs.InvalidateFromWatch(project);
     }
 
-    private void BeatsNow(string epic)
+    private void BeatsNow(string epic, int freshSeconds)
     {
         var folder = Path.Combine(directory.Path, "jidoka-home", "heartbeat");
         Directory.CreateDirectory(folder);
         File.WriteAllText(
             Path.Combine(folder, $"{epic}.json"),
-            $$"""{"epic": "{{epic}}", "time": {{clock.GetUtcNow().ToUnixTimeSeconds()}}, "session": null}""");
+            $$"""
+            {"epic": "{{epic}}", "time": {{clock.GetUtcNow().ToUnixTimeSeconds()}}, "session": null, "fresh_seconds": {{freshSeconds}}}
+            """);
     }
+
+    private static string Entry(string fingerprint, string title, string text) =>
+        $$"""{"fingerprint": "{{fingerprint}}", "title": "{{title}}", "text": "{{text}}"}""";
 
     private static string RunningEpic() =>
         """[{"id": "a", "title": "The parser", "issue_type": "epic", "status": "open", "labels": ["factory"]}]""";
@@ -295,7 +285,7 @@ public sealed class FactoryWatchTests : IDisposable
         $$$"""
         [
           {"id": "a", "title": "The parser", "issue_type": "epic", "status": "open", "labels": ["factory"],
-           "metadata": {"notification": {"task-parked:a.1": "{{{fingerprint}}}"} } },
+           "metadata": {"notification": {"task-parked:a.1": {{{Entry(fingerprint, "Task parked: Read the header", "The task waits on you.")}}} } } },
           {"id": "a.1", "title": "Read the header", "issue_type": "task", "status": "open", "parent": "a",
            "labels": ["human"]}
         ]

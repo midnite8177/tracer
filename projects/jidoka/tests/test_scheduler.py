@@ -298,6 +298,17 @@ class SchedulerOpensLapsTests(SchedulerCase):
                               metadata.get("lap.workspace"), metadata.get("lap.slot"), metadata.get("lap.branch")))
         self.assertNotIn("lap.stage", self.metadata(second))
 
+    def test_a_new_lap_records_its_try_caps_beside_its_tries(self):
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: "till"})
+
+        self.next_printed(epic)
+
+        metadata = self.metadata(task)
+        self.assertEqual((0, 3, 0, 2), (metadata["lap.tries"], metadata["lap.trycap"], metadata["lap.mergetries"],
+                                        metadata["lap.mergetrycap"]))
+
 
 class SchedulerReadyTaskTests(SchedulerCase):
     def test_a_task_waiting_on_an_open_task_in_the_epic_does_not_open_a_lap(self):

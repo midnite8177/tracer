@@ -181,6 +181,29 @@ class ParkedTaskTests(NotifyCase):
 
         self.assertEqual([f"task-parked:{task}"], list(self.notified(epic)))
 
+    def test_the_epics_notification_key_records_the_title_and_the_text_that_jidoka_ui_shows(self):
+        epic = self.new_epic()
+        task = self.new_task(epic)
+        self.park_with_question(task)
+
+        self.notify("task-parked", task)
+
+        [entry] = self.notified(epic).values()
+        self.assertEqual(("Task parked: Read the card", FOUND), (entry["title"], entry["text"]))
+        self.assertTrue(entry["fingerprint"])
+
+    def test_an_entry_that_is_a_bare_fingerprint_stays_and_counts_as_sent(self):
+        epic = self.new_epic("factory", "human")
+        self.bd("update", epic, "--set-metadata", "gate.state=waiting", "--set-metadata", "validation.head=abc123")
+        self.notify("acceptance-gate", epic)
+        [entry] = self.notified(epic).values()
+        self.bd("update", epic, "--set-metadata",
+                f"notification={json.dumps({f'acceptance-gate:{epic}': entry['fingerprint']})}")
+
+        done = self.notify("acceptance-gate", epic)
+
+        self.assertIn("already sent", done.stderr)
+
     def test_the_host_line_names_the_event_and_the_bead(self):
         epic = self.new_epic()
         task = self.new_task(epic)

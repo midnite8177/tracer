@@ -7,9 +7,9 @@ namespace JidokaUi.Core.Jidoka;
 /// <summary>The lap of a task as jidoka's scheduler wrote it, each part as text and empty when jidoka wrote none.</summary>
 /// <param name="Number">The number of the lap.</param>
 /// <param name="Stage">The stage the lap stands at.</param>
-/// <param name="Tries">The tries the lap used at any stage but the merge.</param>
-/// <param name="MergeTries">The tries the lap used at the merge.</param>
-public sealed record RecordedLap(string Number, string Stage, string Tries, string MergeTries);
+/// <param name="TriesAtStage">The tries the lap used at its stage, which the merge counts apart from every other stage.</param>
+/// <param name="CapAtStage">The tries jidoka lets the lap use at its stage.</param>
+public sealed record RecordedLap(string Number, string Stage, string TriesAtStage, string CapAtStage);
 
 /// <summary>Whether an epic waits at the acceptance gate, as the gate script recorded it.</summary>
 public enum GateState
@@ -25,7 +25,9 @@ public enum GateState
 /// <param name="Name">The event, as jidoka names it.</param>
 /// <param name="BeadId">The bead the event points at.</param>
 /// <param name="Fingerprint">The state that the event announced.</param>
-public sealed record RecordedEvent(string Name, string BeadId, string Fingerprint);
+/// <param name="Title">The headline jidoka gave the notification, with the title of the bead in it.</param>
+/// <param name="Text">The sentence jidoka gave the notification, or empty when it gave none.</param>
+public sealed record RecordedEvent(string Name, string BeadId, string Fingerprint, string Title, string Text);
 
 /// <summary>
 /// The one module that spells the metadata keys jidoka writes on a bead and the shape of each
@@ -39,8 +41,11 @@ public static class JidokaMetadata
     private const string RecommendedKey = "question.recommended";
     private const string LapNumberKey = "lap.number";
     private const string LapStageKey = "lap.stage";
+    private const string MergeStage = "merge";
     private const string LapTriesKey = "lap.tries";
     private const string LapMergeTriesKey = "lap.mergetries";
+    private const string LapTryCapKey = "lap.trycap";
+    private const string LapMergeTryCapKey = "lap.mergetrycap";
     private const string GateKey = "gate.state";
     private const string WaitingAtTheGate = "waiting";
     private const string NotificationKey = "notification";
@@ -64,19 +69,25 @@ public static class JidokaMetadata
     }
 
     /// <summary>The lap that jidoka's scheduler recorded on this task.</summary>
-    public static RecordedLap LapOn(Bead task) => new(
-        Entry(task, LapNumberKey),
-        Entry(task, LapStageKey),
-        Entry(task, LapTriesKey),
-        Entry(task, LapMergeTriesKey));
+    public static RecordedLap LapOn(Bead task)
+    {
+        var stage = Entry(task, LapStageKey);
+        var merging = stage == MergeStage;
+        return new RecordedLap(
+            Entry(task, LapNumberKey),
+            stage,
+            Entry(task, merging ? LapMergeTriesKey : LapTriesKey),
+            Entry(task, merging ? LapMergeTryCapKey : LapTryCapKey));
+    }
 
     /// <summary>Whether this epic waits at the acceptance gate.</summary>
     public static GateState GateStateOn(Bead epic) =>
         Entry(epic, GateKey) == WaitingAtTheGate ? GateState.Waiting : GateState.NotWaiting;
 
     /// <summary>
-    /// The events that jidoka's notify script recorded on this epic. The record maps `event:bead` to a
-    /// fingerprint. An entry whose name does not split into an event and a bead is left out.
+    /// The events that jidoka's notify script recorded on this epic. The record maps `event:bead` to an
+    /// object with the fingerprint, the title and the text of the notification. An entry whose name does
+    /// not split into an event and a bead, or that is no object with a fingerprint and a title, is left out.
     /// </summary>
     public static IReadOnlyList<RecordedEvent> EventsOn(Bead epic)
     {
@@ -94,18 +105,28 @@ public static class JidokaMetadata
         return
         [
             .. record.RootElement.EnumerateObject()
-                .Select(member => EventOf(member.Name, JsonText.Of(member.Value)))
+                .Select(member => EventOf(member.Name, member.Value))
                 .OfType<RecordedEvent>(),
         ];
     }
 
-    private static RecordedEvent? EventOf(string name, string fingerprint)
+    private static RecordedEvent? EventOf(string name, JsonElement entry)
     {
         var colon = name.IndexOf(':', StringComparison.Ordinal);
-        return colon <= 0 || colon == name.Length - 1
+        if (colon <= 0 || colon == name.Length - 1 || entry.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var fingerprint = Field(entry, "fingerprint");
+        var title = Field(entry, "title");
+        return fingerprint.Length == 0 || title.Length == 0
             ? null
-            : new RecordedEvent(name[..colon], name[(colon + 1)..], fingerprint);
+            : new RecordedEvent(name[..colon], name[(colon + 1)..], fingerprint, title, Field(entry, "text"));
     }
+
+    private static string Field(JsonElement entry, string name) =>
+        entry.TryGetProperty(name, out var value) ? JsonText.Of(value) : string.Empty;
 
     private static string Entry(Bead bead, string key) =>
         bead.Metadata.TryGetValue(key, out var value) ? value : string.Empty;
@@ -134,8 +155,6 @@ public static class JidokaMetadata
         return new QuestionOption(name.GetString() ?? string.Empty, confidence);
     }
 
-    // bd hands a JSON value back as text whether it stored the value or the text of one, so every
-    // JSON metadata value is parsed here. Text that is not JSON of the wanted kind is no value.
     private static JsonDocument? ParseAs(string text, JsonValueKind kind)
     {
         try

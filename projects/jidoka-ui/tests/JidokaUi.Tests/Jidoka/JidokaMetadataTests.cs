@@ -21,7 +21,31 @@ public sealed class JidokaMetadataTests : IDisposable
 
         var lap = JidokaMetadata.LapOn(bead);
 
-        Assert.Equal(("2", "build", "1", "0"), (lap.Number, lap.Stage, lap.Tries, lap.MergeTries));
+        Assert.Equal(("2", "build", "1"), (lap.Number, lap.Stage, lap.TriesAtStage));
+    }
+
+    [Fact]
+    public async Task ReadsTheTriesAndTheCapOfTheLapsOwnCountAtAnyStageButTheMerge()
+    {
+        var bead = await TheBead("""
+            "metadata": {"lap.stage": "build", "lap.tries": 1, "lap.trycap": 5, "lap.mergetries": 3, "lap.mergetrycap": 4}
+            """);
+
+        var lap = JidokaMetadata.LapOn(bead);
+
+        Assert.Equal(("1", "5"), (lap.TriesAtStage, lap.CapAtStage));
+    }
+
+    [Fact]
+    public async Task ReadsTheTriesAndTheCapOfTheMergeCountAtTheMergeStage()
+    {
+        var bead = await TheBead("""
+            "metadata": {"lap.stage": "merge", "lap.tries": 1, "lap.trycap": 5, "lap.mergetries": 3, "lap.mergetrycap": 4}
+            """);
+
+        var lap = JidokaMetadata.LapOn(bead);
+
+        Assert.Equal(("3", "4"), (lap.TriesAtStage, lap.CapAtStage));
     }
 
     [Fact]
@@ -31,7 +55,7 @@ public sealed class JidokaMetadataTests : IDisposable
 
         var lap = JidokaMetadata.LapOn(bead);
 
-        Assert.Equal(string.Empty, lap.Number + lap.Stage + lap.Tries + lap.MergeTries);
+        Assert.Equal(string.Empty, lap.Number + lap.Stage + lap.TriesAtStage + lap.CapAtStage);
     }
 
     [Fact]
@@ -65,14 +89,19 @@ public sealed class JidokaMetadataTests : IDisposable
     }
 
     [Fact]
-    public async Task ReadsTheEventsThatTheNotifyScriptRecordedWithTheBeadOfEach()
+    public async Task ReadsTheEventsThatTheNotifyScriptRecordedWithTheBeadTheTitleAndTheTextOfEach()
     {
         var bead = await TheBead("""
-            "metadata": {"notification": {"task-parked:a.1": "f1", "acceptance-gate:a": "f2"}}
+            "metadata": {"notification": {
+              "task-parked:a.1": {"fingerprint": "f1", "title": "Task parked: Read the header", "text": "Pick a format."},
+              "acceptance-gate:a": {"fingerprint": "f2", "title": "Ready for acceptance: The parser", "text": "Merge it."}}}
             """);
 
         Assert.Equal(
-            [new RecordedEvent("task-parked", "a.1", "f1"), new RecordedEvent("acceptance-gate", "a", "f2")],
+            [
+                new RecordedEvent("task-parked", "a.1", "f1", "Task parked: Read the header", "Pick a format."),
+                new RecordedEvent("acceptance-gate", "a", "f2", "Ready for acceptance: The parser", "Merge it."),
+            ],
             JidokaMetadata.EventsOn(bead));
     }
 
@@ -80,20 +109,44 @@ public sealed class JidokaMetadataTests : IDisposable
     public async Task ReadsTheEventsWhenBdPrintsTheRecordAsTheTextOfAnObject()
     {
         var bead = await TheBead("""
-            "metadata": {"notification": "{\"epic-parked:a\": \"f1\"}"}
+            "metadata": {"notification": "{\"epic-parked:a\": {\"fingerprint\": \"f1\", \"title\": \"T\", \"text\": \"X\"}}"}
             """);
 
-        Assert.Equal([new RecordedEvent("epic-parked", "a", "f1")], JidokaMetadata.EventsOn(bead));
+        Assert.Equal([new RecordedEvent("epic-parked", "a", "f1", "T", "X")], JidokaMetadata.EventsOn(bead));
     }
 
     [Fact]
     public async Task ReadsTheFingerprintOfAnEventThatIsNotTextAsTheJsonItHolds()
     {
         var bead = await TheBead("""
-            "metadata": {"notification": {"task-parked:a.1": 7}}
+            "metadata": {"notification": {"task-parked:a.1": {"fingerprint": 7, "title": "T", "text": "X"}}}
             """);
 
-        Assert.Equal([new RecordedEvent("task-parked", "a.1", "7")], JidokaMetadata.EventsOn(bead));
+        Assert.Equal([new RecordedEvent("task-parked", "a.1", "7", "T", "X")], JidokaMetadata.EventsOn(bead));
+    }
+
+    [Theory]
+    [InlineData("\"f1\"")]
+    [InlineData("{\"fingerprint\": \"f1\", \"text\": \"X\"}")]
+    [InlineData("{\"fingerprint\": \"f1\", \"title\": \"\", \"text\": \"X\"}")]
+    [InlineData("{\"title\": \"T\", \"text\": \"X\"}")]
+    public async Task LeavesOutAnEntryThatIsNoObjectWithAFingerprintAndATitle(string entry)
+    {
+        var bead = await TheBead($$$"""
+            "metadata": {"notification": {"task-parked:a.1": {{{entry}}}}}
+            """);
+
+        Assert.Empty(JidokaMetadata.EventsOn(bead));
+    }
+
+    [Fact]
+    public async Task ReadsTheTextOfAnEntryThatHoldsNoneAsEmpty()
+    {
+        var bead = await TheBead("""
+            "metadata": {"notification": {"task-parked:a.1": {"fingerprint": "f1", "title": "T"}}}
+            """);
+
+        Assert.Equal([new RecordedEvent("task-parked", "a.1", "f1", "T", string.Empty)], JidokaMetadata.EventsOn(bead));
     }
 
     [Theory]
@@ -102,8 +155,8 @@ public sealed class JidokaMetadataTests : IDisposable
     [InlineData("task-parked:")]
     public async Task LeavesOutAnEntryWhoseNameDoesNotSplitIntoAnEventAndABead(string name)
     {
-        var bead = await TheBead($$"""
-            "metadata": {"notification": "{\"{{name}}\": \"f1\"}"}
+        var bead = await TheBead($$$$"""
+            "metadata": {"notification": {"{{{{name}}}}": {"fingerprint": "f1", "title": "T", "text": "X"}}}
             """);
 
         Assert.Empty(JidokaMetadata.EventsOn(bead));

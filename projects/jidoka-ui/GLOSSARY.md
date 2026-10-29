@@ -781,7 +781,9 @@ row is a bead that is not an epic, with its lap, its stage and its tries, read
 from the bead's metadata. Here the word task is jidoka's: a bead inside an
 epic that the factory holds. A closed row reads merged when it held a lap; an
 open row with no lap reads no lap yet. The tries count against the cap of the
-stage, three for every stage but the merge and two for the merge. An epic
+stage, which jidoka records on the task beside the tries, one cap for the
+merge and one for every other stage; a lap that records none shows only its
+tries. An epic
 that carries the `factory` label has a task table, open or closed, and the
 factory view lists only the open ones. Its state is running, parked when it
 carries the `human` label, or at the acceptance gate.
@@ -791,7 +793,8 @@ _Avoid_: Lap list, task list, pipeline
 The part of the app that follows the factory of every project in the
 registry, whichever page is open, and raises browser notifications. It
 reads the record that jidoka's notify script keeps on each factory epic,
-one entry for each event that jidoka sent, and the heartbeat files in
+one entry for each event that jidoka sent, with the headline and the sentence
+that jidoka worded, and the heartbeat files in
 jidoka's home. What stands when it first reads a project raises nothing,
 because jidoka told the person already. It checks again after each change
 of a project and every thirty seconds, because a heartbeat is a file and
@@ -802,16 +805,17 @@ _Avoid_: Notifier, monitor, poller
 One message that the app asks the browser to show, for an event that jidoka
 sent or for a stale heartbeat. An event raises one: a task parked, an epic
 parked, only parked tasks left, the acceptance gate, a stopped factory, a
-paused factory, or a permission prompt of the host. A new fingerprint under
-the same event is a new event. A press on the message opens the bead's page.
+paused factory, or a permission prompt of the host. It carries the headline
+and the sentence that jidoka recorded for the event, as they stand. A new
+fingerprint under the same event is a new event. A press on the message opens the bead's page.
 The browser lets a page show one only after the person pressed a button to
 allow it, so the layout offers that button while the browser has not been
 asked. Unrelated to a report of a write.
 _Avoid_: Alert, push, toast
 
 **Stale heartbeat**:
-The heartbeat of a running factory epic that is older than ninety seconds,
-a beat and a half. The factory watch warns once for it and stays quiet until
+The heartbeat of a running factory epic that is older than the limit its own
+file names, which jidoka writes into it. The factory watch warns once for it and stays quiet until
 the heartbeat has been fresh again, so each stopped host gives one warning.
 An epic with no heartbeat file, one that a person or the acceptance gate
 holds, and a heartbeat that was already stale when the app first read the
