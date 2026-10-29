@@ -1,16 +1,16 @@
-using System.Text.Json;
 using JidokaUi.Core.Beads;
 using JidokaUi.Core.Boards;
 using JidokaUi.Core.Factory;
+using JidokaUi.Core.Jidoka;
 using JidokaUi.Core.Projects;
 
 namespace JidokaUi.Core.Notifications;
 
 /// <summary>
 /// One notification that jidoka sent about an epic of the factory, read from the record that
-/// jidoka's notify script keeps in the `notification` metadata of the epic. That record maps
-/// `event:bead` to a fingerprint of the state it announced, so a new fingerprint under the same
-/// name is a new event, and an unchanged one is the event the app already knows.
+/// jidoka's notify script keeps on the epic. That record maps `event:bead` to a fingerprint of
+/// the state it announced, so a new fingerprint under the same name is a new event, and an
+/// unchanged one is the event the app already knows.
 /// </summary>
 /// <param name="Name">The event, as jidoka names it: task-parked, acceptance-gate and the others.</param>
 /// <param name="BeadId">The bead the event points at.</param>
@@ -25,7 +25,6 @@ public sealed record FactoryEvent(
     string Fingerprint,
     string BeadTitle)
 {
-    private const string RecordKey = "notification";
     private const string TaskParked = "task-parked";
     private const string EpicParked = "epic-parked";
     private const string OnlyParkedLeft = "only-parked-left";
@@ -65,46 +64,17 @@ public sealed record FactoryEvent(
 
     private static IEnumerable<FactoryEvent> RecordedOn(ProjectPath project, FactoryEpic held)
     {
-        if (!held.Epic.Metadata.TryGetValue(RecordKey, out var text))
+        foreach (var recorded in JidokaMetadata.EventsOn(held.Epic))
         {
-            yield break;
-        }
-
-        foreach (var (name, fingerprint) in Entries(text))
-        {
-            var colon = name.IndexOf(':', StringComparison.Ordinal);
-            if (colon <= 0 || colon == name.Length - 1)
-            {
-                continue;
-            }
-
-            var bead = name[(colon + 1)..];
-            var task = held.Tasks.FirstOrDefault(candidate => candidate.Id == bead);
+            var task = held.Tasks.FirstOrDefault(candidate => candidate.Id == recorded.BeadId);
             yield return new FactoryEvent(
-                project, held.Epic.Id, held.Epic.Title, name[..colon], bead, fingerprint, task?.Title ?? bead);
-        }
-    }
-
-    // The record is a JSON object, which bd hands back as text whether it stored an object or the
-    // text of one. Anything else is no record, and the epic announced nothing.
-    private static List<(string Name, string Fingerprint)> Entries(string text)
-    {
-        try
-        {
-            using var record = JsonDocument.Parse(text);
-            if (record.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                return [];
-            }
-
-            return
-            [
-                .. record.RootElement.EnumerateObject().Select(member => (member.Name, JsonText.Of(member.Value))),
-            ];
-        }
-        catch (JsonException)
-        {
-            return [];
+                project,
+                held.Epic.Id,
+                held.Epic.Title,
+                recorded.Name,
+                recorded.BeadId,
+                recorded.Fingerprint,
+                task?.Title ?? recorded.BeadId);
         }
     }
 

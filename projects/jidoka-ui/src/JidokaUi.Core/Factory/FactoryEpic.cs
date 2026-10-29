@@ -1,4 +1,5 @@
 using JidokaUi.Core.Boards;
+using JidokaUi.Core.Jidoka;
 
 namespace JidokaUi.Core.Factory;
 
@@ -40,9 +41,9 @@ public sealed record TaskLap(string Id, string Title, string Lap, TaskOutcome Ou
     /// <summary>The lap of this task, read from the metadata keys that jidoka's scheduler writes.</summary>
     public static TaskLap Of(Bead task)
     {
-        var stage = Entry(task, "lap.stage");
-        var number = Entry(task, "lap.number");
-        var lap = number.Length > 0 ? number : NoValue;
+        var recorded = JidokaMetadata.LapOn(task);
+        var stage = recorded.Stage;
+        var lap = recorded.Number.Length > 0 ? recorded.Number : NoValue;
         if (task.IsClosed)
         {
             return stage.Length > 0
@@ -55,18 +56,15 @@ public sealed record TaskLap(string Id, string Title, string Lap, TaskOutcome Ou
             return new TaskLap(task.Id, task.Title, NoValue, TaskOutcome.NoLapYet, "no lap yet", NoValue);
         }
 
-        return new TaskLap(task.Id, task.Title, lap, TaskOutcome.InLap, stage, TriesOf(task, stage));
+        return new TaskLap(task.Id, task.Title, lap, TaskOutcome.InLap, stage, TriesOf(recorded));
     }
 
-    private static string TriesOf(Bead task, string stage)
+    private static string TriesOf(RecordedLap recorded)
     {
-        var merging = stage == MergeStage;
-        var used = Entry(task, merging ? "lap.mergetries" : "lap.tries");
+        var merging = recorded.Stage == MergeStage;
+        var used = merging ? recorded.MergeTries : recorded.Tries;
         return $"{(used.Length > 0 ? used : "0")}/{(merging ? MergeTryCap : TryCap)}";
     }
-
-    private static string Entry(Bead task, string key) =>
-        task.Metadata.TryGetValue(key, out var value) ? value : string.Empty;
 }
 
 /// <summary>
@@ -78,9 +76,6 @@ public sealed record FactoryEpic(Bead Epic, EpicState State, IReadOnlyList<TaskL
 {
     /// <summary>The label with which jidoka's handoff marks an epic that the factory holds.</summary>
     public const string FactoryLabel = "factory";
-
-    private const string GateKey = "gate.state";
-    private const string WaitingAtTheGate = "waiting";
 
     /// <summary>True while the epic is open and waits on the human's decision at the acceptance gate.</summary>
     public bool AtTheGate => !Epic.IsClosed && State == EpicState.AtTheGate;
@@ -125,7 +120,7 @@ public sealed record FactoryEpic(Bead Epic, EpicState State, IReadOnlyList<TaskL
 
     private static EpicState StateOf(Bead epic)
     {
-        if (epic.Metadata.TryGetValue(GateKey, out var gate) && gate == WaitingAtTheGate)
+        if (JidokaMetadata.GateStateOn(epic) == GateState.Waiting)
         {
             return EpicState.AtTheGate;
         }

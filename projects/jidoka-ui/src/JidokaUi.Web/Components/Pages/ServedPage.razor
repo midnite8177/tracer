@@ -62,7 +62,7 @@ else if (TheProjectOnTheScreen is { } project)
                 @if (part is PageSlot { Name: AnswerSlot } slot && bead is { } shown)
                 {
                     <div class="jidoka-slot" data-jidoka-slot="@slot.Name">
-                        @if (shown.Question is { } question)
+                        @if (JidokaMetadata.QuestionOn(shown) is { } question)
                         {
                             <AnswerPanel @key="address"
                                          Address="address"

@@ -1,5 +1,6 @@
 using System.Globalization;
 using JidokaUi.Core.Beads;
+using JidokaUi.Core.Jidoka;
 
 namespace JidokaUi.Core.Boards;
 
@@ -24,9 +25,6 @@ public sealed record Bead(
 {
     /// <summary>The label that marks a bead as one that waits on a person.</summary>
     public const string HumanLabel = "human";
-
-    /// <summary>The question that jidoka asked on this bead, read from its metadata, or null when it asked none.</summary>
-    public BeadQuestion? Question { get; } = BeadQuestion.From(Metadata);
 
     /// <summary>True when this bead states a priority of its own.</summary>
     public bool HasPriority => Priority is not null;
@@ -74,7 +72,7 @@ public sealed record Bead(
     /// The question that waits for an answer, or null. The metadata keeps the question after the
     /// answer, so only a bead that still carries the human label has one to answer.
     /// </summary>
-    public BeadQuestion? QuestionToAnswer => NeedsYou ? Question : null;
+    public BeadQuestion? QuestionToAnswer => NeedsYou ? JidokaMetadata.QuestionOn(this) : null;
 
     /// <summary>A close reason belongs to a closed bead, so an open bead never shows one.</summary>
     public bool HasCloseReason => IsClosed && CloseReason.Length > 0;

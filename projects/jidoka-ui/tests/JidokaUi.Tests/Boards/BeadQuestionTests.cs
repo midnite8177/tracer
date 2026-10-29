@@ -1,5 +1,6 @@
 using JidokaUi.Core.Beads;
 using JidokaUi.Core.Boards;
+using JidokaUi.Core.Jidoka;
 
 namespace JidokaUi.Tests.Boards;
 
@@ -11,11 +12,10 @@ public sealed class BeadQuestionTests
     [Fact]
     public void ReadsTheOptionsAndTheRecommendationThatJidokaKeepsInTheMetadataOfABead()
     {
-        var bead = TheBead($$"""
+        var question = Assert.IsType<BeadQuestion>(QuestionOn($$"""
             "metadata": {"question.options": "{{TheOptions}}", "question.recommended": "Use the cheap plan"}
-            """);
+            """));
 
-        var question = Assert.IsType<BeadQuestion>(bead.Question);
         Assert.Equal(
             [new QuestionOption("Use the cheap plan", 80), new QuestionOption("Keep the dear plan", 20)],
             question.Options);
@@ -25,20 +25,20 @@ public sealed class BeadQuestionTests
     [Fact]
     public void ReadsTheOptionsWhenBdPrintsThemAsAnArrayAndNotAsAString()
     {
-        var bead = TheBead("""
+        var question = QuestionOn("""
             "metadata": {"question.options": [{"name": "Yes", "confidence": 90}, {"name": "No", "confidence": 10}],
                          "question.recommended": "Yes"}
             """);
 
-        Assert.Equal(["Yes", "No"], bead.Question?.Options.Select(option => option.Name));
+        Assert.Equal(["Yes", "No"], question?.Options.Select(option => option.Name));
     }
 
     [Fact]
     public void MarksTheOptionThatTheRecommendationNames()
     {
-        var question = Assert.IsType<BeadQuestion>(TheBead($$"""
+        var question = Assert.IsType<BeadQuestion>(QuestionOn($$"""
             "metadata": {"question.options": "{{TheOptions}}", "question.recommended": "Keep the dear plan"}
-            """).Question);
+            """));
 
         Assert.Equal(
             ["Keep the dear plan"],
@@ -48,9 +48,9 @@ public sealed class BeadQuestionTests
     [Fact]
     public void MarksNoOptionWhenTheMetadataKeepsNoRecommendation()
     {
-        var question = Assert.IsType<BeadQuestion>(TheBead($$"""
+        var question = Assert.IsType<BeadQuestion>(QuestionOn($$"""
             "metadata": {"question.options": "{{TheOptions}}"}
-            """).Question);
+            """));
 
         Assert.DoesNotContain(question.Options, question.Recommends);
     }
@@ -58,9 +58,9 @@ public sealed class BeadQuestionTests
     [Fact]
     public void GivesNoQuestionToABeadWhoseMetadataKeepsNoOptions()
     {
-        Assert.Null(TheBead("""
+        Assert.Null(QuestionOn("""
             "metadata": {"lap.stage": "build"}
-            """).Question);
+            """));
     }
 
     [Theory]
@@ -70,15 +70,15 @@ public sealed class BeadQuestionTests
     [InlineData("""[{\"confidence\":50}]""")]
     public void GivesNoQuestionWhenTheOptionsNameNoAnswer(string options)
     {
-        Assert.Null(TheBead($$"""
+        Assert.Null(QuestionOn($$"""
             "metadata": {"question.options": "{{options}}"}
-            """).Question);
+            """));
     }
 
-    private static Bead TheBead(string field)
+    private static BeadQuestion? QuestionOn(string field)
     {
         var printed = $$"""[{"id": "b-7", "title": "Pick a hosting plan", "labels": ["human"], {{field}} }]""";
         Assert.True(BdJson.TryParse(printed, out var records));
-        return Bead.From(Assert.Single(records));
+        return JidokaMetadata.QuestionOn(Bead.From(Assert.Single(records)));
     }
 }
