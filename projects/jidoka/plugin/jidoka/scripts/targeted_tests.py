@@ -3,8 +3,9 @@
 
 The base branch is main for bench work and the epic branch for a lap. The
 command is the app's test command from the repo settings, followed by its
-test_target with the one <...> placeholder replaced by the filter given. The
-script merges the base branch into the worktree, or with --rebase rebases the
+test_target with the one <...> placeholder replaced by the filter given, which
+the script quotes or escapes for the shell so that a filter such as A|B reaches
+the test command whole. The script merges the base branch into the worktree, or with --rebase rebases the
 worktree's branch onto it, which a lap does so that the epic branch stays one
 commit per task. It runs the command once, and when the base branch moved
 during the run it brings the base branch in again and runs the command once
@@ -42,6 +43,7 @@ from __future__ import annotations
 import argparse
 import enum
 import re
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -184,9 +186,42 @@ def test_command(app: App, test_filter: str) -> str:
     if len(placeholders) != 1:
         raise TestRunError(f"the test_target of app {app.name!r} is {app.test_target!r}, which needs exactly "
                            f"one <...> placeholder for the filter and has {len(placeholders)}")
-    refuse_a_repeated_prefix(app, test_filter, app.test_target[:placeholders[0].start()])
+    prefix = app.test_target[:placeholders[0].start()]
+    refuse_a_repeated_prefix(app, test_filter, prefix)
+    quoted = escaped_for(shell_quoting_at_end_of(prefix), test_filter)
     # A replacement string would read backslashes in the filter as escapes and \1 as a group reference.
-    return f"{app.test} {PLACEHOLDER.sub(lambda _: test_filter, app.test_target)}"
+    return f"{app.test} {PLACEHOLDER.sub(lambda _: quoted, app.test_target)}"
+
+
+def shell_quoting_at_end_of(text: str) -> str:
+    """Returns the POSIX shell quoting that is open after the text: "'", '"', or "" for none."""
+    open_quote = ""
+    escaped = False
+    for char in text:
+        if escaped:
+            escaped = False
+        elif char == "\\" and open_quote != "'":
+            escaped = True
+        elif open_quote:
+            if char == open_quote:
+                open_quote = ""
+        elif char in "'\"":
+            open_quote = char
+    return open_quote
+
+
+def escaped_for(open_quote: str, test_filter: str) -> str:
+    """Returns the filter written so that the shell hands it on whole, given the quoting open where it goes.
+
+    The shell runs the command line, so a filter such as A|B would otherwise be a pipe. A test_target that
+    wraps its placeholder in quotes keeps those quotes, which is why the filter is escaped for them and not
+    wrapped in a second pair.
+    """
+    if open_quote == "'":
+        return test_filter.replace("'", "'\\''")
+    if open_quote == '"':
+        return re.sub(r'([\\"$`])', r"\\\1", test_filter)
+    return shlex.quote(test_filter)
 
 
 def refuse_a_repeated_prefix(app: App, test_filter: str, prefix: str) -> None:

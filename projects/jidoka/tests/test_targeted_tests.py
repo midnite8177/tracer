@@ -136,6 +136,9 @@ class TargetedTestsCase(unittest.TestCase):
                  "run": None, "test": cls.test_command, "test_full": '--filter "FullyQualifiedName!~WindowTests"',
                  "test_target": '--filter "FullyQualifiedName~<name>&FullyQualifiedName!~WindowTests"',
                  "hand_run": [WINDOW_TESTS]},
+                {"name": "single-quoted-shop", "kind": "program", "way_in": "its web pages", "build": "true",
+                 "run": None, "test": cls.test_command, "test_full": None,
+                 "test_target": "--filter 'FullyQualifiedName~<name>'", "hand_run": []},
                 {"name": "editor", "kind": "program", "way_in": "its windows", "build": "true",
                  "run": None, "test": None, "test_full": None, "test_target": None, "hand_run": []},
             ],
@@ -462,6 +465,33 @@ class FilterTests(TargetedTestsCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(["--filter FullyQualifiedName~Cart&FullyQualifiedName!~WindowTests"], self.runs_of(bead))
         self.assertEqual("pass", self.metadata(bead)["tests.result"])
+
+    def test_a_filter_with_a_pipe_reaches_the_test_command_whole_when_the_placeholder_is_unquoted(self):
+        bead = self.new_bead()
+
+        done = self.targeted_tests(bead, "dotnet-shop", "A|B", self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["--filter FullyQualifiedName~A|B"], self.runs_of(bead))
+        self.assertEqual("pass", self.metadata(bead)["tests.result"])
+
+    def test_a_filter_with_shell_characters_reaches_the_test_command_whole_inside_double_quotes(self):
+        bead = self.new_bead()
+        hostile = 'A|B "C" $HOME `id` \\ ; $(id)'
+
+        done = self.targeted_tests(bead, "windowed-shop", hostile, self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([f"--filter FullyQualifiedName~{hostile}&FullyQualifiedName!~WindowTests"],
+                         self.runs_of(bead))
+
+    def test_a_filter_with_a_single_quote_reaches_the_test_command_whole_inside_single_quotes(self):
+        bead = self.new_bead()
+
+        done = self.targeted_tests(bead, "single-quoted-shop", "A|B's $HOME", self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["--filter FullyQualifiedName~A|B's $HOME"], self.runs_of(bead))
 
     def test_any_filter_runs_when_the_test_target_is_only_the_placeholder(self):
         bead = self.new_bead()
