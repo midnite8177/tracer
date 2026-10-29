@@ -4,7 +4,7 @@ using JidokaUi.Tests.Beads;
 
 namespace JidokaUi.Tests.Projects;
 
-public class ActiveProjectSelectionTests
+public sealed class ActiveProjectSelectionTests
 {
     [Fact]
     public void HasNoActiveProjectBeforeAChoice()
