@@ -57,6 +57,32 @@ public sealed partial class NarrowWindowTests
         Assert.Contains(rules, rule => rule.Selects("top-bar-nav") && rule.Declares("flex-wrap: wrap"));
     }
 
+    [Fact]
+    public async Task DrawsTheBoardTableAsBlocksSoThatItCannotBeWiderThanTheWindowInAWindowAsNarrowAsAPhone()
+    {
+        var rules = await TheRulesOfAWindowAsNarrowAsAPhoneAsync();
+
+        Assert.Contains(rules, rule => rule.Selects("board-table") && rule.Declares("display: block"));
+        Assert.Contains(rules, rule => rule.Selects("board-table") && rule.Selects("board-row") && rule.Declares("display: flex"));
+    }
+
+    [Fact]
+    public async Task WrapsTheCellsOfABoardRowOntoASecondLineInAWindowAsNarrowAsAPhone()
+    {
+        var rules = await TheRulesOfAWindowAsNarrowAsAPhoneAsync();
+
+        Assert.Contains(rules, rule => rule.Selects("board-row") && rule.Declares("flex-wrap: wrap"));
+        Assert.Contains(rules, rule => rule.Selects("board-row") && rule.Declares("flex-basis: 100%"));
+    }
+
+    [Fact]
+    public async Task LetsTheTitleOfABoardRowTakeTheWidthThatTheTickLeavesInAWindowAsNarrowAsAPhone()
+    {
+        var rules = await TheRulesOfAWindowAsNarrowAsAPhoneAsync();
+
+        Assert.Contains(rules, rule => rule.Selects("board-cell-title") && rule.Declares("min-width: 0"));
+    }
+
     private static async Task<IReadOnlyList<NarrowRule>> TheRulesOfAWindowAsNarrowAsAPhoneAsync()
     {
         using var app = new AnAppOverHttp();

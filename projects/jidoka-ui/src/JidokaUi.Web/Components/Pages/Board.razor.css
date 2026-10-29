@@ -273,3 +273,70 @@
     outline: none;
     box-shadow: 0 0 0 var(--jidoka-focus-ring-width) var(--jidoka-focus-ring);
 }
+
+/*
+    A window as narrow as a phone cannot hold seven columns, so no cell keeps a
+    column. The table, its sections and its rows become blocks, and a row is a
+    flex line that wraps. The tick and the title share the first line, and the
+    other cells follow on the second. The header keeps its tick and its title,
+    which carry Collapse all and Expand all, and drops the names of the cells
+    that moved under the title.
+
+    The empty ::after of a row is the break between the two lines. It stands
+    after the tick and the title in the order and before the other cells.
+*/
+@media (max-width: 576px) {
+    .board-table,
+    .board-table thead,
+    .board-table tbody {
+        display: block;
+    }
+
+    .board-table thead tr,
+    .board-table ::deep .board-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .board-table ::deep .board-row {
+        border-bottom: 1px solid var(--jidoka-border-muted);
+        height: auto;
+        padding: var(--jidoka-space-1) 0;
+    }
+
+    .board-table ::deep .board-row::after {
+        content: "";
+        flex-basis: 100%;
+        order: 1;
+    }
+
+    .board-table td {
+        border-bottom-width: 0;
+    }
+
+    .board-table th:nth-child(n + 3) {
+        display: none;
+    }
+
+    .board-table th:nth-child(2) {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    .board-table td.board-cell-tick,
+    .board-table th.board-cell-tick {
+        flex: 0 0 auto;
+        width: auto;
+    }
+
+    .board-table td.board-cell-title {
+        flex: 1 1 0;
+        min-width: 0;
+        width: auto;
+    }
+
+    .board-table ::deep .board-row > td:not(.board-cell-tick):not(.board-cell-title) {
+        order: 2;
+    }
+}
