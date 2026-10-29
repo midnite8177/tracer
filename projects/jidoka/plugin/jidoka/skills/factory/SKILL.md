@@ -20,6 +20,7 @@ The scripts, run from inside the repo:
 - route: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/route.py"`
 - repo settings: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py"`
 - watcher: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/watch.py"`
+- T3 waker: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_wake.py"`
 - jidoka-ui: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/ui.py"`
 
 The skill folder is the directory that holds this SKILL.md. Write every
@@ -127,7 +128,12 @@ is no try.
 3. **Next.** Run `scheduler next <epic-id> --jidoka-home ...`. Exit 1 means
    it refused and wrote nothing; stderr lists every reason. Show it and
    stop. A refusal because the epic already has a manager means its
-   heartbeat is fresh: show it and stop. Exit 0 prints JSON with `epic`,
+   heartbeat is fresh: show it and stop. Under T3 (the `T3CODE_CLI_PATH`
+   variable is set), after exit 0 call the `t3_thread_configuration` tool
+   with no arguments and run `T3 waker record <epic-id> --thread <threadId>
+   --jidoka-home ...`, so that T3 can wake this host after it releases it;
+   write no event line for it, and go on when the tool or the script fails.
+   Exit 0 prints JSON with `epic`,
    `branch` (the epic branch), `lap_limit`, `actions` and `laps`. On a
    stopped epic this call is the resume: it has ended each lap an earlier
    session left running as interrupted, stopped the workers they left, put
@@ -550,7 +556,10 @@ is no try.
    or blocked tasks. Write `<epic-id>: waiting`, then start the watcher
    in the background (`run_in_background: true`) with
    `watcher <epic-id>` and wait. It exits when a task is unparked, a task is
-   added, a task merges, or the pause is over, and prints which. Then run
+   added, a task merges, or the pause is over, and prints which. Under T3
+   it also exits with the event `restart` after 30 minutes with no change:
+   write `<epic-id>: still waiting`, start the watcher again the same way,
+   and wait; do not run `carry-on`. On any other event run
    `scheduler carry-on <epic-id> --jidoka-home ...`, which opens what fits,
    with no restart, and go on from step 4. A prompt that starts with
    `jidoka: the last turn ended on an API error` wakes you the same way: run

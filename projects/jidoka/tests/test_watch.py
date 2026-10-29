@@ -19,10 +19,19 @@ EXIT_TIMEOUT_SECONDS = 60
 class WatchCase(StopCase):
     """A handed-off epic with three tasks, and a watcher process that reads its beads every second."""
 
-    def start_watch(self) -> subprocess.Popen:
-        watcher = subprocess.Popen([str(LAUNCHER), str(WATCH), self.epic, "--interval", "1"], cwd=self.repo,
+    def start_watch(self, *extra: str) -> subprocess.Popen:
+        return self.launch(extra, None)
+
+    def start_watch_under_t3(self, *extra: str) -> subprocess.Popen:
+        return self.launch(extra, "/t3")
+
+    def launch(self, extra: tuple[str, ...], t3_path: str | None) -> subprocess.Popen:
+        environment = {key: value for key, value in os.environ.items() if key != "T3CODE_CLI_PATH"}
+        if t3_path is not None:
+            environment["T3CODE_CLI_PATH"] = t3_path
+        watcher = subprocess.Popen([str(LAUNCHER), str(WATCH), self.epic, "--interval", "1", *extra], cwd=self.repo,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                                   env={**os.environ, "PATH": fixture.path_with(self.bin),
+                                   env={**environment, "PATH": fixture.path_with(self.bin),
                                         "JIDOKA_HOME": str(self.home), "BEADS_ACTOR": HUMAN})
         self.addCleanup(watcher.kill)
         self.addCleanup(watcher.stdout.close)
@@ -82,6 +91,26 @@ class TheWatcherTests(WatchCase):
         watcher = self.start_watch()
 
         self.assertEqual({"epic": self.epic, "event": "pause-over", "bead": ""}, self.event_of(watcher))
+
+    def test_under_t3_it_exits_with_a_restart_when_nothing_changes(self):
+        watcher = self.start_watch_under_t3("--restart-after", "3")
+        time.sleep(1.5)
+        self.assertIsNone(watcher.poll(), "the watcher restarted early")
+
+        self.assertEqual({"epic": self.epic, "event": "restart", "bead": ""}, self.event_of(watcher))
+
+    def test_under_t3_a_change_still_ends_the_watch_at_once(self):
+        watcher = self.start_watch_under_t3("--restart-after", "30")
+
+        self.bd("close", self.tasks[1])
+
+        self.assertEqual({"epic": self.epic, "event": "merged", "bead": self.tasks[1]}, self.event_of(watcher))
+
+    def test_outside_t3_it_never_exits_on_a_restart(self):
+        watcher = self.start_watch("--restart-after", "1")
+        time.sleep(3.5)
+
+        self.assertIsNone(watcher.poll(), "the watcher ended with nothing changed")
 
 
 if __name__ == "__main__":
