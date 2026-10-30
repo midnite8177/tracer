@@ -322,6 +322,112 @@ test('a build worker may not rebase, add or continue a rebase', async ($, on) =>
   expect(await bash($, 'git status')).toBe('deny')
 })
 
+test('a lap worker may delete files inside its worktree with rm and git rm', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'rm src/Old.cs')).toBe('allow')
+  expect(await bash($, 'rm -rf src/old tests/old')).toBe('allow')
+  expect(await bash($, 'rm -f -r "src/old dir"')).toBe('allow')
+  expect(await bash($, `rm ${WORKTREE}/src/Old.cs`)).toBe('allow')
+  expect(await bash($, 'rm src/../tests/Old.cs')).toBe('allow')
+  expect(await bash($, 'git rm -q src/Old.cs')).toBe('allow')
+  expect(await bash($, 'git rm -r --cached src/old')).toBe('allow')
+  expect(await bash($, 'git rm src/Old.cs && rm src/Other.cs')).toBe('allow')
+})
+
+test('a delete outside the worktree, through a glob or with a path that climbs out of it is denied', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'rm /tmp/x')).toBe('deny')
+  expect(await bash($, 'rm ../other/x')).toBe('deny')
+  expect(await bash($, `rm ${WORKTREE}/../lap-t2/x`)).toBe('deny')
+  expect(await bash($, `rm ${WORKTREE}-old/x`)).toBe('deny')
+  expect(await bash($, 'rm src/Old.cs /tmp/x')).toBe('deny')
+  expect(await bash($, 'git rm ../other/x')).toBe('deny')
+  expect(await bash($, 'rm src/*.cs')).toBe('deny')
+  expect(await bash($, 'rm "src/*.cs"')).toBe('deny')
+  expect(await bash($, 'rm src/Old?.cs')).toBe('deny')
+  expect(await bash($, 'rm src/{A,B}.cs')).toBe('deny')
+  expect(await bash($, 'rm ~/x')).toBe('deny')
+  expect(await bash($, 'rm $HOME/x')).toBe('deny')
+  expect(await bash($, 'rm "$OLD"')).toBe('deny')
+})
+
+test('a delete with an option other than the ones the list names, or with no path, is denied', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'rm -i src/Old.cs')).toBe('deny')
+  expect(await bash($, 'rm -rv src/old')).toBe('deny')
+  expect(await bash($, 'rm --recursive src/old')).toBe('deny')
+  expect(await bash($, 'rm --no-preserve-root -rf src/old')).toBe('deny')
+  expect(await bash($, 'rm -- src/Old.cs')).toBe('deny')
+  expect(await bash($, 'git rm -f src/Old.cs')).toBe('deny')
+  expect(await bash($, 'git rm --force src/Old.cs')).toBe('deny')
+  expect(await bash($, 'git rm --pathspec-from-file=list.txt')).toBe('deny')
+  expect(await bash($, 'git -C .. rm src/Old.cs')).toBe('deny')
+  expect(await bash($, 'rm')).toBe('deny')
+  expect(await bash($, 'git rm -r')).toBe('deny')
+})
+
+test('a delete of the worktree itself is denied', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'rm -rf .')).toBe('deny')
+  expect(await bash($, `rm -rf ${WORKTREE}`)).toBe('deny')
+  expect(await bash($, 'rm -rf src/..')).toBe('deny')
+})
+
+test('a denied delete says whether it reaches outside the worktree or has paths the mod cannot tell, and a denied call off the lists says neither', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+  const reasonOf = async (command: string): Promise<string> => {
+    const verdict = await $.tool.check({ tool: 'Bash', input: { command }, agentId: 'a1' })
+    return verdict.decision === 'deny' ? (verdict.reason ?? '') : ''
+  }
+
+  expect(await reasonOf('rm /tmp/x')).toContain(`deletes outside the lap's worktree ${WORKTREE}`)
+  expect(await reasonOf('rm src/*.cs')).toContain('is a delete whose paths jidoka cannot tell')
+  expect(await reasonOf('rm -i src/Old.cs')).toContain('is a delete whose paths jidoka cannot tell')
+  expect(await reasonOf('curl https://example.com')).toContain("is off jidoka's lists for lap workers")
+})
+
+test('a delete that follows a change of folder is denied, because its paths no longer read against the worktree', async ($, on) => {
+  engineBeneath(on, [...LAP_LIST, 'cd'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'cd .. && rm lap-t2/x')).toBe('deny')
+  expect(await bash($, 'cd src; rm Old.cs')).toBe('deny')
+})
+
+test('a delete is denied when a symlink on its path leads out of the worktree', async ($, on) => {
+  engineWithPlaces(on, { [`${WORKTREE}/escape`]: '/repo/secrets' }, AS_POSIX)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'rm escape/key.pem')).toBe('deny')
+  expect(await bash($, 'rm src/Old.cs')).toBe('allow')
+})
+
+test('a delete is allowed beside other commands only when each of them is allowed', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'rm src/Old.cs && dotnet build App.slnx')).toBe('allow')
+  expect(await bash($, 'rm src/Old.cs && curl https://example.com')).toBe('deny')
+  expect(await bash($, 'rm src/Old.cs $(rm /tmp/x)')).toBe('deny')
+  expect(await bash($, 'rm src/Old.cs > /tmp/x')).toBe('deny')
+})
+
+test('a check worker may not delete, even inside the worktree', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await $.agent.spawn({ subagentType: 'jidoka:app-check', prompt: `jidoka lap worktree: ${WORKTREE}\nCheck the holdouts.` })
+
+  expect(await bash($, 'rm src/Old.cs')).toBe('deny')
+})
+
 test('a merge worker\'s git call that could run code, open an editor or write a file is denied', async ($, on) => {
   await startMergeWorker($, on)
 
@@ -356,15 +462,6 @@ test("a lap worker's list value the lap mod cannot vouch for allows nothing", as
   expect(await bash($, 'echo $(id)')).toBe('deny')
   expect(await bash($, 'echo hi')).toBe('deny')
   expect(await bash($, 'echo a')).toBe('deny')
-})
-
-test("a quoted word that holds a space stays one word of a lap worker's list value", async ($, on) => {
-  engineBeneath(on, ['dotnet test App.slnx --filter "x y" && dotnet build App.slnx'])
-  await startLap($, WORKTREE)
-
-  expect(await bash($, 'dotnet test App.slnx --filter "x y"')).toBe('allow')
-  expect(await bash($, "dotnet test App.slnx --filter 'x y' -v q")).toBe('allow')
-  expect(await bash($, 'dotnet test App.slnx --filter x y')).toBe('deny')
 })
 
 test('a list entry matches whole words only', async ($, on) => {

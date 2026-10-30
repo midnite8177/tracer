@@ -577,7 +577,7 @@ permission prompt. It allows a call on the built-in list, the repo's
 list or the lap's epic's factory rules, refuses a write outside the lap's worktree, whether by its path or
 through a symlink, and denies the rest with a reason. It decides a worker's
 first call too, before the worker's agent id is known. The built-in list holds every call the tool marks read-only, a
-write inside the worktree, the commands a human added to it for every repo
+write inside the worktree, a delete there with `rm` or `git rm`, the commands a human added to it for every repo
 on the machine, and entries scoped to one stage: a merge worker alone may
 rebase the lap onto the epic branch, abort or continue that rebase, add
 paths and look at the conflicts with git. A stage-scoped entry says what

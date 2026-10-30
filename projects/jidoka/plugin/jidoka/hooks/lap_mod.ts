@@ -1,7 +1,9 @@
 import type { EngineInterface, Register } from 'claude-code'
 import type { LapWorker, ListEntry } from '../types/index'
-import { entriesOf, isListed, splitIntoSimpleCommands } from './list_matcher.js'
-import { isAbsolute, isReallyInside } from './path_placement.js'
+import { changesFolder, deletedPaths, isDelete } from './delete_paths.js'
+import { areListed, entriesOf, splitIntoSimpleCommands } from './list_matcher.js'
+import { isAbsolute, isReallyInside, resolved, withDrive } from './path_placement.js'
+import { simpleCommands } from './shell_words.js'
 import { jidokaScriptsIn, runScript, scriptPlace } from './run_script.js'
 import { endFailedTurns, startHeartbeat, wakeAfterFailure } from './timers.js'
 import { forgetJidokaHome, recordRequest, recordUsage, tallyRequestStep, tallyWorkerStep } from './token_usage.js'
@@ -36,7 +38,6 @@ function filePathOf(field: string, input: unknown): string | undefined {
   return typeof path === 'string' && path !== '' ? path : undefined
 }
 
-/** The JSON in `text`, or undefined when it holds something else. */
 function jsonIn(text: string): unknown {
   try {
     return JSON.parse(text)
@@ -131,7 +132,6 @@ export function runsScheduler(command: string, pluginRoot: string): boolean {
 
 type Verdict = { decision: 'allow' } | { decision: 'deny'; reason: string }
 
-/** A tool call as the policy reads it. */
 type ToolCall = { tool: string; input: unknown; isReadOnly: boolean | undefined }
 
 /**
@@ -141,6 +141,52 @@ type ToolCall = { tool: string; input: unknown; isReadOnly: boolean | undefined 
 function managerVerdict(tool: string, input: unknown, pluginRoot: string): Verdict | undefined {
   if (tool !== 'Bash' || jidokaScriptsIn(commandOf(input), pluginRoot) === undefined) return undefined
   return { decision: 'allow' }
+}
+
+/** Why a Bash call is refused, in the words a lap worker's permission question reports as its `cause`. */
+type Refusal = 'off-lists' | 'outside-worktree' | 'unreadable-delete'
+
+/**
+ * Why `command` is refused, or undefined when every simple command of it is
+ * on the worker's list or, for a lap worker, deletes only paths that really
+ * land inside its worktree, the worktree itself excepted. A delete that
+ * follows a change of folder is left to the list, because its relative paths
+ * would read against another folder.
+ */
+async function refusalOf(
+  lap: LapWorker,
+  command: string,
+  landsInside: (path: string) => Promise<boolean>,
+): Promise<Refusal | undefined> {
+  const parts = simpleCommands(command)
+  if (parts === undefined) return 'off-lists'
+  const mayDelete = lap.kind === 'lap' && !parts.some(changesFolder)
+  const root = resolved(lap.worktree, '/')
+  const others: string[][] = []
+  for (const words of parts) {
+    const paths = mayDelete ? deletedPaths(words) : undefined
+    if (paths === undefined) {
+      others.push(words)
+      continue
+    }
+    for (const path of paths.map(withDrive)) {
+      if (resolved(path, lap.worktree) === root || !(await landsInside(path))) return 'outside-worktree'
+    }
+  }
+  const unlisted = others.find(words => !areListed([words], lap.commands))
+  if (unlisted === undefined) return undefined
+  return lap.kind === 'lap' && isDelete(unlisted) ? 'unreadable-delete' : 'off-lists'
+}
+
+function refused(lap: LapWorker, call: string, refusal: Refusal): { decision: 'deny'; reason: string } {
+  if (refusal === 'off-lists') return offTheLists(lap, call)
+  const why =
+    refusal === 'outside-worktree'
+      ? `deletes outside the lap's worktree ${lap.worktree}`
+      : 'is a delete whose paths jidoka cannot tell: a lap worker may delete only paths it names one by one, ' +
+        'with no option but -f and -r (git rm: -r, -q and --cached), no glob, variable or `~`, and no change of ' +
+        'folder before it'
+  return { decision: 'deny', reason: `jidoka: ${call} ${why}. Find another way, or ${WAY_OUT[lap.kind].advice}.` }
 }
 
 /**
@@ -188,8 +234,9 @@ async function workerVerdict(
   if (call.isReadOnly === true) return { decision: 'allow' }
   if (tool === 'Bash') {
     const command = commandOf(call.input)
-    const isCheckScript = lap.kind === 'check' && runsCheckScripts(command, pluginRoot)
-    return isCheckScript || isListed(command, lap.commands) ? { decision: 'allow' } : offTheLists(lap, `\`${command}\``)
+    if (lap.kind === 'check' && runsCheckScripts(command, pluginRoot)) return { decision: 'allow' }
+    const refusal = await refusalOf(lap, command, landsInside)
+    return refusal === undefined ? { decision: 'allow' } : refused(lap, `\`${command}\``, refusal)
   }
   return offTheLists(lap, tool)
 }

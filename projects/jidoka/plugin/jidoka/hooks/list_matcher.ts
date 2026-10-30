@@ -16,10 +16,8 @@ function mayFollow(entry: Grant, rest: readonly string[]): boolean {
   return rest.every(word => !entry.refusing.some(option => isOption(word, option)))
 }
 
-/** True when every simple command of `command` starts with the words of one entry, followed by what it allows. */
-export function isListed(command: string, entries: readonly ListEntry[]): boolean {
-  const parts = simpleCommands(command)
-  if (parts === undefined) return false
+/** True when every one of `parts`, the words of a simple command each, starts with the words of one entry, followed by what it allows. */
+export function areListed(parts: readonly (readonly string[])[], entries: readonly ListEntry[]): boolean {
   const prefixes = entries.flatMap(entry => {
     const grant: Grant = typeof entry === 'string' ? { command: entry, then: 'words', refusing: [] } : entry
     const parsed = simpleCommands(grant.command)
