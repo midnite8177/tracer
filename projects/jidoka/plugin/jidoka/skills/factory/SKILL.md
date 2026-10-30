@@ -246,17 +246,24 @@ own failure.
 
      A permission question is the question about a denied call that has no
      other way round. Its report adds `call`, the denied call as the
-     denial printed it, and `pattern`, the command prefix that would allow
-     it: one simple command whose words appear in `call`. Its report needs no
-     `question`, because the scheduler writes "May lap workers run
-     <pattern>?" itself. Its `options`
-     are exactly `epic` (the epic's factory rules), `repo` (the repo's
-     list), `built-in` (the built-in list, for every repo on the
-     machine) and `none` (no list changes), each with its confidence and
-     no `next`, which the scheduler writes. The human's answer names one
-     list, and the scheduler puts the pattern on it before the next lap,
-     so the next lap's mod allows the call. An answer that names no list
-     is `none`: the pattern goes on no list, and the worker reads the
+     denial printed it, `pattern`, the command prefix that would allow
+     it: one simple command whose words appear in `call`, and `cause`, why
+     the lap mod denied it: `off-lists` when the denial says the call is
+     off jidoka's lists, `outside-worktree` when it says the call deletes
+     outside the worktree, and `unreadable-delete` when it says the
+     delete's paths cannot be told. Its report needs no `question`,
+     because the scheduler writes "May lap workers run <pattern>?" itself.
+     Its `options` are exactly `epic` (the epic's factory rules), `repo`
+     (the repo's list), `built-in` (the built-in list, for every repo on
+     the machine) and `none` (no list changes), each with its confidence
+     and no `next`, which the scheduler writes. Its `shown` is dropped,
+     because the scheduler writes the situation line and the diagram from
+     the denial and the cause, and its `why` is a list of short steps that
+     give the worker's reasons for its pick, which go on the recommended
+     card. The human's answer names one list by opening a comment with
+     its name, and the scheduler puts the pattern on it before the next
+     lap, so the next lap's mod allows the call. Any other answer is
+     `none`: the pattern goes on no list, and the worker reads the
      comment and carries on without the call. When the answer arrives for
      a call the worker asked about, the worker runs it.
 

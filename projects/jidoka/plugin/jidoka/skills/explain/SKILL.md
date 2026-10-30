@@ -30,20 +30,32 @@ recommended option. Change the look here and nowhere else.
 A script makes every part it can count or list. The worker writes only the
 words and the steps of the picture.
 
-0. **The heading.** The report's `question`, the question in one
+1. **The heading.** The report's `question`, the question in one
    sentence, so the page says what it asks. The worker writes it as a
    question the human can answer with one of the options.
-1. **In short.** A box at the top that holds the question's `found`.
-2. **What the app shows.** What a user sees today, from the report's
+2. **In short.** A box at the top that holds the question's `found`.
+3. **What the app shows.** What a user sees today, from the report's
    `shown`. Left out when the worker gave none.
-3. **Why.** A diagram, drawn by the script as an inline SVG, of the steps
+4. **Why.** A diagram, drawn by the script as an inline SVG, of the steps
    in the report's `why`, in order, joined by arrows. Left out when the
    worker gave none.
-4. **A card per option.** The option's name, the worker's confidence in
+5. **A card per option.** The option's name, the worker's confidence in
    percent that it is the right answer, and what happens next if the
-   human picks it, from the option's `next`. The recommended option's card
-   is marked.
-5. **The answer slot.** An empty section with the attribute
+   human picks it, from the option's `next`, which the worker writes for
+   an ordinary question. The recommended option's card is marked.
+
+   For a permission question the script writes parts 1, 3, 4 and 5 from
+   the denial, and the worker writes none of them. Part 1 is "May lap
+   workers run" and the pattern. Part 3 is headed "What happened" and
+   holds one sentence: what the worker tried, and the rule that stopped
+   it, so the task stopped. Part 4 shows four steps: the task, the call,
+   the denial and the park. In part 5 each card's heading is the change
+   its list makes, in ordinary words, and the card holds what the worker
+   does next with the denied call, as a worked example, and the answer
+   word the human types. The worker's `shown` and `next` are dropped. The
+   worker's `why` is its reasoning for its pick, and it goes on the
+   recommended card under "Why the worker picks it".
+6. **The answer slot.** An empty section with the attribute
    `data-jidoka-slot="answer-panel"`. jidoka-ui draws the answer panel
    there, because a file on disk cannot write to a bead.
 
@@ -107,8 +119,11 @@ links the page.
 
 ## Words
 
-The worker writes `shown`, each step of `why` and each option's `next` in
-the question report, with the keys described in the factory skill. The gate
+The worker writes `question`, `shown`, each step of `why` and each
+option's `next` in the question report, with the keys described in the
+factory skill. On a permission question jidoka writes the question,
+`shown`, the steps and every `next` from the denial, and the worker writes
+only `why`. The gate
 worker writes `in_short`, `before`, `after`, each step of `how`, each of
 `steps` and each of `unchecked` in the guide file. Run every one of them
 through the unslop skill before the report or the guide is written. Keep

@@ -53,6 +53,7 @@ section { margin-bottom: 1.5rem; }
 .option .confidence { margin: 0 0 0.6rem; font-weight: 600; color: var(--accent); }
 .option.recommended .confidence::after { content: " \00b7  recommended"; color: var(--mark); }
 .option .next { margin: 0; }
+.option .answer { margin: 0.8rem 0 0; padding-top: 0.5rem; border-top: 1px dashed var(--line); font-size: 0.85rem; }
 .option .next-label { margin: 0.6rem 0 0.1rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); }
 .answer-slot { padding: 1rem 1.25rem; border: 2px dashed var(--line); border-radius: 0.3rem; }
 .answer-slot h2 { margin-top: 0; }

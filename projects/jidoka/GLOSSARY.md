@@ -51,7 +51,7 @@ _Avoid_: Release, batch, feature, project
 **Task**:
 A bead inside an epic that is not itself an epic, whatever its beads type.
 A task that waits on the human, or that lacks its Demo line, is still a
-task; the factory just does not take it yet.
+task; the factory does not take it yet.
 _Avoid_: Ticket, issue, work bead, item, job
 
 **Handoff**:
@@ -271,13 +271,14 @@ _Avoid_: Side quest, follow-up, tech debt
 **Question**:
 A worker's request for a decision from the human, which parks its task or
 its epic. It asks in one sentence, which is the heading of its page and the
-first line of its comment, and says what the worker found, the options, each with the
-worker's confidence in percent that it is the right answer and what happens
-next if the human picks it, and the one it recommends. A report where an
-option lacks what happens next is refused and counts a try; jidoka writes
-that line itself for a permission question's options. Unparking without an answer takes the recommendation. A worker
-never asks live: its stage ends with a question report in its scratch
-folder, and a script posts it on the task. A worker makes the choice as an
+first line of its comment, and says what the worker found, the options,
+each with the worker's confidence in percent that it is the right answer
+and what happens next if the human picks it, and the one it recommends. A
+report where an option lacks what happens next is refused and counts a try;
+jidoka writes that line itself for a permission question's options.
+Unparking without an answer takes the recommendation. A worker never asks
+live: its stage ends with a question report in its scratch folder, and a
+script posts it on the task. A worker makes the choice as an
 assumption instead when the bead, the epic, the glossary or an ADR already
 settles it, or when its recommendation reaches 90% and is cheap to reverse.
 _Avoid_: Escalation, prompt, ask, blocker
@@ -577,11 +578,13 @@ _Avoid_: Temp folder, tmp, workspace
 The hooks module in jidoka's plugin that decides every lap worker's tool
 call ahead of the host's rules, mode and prompt, so no lap waits on a
 permission prompt. It allows a call on the built-in list, the repo's
-list or the lap's epic's factory rules, refuses a write outside the lap's worktree, whether by its path or
-through a symlink, and denies the rest with a reason. It decides a worker's
-first call too, before the worker's agent id is known. The built-in list holds every call the tool marks read-only, a
-write inside the worktree, a delete there with `rm` or `git rm`, the commands a human added to it for every repo
-on the machine, and entries scoped to one stage: a merge worker alone may
+list or the lap's epic's factory rules, refuses a write outside the lap's
+worktree, whether by its path or through a symlink, and denies the rest
+with a reason. It decides a worker's first call too, before the worker's
+agent id is known. The built-in list holds every call the tool marks
+read-only, a write inside the worktree, a delete there with `rm` or
+`git rm`, the commands a human added to it for every repo on the machine,
+and entries scoped to one stage: a merge worker alone may
 rebase the lap onto the epic branch, abort or continue that rebase, add
 paths and look at the conflicts with git. A stage-scoped entry says what
 may follow its words, so `git rebase` never takes `--exec`. The repo's list
@@ -590,15 +593,19 @@ _Avoid_: Permission hook, guard, sandbox, allowlist
 
 **Permission question**:
 A question about a call the lap mod denied, when the worker has no other
-way round it. It names the denied call and a pattern, the command prefix
-that would allow it, and its options are the three lists, the epic's
-factory rules, the repo's list and the built-in list, and `none`. The
-answer names one list, the pattern goes onto it, and the next lap's mod
-allows the call. An answer that names no list is `none`: the pattern goes
-on no list, and the next lap's build carries the comment.
-Jidoka writes each option's card: the change the list makes in plain words,
-what the next lap does, and the list's name as the answer word the human
-types.
+way round it. It names the denied call, a pattern, the command prefix that
+would allow it, and the cause of the denial the lap mod gave, and its
+options are the three lists, the epic's factory rules, the repo's list and
+the built-in list, and `none`. The answer names one list by opening a
+comment with its name, the pattern goes onto it, and the next lap's mod
+allows the call. Any other answer is `none`: the pattern goes on no list,
+and the next lap's build carries the comment. Jidoka writes each option's
+card in ordinary words: the change the list makes, what the worker does
+next with the denied call, and the list's name as the answer word the
+human types. It also writes the situation line, what the worker tried and
+the rule that stopped it, and the four-step diagram of the task, the call,
+the denial and the park; the page and the comment carry no raw denial
+text. The worker's reasons for its pick go on the recommended card.
 _Avoid_: Permission prompt, approval request
 
 ### Repos

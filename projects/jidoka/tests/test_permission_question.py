@@ -26,16 +26,18 @@ CALL = "cd packages/till && make lint --fix"
 PATTERN = "make lint"
 FOUND = "The build needs make lint, and the lap mod denied it."
 ANSWERS = ["epic", "repo", "built-in", "none"]
-CHANGES = [("Only this epic's laps may run make lint", "epic", 50),
-           ("Every lap in this repo may run make lint", "repo", 30),
-           ("Every lap in every repo on this machine may run make lint", "built-in", 5),
-           ("No list changes, and no lap may run make lint", "none", 15)]
+CHANGES = [("Only the workers on this group of tasks may run make lint", "epic", 50),
+           ("Every worker in this repo may run make lint", "repo", 30),
+           ("Every worker in every repo on this machine may run make lint", "built-in", 5),
+           ("Nothing changes, and no worker may run make lint", "none", 15)]
+JIDOKA_WORDS = ["lap", "epic's", "built-in list", "lists"]
 
 
 def report(**changes: object) -> dict:
     options = [{"name": "epic", "confidence": 50}, {"name": "repo", "confidence": 30},
                {"name": "built-in", "confidence": 5}, {"name": "none", "confidence": 15}]
-    return {"found": FOUND, "call": CALL, "pattern": PATTERN, "options": options, "recommended": "epic", **changes}
+    return {"found": FOUND, "call": CALL, "pattern": PATTERN, "cause": "off-lists", "options": options,
+            "recommended": "epic", **changes}
 
 
 class PermissionCase(unittest.TestCase):
@@ -158,7 +160,7 @@ class PermissionQuestionTests(PermissionCase):
         self.assertEqual("Question: May lap workers run make lint?", str(question["text"]).splitlines()[0])
         self.assertEqual(["May lap workers run make lint?"], re.findall(r"<h1>([^<]*)</h1>", html))
 
-    def test_the_comment_leads_each_option_with_the_change_it_makes_and_says_what_the_next_lap_does(self):
+    def test_the_comment_leads_each_option_with_the_change_it_makes_and_says_what_the_worker_does_with_the_call(self):
         _, task = self.asked()
 
         [question] = [comment for comment in self.comments(task) if str(comment["text"]).startswith("Question: ")]
@@ -168,8 +170,20 @@ class PermissionQuestionTests(PermissionCase):
         for line, (change, name, percent) in zip(lines, CHANGES):
             self.assertTrue(line.startswith(f"- {change} ({percent}%)."), line)
             self.assertIn(f"Answer word: {name}.", line)
-            self.assertIn("The next lap", line)
-            self.assertIn(PATTERN, line)
+            self.assertIn("The worker starts again", line)
+            self.assertIn(f"`{CALL}`", line)
+
+    def test_the_change_and_the_next_step_of_each_option_need_no_jidoka_vocabulary(self):
+        _, task = self.asked()
+
+        [question] = [comment for comment in self.comments(task) if str(comment["text"]).startswith("Question: ")]
+        lines = [line for line in str(question["text"]).splitlines() if line.startswith("- ")]
+        html = unescape(next((self.home / "pages").rglob("*.html")).read_text(encoding="utf-8"))
+        cards = re.findall(r'(?s)<article class="option[^"]*">(.*?)</article>', html)
+
+        for words in [*lines, *cards]:
+            for word in JIDOKA_WORDS:
+                self.assertNotIn(word, words)
 
     def test_the_page_card_of_each_option_leads_with_the_change_and_shows_the_answer_word_apart(self):
         _, task = self.asked()
@@ -182,7 +196,7 @@ class PermissionQuestionTests(PermissionCase):
             self.assertEqual([change], [unescape(heading) for heading in re.findall(r"<h3>([^<]*)</h3>", card)])
             self.assertEqual([name], re.findall(r'<code class="answer-word">([^<]*)</code>', card))
             self.assertIn(f"{percent}%", card)
-            self.assertRegex(card, r"(?s)What happens next.*The next lap")
+            self.assertRegex(card, r"(?s)What happens next.*The worker starts again")
 
     def test_a_next_the_worker_wrote_on_a_permission_option_does_not_replace_the_change_or_the_next_lap(self):
         _, task = self.new_task()
@@ -223,10 +237,119 @@ class PermissionQuestionTests(PermissionCase):
         self.assertEqual([], self.comments(task))
 
 
+class PermissionSituationTests(PermissionCase):
+    RM_CALL = "rm ../shared/SessionReader.cs"
+    RAW_DENIAL = ("Permission to use Bash denied by plugin jidoka: jidoka: `rm ../shared/SessionReader.cs` deletes "
+                  "outside the lap's worktree.")
+    REASONS = ["The file has no caller left.", "Deleting it is the smallest change."]
+    SITUATION = ("The worker tried to delete ../shared/SessionReader.cs with rm. Workers may delete only inside "
+                 "their worktree, so the task stopped.")
+    LAP_MOD_WORDS = ["denied by plugin", "off jidoka", "lap mod", "lists"]
+
+    def asked_rm(self) -> tuple[str, str]:
+        _, task = self.new_task()
+        done = self.ask(task, call=self.RM_CALL, pattern="rm", cause="outside-worktree", shown=self.RAW_DENIAL,
+                        why=self.REASONS, found="The build deletes a file that nothing reads.")
+        self.assertEqual(0, done.returncode, done.stderr)
+        return task, next((self.home / "pages").rglob("*.html")).read_text(encoding="utf-8")
+
+    def question_text(self, task: str) -> str:
+        [question] = [comment for comment in self.comments(task) if str(comment["text"]).startswith("Question: ")]
+        return str(question["text"])
+
+    def test_the_page_says_what_the_worker_tried_and_that_workers_may_not_run_it(self):
+        _, html = self.asked_rm()
+
+        self.assertIn(self.SITUATION, unescape(html))
+
+    def test_the_page_shows_no_raw_denial_and_none_of_the_lap_mods_words(self):
+        _, html = self.asked_rm()
+
+        for word in self.LAP_MOD_WORDS:
+            self.assertNotIn(word, unescape(html))
+
+    def test_the_diagram_shows_the_task_the_call_the_denial_and_the_park_in_four_steps(self):
+        task, html = self.asked_rm()
+
+        diagram = re.search(r"(?s)<svg.*?</svg>", html).group(0)
+        words = " ".join(unescape(line) for line in re.findall(r"<text[^>]*>([^<]*)</text>", diagram))
+
+        self.assertEqual(4, diagram.count("<rect"))
+        for step in [task, self.RM_CALL, "denied", "parked"]:
+            self.assertIn(step, words)
+
+    def test_the_workers_reasons_for_its_pick_are_on_the_recommended_card_only(self):
+        _, html = self.asked_rm()
+
+        cards = re.findall(r'(?s)<article class="option[^"]*">(.*?)</article>', html)
+
+        self.assertIn("option recommended", re.findall(r'<article class="([^"]*)">', html)[0])
+        for reason in self.REASONS:
+            self.assertIn(reason, cards[0])
+            self.assertEqual(1, html.count(reason))
+
+    def test_the_comment_holds_the_situation_and_the_reasons_and_none_of_the_lap_mods_words(self):
+        task, _ = self.asked_rm()
+
+        text = self.question_text(task)
+
+        self.assertIn(self.SITUATION, text)
+        for reason in self.REASONS:
+            self.assertIn(reason, text)
+        for word in self.LAP_MOD_WORDS:
+            self.assertNotIn(word, text)
+
+    def test_a_delete_whose_paths_cannot_be_told_says_so_and_not_that_workers_may_not_run_rm(self):
+        _, task = self.new_task()
+
+        done = self.ask(task, call="rm src/*.cs", pattern="rm", cause="unreadable-delete")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        text = self.question_text(task)
+        self.assertIn("The worker tried to delete src/*.cs with rm. Workers may delete only paths they name one by "
+                      "one inside their worktree, so the task stopped.", text)
+        self.assertNotIn("Workers may not run rm", text)
+
+    def test_the_targets_of_a_delete_stop_at_the_separator_even_when_it_is_glued_to_a_word(self):
+        _, task = self.new_task()
+
+        done = self.ask(task, call="rm /tmp/a.txt; ls /tmp", pattern="rm", cause="outside-worktree")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("The worker tried to delete /tmp/a.txt with rm.", self.question_text(task))
+
+    def test_a_report_with_no_cause_or_an_unknown_one_is_refused_and_parks_nothing(self):
+        _, task = self.new_task()
+        no_cause = report()
+        del no_cause["cause"]
+        scratch = self.root / f"scratch-{task}"
+        scratch.mkdir(exist_ok=True)
+        (scratch / "question.json").write_text(json.dumps(no_cause), encoding="utf-8")
+        missing = self.script(PARK, "question", task, "--scratch", str(scratch), "--worktree", str(self.repo),
+                              "--branch", f"lap/{task}", "--tries", "0")
+
+        unknown = self.ask(task, cause="because")
+
+        self.assertEqual(1, missing.returncode)
+        self.assertIn("cause must be a non-empty string", missing.stderr)
+        self.assertEqual(1, unknown.returncode)
+        self.assertIn("cause must be one of", unknown.stderr)
+        self.assertEqual([], self.comments(task))
+
+    def test_a_call_that_deletes_nothing_is_told_as_the_command_the_worker_ran(self):
+        _, task = self.new_task()
+
+        done = self.ask(task)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("The worker tried to run `cd packages/till && make lint --fix`. Workers may not run make lint, "
+                      "so the task stopped.", self.question_text(task))
+
+
 class PermissionAnswerTests(PermissionCase):
     def test_an_answer_naming_the_epic_adds_the_pattern_to_the_epics_rules(self):
         epic, task = self.asked()
-        self.human_answers(task, "The epic's list, please.")
+        self.human_answers(task, "Epic, please.")
 
         done = self.answer(task)
 
@@ -249,7 +372,7 @@ class PermissionAnswerTests(PermissionCase):
 
     def test_an_answer_naming_the_built_in_list_adds_the_pattern_to_the_homes_additions(self):
         epic, task = self.asked()
-        self.human_answers(task, "Put it on the built-in list.")
+        self.human_answers(task, "built-in: put it on the list for every repo.")
 
         done = self.answer(task)
 
@@ -291,30 +414,29 @@ class PermissionAnswerTests(PermissionCase):
         self.assertNotIn(PATTERN, self.settings_shown()["worker_commands"])
         self.assertNotIn(PATTERN, self.built_in_additions())
 
-    def test_an_answer_naming_none_writes_no_list(self):
+    def test_a_comment_that_only_mentions_a_list_word_after_its_first_word_is_none(self):
         epic, task = self.asked()
-        self.human_answers(task, "none")
+        self.human_answers(task, "Don't run it, the repo has a script for that, and the epic needs no lint.")
+
+        done = self.answer(task)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({"task": task, "list": "none", "pattern": PATTERN, "changed": False}, json.loads(done.stdout))
+        self.assertNotIn(PATTERN, self.settings_shown()["worker_commands"])
+        self.assertNotIn("extra_commands", self.rules_shown(epic)["settings"])
+
+    def test_a_list_word_that_only_starts_a_longer_word_names_no_list(self):
+        epic, task = self.asked()
+        self.human_answers(task, "Repository settings are out of scope, so none.")
 
         done = self.answer(task)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual("none", json.loads(done.stdout)["list"])
-        self.assertNotIn("extra_commands", self.rules_shown(epic)["settings"])
-
-    def test_without_a_comment_a_recommended_none_writes_no_list(self):
-        epic, task = self.new_task()
-        self.assertEqual(0, self.ask(task, recommended="none").returncode)
-        self.human_answers(task)
-
-        done = self.answer(task)
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual("none", json.loads(done.stdout)["list"])
-        self.assertNotIn("extra_commands", self.rules_shown(epic)["settings"])
 
     def test_an_answer_that_names_two_lists_writes_nothing(self):
         epic, task = self.asked()
-        self.human_answers(task, "epic or repo, either")
+        self.human_answers(task, "epic", "repo, either")
 
         done = self.answer(task)
 
