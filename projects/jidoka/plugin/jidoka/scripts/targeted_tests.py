@@ -45,7 +45,7 @@ import enum
 import re
 import shlex
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import repo_settings
@@ -101,23 +101,6 @@ class NoTestsExecuted(Exception):
 
 
 @dataclass(frozen=True)
-class HandRunGroup:
-    """A group of the app's tests that its test_target leaves out, and the command the human runs it with."""
-    name: str
-    reason: str
-    command: str
-
-
-@dataclass(frozen=True)
-class App:
-    """The part of an app's repo settings that names its tests."""
-    name: str
-    test: str
-    test_target: str
-    hand_run: list[HandRunGroup]
-
-
-@dataclass(frozen=True)
 class TestRun:
     """One run of the test command on the worktree with the base branch brought in at the sha base."""
     base: str
@@ -154,45 +137,46 @@ class TestOutcome:
         return "\n".join(lines)
 
 
-def app_settings(home: Path, main_tree: Path, name: str) -> App:
+def untested(app: repo_settings.App) -> TestRunError:
+    return TestRunError(f"{app.name} has no test command. Build a test project for it at the bench, "
+                        "then run /jidoka:onboard to record its command.")
+
+
+def app_settings(home: Path, main_tree: Path, name: str) -> repo_settings.App:
     path = repo_settings.settings_path(home, main_tree)
     if not path.is_file():
         raise TestRunError(f"no settings for {main_tree} in {path.parent}. Run /jidoka:onboard to record them")
     try:
         settings = repo_settings.load(path)
+        if not repo_settings.apps_of(settings):
+            raise TestRunError(f"{path} holds no list of apps")
+        if not isinstance(settings.get("untested_apps"), list):
+            raise TestRunError(f"{path} holds no untested_apps list of the apps with no test command. "
+                               "Run /jidoka:onboard to record it")
+        app = repo_settings.app_named(settings, name)
     except repo_settings.SettingsError as error:
         raise TestRunError(str(error)) from error
-    apps = settings.get("apps")
-    if not isinstance(apps, list):
-        raise TestRunError(f"{path} holds no list of apps")
-    if not isinstance(settings.get("untested_apps"), list):
-        raise TestRunError(f"{path} holds no untested_apps list of the apps with no test command. "
-                           "Run /jidoka:onboard to record it")
-    for index, entry in enumerate(apps):
-        if isinstance(entry, dict) and entry.get("name") == name:
-            problems = repo_settings.app_problems(index, entry)
-            if problems:
-                raise TestRunError(f"the repo settings for app {name!r} are incomplete: {'; '.join(problems)}. "
-                                   "Run /jidoka:onboard to record them")
-            if entry["test"] is None:
-                raise TestRunError(f"{name} has no test command. Build a test project for it at the bench, "
-                                   "then run /jidoka:onboard to record its command.")
-            groups = [HandRunGroup(group["name"], group["reason"], group["command"]) for group in entry["hand_run"]]
-            return App(name, entry["test"], entry["test_target"], groups)
-    names = ", ".join(str(entry.get("name")) for entry in apps if isinstance(entry, dict))
-    raise TestRunError(f"the repo settings have no app named {name!r}; the apps are {names}")
+    if app.targeted_command is None:
+        raise untested(app)
+    return app
 
 
-def test_command(app: App, test_filter: str) -> str:
-    placeholders = list(PLACEHOLDER.finditer(app.test_target))
+def test_command(app: repo_settings.App, test_filter: str) -> str:
+    target = app.test_target
+    if target is None:
+        raise untested(app)
+    placeholders = list(PLACEHOLDER.finditer(target))
     if len(placeholders) != 1:
-        raise TestRunError(f"the test_target of app {app.name!r} is {app.test_target!r}, which needs exactly "
+        raise TestRunError(f"the test_target of app {app.name!r} is {target!r}, which needs exactly "
                            f"one <...> placeholder for the filter and has {len(placeholders)}")
-    prefix = app.test_target[:placeholders[0].start()]
+    prefix = target[:placeholders[0].start()]
     refuse_a_repeated_prefix(app, test_filter, prefix)
     quoted = escaped_for(shell_quoting_at_end_of(prefix), test_filter)
     # A replacement string would read backslashes in the filter as escapes and \1 as a group reference.
-    return f"{app.test} {PLACEHOLDER.sub(lambda _: quoted, app.test_target)}"
+    command = replace(app, test_target=PLACEHOLDER.sub(lambda _: quoted, target)).targeted_command
+    if command is None:
+        raise untested(app)
+    return command
 
 
 def shell_quoting_at_end_of(text: str) -> str:
@@ -226,7 +210,7 @@ def escaped_for(open_quote: str, test_filter: str) -> str:
     return shlex.quote(test_filter)
 
 
-def refuse_a_repeated_prefix(app: App, test_filter: str, prefix: str) -> None:
+def refuse_a_repeated_prefix(app: repo_settings.App, test_filter: str, prefix: str) -> None:
     """Raises FilterRefused when the filter starts with text the test_target already puts before it.
 
     The text is the whole prefix, such as "--filter FullyQualifiedName~" or "-k ", or the part of it after
@@ -355,7 +339,7 @@ def targeted_tests(bead: str, worktree: Path, base_branch: str, how: Integration
     return outcome.recorded
 
 
-def left_out(app: App) -> str:
+def left_out(app: repo_settings.App) -> str:
     """Names the hand-run groups the test_target leaves out, because a filter that names one of them runs nothing."""
     if not app.hand_run:
         return ""

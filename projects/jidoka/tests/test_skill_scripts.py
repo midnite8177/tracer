@@ -297,7 +297,7 @@ class ContextFromAnInstalledPluginInARepoWithoutOneTests(SkillScriptCase):
     def run_context_with_only(self, cmd: Path, plugin: Path) -> subprocess.CompletedProcess:
         env = {**os.environ, "PATH": str(cmd), "JIDOKA_HOME": str(self.home),
                **fixture.home_variables(self.empty_home)}
-        return fixture.run_launcher(LAUNCHER, [str(plugin / CONTEXT), "--min", "0"], None, env, self.repo, None)
+        return fixture.run_launcher_on_path(LAUNCHER, [str(plugin / CONTEXT), "--min", "0"], None, env, self.repo, None)
 
     def git_for_windows_without_sh_on_the_path(self) -> Path:
         """The cmd folder of a Git for Windows laid out on disk: git and bd in it, and sh in usr/bin two folders

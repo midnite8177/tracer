@@ -69,13 +69,11 @@ def settings_of(home: Path, folder: Path) -> dict:
 
 
 def run_command_of(app: str, settings: dict) -> str:
-    apps = settings.get("apps")
-    for held in apps if isinstance(apps, list) else []:
-        if isinstance(held, dict) and held.get("name") == app:
-            command = held.get("run")
-            if not isinstance(command, str) or not command.strip():
+    for held in repo_settings.apps_of(settings):
+        if held.name == app:
+            if held.run is None:
                 raise AppProcessError(f"the app {app} has no run command in the repo settings")
-            return command
+            return held.run
     raise AppProcessError(f"the repo settings name no app {app}")
 
 

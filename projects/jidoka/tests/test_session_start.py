@@ -84,6 +84,12 @@ class SessionStartTests(unittest.TestCase):
                **fixture.system_variables(os.environ, fixture.WINDOWS)}
         return fixture.run_launcher(LAUNCHER, [str(HOOK)], stdin, env, process_cwd, None)
 
+    def start_on_path(self, stdin: str, process_cwd: Path, path: str) -> subprocess.CompletedProcess:
+        """Starts the hook as start does, on exactly the PATH given, for a test that hides git from it."""
+        env = {"PATH": path, "JIDOKA_HOME": str(self.home), "HOME": str(self.home),
+               **fixture.system_variables(os.environ, fixture.WINDOWS)}
+        return fixture.run_launcher_on_path(LAUNCHER, [str(HOOK)], stdin, env, process_cwd, None)
+
     def session(self, cwd: Path) -> subprocess.CompletedProcess:
         event = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd)}
         return self.start(json.dumps(event), self.not_a_repo, self.path)
@@ -211,7 +217,7 @@ class SessionStartTests(unittest.TestCase):
     def test_a_worktree_session_without_git_on_the_path_prints_nothing_and_exits_cleanly(self):
         event = json.dumps({"hook_event_name": "SessionStart", "cwd": str(self.worktree)})
 
-        done = self.start(event, self.not_a_repo, str(self.not_a_repo))
+        done = self.start_on_path(event, self.not_a_repo, str(self.not_a_repo))
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual("", done.stdout)

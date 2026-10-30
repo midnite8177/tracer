@@ -73,14 +73,6 @@ class Guide:
 
 
 @dataclass(frozen=True)
-class AppCommands:
-    """How the human builds and runs one app; `run` is "" when the app has no run command."""
-    name: str
-    build: str
-    run: str
-
-
-@dataclass(frozen=True)
 class Checkout:
     """Where the human looks at the epic branch: a worktree path, and the command that cuts it when no worktree has
     the branch out yet ("" when one does)."""
@@ -100,12 +92,12 @@ class GatePage:
     files: tuple[diff_view.FileDiff, ...]
     evidence: tuple[str, ...]
     checkout: Checkout
-    apps: tuple[AppCommands, ...]
+    apps: tuple[repo_settings.App, ...]
     items: gate_items.GateItems
     open_findings: tuple[design_findings.OpenFinding, ...]
     low_findings: tuple[review.Finding, ...]
     removals: tuple[cleanup.Removal, ...]
-    hand_run: tuple[validation.HandRunGroup, ...]
+    hand_run: tuple[repo_settings.HandRunGroup, ...]
     cost: tuple[str, ...]
     danger: tuple[str, ...]
 
@@ -174,13 +166,6 @@ def settings_of(home: Path, main_tree: Path) -> dict:
     return repo_settings.load(repo_settings.settings_path(home, main_tree))
 
 
-def apps_of(settings: dict) -> tuple[AppCommands, ...]:
-    apps = settings.get("apps")
-    listed = apps if isinstance(apps, list) else []
-    return tuple(AppCommands(str(app.get("name") or ""), str(app.get("build") or ""), str(app.get("run") or ""))
-                 for app in listed if isinstance(app, dict))
-
-
 def paths_main_changed(head: str, main_tree: Path) -> set[str]:
     base = run(["git", "merge-base", MAIN_BRANCH, head], main_tree, None).strip()
     listed = run(["git", "diff", "--name-only", "--no-renames", "-z", base, MAIN_BRANCH], main_tree, None)
@@ -228,10 +213,10 @@ def gather(epic: str, guide: Guide, home: Path, main_tree: Path) -> GatePage:
     findings = design_findings.ranked_findings([each.path for each in files], main_tree)
     return GatePage(epic, str(shown.get("title") or epic), branch, head, guide,
                     tuple(gate_items.merged_commits(head, main_tree)), files, evidence_lines(shown),
-                    checkout_of(epic, branch, main_tree), apps_of(settings),
+                    checkout_of(epic, branch, main_tree), tuple(repo_settings.apps_of(settings)),
                     gate_items.gate_items(epic, str(shown.get("title") or ""), main_tree), tuple(findings),
                     tuple(review.stored_findings(shown, review.LOW_KEY)), tuple(cleanup.removed_before(shown)),
-                    tuple(validation.hand_run_groups(settings)), cost_lines(shown),
+                    tuple(repo_settings.stored_hand_run_groups(settings)), cost_lines(shown),
                     danger_lines(shown, branch, head, main_tree))
 
 

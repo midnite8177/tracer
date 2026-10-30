@@ -56,12 +56,11 @@ from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, PassError, move_epic_branch, worktree_at
 from report_text import tail_of
 from worktrees import cut_detached, remove_worktree, stage_worktree
-from repo_settings import full_suite_command
+from repo_settings import HandRunGroup, SettingsError, apps_of, stored_hand_run_groups
 
 WORKTREE_PREFIX = "validation-"
 DOTNET_SKIPPED = re.compile(r"[A-Za-z]+!\s+-\s+Failed:\s*\d+,\s*Passed:\s*\d+,\s*Skipped:\s*(\d+),\s*Total:\s*\d+")
 UNITTEST_SKIPPED = re.compile(r"^(?:OK|FAILED) \([^)]*\bskipped=(\d+)", re.MULTILINE)
-HAND_RUN_FIELDS = ("app", "name", "reason", "command")
 UNKNOWN_FIGURES = "no test count in its output"
 RESULT_KEY = "validation.result"
 RUNS_KEY = "validation.runs"
@@ -80,15 +79,6 @@ class ValidationError(PassError):
 class SuiteCommand:
     """One command of the full suite, and the app whose tests it runs."""
     app: str
-    command: str
-
-
-@dataclass(frozen=True)
-class HandRunGroup:
-    """A group of an app's tests that the full suite leaves out, and the command the human runs it with."""
-    app: str
-    name: str
-    reason: str
     command: str
 
 
@@ -165,17 +155,16 @@ def fields_of(result: str, head: str, runs: list[CommandRun], filed: list[str]) 
 
 def suite_commands(settings: dict) -> list[SuiteCommand]:
     """The full-suite command of every app that has a test command, in the order of the repo settings."""
-    return [SuiteCommand(str(app["name"]), full_suite_command(app)) for app in settings.get("apps") or []
-            if isinstance(app, dict) and app.get("test") is not None]
+    return [SuiteCommand(app.name, command) for app in apps_of(settings)
+            if (command := app.full_suite_command) is not None]
 
 
 def hand_run_groups(settings: dict) -> list[HandRunGroup]:
-    listed = settings.get("hand_run")
-    if not (isinstance(listed, list) and all(isinstance(group, dict) and all(
-            isinstance(group.get(key), str) for key in HAND_RUN_FIELDS) for group in listed)):
-        raise ValidationError("the repo settings hold no hand_run list of the tests validation leaves out. "
-                              "Run /jidoka:onboard again to record it")
-    return [HandRunGroup(*(group[key] for key in HAND_RUN_FIELDS)) for group in listed]
+    """The hand-run groups of the stored settings; raises ValidationError when the settings hold no usable list."""
+    try:
+        return stored_hand_run_groups(settings)
+    except SettingsError as error:
+        raise ValidationError(str(error)) from error
 
 
 def skipped_in(output: str) -> int:

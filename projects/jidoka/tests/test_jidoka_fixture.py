@@ -96,6 +96,19 @@ class WindowsExecutableTests(unittest.TestCase):
         self.assertEqual('exec "$BASH" C:/plugin/bin/jidoka-run x.py go\n',
                          Path(command[1]).read_text(encoding="utf-8", newline=""))
 
+    def test_the_git_bash_is_the_outer_bash_of_the_git_folder_and_not_the_inner_one_beside_sh(self):
+        git_root = self.root / "Git"
+        outer, inner = git_root / "bin" / "bash.exe", git_root / "usr" / "bin" / "bash.exe"
+        for bash in (outer, inner):
+            bash.parent.mkdir(parents=True)
+            bash.write_text("", encoding="utf-8")
+        mingw = git_root / "mingw64" / "bin"
+        mingw.mkdir(parents=True)
+        (git_root / "cmd").mkdir()
+
+        self.assertEqual(str(outer), fixture.git_bash_beside(str(git_root / "cmd" / "git.exe")))
+        self.assertEqual(str(outer), fixture.git_bash_beside(str(mingw / "git.exe")))
+
     def test_a_launcher_command_hands_every_argument_to_the_launcher_as_it_was_given(self):
         given = ["rules.py", "set", "epic", 'tier_routes={"second":"codex"}', 'lap_test_scope="full"', "it's",
                  "two  spaces", "", "back\\slash", "$HOME `x`", "line\nbreak"]
@@ -109,9 +122,35 @@ class WindowsExecutableTests(unittest.TestCase):
 
         self.assertEqual("".join(f"[{word}]\n" for word in given), done.stdout)
 
+    def test_a_path_in_the_windows_form_is_read_by_bash_as_drive_folders_joined_by_colons(self):
+        self.assertEqual("/c/Program Files/Git/cmd:/d/tools",
+                         fixture.windows_bash_path("C:\\Program Files\\Git\\cmd;D:\\tools"))
+
+    def test_a_launcher_command_on_a_path_sets_that_path_before_it_runs_the_launcher(self):
+        command = fixture.bash_command_on_path("C:\\Git\\bin\\bash.exe",
+                                               PureWindowsPath("C:\\plugin\\bin\\jidoka-run"), ["x.py"],
+                                               "/c/Program Files/Git/cmd")
+
+        self.assertEqual("C:\\Git\\bin\\bash.exe", command[0])
+        self.assertEqual("PATH='/c/Program Files/Git/cmd'\nexec \"$BASH\" C:/plugin/bin/jidoka-run x.py\n",
+                         Path(command[1]).read_text(encoding="utf-8", newline=""))
+
+    def test_a_launcher_run_on_a_path_runs_the_launcher_on_exactly_the_path_it_was_given(self):
+        launcher = self.root / "print-path"
+        launcher.write_text('#!/bin/sh\nprintf "%s" "$PATH"\n', encoding="utf-8", newline="\n")
+        launcher.chmod(0o755)
+        only = self.root / "only"
+        only.mkdir()
+        environment = {**os.environ, "PATH": str(only)}
+
+        done = fixture.run_launcher_on_path(launcher, ["unused"], None, environment, self.root, 30)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(fixture.windows_bash_path(str(only)) if fixture.WINDOWS else str(only), done.stdout)
+
     def test_a_launcher_run_gives_the_launcher_its_arguments_stdin_environment_and_folder(self):
         launcher = self.root / "report"
-        launcher.write_text('#!/bin/sh\nprintf "[%s][%s][%s]" "$1" "$(cat)" "$REPORT_VARIABLE"; pwd >&2\n',
+        launcher.write_text('#!/bin/sh\nprintf "[%s][%s][%s]" "$1" "$(cat)" "$REPORT_VARIABLE"; { pwd -W 2>/dev/null || pwd; } >&2\n',
                             encoding="utf-8", newline="\n")
         launcher.chmod(0o755)
         folder = self.root / "work"
@@ -392,6 +431,40 @@ class BdHomeTests(unittest.TestCase):
         home, _ = json.loads(fixture.run([str(fake)], self.root))
 
         self.assertEqual(os.environ.get("HOME"), home)
+
+
+class RepoSettingsTests(unittest.TestCase):
+    """The repo settings a test writes for a repo in a jidoka home."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.repo = self.root / "shop"
+        committed_repo(self.repo)
+        self.home = self.root / "jidoka-home"
+        self.home.mkdir()
+        (self.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
+
+    def test_settings_the_script_accepts_are_stored_in_the_jidoka_home(self):
+        app = {"name": "shop", "kind": "program", "way_in": "its command line", "build": "make", "run": None,
+               "test": "make test", "test_target": "-k <name>", "test_full": None, "hand_run": [],
+               "acceptance": None}
+
+        settings = {"lap_test_scope": "targeted", "worker_commands": [], "slot_use": None, "lap_limit": 1,
+                    "apps": [app]}
+
+        fixture.write_repo_settings(self.repo, self.home, settings)
+
+        [stored] = (self.home / "repos").glob("*.json")
+        self.assertEqual(["shop"], [each["name"] for each in json.loads(stored.read_text(encoding="utf-8"))["apps"]])
+
+    def test_settings_the_script_refuses_fail_with_a_fixture_error_that_names_the_scripts_message(self):
+        with self.assertRaises(fixture.FixtureError) as raised:
+            fixture.write_repo_settings(self.repo, self.home, {"apps": []})
+
+        self.assertIn("apps must be a list that holds at least one app", str(raised.exception))
+        self.assertEqual([], list((self.home / "repos").glob("*.json")))
 
 
 class LinkTargetTests(unittest.TestCase):

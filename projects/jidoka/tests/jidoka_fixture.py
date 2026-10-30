@@ -49,8 +49,10 @@ SHIPPED = ["install.py", "release.py"]
 STARTING_VERSION = "0.1.0"
 TEMPLATE_WAIT_SECONDS = 300
 TEMPLATE_POLL_SECONDS = 0.2
+SETTINGS_WRITE_TIMEOUT_SECONDS = 120
 REMOVAL_WAIT_SECONDS = 10
 REMOVAL_POLL_SECONDS = 0.2
+GIT_FOLDERS_ABOVE_GIT = 3
 
 
 class FixtureError(Exception):
@@ -733,9 +735,19 @@ def read_log(log: Path) -> list:
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line]
 
 
+def git_bash_beside(git: str) -> str:
+    """The outer bash.exe of the Git for Windows folder that holds git: bin/bash.exe, which is where jidoka's scripts
+    find Git Bash. The inner one in usr/bin puts nothing on PATH, so a launcher run by it finds no coreutils."""
+    for folder in list(Path(git).parents)[:GIT_FOLDERS_ABOVE_GIT]:
+        candidate = folder / "bin" / "bash.exe"
+        if candidate.is_file():
+            return str(candidate)
+    raise FixtureError("Git Bash must be installed beside git to run these tests")
+
+
 def git_bash() -> str:
-    """The bash.exe that Git for Windows keeps beside its sh.exe."""
-    return str(Path(real_shell()).with_name("bash.exe"))
+    """The Git Bash of the machine's git."""
+    return git_bash_beside(real_tool("git"))
 
 
 def git_bash_variable(windows: bool) -> dict:
@@ -756,6 +768,24 @@ def bash_script(launcher: PurePath, arguments: list) -> str:
     return f'exec "$BASH" {words}\n'
 
 
+def windows_bash_path(path: str) -> str:
+    """A Windows PATH as bash reads it: each drive folder as /c/folder, joined by colons, where the test wrote
+    C:\\folder joined by semicolons."""
+    folders = []
+    for folder in path.split(";"):
+        folder = folder.replace("\\", "/")
+        if len(folder) >= 2 and folder[1] == ":":
+            folder = f"/{folder[0].lower()}{folder[2:]}"
+        folders.append(folder)
+    return ":".join(folders)
+
+
+def bash_script_on_path(launcher: PurePath, arguments: list, path: str) -> str:
+    """The text of a script that sets PATH to the one given, in the form bash reads, and then runs the launcher as
+    bash_script does. The outer bash.exe has put Git's folders on PATH before the script starts."""
+    return f"PATH={shlex.quote(path)}\n{bash_script(launcher, arguments)}"
+
+
 @functools.cache
 def launch_folder() -> Path:
     """The folder that holds the scripts bash_command writes, removed when the process ends."""
@@ -767,26 +797,69 @@ def launch_folder() -> Path:
 def bash_command(bash: str, launcher: PurePath, arguments: list) -> list:
     """The command that runs the launcher through bash with every argument as it was given. Bash reads a script
     file, by a path with forward slashes, that holds the launcher and the arguments."""
+    return script_command(bash, bash_script(launcher, arguments))
+
+
+def bash_command_on_path(bash: str, launcher: PurePath, arguments: list, path: str) -> list:
+    """The command that runs the launcher through bash on exactly the PATH given, in the form bash reads."""
+    return script_command(bash, bash_script_on_path(launcher, arguments, path))
+
+
+def script_command(bash: str, script: str) -> list:
     handle, name = tempfile.mkstemp(suffix=".sh", dir=launch_folder())
     with os.fdopen(handle, "wb") as written:
-        written.write(bash_script(launcher, arguments).encode("utf-8"))
+        written.write(script.encode("utf-8"))
     return [bash, Path(name).as_posix()]
 
 
 def launch_command(launcher: Path, arguments: list) -> list:
-    """The command that starts the jidoka-run launcher with arguments: through Git Bash on Windows, where a shell
-    script cannot start by itself, and as the file itself elsewhere."""
+    """The command that starts the jidoka-run launcher with arguments. On Windows it goes through Git Bash, where a shell
+    script cannot start by itself. Elsewhere it is the file itself."""
     if WINDOWS:
         return bash_command(git_bash(), launcher, arguments)
     return [str(launcher), *arguments]
+
+
+def launch_command_on_path(launcher: Path, arguments: list, path: str) -> list:
+    """The command that starts the launcher on exactly the PATH given. On Windows it goes through Git Bash, whose script sets
+    the PATH after the outer bash has added Git's folders. Elsewhere it is the file itself, where the environment's
+    PATH is the whole PATH."""
+    if WINDOWS:
+        return bash_command_on_path(git_bash(), launcher, arguments, windows_bash_path(path))
+    return [str(launcher), *arguments]
+
+
+def run_command(command: list, stdin: str | None, env: dict, cwd: Path | None,
+                timeout: float | None) -> subprocess.CompletedProcess:
+    return subprocess.run(command, input=stdin, capture_output=True, text=True, encoding="utf-8", timeout=timeout,
+                          env=env, cwd=cwd)
 
 
 def run_launcher(launcher: Path, arguments: list, stdin: str | None, env: dict, cwd: Path | None,
                  timeout: float | None) -> subprocess.CompletedProcess:
     """Runs the jidoka-run launcher with arguments to the end and returns its result, output decoded as UTF-8. The
     stdin text, when there is some, is what the launcher reads."""
-    return subprocess.run(launch_command(launcher, arguments), input=stdin, capture_output=True, text=True,
-                          encoding="utf-8", timeout=timeout, env=env, cwd=cwd)
+    return run_command(launch_command(launcher, arguments), stdin, env, cwd, timeout)
+
+
+def run_launcher_on_path(launcher: Path, arguments: list, stdin: str | None, env: dict, cwd: Path | None,
+                         timeout: float | None) -> subprocess.CompletedProcess:
+    """Runs the launcher as run_launcher does, on exactly the PATH in env, with none of the folders Git's outer bash
+    adds on Windows. A test that hides git or sh from its PATH runs this."""
+    return run_command(launch_command_on_path(launcher, arguments, env["PATH"]), stdin, env, cwd, timeout)
+
+
+def write_repo_settings(repo: Path, home: Path, settings: dict) -> None:
+    """Writes the settings as the repo's settings in the jidoka home, through the settings script's write command.
+
+    Raises FixtureError with the script's message when the script refuses them.
+    """
+    done = run_launcher(PROJECT / "plugin" / "jidoka" / "bin" / "jidoka-run",
+                        [str(PROJECT / "plugin" / "jidoka" / "scripts" / "repo_settings.py"), "write"],
+                        json.dumps(settings), {**os.environ, "JIDOKA_HOME": str(home)}, repo,
+                        SETTINGS_WRITE_TIMEOUT_SECONDS)
+    if done.returncode != 0:
+        raise FixtureError(f"repo_settings.py write failed: {done.stderr}")
 
 
 def script_env(bin_dir: Path, home_dir: Path) -> dict:

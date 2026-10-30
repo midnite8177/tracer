@@ -113,10 +113,9 @@ def read(epic: str, main_tree: Path) -> list[Holdout]:
 def brief(epic: str, main_tree: Path, home: Path) -> dict:
     shown = read_bead(epic, main_tree)
     settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
-    apps = [app for app in settings.get("apps") or [] if isinstance(app, dict)]
     return {"epic": epic, "title": shown.get("title", ""), "spec": shown.get("description") or "",
-            "apps": [{"name": app.get("name"), "way_in": app.get("way_in"), "acceptance": app.get("acceptance")}
-                     for app in apps]}
+            "apps": [{"name": app.name, "way_in": app.way_in, "acceptance": app.acceptance}
+                     for app in repo_settings.apps_of(settings)]}
 
 
 def write(epic: str, raw: str, main_tree: Path) -> None:

@@ -16,7 +16,6 @@ LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 HANDOFF = PLUGIN / "scripts" / "handoff.py"
 HOLDOUTS = PLUGIN / "scripts" / "holdouts.py"
 HOLDOUTS_GUARD = PLUGIN / "hooks" / "holdouts_guard.py"
-SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 
 RUN_TIMEOUT_SECONDS = 120
 JEFF = "Jeff Handoff"
@@ -73,10 +72,7 @@ class HandoffCase(unittest.TestCase):
     def write_settings(cls, home: Path, apps: list) -> None:
         settings = {"lap_test_scope": "targeted", "worker_commands": [], "slot_use": None, "lap_limit": 1,
                     "apps": apps}
-        done = fixture.run_launcher(LAUNCHER, [str(SETTINGS_SCRIPT), "write"], json.dumps(settings),
-                                    {**os.environ, "JIDOKA_HOME": str(home)}, cls.repo, RUN_TIMEOUT_SECONDS)
-        if done.returncode != 0:
-            raise fixture.FixtureError(f"repo_settings.py write failed: {done.stderr}")
+        fixture.write_repo_settings(cls.repo, home, settings)
 
     def create(self, title: str, *flags: str) -> str:
         return json.loads(fixture.run([self.bd, "create", "--title", title, *flags, "--json"], self.repo))["id"]

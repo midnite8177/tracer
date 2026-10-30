@@ -17,7 +17,6 @@ import jidoka_fixture as fixture  # noqa: E402
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 LAND = PLUGIN / "scripts" / "land.py"
-SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 
 MESSAGE = "Add the greeting\n\nThe greeting is printed once at startup."
 DIRTY_EXIT_CODE = 3
@@ -147,10 +146,7 @@ class LandingCase(unittest.TestCase):
             "lap_limit": 3,
             "apps": cls.apps(),
         }
-        done = fixture.run_launcher(LAUNCHER, [str(SETTINGS_SCRIPT), "write"], json.dumps(settings),
-                                    {**os.environ, "JIDOKA_HOME": str(cls.home)}, cls.repo, None)
-        if done.returncode != 0:
-            raise fixture.FixtureError(done.stderr)
+        fixture.write_repo_settings(cls.repo, cls.home, settings)
 
     def new_bead(self, tests_result: str | None) -> Bead:
         """A bead with a branch and a worktree that adds two files; tests_result None records no tests.

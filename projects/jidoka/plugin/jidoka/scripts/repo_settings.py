@@ -67,7 +67,7 @@ import os
 import subprocess
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
 import git_exclude
@@ -89,6 +89,7 @@ DERIVED_KEYS = ["build", "full_suite", "hand_run", "untested_apps"]
 MOVED_LINES = "moved_lines"
 APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_full", "test_target", "hand_run", "acceptance"]
 HAND_RUN_KEYS = ["name", "exclusion", "command", "reason"]
+HAND_RUN_GROUP_KEYS = ["app", "name", "reason", "command"]
 RULE_CONFLICT_KEYS = ["repo_rule", "written_in", "overrules"]
 NO_TESTS = "an app with no test command has null for test, test_target and test_full, and [] for hand_run"
 TEST_SCOPES = ["targeted", "full"]
@@ -104,27 +105,100 @@ class SettingsError(Exception):
 
 
 @dataclass(frozen=True)
-class App:
-    """One app of the repo as the stored settings hold it. A field is None when the app has none of it."""
+class HandRun:
+    """One group of an app's tests that the full suite leaves out, as the stored settings hold it."""
     name: str
+    exclusion: str
+    command: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class HandRunGroup:
+    """A group of an app's tests that the full suite leaves out, with the app's name and the command the human runs
+    it with. The stored "hand_run" list holds one object for each, under the field names."""
+    app: str
+    name: str
+    reason: str
+    command: str
+
+
+@dataclass(frozen=True)
+class App:
+    """One app of the repo as the stored settings hold it. A field is None when the app has none of it, and
+    hand_run is empty when every test of the app runs in the full suite."""
+    name: str
+    kind: str | None
     build: str | None
     run: str | None
     test: str | None
+    test_full: str | None
+    test_target: str | None
     way_in: str | None
     acceptance: str | None
+    hand_run: tuple[HandRun, ...]
+
+    @property
+    def full_suite_command(self) -> str | None:
+        """The test command followed by test_full when there is one; None for an app with no test command."""
+        if self.test is None:
+            return None
+        return self.test if self.test_full is None else f"{self.test} {self.test_full}"
+
+    @property
+    def targeted_command(self) -> str | None:
+        """The test command followed by the test_target, its placeholder left in; None when either is missing."""
+        if self.test is None or self.test_target is None:
+            return None
+        return f"{self.test} {self.test_target}"
 
 
 def text_of(value: object) -> str | None:
     return value if is_text(value) else None
 
 
+def hand_run_of(app: dict) -> tuple[HandRun, ...]:
+    listed = app.get("hand_run")
+    return tuple(HandRun(*(str(group.get(key) or "") for key in HAND_RUN_KEYS))
+                 for group in (listed if isinstance(listed, list) else []) if isinstance(group, dict))
+
+
+def app_of(entry: dict) -> App:
+    return App(str(entry.get("name") or ""), text_of(entry.get("kind")), text_of(entry.get("build")),
+               text_of(entry.get("run")), text_of(entry.get("test")), text_of(entry.get("test_full")),
+               text_of(entry.get("test_target")), text_of(entry.get("way_in")), text_of(entry.get("acceptance")),
+               hand_run_of(entry))
+
+
 def apps_of(settings: dict) -> list[App]:
     """The apps of stored settings, in the order the settings list them. Settings with no apps give none, and an
     entry that is not a JSON object is left out."""
     listed = settings.get("apps")
-    return [App(str(app.get("name") or ""), text_of(app.get("build")), text_of(app.get("run")),
-                text_of(app.get("test")), text_of(app.get("way_in")), text_of(app.get("acceptance")))
-            for app in (listed if isinstance(listed, list) else []) if isinstance(app, dict)]
+    return [app_of(entry) for entry in (listed if isinstance(listed, list) else []) if isinstance(entry, dict)]
+
+
+def problems_of_app(settings: dict, name: str) -> list[str]:
+    """The problems of the first app of the settings that has the name, as the write refuses them; none when no
+    app has the name."""
+    listed = settings.get("apps")
+    for index, entry in enumerate(listed if isinstance(listed, list) else []):
+        if isinstance(entry, dict) and entry.get("name") == name:
+            return app_problems(index, entry)
+    return []
+
+
+def app_named(settings: dict, name: str) -> App:
+    """The first app of the settings that has the name; raises SettingsError when none has it or its entry has a
+    problem the write refuses."""
+    found = next((app for app in apps_of(settings) if app.name == name), None)
+    if found is None:
+        raise SettingsError(f"the repo settings have no app named {name!r}; "
+                            f"the apps are {', '.join(app.name for app in apps_of(settings))}")
+    problems = problems_of_app(settings, name)
+    if problems:
+        raise SettingsError(f"the repo settings for app {name!r} are incomplete: {'; '.join(problems)}. "
+                            "Run /jidoka:onboard to record them")
+    return found
 
 
 def jidoka_home(flag: str | None) -> Path:
@@ -283,10 +357,6 @@ def test_command_problems(label: str, app: dict) -> list[str]:
             for key in ("test_target", "test_full") if app[key] is not None]
 
 
-def full_suite_command(app: dict) -> str:
-    return app["test"] if app["test_full"] is None else f"{app['test']} {app['test_full']}"
-
-
 def hand_run_problems(label: str, app: dict, commands_valid: bool) -> list[str]:
     groups = app["hand_run"]
     if not isinstance(groups, list):
@@ -308,19 +378,32 @@ def hand_run_problems(label: str, app: dict, commands_valid: bool) -> list[str]:
         if commands_valid and is_text(exclusion):
             problems += [f"{group_label} whose exclusion {exclusion!r} is not in the {kind}, {command!r}, "
                          "so that command runs the group"
-                         for kind, command in app_commands(app) if exclusion not in command]
+                         for kind, command in app_commands(app_of(app)) if exclusion not in command]
     return problems
 
 
-def app_commands(app: dict) -> list[tuple[str, str]]:
-    """The app's full-suite command and its targeted command, the placeholder left in, each named."""
-    return [("full-suite command", full_suite_command(app)),
-            ("targeted command", f"{app['test']} {app['test_target']}")]
+def app_commands(app: App) -> list[tuple[str, str]]:
+    """The app's full-suite command and its targeted command, the placeholder left in, each named, for the
+    commands it has."""
+    named = [("full-suite command", app.full_suite_command), ("targeted command", app.targeted_command)]
+    return [(kind, command) for kind, command in named if command is not None]
 
 
-def hand_run_list(apps: list[dict]) -> list[dict]:
-    return [{"app": app["name"], "name": group["name"], "reason": group["reason"], "command": group["command"]}
-            for app in apps for group in app["hand_run"]]
+def hand_run_groups(apps: list[App]) -> list[HandRunGroup]:
+    """The hand-run groups of every app, in app order, each with the app's name."""
+    return [HandRunGroup(app.name, group.name, group.reason, group.command)
+            for app in apps for group in app.hand_run]
+
+
+def stored_hand_run_groups(settings: dict) -> list[HandRunGroup]:
+    """The hand-run groups that write derived and stored under "hand_run"; raises SettingsError when the list is
+    missing or a group of it lacks a text field."""
+    listed = settings.get("hand_run")
+    if not (isinstance(listed, list) and all(isinstance(group, dict) and all(
+            isinstance(group.get(key), str) for key in HAND_RUN_GROUP_KEYS) for group in listed)):
+        raise SettingsError("the repo settings hold no hand_run list of the tests validation leaves out. "
+                            "Run /jidoka:onboard again to record it")
+    return [HandRunGroup(*(group[key] for key in HAND_RUN_GROUP_KEYS)) for group in listed]
 
 
 def is_repo_path(value: object) -> bool:
@@ -467,13 +550,14 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
     if problems:
         raise SettingsError("nothing was written:\n" + "\n".join(f"  {problem}" for problem in problems))
     refuse_tracked_private_docs(main_tree, merged, GIT_TIMEOUT_SECONDS)
+    apps = apps_of(merged)
     settings = {
         "main_worktree": str(main_tree),
         **{key: merged[key] for key in [*GIVEN_KEYS, *DEFAULTS]},
-        "build": [app["build"] for app in merged["apps"] if app["build"] is not None],
-        "full_suite": [full_suite_command(app) for app in merged["apps"] if app["test"] is not None],
-        "hand_run": hand_run_list(merged["apps"]),
-        "untested_apps": [app["name"] for app in merged["apps"] if app["test"] is None],
+        "build": [app.build for app in apps if app.build is not None],
+        "full_suite": [command for app in apps if (command := app.full_suite_command) is not None],
+        "hand_run": [asdict(group) for group in hand_run_groups(apps)],
+        "untested_apps": [app.name for app in apps if app.test is None],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")

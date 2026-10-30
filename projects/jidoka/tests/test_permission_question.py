@@ -55,8 +55,7 @@ class PermissionCase(unittest.TestCase):
                     "apps": [{"name": "shop", "kind": "program", "way_in": "its command line", "build": "make",
                               "run": None, "test": "make test", "test_target": "T=<name>", "test_full": None,
                               "hand_run": [], "acceptance": None}]}
-        done = self.script(SETTINGS_SCRIPT, "write", stdin=json.dumps(settings))
-        self.assertEqual(0, done.returncode, done.stderr)
+        fixture.write_repo_settings(self.repo, self.home, settings)
 
     def script(self, script: Path, *args: str, stdin: str | None = None,
                cwd: Path | None = None) -> subprocess.CompletedProcess:

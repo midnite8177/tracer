@@ -49,11 +49,7 @@ exec "{fake_bd}" "$@"
 
 
 def write_settings_in(home: Path, settings: dict, repo: Path) -> Path:
-    done = fixture.run_launcher(test_scheduler.LAUNCHER, [str(test_scheduler.SETTINGS_SCRIPT), "write"],
-                                json.dumps(settings), {**os.environ, "JIDOKA_HOME": str(home)}, repo,
-                                test_scheduler.RUN_TIMEOUT_SECONDS)
-    if done.returncode != 0:
-        raise fixture.FixtureError(f"repo_settings.py write failed: {done.stderr}")
+    fixture.write_repo_settings(repo, home, settings)
     [written] = (home / "repos").glob("*.json")
     return written
 

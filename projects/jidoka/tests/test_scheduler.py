@@ -20,7 +20,6 @@ LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 SCHEDULER = PLUGIN / "scripts" / "scheduler.py"
 HANDOFF = PLUGIN / "scripts" / "handoff.py"
 RULES = PLUGIN / "scripts" / "rules.py"
-SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 MERGE_GATE = PLUGIN / "scripts" / "merge_gate.py"
 SAVED_PRICE_PAGES = HERE / "fixtures" / "pricing"
 
@@ -97,10 +96,7 @@ class SchedulerCase(unittest.TestCase):
                     "apps": [{"name": "shop", "kind": "program", "way_in": "its command line", "build": "make",
                               "run": None, "test": cls.test_command, "test_target": "-k <name>",
                               "test_full": None, "hand_run": [], "acceptance": ACCEPTANCE}], **extra}
-        done = fixture.run_launcher(LAUNCHER, [str(SETTINGS_SCRIPT), "write"], json.dumps(settings),
-                                    {**os.environ, "JIDOKA_HOME": str(cls.home)}, cls.repo, RUN_TIMEOUT_SECONDS)
-        if done.returncode != 0:
-            raise fixture.FixtureError(f"repo_settings.py write failed: {done.stderr}")
+        fixture.write_repo_settings(cls.repo, cls.home, settings)
 
     @classmethod
     def tearDownClass(cls):

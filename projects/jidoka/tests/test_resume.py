@@ -17,7 +17,6 @@ LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 SCHEDULER = PLUGIN / "scripts" / "scheduler.py"
 HANDOFF = PLUGIN / "scripts" / "handoff.py"
 HEARTBEAT = PLUGIN / "scripts" / "heartbeat.py"
-SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 HOOK = PLUGIN / "hooks" / "session_start.py"
 
 RUN_TIMEOUT_SECONDS = 120
@@ -66,10 +65,7 @@ class ResumeCase(unittest.TestCase):
                     "apps": [{"name": "shop", "kind": "program", "way_in": "its command line", "build": "make",
                               "run": None, "test": "true", "test_target": "-k <name>", "test_full": None,
                               "hand_run": [], "acceptance": "specs/acceptance"}]}
-        done = fixture.run_launcher(LAUNCHER, [str(SETTINGS_SCRIPT), "write"], json.dumps(settings),
-                                    {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)},
-                                    self.repo, RUN_TIMEOUT_SECONDS)
-        self.assertEqual(0, done.returncode, done.stderr)
+        fixture.write_repo_settings(self.repo, self.home, settings)
 
     def script(self, script: Path, *args: str) -> subprocess.CompletedProcess:
         return self.script_with(MANAGER_SESSION, {}, script, *args)

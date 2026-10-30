@@ -89,8 +89,8 @@ class Merged:
 
 def protected_folders(settings: dict) -> list[PurePosixPath]:
     """The acceptance folder of every app in the repo settings that has one."""
-    return [PurePosixPath(app["acceptance"]) for app in settings.get("apps") or []
-            if isinstance(app, dict) and repo_settings.is_repo_path(app.get("acceptance"))]
+    return [PurePosixPath(app.acceptance) for app in repo_settings.apps_of(settings)
+            if app.acceptance is not None and repo_settings.is_repo_path(app.acceptance)]
 
 
 def is_protected(path: str, folders: list[PurePosixPath]) -> bool:

@@ -16,7 +16,6 @@ import test_scheduler  # noqa: E402
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 LIZARD_SCRIPT = PLUGIN / "scripts" / "lizard_hints.py"
-SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 TIMEOUT_SECONDS = 120
 LIMITS = {"ccn": 5, "length": 80, "arguments": 6}
 MODULE = "till.py"
@@ -51,8 +50,7 @@ class LizardScriptCase(unittest.TestCase):
         self.record(LIMITS)
 
     def record(self, limits: dict) -> None:
-        done = self.launch(SETTINGS_SCRIPT, "write", stdin=json.dumps(shop_settings(limits)))
-        self.assertEqual(0, done.returncode, done.stderr)
+        fixture.write_repo_settings(self.repo, self.home, shop_settings(limits))
 
     def launch(self, script: Path, *args: str, stdin: str = "") -> subprocess.CompletedProcess:
         return fixture.run_launcher(LAUNCHER, [str(script), *args], stdin,
@@ -157,11 +155,7 @@ class DesignLaneHintsTests(test_review.ReviewCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        done = fixture.run_launcher(test_scheduler.LAUNCHER, [str(test_scheduler.SETTINGS_SCRIPT), "write"],
-                                    json.dumps({"lizard_limits": LIMITS}),
-                                    {**os.environ, "JIDOKA_HOME": str(cls.home)}, cls.repo, TIMEOUT_SECONDS)
-        if done.returncode != 0:
-            raise fixture.FixtureError(f"repo_settings.py write failed: {done.stderr}")
+        fixture.write_repo_settings(cls.repo, cls.home, {"lizard_limits": LIMITS})
 
     def finish_epic_with_a_long_function(self) -> tuple[str, dict]:
         epic = self.new_epic()

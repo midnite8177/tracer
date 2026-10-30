@@ -1,6 +1,10 @@
-import type { EngineInterface, Register, Timer, TurnUsage } from 'claude-code'
-import type { Grant, LapWorker, ListEntry } from '../types/index'
-import { isAbsolute, isInside, isReallyInside, resolved, withDrive } from './path_placement.js'
+import type { EngineInterface, Register } from 'claude-code'
+import type { LapWorker, ListEntry } from '../types/index'
+import { entriesOf, isListed, splitIntoSimpleCommands } from './list_matcher.js'
+import { isAbsolute, isReallyInside } from './path_placement.js'
+import { jidokaScriptsIn, runScript, scriptPlace } from './run_script.js'
+import { endFailedTurns, startHeartbeat, wakeAfterFailure } from './timers.js'
+import { forgetJidokaHome, recordRequest, recordUsage, tallyRequestStep, tallyWorkerStep } from './token_usage.js'
 
 const LAP_LINE = /^jidoka lap worktree: (.+?)\s*$/
 
@@ -32,147 +36,6 @@ function filePathOf(field: string, input: unknown): string | undefined {
   return typeof path === 'string' && path !== '' ? path : undefined
 }
 
-/**
- * A shell command split into its simple commands, each a list of words with
- * the quotes taken off; undefined when it holds a command substitution, a
- * process substitution, an output redirect or an unclosed quote, which no
- * list entry can vouch for. `&&`, `||`, `;`, `|`, `&` and a newline each end
- * a simple command.
- */
-function simpleCommands(command: string): string[][] | undefined {
-  if (command.includes('$(') || command.includes('`')) return undefined
-  const commands: string[][] = []
-  let words: string[] = []
-  let word = ''
-  let hasWord = false
-  let quote: "'" | '"' | undefined
-  const endWord = (): void => {
-    if (hasWord) words.push(word)
-    word = ''
-    hasWord = false
-  }
-  for (let i = 0; i < command.length; i++) {
-    const c = command.charAt(i)
-    const after = command.charAt(i + 1)
-    if (quote === "'") {
-      if (c === "'") quote = undefined
-      else word += c
-    } else if (quote === '"') {
-      if (c === '"') quote = undefined
-      else if (c === '\\' && '"\\$'.includes(after) && after !== '') {
-        word += after
-        i++
-      } else word += c
-    } else if (c === "'" || c === '"') {
-      quote = c
-      hasWord = true
-    } else if (c === '\\') {
-      if (after !== '\n') {
-        word += after
-        hasWord = true
-      }
-      i++
-    } else if (c === '>' || (c === '<' && after === '(')) {
-      return undefined
-    } else if (c === ' ' || c === '\t') {
-      endWord()
-    } else if ('\n;&|'.includes(c)) {
-      endWord()
-      commands.push(words)
-      words = []
-      if ((c === '&' || c === '|') && after === c) i++
-    } else {
-      word += c
-      hasWord = true
-    }
-  }
-  if (quote !== undefined) return undefined
-  endWord()
-  commands.push(words)
-  return commands
-}
-
-/** True when `word` is the long option, gives it a value, or abbreviates it as git lets a long option be abbreviated. */
-function isOption(word: string, option: string): boolean {
-  const name = word.split('=', 1)[0] ?? ''
-  return word === option || (name.startsWith('--') && name.length > 2 && option.startsWith(name))
-}
-
-function mayFollow(entry: Grant, rest: readonly string[]): boolean {
-  if (entry.then === 'nothing') return rest.length === 0
-  if (entry.then === 'paths') {
-    const end = rest.indexOf('--')
-    return (end === -1 ? rest : rest.slice(0, end)).every(word => !word.startsWith('-'))
-  }
-  return rest.every(word => !entry.refusing.some(option => isOption(word, option)))
-}
-
-/** True when every simple command of `command` starts with the words of one entry, followed by what it allows. */
-function isListed(command: string, entries: readonly ListEntry[]): boolean {
-  const parts = simpleCommands(command)
-  if (parts === undefined) return false
-  const prefixes = entries.flatMap(entry => {
-    const grant: Grant = typeof entry === 'string' ? { command: entry, then: 'words', refusing: [] } : entry
-    const parsed = simpleCommands(grant.command)
-    return parsed?.length === 1 && parsed[0] !== undefined && parsed[0].length > 0 ? [{ words: parsed[0], grant }] : []
-  })
-  return parts.every(words =>
-    prefixes.some(
-      ({ words: own, grant }) => own.every((w, i) => words[i] === w) && mayFollow(grant, words.slice(own.length)),
-    ),
-  )
-}
-
-function textsOf(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-}
-
-/** The entry `item` holds, or undefined when it holds text or an object of no shape the lists know. */
-function grantOf(item: unknown): Grant | undefined {
-  if (typeof item !== 'object' || item === null) return undefined
-  const { command, then, refusing } = item as Record<string, unknown>
-  if (typeof command !== 'string') return undefined
-  if (then === 'nothing' || then === 'paths') return { command, then }
-  if (then === 'words' && Array.isArray(refusing) && textsOf(refusing).length === refusing.length) {
-    return { command, then, refusing: textsOf(refusing) }
-  }
-  return undefined
-}
-
-/** The list entries in `value`, a JSON list of text and entry objects; an item of any other shape is left out. */
-function entriesOf(value: unknown): ListEntry[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((item: unknown): ListEntry[] => {
-    if (typeof item === 'string') return [item]
-    const grant = grantOf(item)
-    return grant === undefined ? [] : [grant]
-  })
-}
-
-function launcherIn(root: string): string {
-  return `${root}/bin/jidoka-run`
-}
-
-type Printed = { exitCode: number; stdout: string }
-
-/**
- * What jidoka's script `name` printed when the launcher ran it with `args` in
- * `cwd`; undefined when the run itself failed.
- */
-async function runScript(
-  $: EngineInterface,
-  name: string,
-  args: readonly string[],
-  cwd: string,
-): Promise<Printed | undefined> {
-  const root = $.plugin.root
-  try {
-    return await $.process.run(['sh', launcherIn(root), `${root}/scripts/${name}.py`, ...args], { cwd })
-  } catch {
-    return undefined
-  }
-}
-
 /** The JSON in `text`, or undefined when it holds something else. */
 function jsonIn(text: string): unknown {
   try {
@@ -183,24 +46,10 @@ function jsonIn(text: string): unknown {
 }
 
 /**
- * A text entry split into one entry for each simple command it holds, with
- * the quotes taken off; an entry object stays as it is, and a text that holds
- * a command substitution, a process substitution, an output redirect or an
- * unclosed quote adds nothing, because no list entry can vouch for it.
- */
-function splitIntoSimpleCommands(entries: readonly ListEntry[]): ListEntry[] {
-  return entries.flatMap((entry): ListEntry[] =>
-    typeof entry !== 'string'
-      ? [entry]
-      : (simpleCommands(entry) ?? []).filter(words => words.length > 0).map(words => words.join(' ')),
-  )
-}
-
-/**
  * The commands a worker of this kind may run besides what the tools mark
  * read-only, from jidoka's lap-lists script run in the worktree; none when
  * the script cannot print them. The script prints a check worker's app values
- * whole, and they are split here.
+ * whole, and this function splits them.
  */
 async function commandsFor($: EngineInterface, kind: LapWorker['kind'], worktree: string): Promise<ListEntry[]> {
   const shown = await runScript($, 'lap_lists', [kind], worktree)
@@ -209,35 +58,7 @@ async function commandsFor($: EngineInterface, kind: LapWorker['kind'], worktree
   return kind === 'check' ? splitIntoSimpleCommands(listed) : listed
 }
 
-function scriptPlace(pluginRoot: string, name: string): string | undefined {
-  return resolved(`${withDrive(pluginRoot)}/scripts/${name}`, '/')
-}
-
-/**
- * The scripts that `command` runs, resolved, when every simple command of it
- * runs jidoka's launcher, by its absolute path and through `sh` or not, on a
- * script inside the plugin; undefined when any simple command runs anything
- * else. A path may be written as Git Bash takes it on Windows: `C:/...`,
- * `/c/...` or a quoted backslash path.
- */
-export function jidokaScriptsIn(command: string, pluginRoot: string): string[] | undefined {
-  const parts = simpleCommands(command)
-  const root = withDrive(pluginRoot)
-  const launcher = resolved(launcherIn(root), '/')
-  if (parts === undefined || launcher === undefined) return undefined
-  const scripts: string[] = []
-  for (const words of parts) {
-    const [program = '', script = ''] = (words[0] === 'sh' ? words.slice(1) : words).map(withDrive)
-    const path = isAbsolute(script) && isInside(script, root) ? resolved(script, '/') : undefined
-    if (!isAbsolute(program) || resolved(program, '/') !== launcher || path === undefined) return undefined
-    scripts.push(path)
-  }
-  return scripts
-}
-
-function runsJidokaScripts(command: string, pluginRoot: string): boolean {
-  return jidokaScriptsIn(command, pluginRoot) !== undefined
-}
+export { jidokaScriptsIn }
 
 /** The scripts a check worker may run through the launcher: the holdouts, and the one that starts and stops its app. */
 const CHECK_SCRIPTS = ['holdouts.py', 'app_process.py']
@@ -303,243 +124,10 @@ async function notifyPermissionPrompt($: EngineInterface): Promise<void> {
   }
 }
 
-const HEARTBEAT_MS = 60_000
-let heartbeat: Timer | undefined
-
-/**
- * Tells jidoka's heartbeat script to beat for this session, run in the host's
- * own folder so that it finds the repo whose epics run there. The script
- * renews only an epic that runs and that a manager of this session claimed,
- * so a session that runs no manager renews nothing, and a failure here never
- * reaches the host.
- */
-async function beat($: EngineInterface): Promise<void> {
-  try {
-    await runScript($, 'heartbeat', ['beat', '--session', await $.session.id()], await $.session.cwd())
-  } catch {
-    return
-  }
-}
-
-/** Beats once a minute from now on, in place of any earlier timer of this host. */
-function startHeartbeat($: EngineInterface): void {
-  try {
-    heartbeat?.cancel()
-  } catch {
-    heartbeat = undefined
-  }
-  heartbeat = $.clock.every(HEARTBEAT_MS, () => {
-    void beat($)
-  })
-}
-
-const SECOND_MS = 1000
-let failedTurns = 0
-let wake: Timer | undefined
-
-type Wake = { seconds: number; text: string }
-
-/** What jidoka's wake script prints, or undefined where it printed nothing or something else. */
-function wakeIn(stdout: string): Wake | undefined {
-  try {
-    const printed: unknown = JSON.parse(stdout)
-    if (typeof printed !== 'object' || printed === null) return undefined
-    const { seconds, text } = printed as Record<string, unknown>
-    return typeof seconds === 'number' && typeof text === 'string' ? { seconds, text } : undefined
-  } catch {
-    return undefined
-  }
-}
-
-function cancelWake(): void {
-  try {
-    wake?.cancel()
-  } catch {}
-  wake = undefined
-}
-
-/**
- * Asks jidoka's wake script, run in the host's own folder and naming this
- * session, how long to wait after the host's latest failed turn and what to
- * say then. Where this session manages an epic, a timer submits that prompt
- * to the host, which would otherwise sit idle after an API error for good; a
- * later failure replaces the timer. A session that manages no epic, such as
- * an advisor, wakes nobody. The host never learns of a failure here.
- */
-async function wakeAfterFailure($: EngineInterface, error: unknown): Promise<void> {
-  failedTurns++
-  try {
-    const cwd = await $.session.cwd()
-    const args = ['--failures', String(failedTurns), '--session', await $.session.id()]
-    if (typeof error === 'string') args.push('--error', error)
-    const printed = await runScript($, 'wake', args, cwd)
-    const due = printed?.exitCode === 0 ? wakeIn(printed.stdout) : undefined
-    if (due === undefined) return
-    cancelWake()
-    wake = $.clock.after(due.seconds * SECOND_MS, () => {
-      wake = undefined
-      $.prompt.submit({ text: due.text }).catch(() => undefined)
-    })
-  } catch {
-    return
-  }
-}
-
-const TOKENS_FOLDER = 'tokens'
-
-/** The sums of the steps of one agent, or of one manager request, in the shape the ledger script reads. */
-type Sums = {
-  model: string
-  steps: number
-  input_tokens: number
-  output_tokens: number
-  cache_read_input_tokens: number
-  cache_creation_input_tokens: number
-}
-
-function emptySums(): Sums {
-  return { model: '', steps: 0, input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
-}
-
-/** `sums` with one more step, whose usage is null where the host reported none. */
-function withStep(sums: Sums, usage: TurnUsage | null): Sums {
-  const next = { ...sums, steps: sums.steps + 1 }
-  if (usage === null) return next
-  return {
-    model: usage.model,
-    steps: next.steps,
-    input_tokens: sums.input_tokens + usage.input_tokens,
-    output_tokens: sums.output_tokens + usage.output_tokens,
-    cache_read_input_tokens: sums.cache_read_input_tokens + usage.cache_read_input_tokens,
-    cache_creation_input_tokens: sums.cache_creation_input_tokens + usage.cache_creation_input_tokens,
-  }
-}
-
-const agentSums = new Map<string, Sums>()
-let requestSums = emptySums()
-let requestStartedAt: number | undefined
-
-/**
- * Jidoka's home as `repo_settings.py home` prints it, so that the rule for
- * finding it stays in that script; undefined when the script cannot say.
- */
-async function jidokaHome($: EngineInterface): Promise<string | undefined> {
-  const printed = await runScript($, 'repo_settings', ['home'], $.plugin.root)
-  const home = printed?.exitCode === 0 ? printed.stdout.trim() : ''
-  return home === '' ? undefined : home
-}
-
-/**
- * Adds one step to the sums kept for a lap worker's agent id and writes them to
- * `<jidoka home>/tokens/<agent id>.json`, where the ledger script reads them. A
- * step of an agent that is no lap worker adds nothing, and a failed write is
- * lost without telling the host.
- */
-async function tallyWorkerStep($: EngineInterface, agentId: string, usage: TurnUsage | null): Promise<void> {
-  try {
-    if ((await lapOf($, agentId)) === undefined) return
-    const sums = withStep(agentSums.get(agentId) ?? emptySums(), usage)
-    agentSums.set(agentId, sums)
-    const home = await jidokaHome($)
-    if (home !== undefined) await $.fs.write(`${home}/${TOKENS_FOLDER}/${agentId}.json`, `${JSON.stringify(sums)}\n`)
-  } catch {
-    return
-  }
-}
-
-async function tallyRequestStep($: EngineInterface, usage: TurnUsage | null): Promise<void> {
-  requestStartedAt ??= await $.clock.now().catch(() => undefined)
-  requestSums = withStep(requestSums, usage)
-}
-
-/**
- * Tells jidoka's ledger script, run in the host's own folder, what the manager's
- * request that just ended used and how long it took, then starts the next
- * request's sums. The script writes a row only for a session that manages an
- * epic, and a failure here never reaches the host.
- */
-async function recordRequest($: EngineInterface): Promise<void> {
-  const used = requestSums
-  const startedAt = requestStartedAt
-  requestSums = emptySums()
-  requestStartedAt = undefined
-  if (used.steps === 0) return
-  try {
-    const now = await $.clock.now().catch(() => startedAt ?? 0)
-    const seconds = startedAt === undefined ? 0 : Math.max(0, Math.round((now - startedAt) / SECOND_MS))
-    await runScript(
-      $,
-      'ledger',
-      [
-        'request',
-        '--session', await $.session.id(),
-        '--model', used.model,
-        '--input', String(used.input_tokens),
-        '--output', String(used.output_tokens),
-        '--cache-read', String(used.cache_read_input_tokens),
-        '--cache-write', String(used.cache_creation_input_tokens),
-        '--seconds', String(seconds),
-      ],
-      await $.session.cwd(),
-    )
-  } catch {
-    return
-  }
-}
-
-const USAGE_FOLDER = 'usage'
-const ACCOUNT = 'claude'
-
-/** One usage window as the scheduler reads it: the share used, in percent, and the second it resets. */
-type UsageWindow = { used_percent: number; resets_at: number }
-
-/** What the account's usage looked like when the manager called the scheduler; a window the account lacks is left out. */
-type UsageReading = { read_at: number; five_hour?: UsageWindow; seven_day?: UsageWindow }
-
-/** The window of `kind` in `rateLimits`, the engine's list of entries with a `kind`, a `percentUsed` and an ISO `resetsAt`; undefined when no entry of that kind has both. */
-function usageWindowIn(rateLimits: unknown, kind: string): UsageWindow | undefined {
-  if (!Array.isArray(rateLimits)) return undefined
-  const entry: unknown = rateLimits.find(
-    (limit: unknown) => typeof limit === 'object' && limit !== null && (limit as Record<string, unknown>).kind === kind,
-  )
-  if (typeof entry !== 'object' || entry === null) return undefined
-  const { percentUsed, resetsAt } = entry as Record<string, unknown>
-  const resets = typeof resetsAt === 'string' ? Date.parse(resetsAt) : Number.NaN
-  if (typeof percentUsed !== 'number' || Number.isNaN(resets)) return undefined
-  return { used_percent: percentUsed, resets_at: Math.floor(resets / SECOND_MS) }
-}
-
 /** True when every simple command of `command` runs jidoka's launcher on a script inside the plugin and one of them runs the scheduler. */
 export function runsScheduler(command: string, pluginRoot: string): boolean {
   const scheduler = scriptPlace(pluginRoot, 'scheduler.py')
   return scheduler !== undefined && (jidokaScriptsIn(command, pluginRoot) ?? []).includes(scheduler)
-}
-
-/**
- * Writes the usage windows of the account the host runs on to
- * `<jidoka home>/usage/claude.json`, where the scheduler reads them. The windows
- * are the `five_hour` and `seven_day` entries of the `rateLimits` that
- * `$.session.usage()` answers. It runs on every call of the scheduler, so the
- * file always shows the account as it is now. An account with no windows, or a
- * usage call that fails, leaves a reading with none, and a failed write is lost
- * without telling the host.
- */
-async function recordUsage($: EngineInterface): Promise<void> {
-  try {
-    const home = await jidokaHome($)
-    if (home === undefined) return
-    const usage: unknown = await $.session.usage().catch(() => undefined)
-    const rateLimits: unknown =
-      typeof usage === 'object' && usage !== null ? (usage as Record<string, unknown>).rateLimits : undefined
-    const reading: UsageReading = { read_at: Math.floor((await $.clock.now()) / SECOND_MS) }
-    const fiveHour = usageWindowIn(rateLimits, 'five_hour')
-    const sevenDay = usageWindowIn(rateLimits, 'seven_day')
-    if (fiveHour !== undefined) reading.five_hour = fiveHour
-    if (sevenDay !== undefined) reading.seven_day = sevenDay
-    await $.fs.write(`${home}/${USAGE_FOLDER}/${ACCOUNT}.json`, `${JSON.stringify(reading)}\n`)
-  } catch {
-    return
-  }
 }
 
 type Verdict = { decision: 'allow' } | { decision: 'deny'; reason: string }
@@ -548,14 +136,11 @@ type Verdict = { decision: 'allow' } | { decision: 'deny'; reason: string }
 type ToolCall = { tool: string; input: unknown; isReadOnly: boolean | undefined }
 
 /**
- * The manager's own call: allowed, after the usage is recorded when it runs the
- * scheduler, when it runs jidoka's launcher on a script inside the plugin;
- * undefined for every other call, which the host decides.
+ * The manager's own call: allowed when it runs jidoka's launcher on a script
+ * inside the plugin; undefined for every other call, which the host decides.
  */
-async function managerVerdict($: EngineInterface, tool: string, input: unknown): Promise<Verdict | undefined> {
-  const command = tool === 'Bash' ? commandOf(input) : ''
-  if (tool !== 'Bash' || !runsJidokaScripts(command, $.plugin.root)) return undefined
-  if (runsScheduler(command, $.plugin.root)) await recordUsage($)
+function managerVerdict(tool: string, input: unknown, pluginRoot: string): Verdict | undefined {
+  if (tool !== 'Bash' || jidokaScriptsIn(commandOf(input), pluginRoot) === undefined) return undefined
   return { decision: 'allow' }
 }
 
@@ -616,22 +201,27 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('session.end', async (_, e, next) => {
+    forgetJidokaHome()
+    return next(e)
+  })
+
   on('classic.StopFailure', async ($, e, next) => {
     await wakeAfterFailure($, (e as { error?: unknown }).error)
     return next(e)
   })
 
   on('classic.Stop', async ($, e, next) => {
-    failedTurns = 0
-    cancelWake()
+    endFailedTurns()
     await recordRequest($)
     return next(e)
   })
 
   on('turn.step', async function* ($, e, next) {
     const result = yield* next(e)
-    if (e.agentId === undefined) await tallyRequestStep($, result.usage)
-    else await tallyWorkerStep($, e.agentId, result.usage)
+    const { agentId } = e
+    if (agentId === undefined) await tallyRequestStep($, result.usage)
+    else await tallyWorkerStep($, agentId, result.usage, async () => (await lapOf($, agentId)) !== undefined)
     return result
   })
 
@@ -664,7 +254,8 @@ export const register: Register = on => {
 
   on('tool.check', async ($, e, next) => {
     if (e.agentId === undefined) {
-      const allowed = await managerVerdict($, e.tool, e.input)
+      const allowed = managerVerdict(e.tool, e.input, $.plugin.root)
+      if (allowed !== undefined && runsScheduler(commandOf(e.input), $.plugin.root)) await recordUsage($)
       return allowed ?? next(e)
     }
     const lap = await lapOf($, e.agentId)

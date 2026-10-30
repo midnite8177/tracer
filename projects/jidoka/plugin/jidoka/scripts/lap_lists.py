@@ -82,14 +82,15 @@ def texts(value: object) -> list[str]:
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
-def app_values(settings: dict, fields: list[str]) -> list[str]:
-    """The text the settings' apps hold under the fields, app by app."""
-    apps = settings.get("apps")
-    values: list[object] = []
-    for app in apps if isinstance(apps, list) else []:
-        if isinstance(app, dict):
-            values += [app.get(field) for field in fields]
-    return texts(values)
+def test_commands(settings: dict) -> list[str]:
+    """The test command of every app that has one, in app order."""
+    return [app.test for app in repo_settings.apps_of(settings) if app.test is not None]
+
+
+def check_commands(settings: dict) -> list[str]:
+    """The build, run and way in of every app, in that order for each app and in app order, for those it has."""
+    return [command for app in repo_settings.apps_of(settings) for command in (app.build, app.run, app.way_in)
+            if command is not None]
 
 
 def merge_grant(epic_branch: str) -> list[Grant]:
@@ -150,7 +151,7 @@ def epic_part(worktree: Path, main_tree: Path) -> EpicPart:
 
 def repo_part(home: Path, main_tree: Path) -> list[str]:
     settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
-    return [*app_values(settings, ["test"]), *texts(settings.get("worker_commands"))]
+    return [*test_commands(settings), *texts(settings.get("worker_commands"))]
 
 
 def lap_list(worktree: Path, home: Path, main_tree: Path) -> list[str | Grant]:
@@ -161,7 +162,7 @@ def lap_list(worktree: Path, home: Path, main_tree: Path) -> list[str | Grant]:
 
 
 def check_list(settings: dict) -> list[str]:
-    return [*app_values(settings, ["build", "run", "way_in"]), *texts(settings.get("worker_commands"))]
+    return [*check_commands(settings), *texts(settings.get("worker_commands"))]
 
 
 def main(argv: list[str]) -> int:

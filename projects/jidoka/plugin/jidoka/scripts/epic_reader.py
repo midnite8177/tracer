@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import holdouts
+import repo_settings
 from commands import bd_list, is_labeled_for_human, metadata_of, read_bead, run
 
 BRANCH_KEY = "factory.branch"
@@ -178,14 +179,14 @@ def holdout_problems(epic: Epic, epic_holdouts: list[holdouts.Holdout]) -> list[
 
 
 def way_in_problems(settings: dict, epic_holdouts: list[holdouts.Holdout]) -> list[str]:
-    apps = {app.get("name"): app for app in settings.get("apps") or [] if isinstance(app, dict)}
+    apps = {app.name: app for app in repo_settings.apps_of(settings)}
     held = list(dict.fromkeys(holdout.app for holdout in epic_holdouts))
     problems = [f"a holdout reaches the app {name}, which the repo settings do not list. Run {ONBOARD} to "
                 "record it with its way in" for name in held if name not in apps]
     for name, app in apps.items():
-        has = [kind for kind, present in (("holdouts", name in held), ("acceptance specs", app.get("acceptance")))
+        has = [kind for kind, present in (("holdouts", name in held), ("acceptance specs", app.acceptance))
                if present]
-        if has and app.get("way_in") is None:
+        if has and app.way_in is None:
             problems.append(f"the app {name} has {' and '.join(has)} but no way in, so no app check can reach "
                             f"it. Run {ONBOARD} to record how a person or a program reaches it")
     return problems
