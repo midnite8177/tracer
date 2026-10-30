@@ -57,7 +57,8 @@ COMMENT_CLEANUP_START = "Comment cleanup is requested work in this repository"
 
 
 def run(args: list, cwd: Path) -> str:
-    done = subprocess.run(args, cwd=cwd, capture_output=True, text=True, encoding="utf-8")
+    env = jidoka_fixture.environment_for(args[0], os.environ.copy())
+    done = subprocess.run(args, cwd=cwd, capture_output=True, text=True, encoding="utf-8", env=env)
     if done.returncode != 0:
         raise FixtureError(f"{' '.join(args)} failed in {cwd}: {done.stderr.strip()}")
     return done.stdout

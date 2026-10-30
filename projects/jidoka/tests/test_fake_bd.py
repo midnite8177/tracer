@@ -78,6 +78,7 @@ class Play:
         env = {key: value for key, value in os.environ.items() if key != "BEADS_ACTOR"}
         if actor is not None:
             env["BEADS_ACTOR"] = actor
+        env = fixture.environment_for(self.bd, env)
         done = subprocess.run([self.bd, *args], capture_output=True, text=True, encoding="utf-8", env=env,
                               cwd=cwd, timeout=RUN_TIMEOUT_SECONDS)
         self.calls[step] = Call(done.returncode, None)
@@ -209,8 +210,7 @@ class FakeBdContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        root = Path(cls.tmp.name).resolve()
+        root = fixture.bd_folder(cls.addClassCleanup).resolve()
         real_repo, fake_repo = root / "real", root / "fake"
         committed_repo(real_repo)
         fixture.add_stealth_beads(real_repo)
@@ -218,10 +218,6 @@ class FakeBdContractTests(unittest.TestCase):
         fake = fixture.add_fake_beads(fake_repo, root / "bin")
         cls.real = Play(fixture.real_tool("bd"), real_repo, linked_worktree(real_repo)).run()
         cls.fake = Play(str(fake), fake_repo, linked_worktree(fake_repo)).run()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
 
     def assert_same(self, step: str) -> None:
         real, fake = self.real.calls[step], self.fake.calls[step]
@@ -327,7 +323,7 @@ class FakeBdContractTests(unittest.TestCase):
 
 
 class FakeBdRefusalTests(unittest.TestCase):
-    """The fake bd fails loudly on a call the scripts do not make, so a new call cannot pass unchecked."""
+    """The fake bd fails on a call the scripts do not make, so a new call cannot pass unchecked."""
 
     @classmethod
     def setUpClass(cls):

@@ -11,7 +11,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import jidoka_fixture as fixture  # noqa: E402
+import jidoka_fixture as fixture
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
@@ -31,12 +31,16 @@ DOMAIN_DOC_BYTES = 5120
 
 class SkillScriptCase(unittest.TestCase):
     """Runs each script a skill carries the way the skill names it: sh, the launcher, then the script, from inside the repo,
-    with the fake bd first on the PATH."""
+    with the fake bd first on the PATH. Everything sits below a user folder that holds a .beads, as the temporary folder
+    of a user who runs bd does."""
 
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
-        cls.root = Path(cls.tmp.name).resolve()
+        user_folder = Path(cls.tmp.name).resolve() / "user"
+        (user_folder / ".beads").mkdir(parents=True)
+        cls.root = user_folder / "work"
+        cls.root.mkdir()
         cls.home = cls.root / "jidoka-home"
         cls.home.mkdir()
         (cls.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
@@ -59,9 +63,10 @@ class SkillScriptCase(unittest.TestCase):
         return json.loads(created)["id"]
 
     def run_script(self, script: Path, args: list, home: str, cwd: Path) -> subprocess.CompletedProcess:
-        env = {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home), "HOME": home}
-        return subprocess.run(["sh", str(LAUNCHER), str(script), *args], capture_output=True, text=True,
-                              encoding="utf-8", env=env, cwd=cwd)
+        env = {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
+               **fixture.home_variables(home)}
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), capture_output=True,
+                              text=True, encoding="utf-8", env=env, cwd=cwd)
 
 
 class ShopIssuesTests(SkillScriptCase):
@@ -73,7 +78,7 @@ class ShopIssuesTests(SkillScriptCase):
         cls.goodbye = cls.create_bead(cls.repo, "Wave goodbye", WITH_DEMO, ["--type=task", f"--deps={cls.greeting}"])
 
     def test_issues_lists_the_ready_beads_on_the_board(self):
-        done = self.run_script(ISSUES, [], os.environ["HOME"], self.repo)
+        done = self.run_script(ISSUES, [], str(Path.home()), self.repo)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"Print the greeting ({self.greeting}) · ready ✓", done.stdout)
@@ -81,27 +86,27 @@ class ShopIssuesTests(SkillScriptCase):
         self.assertIn("ready 2 · blocked 1 · needs you 0", done.stdout)
 
     def test_issues_shows_one_bead_with_its_description(self):
-        done = self.run_script(ISSUES, [self.greeting], os.environ["HOME"], self.repo)
+        done = self.run_script(ISSUES, [self.greeting], str(Path.home()), self.repo)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertTrue(done.stdout.startswith(f"Print the greeting  ({self.greeting})\n"), done.stdout)
         self.assertIn("The shop prints hello at startup.", done.stdout)
 
     def test_issues_sends_a_bead_without_a_demo_line_back_to_jidoka_planning(self):
-        done = self.run_script(ISSUES, [self.farewell], os.environ["HOME"], self.repo)
+        done = self.run_script(ISSUES, [self.farewell], str(Path.home()), self.repo)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn("next: no Demo line — /jidoka:grill-with-docs or /jidoka:to-tickets before implementing",
                       done.stdout)
 
     def test_issues_says_a_ready_bead_with_a_demo_line_is_ready_to_build(self):
-        done = self.run_script(ISSUES, [self.greeting], os.environ["HOME"], self.repo)
+        done = self.run_script(ISSUES, [self.greeting], str(Path.home()), self.repo)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"next: ready to build with /jidoka:bench {self.greeting}", done.stdout)
 
     def test_issues_sends_a_blocked_bead_to_its_blocker(self):
-        done = self.run_script(ISSUES, [self.goodbye], os.environ["HOME"], self.repo)
+        done = self.run_script(ISSUES, [self.goodbye], str(Path.home()), self.repo)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"next: look at the blocker first ({self.greeting})", done.stdout)
@@ -109,7 +114,7 @@ class ShopIssuesTests(SkillScriptCase):
     def test_issues_reports_no_failed_bd_call_on_the_board_a_bead_page_or_a_search(self):
         for args in [[], [self.greeting], [self.goodbye], ["greeting"]]:
             with self.subTest(args=args):
-                done = self.run_script(ISSUES, args, os.environ["HOME"], self.repo)
+                done = self.run_script(ISSUES, args, str(Path.home()), self.repo)
 
                 self.assertEqual(0, done.returncode, done.stderr)
                 self.assertEqual("", done.stderr)
@@ -117,7 +122,7 @@ class ShopIssuesTests(SkillScriptCase):
     def test_issues_never_points_a_ready_unplanned_or_blocked_bead_at_a_tracer_command(self):
         for args in [[], [self.greeting], [self.farewell], [self.goodbye]]:
             with self.subTest(args=args):
-                done = self.run_script(ISSUES, args, os.environ["HOME"], self.repo)
+                done = self.run_script(ISSUES, args, str(Path.home()), self.repo)
 
                 self.assertEqual(0, done.returncode, done.stderr)
                 self.assertNotIn("/tracer:", done.stdout)
@@ -136,21 +141,21 @@ class AtlasIssuesTests(SkillScriptCase):
         cls.receipt = cls.create_bead(cls.atlas, "Print the receipt", WITH_DEMO, ["--type=task", "--labels=bench"])
 
     def test_issues_sends_a_wayfinder_bead_to_the_wayfinder_with_its_map(self):
-        done = self.run_script(ISSUES, [self.question], os.environ["HOME"], self.atlas)
+        done = self.run_script(ISSUES, [self.question], str(Path.home()), self.atlas)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"next: /jidoka:wayfinder {self.map}", done.stdout)
         self.assertNotIn("no Demo line", done.stdout)
 
     def test_issues_counts_a_bench_bead_as_needing_you(self):
-        done = self.run_script(ISSUES, [], os.environ["HOME"], self.atlas)
+        done = self.run_script(ISSUES, [], str(Path.home()), self.atlas)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"Print the receipt ({self.receipt}) · needs you ✓", done.stdout)
         self.assertRegex(done.stdout, r"\nready \d+ · blocked 0 · needs you 1")
 
     def test_issues_sends_a_bench_bead_to_the_bench(self):
-        done = self.run_script(ISSUES, [self.receipt], os.environ["HOME"], self.atlas)
+        done = self.run_script(ISSUES, [self.receipt], str(Path.home()), self.atlas)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"next: needs you at the bench, /jidoka:bench {self.receipt}", done.stdout)
@@ -159,7 +164,7 @@ class AtlasIssuesTests(SkillScriptCase):
         views = [[], [self.receipt], [self.question], ["--label", "wayfinder:research"], ["bench"], ["receipt"]]
         for args in views:
             with self.subTest(args=args):
-                done = self.run_script(ISSUES, args, os.environ["HOME"], self.atlas)
+                done = self.run_script(ISSUES, args, str(Path.home()), self.atlas)
 
                 self.assertEqual(0, done.returncode, done.stderr)
                 self.assertNotIn("/tracer:", done.stdout)
@@ -169,7 +174,7 @@ class DecisionLogTests(SkillScriptCase):
     def test_the_decision_log_gets_its_header_and_the_row_it_was_given_relative_to_the_repo(self):
         cells = ["build", "kept the old parser", "the new one drops comments", "commit 3a9f1c2", "tests green"]
 
-        done = self.run_script(LOG, [".audit/greeting.tsv", *cells], os.environ["HOME"], self.repo)
+        done = self.run_script(LOG, [".audit/greeting.tsv", *cells], str(Path.home()), self.repo)
 
         self.assertEqual(0, done.returncode, done.stderr)
         lines = (self.repo / ".audit" / "greeting.tsv").read_text(encoding="utf-8").splitlines()
@@ -260,9 +265,65 @@ class ContextFromAnInstalledPluginInARepoWithoutOneTests(SkillScriptCase):
         self.assertEqual(0, done.returncode, done.stderr)
         rows = self.section(done.stdout, "Loads every session, before you type anything")
         hook = [row for row in rows if row.endswith("jidoka SessionStart hook output")]
-        self.assertEqual(1, len(hook), done.stdout)
-        self.assertGreater(float(hook[0].split()[0]), 0, done.stdout)
+        self.assertEqual(1, len(hook), f"{done.stdout}\n{done.stderr}")
+        self.assertGreater(float(hook[0].split()[0]), 0, f"{done.stdout}\n{done.stderr}")
         self.assertNotIn("tracer", done.stdout.lower())
+
+    def run_context_with_only(self, cmd: Path, plugin: Path) -> subprocess.CompletedProcess:
+        env = {**os.environ, "PATH": str(cmd), "JIDOKA_HOME": str(self.home),
+               **fixture.home_variables(self.empty_home)}
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(plugin / CONTEXT), "--min", "0"]),
+                              capture_output=True, text=True, encoding="utf-8", env=env, cwd=self.repo)
+
+    def git_for_windows_without_sh_on_the_path(self) -> Path:
+        """The cmd folder of a Git for Windows laid out on disk: git and bd in it, and sh in usr/bin two folders
+        above git, so that no PATH entry reaches sh."""
+        layout = self.root / "git-for-windows"
+        cmd, usr_bin = layout / "cmd", layout / "usr" / "bin"
+        cmd.mkdir(parents=True, exist_ok=True)
+        usr_bin.mkdir(parents=True, exist_ok=True)
+        fixture.write_forwarder(cmd / "git", [fixture.real_tool("git")])
+        fixture.write_forwarder(cmd / "bd", [sys.executable, str(Path(fixture.fake_bd.__file__).resolve())])
+        fixture.write_forwarder(usr_bin / ("sh" if fixture.WINDOWS else "sh.exe"), [fixture.real_shell()])
+        return cmd
+
+    def test_context_measures_the_hook_when_sh_is_not_on_the_path_but_sits_beside_git(self):
+        cmd = self.git_for_windows_without_sh_on_the_path()
+
+        done = self.run_context_with_only(cmd, self.installed)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        rows = self.section(done.stdout, "Loads every session, before you type anything")
+        hook = [row for row in rows if row.endswith("jidoka SessionStart hook output")]
+        self.assertEqual(1, len(hook), f"{done.stdout}\n{done.stderr}")
+        self.assertGreater(float(hook[0].split()[0]), 0, f"{done.stdout}\n{done.stderr}")
+
+    def test_context_says_on_stderr_that_it_found_no_sh_for_the_hook_when_none_is_on_the_path_or_beside_git(self):
+        cmd = self.git_for_windows_without_sh_on_the_path()
+        for sh in (cmd.parent / "usr" / "bin").iterdir():
+            sh.unlink()
+
+        done = self.run_context_with_only(cmd, self.installed)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("jidoka SessionStart hook output", done.stdout)
+        self.assertIn("jidoka SessionStart hook", done.stderr)
+        self.assertIn("no sh", done.stderr)
+
+    def test_context_names_the_command_the_exit_code_and_the_stderr_of_a_hook_that_fails(self):
+        failing = self.root / "failing-plugin" / "jidoka"
+        shutil.copytree(self.installed, failing, ignore=shutil.ignore_patterns("__pycache__"))
+        (failing / "hooks" / "session_start.py").write_text(
+            "import sys\nsys.stderr.write('the hook broke\\n')\nsys.exit(1)\n", encoding="utf-8")
+
+        done = self.run_script(failing / CONTEXT, ["--min", "0"], str(self.empty_home), self.repo)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("jidoka SessionStart hook output", done.stdout)
+        self.assertIn("jidoka SessionStart hook", done.stderr)
+        self.assertIn("session_start.py", done.stderr)
+        self.assertIn("exit code 1", done.stderr)
+        self.assertIn("the hook broke", done.stderr)
 
     def test_context_measures_the_output_of_bd_prime_in_the_startup_section(self):
         done = self.run_context(self.empty_home, self.repo)
@@ -272,6 +333,36 @@ class ContextFromAnInstalledPluginInARepoWithoutOneTests(SkillScriptCase):
         prime = [row for row in rows if row.endswith("bd prime (SessionStart hook output)")]
         self.assertEqual(1, len(prime), done.stdout)
         self.assertRegex(prime[0], r"≈\s*[1-9][\d,]* tok", done.stdout)
+
+    def run_context_under_a_locale_that_reads_only_ascii(self, repo: Path, bin_dir: Path) -> subprocess.CompletedProcess:
+        """Runs context.py as a Windows console does, where text read from a child process is decoded with a code page
+        that is not UTF-8."""
+        env = {**os.environ, "PATH": fixture.path_with(bin_dir), "JIDOKA_HOME": str(self.home),
+               **fixture.home_variables(self.empty_home), "LC_ALL": "C", "LANG": "C",
+               "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(self.installed / CONTEXT), "--min", "0"]),
+                              capture_output=True, text=True, encoding="utf-8", env=env, cwd=repo)
+
+    def test_context_measures_the_output_of_bd_prime_when_it_holds_characters_the_console_code_page_lacks(self):
+        bin_dir = self.root / "bd-with-a-check-mark"
+        bin_dir.mkdir()
+        fixture.write_executable(bin_dir / "bd", "#!/bin/sh\nprintf '# Beads Workflow \\342\\234\\223\\n'\n")
+
+        done = self.run_context_under_a_locale_that_reads_only_ascii(self.repo, bin_dir)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        rows = self.section(done.stdout, "Loads every session, before you type anything")
+        prime = [row for row in rows if row.endswith("bd prime (SessionStart hook output)")]
+        self.assertEqual(1, len(prime), done.stdout)
+
+    def test_context_names_the_repo_whose_folder_holds_characters_the_console_code_page_lacks(self):
+        repo = self.root / "café"
+        fixture.init_repo(repo)
+
+        done = self.run_context_under_a_locale_that_reads_only_ascii(repo, self.bin)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(f"context for {repo}", done.stdout.splitlines()[0])
 
     def test_context_names_no_tracer_command_or_folder(self):
         done = self.run_context(self.empty_home, self.repo)

@@ -214,7 +214,7 @@ class ValidationHoldoutsCase(ValidationCase):
         """An epic with one task and one holdout for each scenario; returns the epic, the task and the printed moves
         of the build's report, which ends with the holdouts action."""
         epic, task, _ = self.finish_epic_but_for_the_last_report()
-        written = subprocess.run([str(test_scheduler.LAUNCHER), str(HOLDOUTS), "write", epic],
+        written = subprocess.run(fixture.launch_command(test_scheduler.LAUNCHER, [str(HOLDOUTS), "write", epic]),
                                  input=json.dumps([{"app": "shop", "tasks": [task], "scenario": each}
                                                    for each in scenarios]),
                                  capture_output=True, text=True, encoding="utf-8", env=self.caller_env(self.home),
@@ -419,7 +419,7 @@ class ValidationHoldoutsTests(ValidationHoldoutsCase):
 
     def test_a_red_suite_runs_no_holdouts(self):
         epic, task, _ = self.finish_epic_but_for_the_last_report()
-        subprocess.run([str(test_scheduler.LAUNCHER), str(HOLDOUTS), "write", epic],
+        subprocess.run(fixture.launch_command(test_scheduler.LAUNCHER, [str(HOLDOUTS), "write", epic]),
                        input=json.dumps([{"app": "shop", "tasks": [task], "scenario": SCENARIO}]),
                        capture_output=True, text=True, encoding="utf-8", env=self.caller_env(self.home),
                        cwd=self.repo, check=True)

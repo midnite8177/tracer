@@ -7,9 +7,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import jidoka_fixture as fixture  # noqa: E402
-import test_scheduler  # noqa: E402
-import test_validation  # noqa: E402
+import jidoka_fixture as fixture
+import test_scheduler
+import test_validation
 
 GATE = test_scheduler.PLUGIN / "scripts" / "gate.py"
 HOLDOUTS = test_scheduler.PLUGIN / "scripts" / "holdouts.py"
@@ -112,7 +112,7 @@ class MergeLandsTheEpicTests(GateCase):
 
     def test_merge_retires_the_epic_s_holdouts_and_keeps_its_other_metadata(self):
         epic, task, branch = self.epic_at_the_gate()
-        written = subprocess.run([str(test_scheduler.LAUNCHER), str(HOLDOUTS), "write", epic],
+        written = subprocess.run(fixture.launch_command(test_scheduler.LAUNCHER, [str(HOLDOUTS), "write", epic]),
                                  input=json.dumps([{"app": "shop", "tasks": [task], "scenario": "Pay 5.00."}]),
                                  capture_output=True, text=True, encoding="utf-8",
                                  timeout=test_scheduler.RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home),

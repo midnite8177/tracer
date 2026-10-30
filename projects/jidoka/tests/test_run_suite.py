@@ -9,6 +9,10 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+import run_suite  # noqa: E402
+
 RUNNER = HERE / "run_suite.py"
 RUN_TIMEOUT_SECONDS = 120
 NO_TESTS_EXIT_CODE = 5
@@ -270,6 +274,19 @@ class SuiteRunnerTests(unittest.TestCase):
         self.assertEqual(1, len(set(folders)), folders)
         self.assertNotEqual("none", folders[0])
         self.assertFalse(Path(folders[0]).exists())
+
+
+class WorkerCountTests(unittest.TestCase):
+    def test_a_run_has_a_worker_for_each_class_up_to_the_number_of_cpus(self):
+        self.assertEqual(3, run_suite.worker_count(3, 8, False))
+        self.assertEqual(8, run_suite.worker_count(50, 8, False))
+
+    def test_a_run_on_windows_never_has_more_workers_than_a_process_pool_there_allows(self):
+        self.assertEqual(61, run_suite.worker_count(200, 96, True))
+        self.assertEqual(96, run_suite.worker_count(200, 96, False))
+
+    def test_a_machine_that_cannot_count_its_cpus_gets_one_worker(self):
+        self.assertEqual(1, run_suite.worker_count(5, None, False))
 
 
 if __name__ == "__main__":

@@ -30,15 +30,26 @@ function isAbsolute(path: string): boolean {
   return /^([A-Za-z]:)?[/\\]/.test(path)
 }
 
+/** The `\\?\` or `\\.\` prefix that Windows puts before a drive path, which names the same place without it. */
+const EXTENDED_DRIVE_PREFIX = /^[\\/]{2}[?.][\\/](?=[A-Za-z]:([\\/]|$))/
+
+/** A path that starts with a drive letter and no separator, which Windows reads against that drive's own current folder. */
+const DRIVE_RELATIVE = /^[A-Za-z]:(?![/])/
+
 /**
  * The path with forward slashes and its `.` and `..` segments resolved, a
- * relative one taken from `base`; undefined when `..` climbs above the root.
- * Windows paths compare case-insensitively, so a drive-letter path comes back
- * lowercased.
+ * relative one taken from `base`; undefined when `..` climbs above the root,
+ * and for a place that no drive path can vouch for: a network share, a device
+ * or volume name, or a drive-relative path such as `C:notes`. A `\\?\` prefix
+ * before a drive path is dropped. Windows paths compare case-insensitively, so
+ * a drive-letter path comes back lowercased.
  */
 function resolved(path: string, base: string): string | undefined {
-  const slashed = path.replaceAll('\\', '/')
-  const whole = isAbsolute(path) ? slashed : `${base.replaceAll('\\', '/')}/${slashed}`
+  const own = path.replace(EXTENDED_DRIVE_PREFIX, '')
+  const slashed = own.replaceAll('\\', '/')
+  const root = base.replace(EXTENDED_DRIVE_PREFIX, '').replaceAll('\\', '/').replace(/\/+$/, '')
+  const whole = isAbsolute(own) ? slashed : `${root}/${slashed}`
+  if (DRIVE_RELATIVE.test(slashed) || DRIVE_RELATIVE.test(whole) || whole.startsWith('//')) return undefined
   const drive = DRIVE.exec(whole)?.[0] ?? ''
   const segments: string[] = []
   for (const segment of whole.slice(drive.length).split('/')) {
@@ -76,7 +87,10 @@ async function realLocation($: EngineInterface, path: string, base: string): Pro
       stat => stat.realPath,
       () => undefined,
     )
-    if (real !== undefined) return resolved(`${real}/${parts.slice(cut).join('/')}`, '/')
+    if (real !== undefined) {
+      if (!isAbsolute(real.replace(EXTENDED_DRIVE_PREFIX, ''))) return undefined
+      return resolved(`${real.replace(/[\\/]+$/, '')}/${parts.slice(cut).join('/')}`, '/')
+    }
     const link = await $.fs.stat(spot).then(
       stat => stat.isLink,
       () => false,
@@ -217,7 +231,6 @@ function entriesOf(value: unknown): ListEntry[] {
   })
 }
 
-/** The launcher that runs every jidoka script, in the plugin at `root`. */
 function launcherIn(root: string): string {
   return `${root}/bin/jidoka-run`
 }
@@ -278,20 +291,38 @@ async function commandsFor($: EngineInterface, kind: LapWorker['kind'], worktree
   return kind === 'check' ? splitIntoSimpleCommands(listed) : listed
 }
 
+const GIT_BASH_DRIVE = /^\/([A-Za-z])(?=\/)/
+
+/**
+ * `path` with a Git Bash drive prefix, `/c/...`, written as the drive path it
+ * stands for, `c:/...`, which `resolved` compares with the other Windows forms.
+ * A command's words are the only paths that come this way; a tool's own
+ * `file_path` never does.
+ */
+function withDrive(path: string): string {
+  return path.replace(GIT_BASH_DRIVE, '$1:')
+}
+
+function scriptPlace(pluginRoot: string, name: string): string | undefined {
+  return resolved(`${withDrive(pluginRoot)}/scripts/${name}`, '/')
+}
+
 /**
  * The scripts that `command` runs, resolved, when every simple command of it
  * runs jidoka's launcher, by its absolute path and through `sh` or not, on a
  * script inside the plugin; undefined when any simple command runs anything
- * else.
+ * else. A path may be written as Git Bash takes it on Windows: `C:/...`,
+ * `/c/...` or a quoted backslash path.
  */
-function jidokaScriptsIn(command: string, pluginRoot: string): string[] | undefined {
+export function jidokaScriptsIn(command: string, pluginRoot: string): string[] | undefined {
   const parts = simpleCommands(command)
-  const launcher = resolved(launcherIn(pluginRoot), '/')
+  const root = withDrive(pluginRoot)
+  const launcher = resolved(launcherIn(root), '/')
   if (parts === undefined || launcher === undefined) return undefined
   const scripts: string[] = []
   for (const words of parts) {
-    const [program = '', script = ''] = words[0] === 'sh' ? words.slice(1) : words
-    const path = isAbsolute(script) && isInside(script, pluginRoot) ? resolved(script, '/') : undefined
+    const [program = '', script = ''] = (words[0] === 'sh' ? words.slice(1) : words).map(withDrive)
+    const path = isAbsolute(script) && isInside(script, root) ? resolved(script, '/') : undefined
     if (!isAbsolute(program) || resolved(program, '/') !== launcher || path === undefined) return undefined
     scripts.push(path)
   }
@@ -306,8 +337,8 @@ function runsJidokaScripts(command: string, pluginRoot: string): boolean {
 const CHECK_SCRIPTS = ['holdouts.py', 'app_process.py']
 
 /** True when every simple command of `command` runs jidoka's launcher on a script a check worker may run. */
-function runsCheckScripts(command: string, pluginRoot: string): boolean {
-  const allowed = CHECK_SCRIPTS.map(name => resolved(`${pluginRoot}/scripts/${name}`, '/'))
+export function runsCheckScripts(command: string, pluginRoot: string): boolean {
+  const allowed = CHECK_SCRIPTS.map(name => scriptPlace(pluginRoot, name))
   const scripts = jidokaScriptsIn(command, pluginRoot)
   return scripts !== undefined && scripts.every(script => allowed.includes(script))
 }
@@ -482,12 +513,23 @@ const agentSums = new Map<string, Sums>()
 let requestSums = emptySums()
 let requestStartedAt: number | undefined
 
-/** Jidoka's home as the launcher finds it: `JIDOKA_HOME`, else `.jidoka` in the user's home. */
+/** `value` unless it is empty, which an environment variable that is set to nothing reads as. */
+function present(value: string | undefined): string | undefined {
+  return value === '' ? undefined : value
+}
+
+/**
+ * Jidoka's home as the launcher finds it: `JIDOKA_HOME`, else `.jidoka` in the
+ * user's home, which is `HOME`, or `USERPROFILE` where the host on Windows sets
+ * no `HOME`.
+ */
 async function jidokaHome($: EngineInterface): Promise<string | undefined> {
-  const named = await $.env.get('JIDOKA_HOME').catch(() => undefined)
-  if (named !== undefined && named !== '') return named
-  const home = await $.env.get('HOME').catch(() => undefined)
-  return home === undefined || home === '' ? undefined : `${home.replace(/[\\/]+$/, '')}/.jidoka`
+  const named = present(await $.env.get('JIDOKA_HOME').catch(() => undefined))
+  if (named !== undefined) return named
+  const home =
+    present(await $.env.get('HOME').catch(() => undefined)) ??
+    present(await $.env.get('USERPROFILE').catch(() => undefined))
+  return home === undefined ? undefined : `${home.replace(/[\\/]+$/, '')}/.jidoka`
 }
 
 /**
@@ -508,7 +550,6 @@ async function tallyWorkerStep($: EngineInterface, agentId: string, usage: TurnU
   }
 }
 
-/** Adds one step to the manager's current request. */
 async function tallyRequestStep($: EngineInterface, usage: TurnUsage | null): Promise<void> {
   requestStartedAt ??= await $.clock.now().catch(() => undefined)
   requestSums = withStep(requestSums, usage)
@@ -572,8 +613,8 @@ function usageWindowIn(rateLimits: unknown, kind: string): UsageWindow | undefin
 }
 
 /** True when every simple command of `command` runs jidoka's launcher on a script inside the plugin and one of them runs the scheduler. */
-function runsScheduler(command: string, pluginRoot: string): boolean {
-  const scheduler = resolved(`${pluginRoot}/scripts/scheduler.py`, '/')
+export function runsScheduler(command: string, pluginRoot: string): boolean {
+  const scheduler = scriptPlace(pluginRoot, 'scheduler.py')
   return scheduler !== undefined && (jidokaScriptsIn(command, pluginRoot) ?? []).includes(scheduler)
 }
 

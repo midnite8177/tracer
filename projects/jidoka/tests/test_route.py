@@ -61,8 +61,8 @@ class RouteCase(unittest.TestCase):
 
     def route(self, *args: str, home: Path | None = None) -> subprocess.CompletedProcess:
         env = {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home or self.home)}
-        return subprocess.run([str(LAUNCHER), str(ROUTE), *args], capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=env, cwd=self.repo)
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(ROUTE), *args]), capture_output=True,
+                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=env, cwd=self.repo)
 
     def fall_back(self, task: str, stage: str, tier: str, run: str) -> dict:
         done = self.route("fallback", task, stage, tier, "--run", run)

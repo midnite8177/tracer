@@ -1,5 +1,4 @@
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -346,7 +345,7 @@ class LaterReviewTests(ReviewCase):
     def merge_main_into(self, branch: str) -> None:
         """Merges main into the epic branch in a throwaway worktree, as validation does."""
         scratch = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, scratch, True)
+        self.addCleanup(fixture.remove_tree_quietly, scratch)
         tree = scratch / "merge"
         test_validation.git(self.repo, "worktree", "add", "--quiet", "--detach", str(tree), branch)
         test_validation.git(tree, "merge", "--quiet", "--no-edit", "main")

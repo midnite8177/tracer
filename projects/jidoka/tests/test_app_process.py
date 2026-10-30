@@ -21,16 +21,24 @@ RUN_TIMEOUT_SECONDS = 60
 GONE_WAIT_SECONDS = 10.0
 GONE_POLL_SECONDS = 0.05
 
-# The app records its own pid and the pid of a child it starts, then waits on the child.
-RUN_TWO_PROCESSES = 'echo $$ >> "$PIDS"; sleep 600 & echo $! >> "$PIDS"; wait'
+TWO_PROCESSES = "\n".join([
+    "import os, subprocess, sys",
+    f"child = subprocess.Popen([sys.executable, '-c', {fixture.SLEEP_FOR_AN_HOUR!r}])",
+    "with open(os.environ['PIDS'], 'a') as pids:",
+    "    pids.write(f'{os.getpid()}\\n{child.pid}\\n')",
+    "child.wait()",
+    ""])
+RECORDS_ITS_FOLDER_AND_PORT = "\n".join([
+    "import os, time",
+    "with open(os.environ['PIDS'], 'w') as seen:",
+    "    seen.write(os.getcwd() + '\\n' + os.environ['PORT'] + '\\n')",
+    "time.sleep(3600)",
+    ""])
+PRINTS_AND_WAITS = "import time\nprint('listening', flush=True)\ntime.sleep(3600)\n"
+EXITS_AT_ONCE = "pass\n"
 SLOT_USE = "PORT 5100 plus the slot"
 
-
-def is_running(pid: int) -> bool:
-    """True while the process exists and is no zombie, which no longer runs anything."""
-    done = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
-    state = done.stdout.strip()
-    return state != "" and not state.startswith("Z")
+is_running = fixture.process_is_running
 
 
 class AppProcessTests(unittest.TestCase):
@@ -40,6 +48,7 @@ class AppProcessTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name).resolve()
+        self.root = root
         self.repo = root / "shop"
         fixture.init_repo(self.repo)
         (self.repo / "README.md").write_text("shop\n", encoding="utf-8")
@@ -48,10 +57,15 @@ class AppProcessTests(unittest.TestCase):
         self.home.mkdir()
         (self.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
         self.pids = root / "pids"
-        self.write_settings([{"name": "shop", "run": RUN_TWO_PROCESSES}])
+        self.write_settings([{"name": "shop", "run": self.app_command(TWO_PROCESSES)}])
         self.addCleanup(self.kill_what_is_left)
 
     slot_use = SLOT_USE
+
+    def app_command(self, source: str) -> str:
+        program = self.root / f"app-{len(list(self.root.glob('app-*.py')))}.py"
+        program.write_text(source, encoding="utf-8")
+        return f'"{sys.executable}" "{program}"'
 
     def write_settings(self, apps: list[dict]) -> None:
         full = [{"kind": "program", "way_in": "curl localhost", "build": "make", "test": "true",
@@ -59,24 +73,27 @@ class AppProcessTests(unittest.TestCase):
                 for app in apps]
         settings = {"lap_test_scope": "targeted", "worker_commands": [], "slot_use": self.slot_use, "lap_limit": 1,
                     "apps": full}
-        done = subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), "write"], input=json.dumps(settings),
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              env=self.env(), cwd=self.repo)
+        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), "write"]),
+                              input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
+                              timeout=RUN_TIMEOUT_SECONDS, env=self.env(), cwd=self.repo)
         self.assertEqual(0, done.returncode, done.stderr)
 
     def env(self) -> dict[str, str]:
         return {**os.environ, "JIDOKA_HOME": str(self.home), "PIDS": str(self.pids)}
 
     def app_process(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(APP_PROCESS), *args], capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.env(), cwd=self.repo)
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(APP_PROCESS), *args]), capture_output=True,
+                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.env(),
+                              cwd=self.repo)
 
     def app_pids(self) -> list[int]:
-        """The pids the app has written so far, waiting for the app to write both."""
+        """The pids the app has written so far, waiting for the app to write both. The file exists, empty, from the
+        moment the app opens it, before it writes."""
         deadline = time.monotonic() + GONE_WAIT_SECONDS
         while time.monotonic() < deadline:
-            if self.pids.is_file() and len(self.pids.read_text(encoding="utf-8").split()) % 2 == 0:
-                return [int(pid) for pid in self.pids.read_text(encoding="utf-8").split()]
+            written = self.pids.read_text(encoding="utf-8").split() if self.pids.is_file() else []
+            if written and len(written) % 2 == 0:
+                return [int(pid) for pid in written]
             time.sleep(GONE_POLL_SECONDS)
         self.fail("the app wrote no pids")
 
@@ -93,7 +110,7 @@ class AppProcessTests(unittest.TestCase):
         if not self.pids.is_file():
             return
         for pid in self.pids.read_text(encoding="utf-8").split():
-            subprocess.run(["kill", "-9", pid], capture_output=True)
+            fixture.end_process(int(pid))
 
     def test_an_app_started_runs_until_it_is_stopped_and_then_no_process_of_it_is_left(self):
         started = self.app_process("start", "shop")
@@ -120,11 +137,12 @@ class AppProcessTests(unittest.TestCase):
         self.assertEqual(0, self.app_process("stop", "shop").returncode)
 
     def test_the_app_runs_in_the_folder_the_script_ran_in_with_the_variables_it_was_given(self):
-        self.write_settings([{"name": "shop", "run": 'pwd > "$PIDS"; echo "$PORT" >> "$PIDS"; sleep 600'}])
+        self.write_settings([{"name": "shop", "run": self.app_command(RECORDS_ITS_FOLDER_AND_PORT)}])
 
         self.assertEqual(0, self.app_process("start", "shop", "--env", "PORT=5103").returncode)
         deadline = time.monotonic() + GONE_WAIT_SECONDS
-        while time.monotonic() < deadline and len(self.pids.read_text(encoding="utf-8").split()) < 2:
+        while time.monotonic() < deadline and (not self.pids.is_file()
+                                               or len(self.pids.read_text(encoding="utf-8").split()) < 2):
             time.sleep(GONE_POLL_SECONDS)
         cwd, port = self.pids.read_text(encoding="utf-8").split()
         self.assertEqual(0, self.app_process("stop", "shop").returncode)
@@ -134,7 +152,7 @@ class AppProcessTests(unittest.TestCase):
         self.pids.unlink()
 
     def test_the_app_s_output_goes_to_a_log_in_the_scratch_folder(self):
-        self.write_settings([{"name": "shop", "run": "echo listening; sleep 600"}])
+        self.write_settings([{"name": "shop", "run": self.app_command(PRINTS_AND_WAITS)}])
 
         self.assertEqual(0, self.app_process("start", "shop").returncode)
         log = self.repo / ".scratch" / "apps" / "shop.log"
@@ -152,7 +170,7 @@ class AppProcessTests(unittest.TestCase):
         self.assertIn("not running", stopped.stdout)
 
     def test_stopping_an_app_that_already_ended_succeeds(self):
-        self.write_settings([{"name": "shop", "run": "true"}])
+        self.write_settings([{"name": "shop", "run": self.app_command(EXITS_AT_ONCE)}])
         self.assertEqual(0, self.app_process("start", "shop").returncode)
         time.sleep(0.5)
 
@@ -188,7 +206,7 @@ class AppProcessTests(unittest.TestCase):
 
     def sleeper(self) -> subprocess.Popen:
         """A process of its own group that this test, not the script, started."""
-        process = subprocess.Popen(["sleep", "600"], start_new_session=True)
+        process = subprocess.Popen([sys.executable, "-c", fixture.SLEEP_FOR_AN_HOUR], start_new_session=True)
         self.addCleanup(process.wait)
         self.addCleanup(process.kill)
         return process
@@ -240,7 +258,7 @@ class AppProcessTests(unittest.TestCase):
 
     def test_a_variable_that_changes_how_a_program_loads_is_refused_even_when_the_slot_use_names_it(self):
         self.slot_use = "PORT, PATH and LD_PRELOAD from the slot"
-        self.write_settings([{"name": "shop", "run": RUN_TWO_PROCESSES}])
+        self.write_settings([{"name": "shop", "run": self.app_command(TWO_PROCESSES)}])
 
         for name in ("PATH", "LD_PRELOAD"):
             started = self.app_process("start", "shop", "--env", f"{name}=/tmp/x")

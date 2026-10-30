@@ -3,7 +3,8 @@
 
 Jeff runs it in a terminal and names the Claude config dirs to install into.
 It checks for git, bd, claude and Python 3.10 or later and installs none of
-them. It refuses while the plugin folder next to this file has uncommitted
+them. On Windows it also checks for Git for Windows, whose Git Bash runs every hook and the launcher, and for
+Developer Mode, which symbolic links need, and refuses naming what is missing. It refuses while the plugin folder next to this file has uncommitted
 changes, so what gets installed is a commit. It writes that commit's plugin
 to <jidoka-home>/plugins/<version>/, a snapshot, because Claude Code runs a
 plugin from a folder marketplace in place and an edit to the checkout would
@@ -44,18 +45,20 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path, PureWindowsPath
 
 PLUGIN_FOLDER = Path(__file__).resolve().parent / "plugin"
 sys.path.append(str(PLUGIN_FOLDER / "jidoka" / "scripts"))
-# A bytecode file written into the plugin folder would count as an uncommitted change to what gets installed.
-WRITES_BYTECODE = sys.dont_write_bytecode
+# A bytecode file written into the plugin folder would make the installer refuse that folder as uncommitted.
+DONT_WRITE_BYTECODE_BEFORE_IMPORTS = sys.dont_write_bytecode
 sys.dont_write_bytecode = True
+import commands  # noqa: E402
+import links  # noqa: E402
 import routes as machine_routes  # noqa: E402
 
-sys.dont_write_bytecode = WRITES_BYTECODE
+sys.dont_write_bytecode = DONT_WRITE_BYTECODE_BEFORE_IMPORTS
 
 MIN_PYTHON = (3, 10)
 REQUIRED_TOOLS = ["git", "bd", "claude"]
@@ -128,6 +131,55 @@ def find_missing(python_version: tuple[int, int], which: Callable[[str], str | N
     for name in REQUIRED_TOOLS:
         if which(name) is None:
             missing.append(f"`{name}`")
+    return missing
+
+
+def git_bash_exists(git: str, environ: Mapping[str, str]) -> bool:
+    """Whether Git Bash, which runs every hook, the launcher and the test commands, is where Claude Code looks for
+    it."""
+    return commands.git_bash_path(git, environ) is not None
+
+
+def developer_mode_is_on(make_link: Callable[[Path, Path | str, bool], None]) -> bool:
+    """Whether this account can make a symbolic link, which Windows allows without administrator rights only in
+    Developer Mode. Any other failure to make the link is raised."""
+    with tempfile.TemporaryDirectory() as folder:
+        link = Path(folder) / "link"
+        try:
+            make_link(link, Path(folder) / "target", False)
+        except links.LinkError:
+            return False
+    return True
+
+
+def find_missing_on_windows(git: str, environ: Mapping[str, str],
+                            make_link: Callable[[Path, Path | str, bool], None]) -> list[str]:
+    missing = []
+    if not git_bash_exists(git, environ):
+        missing.append("Git for Windows, whose Git Bash runs every hook and the launcher "
+                       "(https://gitforwindows.org)")
+    if not developer_mode_is_on(make_link):
+        missing.append("Developer Mode, which Windows requires to make the symbolic links jidoka uses "
+                       "(Settings, System, For developers, Developer Mode)")
+    return missing
+
+
+def no_missing_on_this_host(git: str) -> list[str]:
+    return []
+
+
+def missing_on_windows(git: str) -> list[str]:
+    return find_missing_on_windows(git, os.environ, links.create)
+
+
+def find_every_gap(python_version: tuple[int, int], which: Callable[[str], str | None],
+                   missing_on_host: Callable[[str], list[str]]) -> list[str]:
+    """Every prerequisite the machine lacks, so one refusal names them all. The host's own checks run on the git
+    that `which` finds, and only when it finds one."""
+    missing = find_missing(python_version, which)
+    git = which("git")
+    if git is not None:
+        missing += missing_on_host(git)
     return missing
 
 
@@ -417,8 +469,8 @@ def ask_for_pushover(home: Path, terminal: Terminal | None) -> str:
 
 
 def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[int, int], python: str,
-            terminal: Terminal | None) -> None:
-    missing = find_missing(python_version, shutil.which)
+            terminal: Terminal | None, missing_on_host: Callable[[str], list[str]]) -> None:
+    missing = find_every_gap(python_version, shutil.which, missing_on_host)
     if missing:
         raise InstallerError("these are missing, and the installer installs none of them: " + ", ".join(missing))
     tools = locate_tools(shutil.which)
@@ -449,7 +501,7 @@ def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[in
               + "\n".join(f"  {path}" for path in unnamed))
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], missing_on_host: Callable[[str], list[str]]) -> int:
     parser = argparse.ArgumentParser(prog="install.py", description="Install or update jidoka's plugin on this machine.")
     parser.add_argument("--config-dir", action="append", required=True, metavar="PATH",
                         help="a Claude config dir to install into; repeat it for each one")
@@ -459,7 +511,7 @@ def main(argv: list[str]) -> int:
     terminal = Terminal(input, getpass.getpass) if sys.stdin.isatty() and sys.stdout.isatty() else None
     try:
         install(config_dirs, Path(args.jidoka_home).expanduser().resolve(), sys.version_info[:2], sys.executable,
-                terminal)
+                terminal, missing_on_host)
     except (InstallerError, OSError) as err:
         print(f"install.py: {err}", file=sys.stderr)
         return 2
@@ -467,4 +519,4 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main(sys.argv[1:], missing_on_windows if os.name == "nt" else no_missing_on_this_host))

@@ -78,8 +78,8 @@ class NotifyCase(unittest.TestCase):
         (self.home / "pushover.json").write_text(json.dumps({**keys, **changes}), encoding="utf-8")
 
     def script(self, script: Path, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(script), *args], capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), capture_output=True,
+                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
                                    "BEADS_ACTOR": HUMAN})
 

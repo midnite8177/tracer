@@ -8,16 +8,20 @@ Usage:
 
 Token figures are estimates (bytes / 4); real counts vary by content.
 """
-import glob, json, os, re, signal, subprocess, sys
+import glob, json, os, re, shutil, signal, subprocess, sys
+from pathlib import Path
 if hasattr(signal, "SIGPIPE"): signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # quiet exit when piped; absent on Windows
 try: sys.stdout.reconfigure(encoding="utf-8", errors="replace")            # Windows consoles default to cp1252
 except Exception: pass
 
 HOME = os.path.expanduser("~")
-ROOT = os.path.normpath(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or os.getcwd())
+ROOT = os.path.normpath(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip() or os.getcwd())
 INSTALLED_PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 BENCH_SKILLS = ("bench", "tdd", "unslop", "spec-check", "no-comments")
 WARN_BYTES, WARN_LINES = 16 * 1024, 200
+CMD_TIMEOUT_SECONDS = 20
+# Folders above git that can be the Git for Windows root: <Git>/cmd/git.exe is one below it, <Git>/mingw64/bin/git.exe two.
+GIT_FOLDERS_ABOVE_GIT = 3
 
 def size(path):
     try:
@@ -49,11 +53,40 @@ def memory_dir():
              if os.path.basename(os.path.dirname(d)).strip("-").lower() == enc.lower()]
     return cands[0] if cands else None
 
-def cmd_bytes(args, stdin):
-    try:
-        out = subprocess.run(args, input=stdin, capture_output=True, text=True, timeout=20, cwd=ROOT).stdout
-        return len(out.encode()), out.count("\n") + 1
-    except Exception: return None
+def shell():
+    """The sh that runs jidoka's hooks: the first on the PATH, else the usr/bin/sh.exe of the Git for Windows that
+    holds git. None when there is neither."""
+    found = shutil.which("sh")
+    if found: return found
+    git = shutil.which("git")
+    if git is None: return None
+    for folder in list(Path(git).parents)[:GIT_FOLDERS_ABOVE_GIT]:
+        candidate = folder / "usr" / "bin" / "sh.exe"
+        if candidate.is_file(): return str(candidate)
+    return None
+
+def cmd_bytes(args, stdin, label):
+    """Size and line count of what the command prints, or None when it cannot be measured. A label names the row on
+    stderr, with the command and why it could not be measured; None keeps the failure quiet."""
+    def fail(why):
+        if label: print(f"context: {label}: {' '.join(args)}: {why}", file=sys.stderr)
+        return None
+    try: done = subprocess.run(args, input=stdin.encode("utf-8"), capture_output=True, timeout=CMD_TIMEOUT_SECONDS, cwd=ROOT)
+    except subprocess.TimeoutExpired: return fail(f"no answer in {CMD_TIMEOUT_SECONDS} seconds")
+    except OSError as e: return fail(f"did not start: {e}")
+    if done.returncode != 0:
+        return fail(f"exit code {done.returncode}, stderr: {done.stderr.decode('utf-8', errors='replace').strip()}")
+    return len(done.stdout), done.stdout.count(b"\n") + 1
+
+def hook_measure():
+    label = "jidoka SessionStart hook"
+    sh = shell()
+    if sh is None:
+        print(f"context: {label}: no sh on the PATH or in the usr/bin of the Git for Windows that holds git", file=sys.stderr)
+        return None
+    runner = Path(INSTALLED_PLUGIN_ROOT, "bin", "jidoka-run").as_posix()
+    hook = Path(INSTALLED_PLUGIN_ROOT, "hooks", "session_start.py").as_posix()
+    return cmd_bytes([sh, runner, hook], json.dumps({"cwd": ROOT, "hook_event_name": "SessionStart", "source": "startup"}), label)
 
 rows = {"startup": [], "invoke": [], "bench": []}
 
@@ -78,10 +111,8 @@ if md:
     idx = os.path.join(md, "MEMORY.md")
     if os.path.isfile(idx):
         m = size(idx); add("startup", "auto-memory MEMORY.md (first 200 lines / 25 KB load)", measured=(min(m[0], 25 * 1024), min(m[1], 200)))
-add("startup", "bd prime (SessionStart hook output)", measured=cmd_bytes(["bd", "prime"], ""))
-add("startup", "jidoka SessionStart hook output", measured=cmd_bytes(
-    ["sh", os.path.join(INSTALLED_PLUGIN_ROOT, "bin", "jidoka-run"), os.path.join(INSTALLED_PLUGIN_ROOT, "hooks", "session_start.py")],
-    json.dumps({"cwd": ROOT, "hook_event_name": "SessionStart", "source": "startup"})))
+add("startup", "bd prime (SessionStart hook output)", measured=cmd_bytes(["bd", "prime"], "", None))
+add("startup", "jidoka SessionStart hook output", measured=hook_measure())
 
 for name in ("GLOSSARY.md", "GLOSSARY-MAP.md", "CONTEXT.md", "CONTEXT-MAP.md"):
     add("bench", name, os.path.join(ROOT, name))

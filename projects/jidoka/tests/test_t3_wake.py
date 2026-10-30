@@ -3,7 +3,6 @@ import dataclasses
 import io
 import json
 import os
-import stat
 import subprocess
 import sys
 import time
@@ -33,9 +32,7 @@ class WakeCase(StopCase):
     def setUp(self):
         super().setUp()
         self.sent = self.root / "sent.txt"
-        fake = self.bin / "t3"
-        fake.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{self.sent}"\n', encoding="utf-8")
-        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+        fake = fixture.write_executable(self.bin / "t3", f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{self.sent.as_posix()}"\n')
         self.t3 = str(fake)
 
     def environment(self, session: str | None) -> dict[str, str]:
@@ -47,13 +44,13 @@ class WakeCase(StopCase):
         return environment
 
     def record(self, thread: str) -> None:
-        done = subprocess.run([str(LAUNCHER), str(T3_WAKE), "record", self.epic, "--thread", thread],
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
+        command = fixture.launch_command(LAUNCHER, [str(T3_WAKE), "record", self.epic, "--thread", thread])
+        done = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
                               cwd=self.repo, env=self.environment(SESSION))
         self.assertEqual(0, done.returncode, done.stderr)
 
     def end_session(self, session: str) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(SESSION_END)], input=json.dumps(
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(SESSION_END)]), input=json.dumps(
             {"session_id": session, "cwd": str(self.repo), "reason": "other"}), capture_output=True, text=True,
             encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo, env=self.environment(None))
 
@@ -73,6 +70,9 @@ class WakeCase(StopCase):
         self.assertEqual([], self.sent_lines())
 
     def kill_wakers(self) -> None:
+        if fixture.WINDOWS:
+            fixture.end_orphans_in(self.repo)
+            return
         subprocess.run(["pkill", "-f", f"t3_wake.py wait {self.epic}"], capture_output=True)
 
 

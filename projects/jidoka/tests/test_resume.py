@@ -1,6 +1,5 @@
 import json
 import os
-import signal
 import subprocess
 import sys
 import tempfile
@@ -30,6 +29,8 @@ STALE_SECONDS = 600
 FRESH_SECONDS = 5
 MANAGER_SESSION = "session-of-the-manager"
 OTHER_SESSION = "session-of-an-advisor"
+LEAVES_A_SLEEPER_AND_EXITS = ("import subprocess, sys; "
+                              f"print(subprocess.Popen([sys.executable, '-c', {fixture.SLEEP_FOR_AN_HOUR!r}]).pid)")
 
 
 class ResumeCase(unittest.TestCase):
@@ -65,8 +66,9 @@ class ResumeCase(unittest.TestCase):
                     "apps": [{"name": "shop", "kind": "program", "way_in": "its command line", "build": "make",
                               "run": None, "test": "true", "test_target": "-k <name>", "test_full": None,
                               "hand_run": [], "acceptance": "specs/acceptance"}]}
-        done = subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), "write"], input=json.dumps(settings),
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
+        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), "write"]),
+                              input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
+                              timeout=RUN_TIMEOUT_SECONDS,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)},
                               cwd=self.repo)
         self.assertEqual(0, done.returncode, done.stderr)
@@ -75,9 +77,8 @@ class ResumeCase(unittest.TestCase):
         return self.script_with(MANAGER_SESSION, {}, script, *args)
 
     def script_with(self, session: str, env: dict[str, str], script: Path, *args: str) -> subprocess.CompletedProcess:
-        """Runs a script as a call made from the session, with more variables in its environment."""
-        return subprocess.run([str(LAUNCHER), str(script), *args], capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), capture_output=True,
+                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
                                    "BEADS_ACTOR": HUMAN, "JIDOKA_SESSION_ID": session, **env})
 
@@ -125,7 +126,6 @@ class ResumeCase(unittest.TestCase):
         return json.loads(self.beat_file().read_text(encoding="utf-8"))["time"]
 
     def start_a_manager(self) -> dict[str, dict]:
-        """Opens the laps the way a manager's first call does, and returns each action by task."""
         return {action["task"]: action for action in self.next_printed()["actions"]}
 
     def stop_the_host(self) -> dict[str, dict]:
@@ -187,7 +187,7 @@ class ResumeLapsTests(ResumeCase):
         worktree = Path(action["worktree"])
         (worktree / "till.txt").write_text("till\n", encoding="utf-8")
         fixture.git_commit_all(worktree, "Take the till")
-        fixture.run(["rm", "-rf", str(worktree)], self.repo)
+        fixture.remove_tree(worktree)
 
         resumed = {item["task"]: item for item in self.next_printed()["actions"]}
 
@@ -254,7 +254,7 @@ class MergeLockTests(ResumeCase):
 
     def test_a_merge_lock_whose_holder_is_gone_is_cleared(self):
         self.stop_the_host()
-        gone = subprocess.Popen(["true"])
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
         gone.wait()
         self.lock().parent.mkdir(exist_ok=True)
         self.lock().write_text(f"{gone.pid}\n", encoding="utf-8")
@@ -278,31 +278,22 @@ class MergeLockTests(ResumeCase):
 
 class OrphanWorkerTests(ResumeCase):
     def alive(self, pid: int) -> bool:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        return True
+        return fixture.process_is_running(pid)
 
     def orphan_in(self, folder: Path) -> int:
         """A process left running in the folder whose parent is gone, as a dead host leaves a worker."""
-        launched = subprocess.Popen(["sh", "-c", "sleep 600 & echo $!"], cwd=folder, stdout=subprocess.PIPE, text=True)
+        launched = subprocess.Popen([sys.executable, "-c", LEAVES_A_SLEEPER_AND_EXITS], cwd=folder,
+                                    stdout=subprocess.PIPE, text=True)
         pid = int((launched.stdout.readline() if launched.stdout else "").strip())
         launched.wait()
-        self.addCleanup(self.kill, pid)
+        self.addCleanup(fixture.end_process, pid)
         deadline = time.time() + 5
-        while time.time() < deadline:
+        while not fixture.WINDOWS and time.time() < deadline:
             parent = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True)
             if parent.stdout.strip() == "1":
                 break
             time.sleep(0.05)
         return pid
-
-    def kill(self, pid: int) -> None:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
 
     def test_an_orphan_worker_in_a_lap_worktree_is_stopped(self):
         opened = self.stop_the_host()
@@ -322,7 +313,7 @@ class OrphanWorkerTests(ResumeCase):
     def test_a_process_with_a_live_parent_in_a_lap_worktree_is_left_alone(self):
         opened = self.stop_the_host()
         worktree = Path(next(iter(opened.values()))["worktree"])
-        owned = subprocess.Popen(["sleep", "600"], cwd=worktree)
+        owned = subprocess.Popen([sys.executable, "-c", fixture.SLEEP_FOR_AN_HOUR], cwd=worktree)
         self.addCleanup(owned.wait)
         self.addCleanup(owned.kill)
 
@@ -456,8 +447,9 @@ class SecondManagerTests(ResumeCase):
 class SessionStartTests(ResumeCase):
     def session(self) -> str:
         event = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "startup", "cwd": str(self.repo)}
-        done = subprocess.run([str(LAUNCHER), str(HOOK)], input=json.dumps(event), capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.root,
+        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(HOOK)]), input=json.dumps(event),
+                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
+                              cwd=self.root,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)})
         self.assertEqual(0, done.returncode, done.stderr)
         return done.stdout

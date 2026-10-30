@@ -9,14 +9,15 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import jidoka_fixture as fixture  # noqa: E402
+import jidoka_fixture as fixture
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 SETUP = PLUGIN / "scripts" / "setup.py"
 
 RUN_TIMEOUT_SECONDS = 120
-SYSTEM_PATH = f"/usr/bin{os.pathsep}/bin"
+SYSTEM_PATH = (str(Path(os.environ["SystemRoot"]) / "System32") if fixture.WINDOWS
+               else f"/usr/bin{os.pathsep}/bin")
 KEY_VARIABLES = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY"]
 CODEX = {"harness": "codex", "model": None, "version": None, "effort": None}
 NATIVE_OPUS = {"harness": "claude", "model": "opus", "version": "5.5", "effort": "high"}
@@ -59,13 +60,14 @@ class SetupCase(unittest.TestCase):
         fixture.write_executable(self.bin / "codex", "#!/bin/sh\nexit 0\n")
 
     def without_codex(self) -> None:
-        (self.bin / "codex").unlink(missing_ok=True)
+        fixture.executable_file(self.bin / "codex", fixture.WINDOWS).unlink(missing_ok=True)
 
     def setup_script(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
         env = {name: value for name, value in os.environ.items() if name not in KEY_VARIABLES}
         env.update({"PATH": f"{self.bin}{os.pathsep}{SYSTEM_PATH}", "JIDOKA_HOME": str(self.home), **self.keys})
-        return subprocess.run([str(LAUNCHER), str(SETUP), *args], input=stdin, capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=env, cwd=self.repo)
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(SETUP), *args]), input=stdin,
+                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=env,
+                              cwd=self.repo)
 
     def proposal(self) -> dict:
         done = self.setup_script("propose")
@@ -114,7 +116,8 @@ class ProposeTests(SetupCase):
 
         found = self.proposal()["found"]
 
-        self.assertEqual(str(self.bin / "codex"), found["codex"])
+        expected = str(fixture.executable_file(self.bin / "codex", fixture.WINDOWS))
+        self.assertEqual(os.path.normcase(expected), os.path.normcase(found["codex"]))
 
     def test_it_reports_no_codex_when_the_machine_has_none(self):
         self.without_codex()

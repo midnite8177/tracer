@@ -5,11 +5,17 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 COMMAND_TIMEOUT_SECONDS = 120
+GIT_BASH_VARIABLE = "CLAUDE_CODE_GIT_BASH_PATH"
+# Folders above git that can be the Git for Windows root: <Git>/cmd/git.exe is one below it, <Git>/mingw64/bin/git.exe two.
+GIT_FOLDERS_ABOVE_GIT = 3
 FACTORY_ACTOR = "jidoka"
 FACTORY_LABEL = "factory"
 HUMAN_LABEL = "human"
@@ -212,13 +218,57 @@ def bd_comments(bead: str, cwd: Path) -> list[dict]:
     return printed_beads(["bd", "comments", bead, "--json"], cwd)
 
 
+def git_bash_path(git: str | None, environ: Mapping[str, str]) -> Path | None:
+    """The Git Bash that Claude Code looks for: the file GIT_BASH_VARIABLE names, else bin/bash.exe in the Git for
+    Windows folder that holds git. None when that file does not exist."""
+    named = environ.get(GIT_BASH_VARIABLE)
+    if named:
+        return Path(named) if Path(named).is_file() else None
+    if git is None:
+        return None
+    for folder in list(Path(git).parents)[:GIT_FOLDERS_ABOVE_GIT]:
+        candidate = folder / "bin" / "bash.exe"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def test_script(command: str, folder: Path) -> Path:
+    """The script file in the folder that holds the test command line, for Git Bash to read.
+
+    The Windows command line loses the double quotes of an argument, so a line that holds a quote reaches bash.exe
+    cut. A file holds the line as written.
+    """
+    script = folder / "run-tests.sh"
+    script.write_bytes(f"{command}\n".encode("utf-8"))
+    return script
+
+
+def git_bash_command(script: Path, git: str | None, environ: Mapping[str, str]) -> list[str]:
+    """The arguments that run a test script through Git Bash, where the filter in the line is quoted for sh and
+    cmd.exe would read it differently. The script goes by a path with forward slashes, which bash.exe reads.
+
+    Raises CommandError when there is no Git Bash.
+    """
+    bash = git_bash_path(git, environ)
+    if bash is None:
+        raise CommandError(f"cannot run the tests: Git Bash is not where Claude Code looks for it, in the file "
+                           f"{GIT_BASH_VARIABLE} names or in bin/bash.exe of the folder that holds git")
+    return [str(bash), script.as_posix()]
+
+
 def run_test_command(command: str, cwd: Path) -> subprocess.CompletedProcess:
-    """Runs a test command line from the repo settings through the shell.
+    """Runs a test command line from the repo settings through Git Bash on Windows and through the shell elsewhere.
 
     It has no timeout, because a test suite can run far longer than any git or bd command.
     """
     try:
-        return subprocess.run(command, cwd=cwd, shell=True, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace")
+        if os.name != "nt":
+            return subprocess.run(command, cwd=cwd, shell=True, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace")
+        with tempfile.TemporaryDirectory(prefix="jidoka-tests-") as folder:
+            arguments = git_bash_command(test_script(command, Path(folder)), shutil.which("git"), os.environ)
+            return subprocess.run(arguments, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace")
     except OSError as error:
         raise CommandError(f"cannot run the tests: {error}") from error

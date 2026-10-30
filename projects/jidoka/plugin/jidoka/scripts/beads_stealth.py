@@ -28,7 +28,9 @@ missing on disk, then excludes them all. When git does not track the
 workspace and it has no beads database, the script runs `bd bootstrap
 --yes` if origin holds Dolt data at refs/dolt/data. Without that data it
 makes no database, since bootstrap would make an empty one, and says the
-beads stay on the machine that has them. With no .beads/ at all it runs
+beads stay on the machine that has them. An origin that is a folder on
+Windows reaches bd as a file URL in sync.remote, because Dolt rejects the
+raw path. With no .beads/ at all it runs
 `bd init --stealth --non-interactive`. A run that finds nothing to do
 writes nothing and says the workspace is already in stealth mode. It
 never pushes Dolt data, never commits, never rewrites git history and
@@ -43,20 +45,25 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import bd_files
 import git_exclude
+import links
 import repo_settings
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, run
 
 WORKSPACE = ".beads"
 DOLT_DATA = "refs/dolt/data"
+SYNC_REMOTE = "sync.remote"
+WINDOWS_FOLDER = re.compile(r"[A-Za-z]:[\\/]|[\\/]{2}")
 
 
 class StealthError(Exception):
@@ -99,6 +106,18 @@ def disk_text(main_tree: Path, path: str) -> str | None:
         return handle.read()
 
 
+def has_unstaged_changes(main_tree: Path, path: str) -> bool:
+    """Whether git reports a change to the file on disk against the index.
+
+    Git applies core.autocrlf here, so a file written with CRLF while the index holds LF is unchanged, and a byte
+    comparison with the index would say otherwise.
+    """
+    done = capture(["git", "diff", "--quiet", "--", path], main_tree, None)
+    if done.returncode > 1:
+        raise CommandError(f"git diff --quiet -- {path} failed: {done.stderr.strip()}")
+    return done.returncode == 1
+
+
 def stealth_line(path: str) -> str:
     """The exclude line for a path the switch untracks.
 
@@ -132,13 +151,13 @@ def plan_switch(main_tree: Path) -> Switch:
             kept_rules.append(path)
         if not bd_files.has_blocks(staged) and not (on_disk and bd_files.has_blocks(on_disk)):
             continue
-        if on_disk != staged:
+        if has_unstaged_changes(main_tree, path) or on_disk is None:
             raise StealthError(f"{path} holds bd's blocks and changes that are not staged, and the switch "
                                f"edits it. Stage, stash or undo the changes to {path} first")
-        if bd_files.is_stock_rules(path, staged):
+        if bd_files.is_stock_rules(path, on_disk):
             untracked.append(path)
         else:
-            rewritten_rules[path] = bd_files.without_blocks(staged)
+            rewritten_rules[path] = bd_files.without_blocks(on_disk)
     return Switch(untracked, rewritten_rules, kept_hook_files, kept_rules)
 
 
@@ -195,7 +214,8 @@ def write_blob(main_tree: Path, commit: str, mode: str, path: str) -> None:
     target = main_tree / path
     target.parent.mkdir(parents=True, exist_ok=True)
     if mode == "120000":
-        os.symlink(content.decode("utf-8"), target)
+        points_at = content.decode("utf-8")
+        links.create(target, points_at, (target.parent / points_at).is_dir())
         return
     target.write_bytes(content)
     if mode == "100755":
@@ -227,14 +247,31 @@ def has_database(main_tree: Path) -> bool:
     return "database_path" in json.loads(run(["bd", "where", "--json"], main_tree, None))
 
 
+def bd_remote_url(origin: str) -> str:
+    """The remote URL to give bd for a git origin.
+
+    bd prefixes `git+` to a raw Windows folder path, and Dolt rejects `git+C:\\...` as an invalid remote url. A
+    drive or UNC folder becomes a file URL, which bd and Dolt accept. Any other origin comes back unchanged.
+    """
+    if WINDOWS_FOLDER.match(origin):
+        return PureWindowsPath(origin).as_uri()
+    return origin
+
+
 def fetch_database(main_tree: Path) -> list[str]:
     """Makes the workspace's database from the Dolt data on origin, when origin holds any.
 
-    Without Dolt data on origin, bd bootstrap would make an empty database, so the script makes none.
+    Without Dolt data on origin, bd bootstrap would make an empty database, so the script makes none. A
+    sync.remote that bd holds wins over the git origin, so a folder origin on Windows reaches bd as a file URL
+    through sync.remote, and the repo's git origin stays as it is.
     """
     if not run(["git", "ls-remote", "origin", DOLT_DATA], main_tree, None).strip():
         return [f"there is no beads database in {main_tree / WORKSPACE}, and origin holds no Dolt data to make "
                 "one from, so this script made none. The beads stay on the machine that has them"]
+    origin = run(["git", "remote", "get-url", "origin"], main_tree, None).strip()
+    remote = bd_remote_url(origin)
+    if remote != origin:
+        run(["bd", "config", "set", SYNC_REMOTE, remote], main_tree, None)
     run(["bd", "bootstrap", "--yes"], main_tree, None)
     beads = json.loads(run(["bd", "list", "--all", "--limit", "0", "--json"], main_tree, None) or "[]")
     return [f"made the beads database from the Dolt data on origin with bd bootstrap; bd now lists "
@@ -256,6 +293,9 @@ def make_stealth(main_tree: Path) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):  # a pipe on Windows takes the console code page; a test's StringIO has no encoding
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(prog="beads_stealth.py",
                                      description="Put the beads workspace of the repo of the cwd in stealth mode.")
     parser.parse_args(argv)
@@ -263,7 +303,7 @@ def main(argv: list[str]) -> int:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         for line in make_stealth(main_tree):
             print(line)
-    except (StealthError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (StealthError, CommandError, links.LinkError, repo_settings.SettingsError, OSError) as error:
         print(f"beads_stealth: {error}", file=sys.stderr)
         return 1
     return 0

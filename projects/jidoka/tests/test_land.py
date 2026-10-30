@@ -147,8 +147,8 @@ class LandingCase(unittest.TestCase):
             "lap_limit": 3,
             "apps": cls.apps(),
         }
-        done = subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), "write"], input=json.dumps(settings),
-                              capture_output=True, text=True, encoding="utf-8",
+        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), "write"]),
+                              input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
                               env={**os.environ, "JIDOKA_HOME": str(cls.home)}, cwd=cls.repo)
         if done.returncode != 0:
             raise fixture.FixtureError(done.stderr)
@@ -196,9 +196,10 @@ class LandingCase(unittest.TestCase):
             path = str(self.bd_in_front) + os.pathsep + path
         env = {**os.environ, "JIDOKA_HOME": str(self.jidoka_home), "PATH": path}
         inside_repo = bead.worktree if bead.worktree.exists() else self.repo
-        return subprocess.Popen([str(LAUNCHER), str(LAND), "--repo", str(inside_repo), "--bead", bead.id,
-                                 "--branch", bead.branch, "--worktree", str(bead.worktree),
-                                 "--message", message, "--jidoka-home", str(self.jidoka_home)],
+        command = fixture.launch_command(LAUNCHER, [
+            str(LAND), "--repo", str(inside_repo), "--bead", bead.id, "--branch", bead.branch,
+            "--worktree", str(bead.worktree), "--message", message, "--jidoka-home", str(self.jidoka_home)])
+        return subprocess.Popen(command,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
                                 env=env, cwd=self.root)
 

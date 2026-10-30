@@ -30,8 +30,9 @@ MERGE_GRANT = [
 
 
 def lap_lists(kind: str, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
-    return subprocess.run([str(test_scheduler.LAUNCHER), str(LAP_LISTS), kind], capture_output=True, text=True,
-                          encoding="utf-8", timeout=test_scheduler.RUN_TIMEOUT_SECONDS, env=env, cwd=cwd)
+    return subprocess.run(fixture.launch_command(test_scheduler.LAUNCHER, [str(LAP_LISTS), kind]),
+                          capture_output=True, text=True, encoding="utf-8",
+                          timeout=test_scheduler.RUN_TIMEOUT_SECONDS, env=env, cwd=cwd)
 
 
 def with_bd_refusing(bead: str, env: dict[str, str], folder: Path, fake_bd: str) -> dict[str, str]:
@@ -52,7 +53,8 @@ exec "{fake_bd}" "$@"
 
 def write_settings_in(home: Path, settings: dict, repo: Path) -> Path:
     """Writes the repo's settings into the home, as onboarding does, and returns the file that holds them."""
-    done = subprocess.run([str(test_scheduler.LAUNCHER), str(test_scheduler.SETTINGS_SCRIPT), "write"],
+    command = fixture.launch_command(test_scheduler.LAUNCHER, [str(test_scheduler.SETTINGS_SCRIPT), "write"])
+    done = subprocess.run(command,
                           input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
                           timeout=test_scheduler.RUN_TIMEOUT_SECONDS, env={**os.environ, "JIDOKA_HOME": str(home)},
                           cwd=repo)
@@ -192,8 +194,8 @@ class LapListsTests(test_scheduler.SchedulerCase):
         self.assertIn("the built-in list", done.stderr)
 
     def test_a_call_with_no_worker_kind_is_a_usage_error(self):
-        done = subprocess.run([str(test_scheduler.LAUNCHER), str(LAP_LISTS)], capture_output=True, text=True,
-                              encoding="utf-8", timeout=test_scheduler.RUN_TIMEOUT_SECONDS,
+        done = subprocess.run(fixture.launch_command(test_scheduler.LAUNCHER, [str(LAP_LISTS)]),
+                              capture_output=True, text=True, encoding="utf-8", timeout=test_scheduler.RUN_TIMEOUT_SECONDS,
                               env=self.caller_env(self.home), cwd=self.repo)
 
         self.assertEqual(2, done.returncode)

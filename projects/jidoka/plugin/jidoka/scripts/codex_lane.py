@@ -26,9 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
-import signal
 import subprocess
 import sys
 import tempfile
@@ -38,6 +36,7 @@ from pathlib import Path
 import clock
 import lap_record
 import ledger
+import processes
 import repo_settings
 import review
 import routes
@@ -119,7 +118,7 @@ def codex_command(route: dict, lane: Lane, last_message: Path) -> list[str]:
 def stop(process: subprocess.Popen) -> None:
     """Ends codex and everything it started."""
     try:
-        os.killpg(process.pid, signal.SIGKILL)
+        processes.end_group(process.pid)
     except OSError:
         process.kill()
 
@@ -128,7 +127,7 @@ def run_codex(command: list[str], prompt: str, lane: Lane, last_message: Path) -
     try:
         process = subprocess.Popen(command, cwd=lane.worktree, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                                   start_new_session=True)
+                                   **processes.detached_options())
     except OSError as error:
         raise LaneError(f"cannot run codex: {error}") from error
     code: int | None

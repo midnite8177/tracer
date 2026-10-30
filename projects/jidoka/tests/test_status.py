@@ -44,8 +44,8 @@ class StatusCase(unittest.TestCase):
         (self.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
 
     def script(self, script: Path, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(script), *args], capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), capture_output=True,
+                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
                                    "BEADS_ACTOR": HUMAN})
 
@@ -168,7 +168,8 @@ class HeartbeatTests(StatusCase):
         outside = self.root / "elsewhere"
         outside.mkdir()
 
-        done = subprocess.run([str(LAUNCHER), str(HEARTBEAT), "beat", "--session", MANAGER_SESSION], capture_output=True, text=True,
+        command = fixture.launch_command(LAUNCHER, [str(HEARTBEAT), "beat", "--session", MANAGER_SESSION])
+        done = subprocess.run(command, capture_output=True, text=True,
                               encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=outside,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)})
 

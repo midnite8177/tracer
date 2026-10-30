@@ -60,8 +60,9 @@ class PermissionCase(unittest.TestCase):
 
     def script(self, script: Path, *args: str, stdin: str | None = None,
                cwd: Path | None = None) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(script), *args], input=stdin, capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=cwd or self.repo,
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), input=stdin,
+                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
+                              cwd=cwd or self.repo,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
                                    "BEADS_ACTOR": HUMAN})
 
@@ -82,7 +83,6 @@ class PermissionCase(unittest.TestCase):
         return json.loads(self.bd("comments", bead, "--json") or "[]") or []
 
     def ask(self, task: str, **changes: object) -> subprocess.CompletedProcess:
-        """Writes a question report in a scratch folder and posts it with park.py."""
         scratch = self.root / f"scratch-{task}"
         scratch.mkdir(exist_ok=True)
         (scratch / "question.json").write_text(json.dumps(report(**changes)), encoding="utf-8")

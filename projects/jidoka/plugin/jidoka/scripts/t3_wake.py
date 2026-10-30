@@ -34,6 +34,7 @@ from pathlib import Path
 
 import epics
 import heartbeat
+import processes
 import repo_settings
 import watch
 from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError, labels_of
@@ -116,8 +117,8 @@ def wait_and_send(epic: str, thread: str, home: Path, interval_seconds: int, rea
 
 
 def start_wakers(home: Path, session: str, folder: Path) -> None:
-    """Starts a detached `wait` process, in a session of its own so that it outlives the host, for each epic that
-    a manager of this session recorded a thread for and that the factory still holds."""
+    """Starts a `wait` process for each epic that a manager of this session recorded a thread for and that the
+    factory still holds. The process is detached from the host's session or console, so it outlives the host."""
     threads = threads_of_session(home, session)
     if not threads:
         return
@@ -131,7 +132,7 @@ def start_wakers(home: Path, session: str, folder: Path) -> None:
         if interval:
             command += ["--interval", interval]
         subprocess.Popen(command, cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
+                         stderr=subprocess.DEVNULL, **processes.detached_options())
 
 
 def main(argv: list[str]) -> int:

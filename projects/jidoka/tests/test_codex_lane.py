@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -22,11 +23,16 @@ USAGE = {"input_tokens": 1_000_000, "cached_input_tokens": 400_000, "output_toke
 FAKE_CODEX = """#!{python}
 import json
 import os
+import subprocess
 import sys
 import time
 
 behavior = json.loads(open(os.environ["CODEX_FAKE"], encoding="utf-8").read())
 argv = sys.argv[1:]
+if "child_pid_file" in behavior:
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    with open(behavior["child_pid_file"], "w", encoding="utf-8") as written:
+        written.write(str(child.pid))
 with open(os.environ["CODEX_CALLS"], "w", encoding="utf-8") as calls:
     json.dump({{"argv": argv, "stdin": sys.stdin.read(), "cwd": os.getcwd()}}, calls)
 time.sleep(behavior.get("sleep", 0))
@@ -54,9 +60,7 @@ class CodexLaneCase(test_ledger.LedgerBooks, test_review.ReviewCase):
                                                                         "second": CODEX_ROUTE}}), encoding="utf-8")
         cls.codex_bin = cls.root / "codex-bin"
         cls.codex_bin.mkdir()
-        fake = cls.codex_bin / "codex"
-        fake.write_text(FAKE_CODEX.format(python=sys.executable), encoding="utf-8")
-        fake.chmod(0o755)
+        fixture.write_executable(cls.codex_bin / "codex", FAKE_CODEX.format(python=sys.executable))
         cls.fakes = 0
 
     def setUp(self):
@@ -216,6 +220,26 @@ class AFailedCodexRunExitsOneAndLeavesNoReportTests(CodexLaneCase):
         done = self.run_lane(epic, action, "--wall-seconds", "1")
 
         self.assert_failed_without_a_report(epic, action, done, "wall clock")
+
+    def test_a_run_past_the_wall_clock_ends_the_processes_codex_started_too(self):
+        epic, printed = self.finish_epic_at_the_review()
+        action = self.spec_action_of(printed)
+        child_pid_file = self.root / f"codex-child-{self.fakes}.txt"
+        self.codex_ends(sleep=30, message="[]", child_pid_file=str(child_pid_file))
+
+        self.run_lane(epic, action, "--wall-seconds", "2")
+
+        child = int(child_pid_file.read_text(encoding="utf-8"))
+        self.assertTrue(self.ends_soon(child), "the process codex started is still running")
+
+    @staticmethod
+    def ends_soon(pid: int) -> bool:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if not fixture.process_is_running(pid):
+                return True
+            time.sleep(0.1)
+        return False
 
     def test_settings_that_hold_no_route_for_the_second_tier_fail_the_lane_before_codex_starts(self):
         epic, printed = self.finish_epic_at_the_review()

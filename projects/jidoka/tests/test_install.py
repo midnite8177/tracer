@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -16,6 +18,7 @@ sys.path.insert(0, str(HERE.parent))
 
 import install  # noqa: E402
 import jidoka_fixture as fixture  # noqa: E402
+import links  # noqa: E402
 
 
 def older_python() -> str | None:
@@ -64,7 +67,8 @@ class InstallerTestCase(unittest.TestCase):
 
     def codex_marketplaces(self) -> dict:
         """What `codex plugin marketplace list --json` shows, as marketplace name -> source."""
-        listed = subprocess.run([str(self.bin / "codex"), "plugin", "marketplace", "list", "--json"],
+        codex = fixture.executable_file(self.bin / "codex", fixture.WINDOWS)
+        listed = subprocess.run([str(codex), "plugin", "marketplace", "list", "--json"],
                                 capture_output=True, text=True, encoding="utf-8", check=True)
         return {entry["name"]: entry["marketplaceSource"]["source"] for entry in json.loads(listed.stdout)["marketplaces"]}
 
@@ -180,10 +184,10 @@ class SnapshotTests(InstallerTestCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
         snapshot = self.snapshot("0.1.0")
-        self.assertEqual((self.repo / "plugin" / ".claude-plugin" / "marketplace.json").read_bytes(),
-                         (snapshot / ".claude-plugin" / "marketplace.json").read_bytes())
-        self.assertEqual((self.repo / "plugin" / "jidoka" / "hooks" / "session_start.py").read_bytes(),
-                         (snapshot / "jidoka" / "hooks" / "session_start.py").read_bytes())
+        self.assertEqual((self.repo / "plugin" / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"),
+                         (snapshot / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+        self.assertEqual((self.repo / "plugin" / "jidoka" / "hooks" / "session_start.py").read_text(encoding="utf-8"),
+                         (snapshot / "jidoka" / "hooks" / "session_start.py").read_text(encoding="utf-8"))
         tree = fixture.run(["git", "rev-parse", "HEAD:plugin"], self.repo).strip()
         self.assertEqual(tree, (snapshot / install.TREE_FILE).read_text(encoding="utf-8").strip())
 
@@ -217,6 +221,7 @@ class SnapshotTests(InstallerTestCase):
         self.assertTrue((self.snapshot("0.1.0") / "jidoka" / "hooks" / "session_start.py").is_file())
         self.assertFalse((self.snapshot("0.1.0") / "jidoka" / "hooks" / "__pycache__").exists())
 
+    @unittest.skipIf(fixture.WINDOWS, "Windows keeps no executable bit in a file's mode")
     def test_the_launcher_keeps_its_executable_bit_in_the_snapshot(self):
         self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
 
@@ -234,7 +239,7 @@ class SnapshotTests(InstallerTestCase):
         self.assertEqual(0, done.returncode, done.stderr)
         alias = self.snapshot("0.1.0") / "jidoka" / "docs" / "alias.md"
         self.assertTrue(alias.is_symlink())
-        self.assertEqual("domain.md", os.readlink(alias))
+        self.assertEqual(Path("domain.md"), fixture.link_target(alias))
 
     @unittest.skipUnless(hasattr(tarfile, "data_filter"), "this Python has no tar extraction filters")
     def test_a_symlink_that_points_outside_the_plugin_is_refused_and_no_snapshot_is_left(self):
@@ -502,6 +507,10 @@ class JidokaUiPublishTests(InstallerTestCase):
         self.dotnet = self.bin / "dotnet"
         fixture.write_dotnet(self.dotnet, self.log)
 
+    def dotnet_file(self) -> Path:
+        """The file the fake dotnet is stored in, which is a .exe on Windows."""
+        return fixture.executable_file(self.dotnet, fixture.WINDOWS)
+
     def published_folder(self) -> Path:
         tree = fixture.run(["git", "rev-parse", "HEAD:projects/jidoka-ui"], self.repo).strip()
         return self.home.resolve() / "ui" / tree
@@ -518,14 +527,16 @@ class JidokaUiPublishTests(InstallerTestCase):
         self.assertEqual(0, done.returncode, done.stderr)
         app = self.published_folder() / "JidokaUi.Web.dll"
         self.assertTrue(app.is_file())
-        self.assertEqual({"dotnet": str(self.dotnet), "app": str(app), "port": 5099}, self.settings()["ui"])
+        recorded = self.settings()["ui"]
+        self.assertEqual(os.path.normcase(str(self.dotnet_file())), os.path.normcase(recorded["dotnet"]))
+        self.assertEqual({"dotnet": recorded["dotnet"], "app": str(app), "port": 5099}, recorded)
         self.assertIn(str(self.published_folder()), done.stdout)
 
     def test_publishes_the_web_project_in_release(self):
         self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
 
         [publish] = self.publishes()
-        self.assertTrue(publish[1].endswith("src/JidokaUi.Web/JidokaUi.Web.csproj"), publish)
+        self.assertTrue(Path(publish[1]).as_posix().endswith("src/JidokaUi.Web/JidokaUi.Web.csproj"), publish)
         self.assertEqual(["--configuration", "Release"], publish[2:4])
 
     def test_an_uncommitted_edit_to_jidoka_ui_never_reaches_what_is_published(self):
@@ -563,7 +574,7 @@ class JidokaUiPublishTests(InstallerTestCase):
         self.assertEqual(str(second / "JidokaUi.Web.dll"), self.settings()["ui"]["app"])
 
     def test_without_dotnet_the_install_goes_on_and_says_jidoka_ui_was_not_published(self):
-        self.dotnet.unlink()
+        self.dotnet_file().unlink()
 
         done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
 
@@ -575,7 +586,7 @@ class JidokaUiPublishTests(InstallerTestCase):
     def test_a_run_without_dotnet_keeps_the_jidoka_ui_an_earlier_run_published(self):
         self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
         recorded = self.settings()["ui"]
-        self.dotnet.unlink()
+        self.dotnet_file().unlink()
 
         done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
 
@@ -614,15 +625,20 @@ class PushoverKeysTests(InstallerTestCase):
     def pushover(self) -> dict:
         return json.loads((self.home / "pushover.json").read_text(encoding="utf-8"))
 
-    def test_the_keys_typed_at_the_terminal_are_written_to_the_pushover_file_for_its_owner_only(self):
+    def test_the_keys_typed_at_the_terminal_are_written_to_the_pushover_file(self):
         person = ScriptedTerminal("u-pat", "a-jidoka", "http://board.example:5099")
 
         line = install.ask_for_pushover(self.home, person.terminal())
 
         self.assertEqual({"user_key": "u-pat", "app_token": "a-jidoka", "ui_url": "http://board.example:5099"},
                          self.pushover())
-        self.assertEqual(0o600, (self.home / "pushover.json").stat().st_mode & 0o777)
         self.assertIn("Pushover is set up", line)
+
+    @unittest.skipIf(fixture.WINDOWS, "Windows has no POSIX file modes, so a file cannot be owner-only by its mode")
+    def test_the_pushover_file_is_readable_by_its_owner_only(self):
+        install.ask_for_pushover(self.home, ScriptedTerminal("u-pat", "a-jidoka", "").terminal())
+
+        self.assertEqual(0o600, (self.home / "pushover.json").stat().st_mode & 0o777)
 
     def test_the_application_token_is_typed_hidden_and_the_other_answers_are_not(self):
         person = ScriptedTerminal("u-pat", "a-jidoka", "")
@@ -743,6 +759,91 @@ class PrerequisiteTests(InstallerTestCase):
         self.assertEqual(4, len(missing))
 
 
+class WindowsPrerequisiteTests(InstallerTestCase):
+    """The checks that run only on Windows, run here with stand-ins for the answers Windows gives."""
+
+    def setUp(self):
+        super().setUp()
+        self.git_root = self.root / "Git"
+        (self.git_root / "cmd").mkdir(parents=True)
+        self.git = str(self.git_root / "cmd" / "git.exe")
+
+    def add_git_bash(self) -> Path:
+        bash = self.git_root / "bin" / "bash.exe"
+        bash.parent.mkdir(parents=True)
+        bash.write_text("", encoding="utf-8")
+        return bash
+
+    def links_allowed(self, link: Path, target: Path | str, target_is_directory: bool) -> None:
+        link.write_text("", encoding="utf-8")
+
+    def links_refused(self, link: Path, target: Path | str, target_is_directory: bool) -> None:
+        raise links.LinkError(f"this account cannot make the symbolic link {link}")
+
+    def links_broken(self, link: Path, target: Path | str, target_is_directory: bool) -> None:
+        raise OSError(5, "disk error")
+
+    def run_install(self, environ: dict, make_link, tools: fixture.ToolsOnPath) -> subprocess.CompletedProcess:
+        """Runs the installer's main in this process, with a PATH of the fake tools alone, and gives its exit code and stderr."""
+        fixture.build_bin(self.bin, tools, self.log, "", self.codex_state, "")
+        stderr = io.StringIO()
+        path = os.environ["PATH"]
+        os.environ["PATH"] = str(self.bin)
+        try:
+            with contextlib.redirect_stderr(stderr):
+                code = install.main(["--jidoka-home", str(self.home), "--config-dir", str(self.config_a)],
+                                    lambda git: install.find_missing_on_windows(git, environ, make_link))
+        finally:
+            os.environ["PATH"] = path
+        return subprocess.CompletedProcess([], code, "", stderr.getvalue())
+
+    def test_a_machine_with_git_bash_and_developer_mode_has_nothing_missing(self):
+        self.add_git_bash()
+
+        self.assertEqual([], install.find_missing_on_windows(self.git, {}, self.links_allowed))
+
+    def test_both_gaps_come_back_together(self):
+        self.assertEqual(2, len(install.find_missing_on_windows(self.git, {}, self.links_refused)))
+
+    def test_a_link_error_other_than_a_missing_privilege_is_not_taken_for_developer_mode(self):
+        self.add_git_bash()
+
+        with self.assertRaises(OSError):
+            install.find_missing_on_windows(self.git, {}, self.links_broken)
+
+    def test_an_install_without_git_bash_is_refused_naming_git_for_windows_and_installs_nothing(self):
+        done = self.run_install({}, self.links_allowed, fixture.WITHOUT_CODEX)
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("Git for Windows", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertFalse(self.home.exists())
+        self.assertEqual([], fixture.read_log(self.log))
+
+    def test_an_install_without_developer_mode_is_refused_naming_it_and_installs_nothing(self):
+        bash = self.add_git_bash()
+
+        done = self.run_install({"CLAUDE_CODE_GIT_BASH_PATH": str(bash)}, self.links_refused,
+                                fixture.WITHOUT_CODEX)
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("Developer Mode", done.stderr)
+        self.assertNotIn("Git for Windows", done.stderr)
+        self.assertFalse(self.home.exists())
+        self.assertEqual([], fixture.read_log(self.log))
+
+    def test_a_windows_machine_lacking_bd_and_git_bash_hears_of_both_in_one_refusal(self):
+        without_bd = fixture.ToolsOnPath(git=True, bd=fixture.Bd.NONE, claude=True, codex=False)
+
+        done = self.run_install({}, self.links_allowed, without_bd)
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("`bd`", done.stderr)
+        self.assertIn("Git for Windows", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertFalse(self.home.exists())
+
+
 class DirtyPluginFolderTests(InstallerTestCase):
     def test_an_edited_file_in_the_plugin_folder_stops_the_install_and_is_named(self):
         manifest = self.repo / "plugin" / "jidoka" / ".claude-plugin" / "plugin.json"
@@ -803,31 +904,25 @@ class DirtyPluginFolderTests(InstallerTestCase):
 class StealthWorkspaceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.template_dir = tempfile.TemporaryDirectory()
-        cls.template = Path(cls.template_dir.name) / "checkout"
+        cls.template = fixture.bd_folder(cls.addClassCleanup) / "checkout"
         fixture.build_checkout(cls.template)
         fixture.add_stealth_beads(cls.template)
         fixture.run(["bd", "create", "--title=Carry on", "--type=task"], cls.template)
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.template_dir.cleanup()
-
     def test_a_checkout_with_a_stealth_bd_workspace_installs_and_the_workspace_is_untouched(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            tools = fixture.ToolsOnPath(git=True, bd=fixture.Bd.REAL, claude=True, codex=False)
-            fixture.build_bin(root / "bin", tools, root / "calls.log", "", root / "codex-marketplaces.json", "")
-            user = root / "user"
-            user.mkdir()
+        root = fixture.bd_folder(self.addCleanup)
+        tools = fixture.ToolsOnPath(git=True, bd=fixture.Bd.REAL, claude=True, codex=False)
+        fixture.build_bin(root / "bin", tools, root / "calls.log", "", root / "codex-marketplaces.json", "")
+        user = root / "user"
+        user.mkdir()
 
-            done = fixture.run_script(self.template, "install.py",
-                                      ["--jidoka-home", str(root / "home"), "--config-dir", str(root / "claude")],
-                                      fixture.script_env(root / "bin", user))
+        done = fixture.run_script(self.template, "install.py",
+                                  ["--jidoka-home", str(root / "home"), "--config-dir", str(root / "claude")],
+                                  fixture.script_env(root / "bin", user))
 
-            self.assertEqual(0, done.returncode, done.stderr)
-            self.assertIn("Carry on", fixture.run(["bd", "list"], self.template))
-            self.assertEqual("", fixture.run(["git", "status", "--porcelain"], self.template))
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("Carry on", fixture.run(["bd", "list"], self.template))
+        self.assertEqual("", fixture.run(["git", "status", "--porcelain"], self.template))
 
 
 if __name__ == "__main__":

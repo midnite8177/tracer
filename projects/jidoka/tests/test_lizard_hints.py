@@ -55,9 +55,9 @@ class LizardScriptCase(unittest.TestCase):
         self.assertEqual(0, done.returncode, done.stderr)
 
     def launch(self, script: Path, *args: str, stdin: str = "") -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(script), *args], input=stdin, capture_output=True, text=True,
-                              encoding="utf-8", timeout=TIMEOUT_SECONDS, cwd=self.repo,
-                              env={**os.environ, "JIDOKA_HOME": str(self.home)})
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), input=stdin,
+                              capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT_SECONDS,
+                              cwd=self.repo, env={**os.environ, "JIDOKA_HOME": str(self.home)})
 
     def commit(self, files: dict[str, str]) -> str:
         for name, text in files.items():
@@ -158,8 +158,8 @@ class DesignLaneHintsTests(test_review.ReviewCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        done = subprocess.run([str(test_scheduler.LAUNCHER), str(test_scheduler.SETTINGS_SCRIPT), "write"],
-                              input=json.dumps({"lizard_limits": LIMITS}), capture_output=True, text=True,
+        command = fixture.launch_command(test_scheduler.LAUNCHER, [str(test_scheduler.SETTINGS_SCRIPT), "write"])
+        done = subprocess.run(command, input=json.dumps({"lizard_limits": LIMITS}), capture_output=True, text=True,
                               encoding="utf-8", timeout=TIMEOUT_SECONDS, cwd=cls.repo,
                               env={**os.environ, "JIDOKA_HOME": str(cls.home)})
         if done.returncode != 0:

@@ -2,7 +2,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -111,8 +110,7 @@ class OnboardingFixture:
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        cls.root = Path(cls.tmp.name).resolve()
+        cls.root = fixture.bd_folder(cls.addClassCleanup).resolve()
         cls.bin = cls.root / "bin"
 
         cls.repo = cls.root / "shop"
@@ -129,10 +127,6 @@ class OnboardingFixture:
         init_committed_repo(cls.plain_repo)
         cls.count = 0
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
-
     def setUp(self):
         type(self).count += 1
         self.home = self.root / f"jidoka-home-{self.count}"
@@ -144,11 +138,12 @@ class OnboardingFixture:
                 local.unlink()
 
     def env(self) -> dict:
-        return {"PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home), "HOME": str(self.home)}
+        return {"PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
+                **fixture.home_variables(self.home), **fixture.system_variables(os.environ, fixture.WINDOWS)}
 
     def settings_script(self, cwd: Path, args: list, stdin: str) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), *args], input=stdin, capture_output=True,
-                              text=True, encoding="utf-8", env=self.env(), cwd=cwd)
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), *args]), input=stdin,
+                              capture_output=True, text=True, encoding="utf-8", env=self.env(), cwd=cwd)
 
     def write(self, cwd: Path, settings: dict) -> subprocess.CompletedProcess:
         return self.settings_script(cwd, ["write"], json.dumps(settings))
@@ -162,8 +157,8 @@ class OnboardingFixture:
 
     def session(self, cwd: Path) -> subprocess.CompletedProcess:
         event = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd)}
-        return subprocess.run([str(LAUNCHER), str(HOOK)], input=json.dumps(event), capture_output=True,
-                              text=True, encoding="utf-8", env=self.env(), cwd=self.root)
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(HOOK)]), input=json.dumps(event),
+                              capture_output=True, text=True, encoding="utf-8", env=self.env(), cwd=self.root)
 
 
 class SettingsStorageTests(OnboardingFixture, unittest.TestCase):
@@ -561,8 +556,9 @@ class TrackedBeadsTests(OnboardingFixture, unittest.TestCase):
 
     def test_writes_settings_once_the_switch_has_untracked_the_beads(self):
         repo = self.committed_beads_repo()
-        switched = subprocess.run([str(LAUNCHER), str(STEALTH_SCRIPT)], capture_output=True, text=True,
-                                  encoding="utf-8", env={**self.env(), "PATH": os.environ["PATH"]}, cwd=repo)
+        switched = subprocess.run(fixture.launch_command(LAUNCHER, [str(STEALTH_SCRIPT)]), capture_output=True,
+                                  text=True, encoding="utf-8", env={**self.env(), "PATH": os.environ["PATH"]},
+                                  cwd=repo)
 
         done = self.write(repo, tracer_settings())
 

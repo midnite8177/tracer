@@ -16,7 +16,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import jidoka_fixture as fixture  # noqa: E402
+import jidoka_fixture as fixture
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
@@ -27,7 +27,6 @@ WAIT_SECONDS = "20"
 SHORT_WAIT_SECONDS = "1"
 ANSWER_TIMEOUT_SECONDS = 2
 
-# A dotnet that runs a published app which writes one line and exits before it binds its port.
 EXITS_AT_ONCE = "\n".join([
     f"#!{sys.executable}",
     "import sys",
@@ -35,7 +34,6 @@ EXITS_AT_ONCE = "\n".join([
     "sys.exit(134)",
     ""])
 
-# A dotnet whose app runs but never binds its port.
 NEVER_ANSWERS = "\n".join([
     f"#!{sys.executable}",
     "import time",
@@ -98,10 +96,11 @@ class JidokaUiStartTests(unittest.TestCase):
         (self.home / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
 
     def env(self) -> dict[str, str]:
-        return {"PATH": os.environ.get("PATH", ""), "HOME": str(self.root), "JIDOKA_HOME": str(self.home)}
+        return {"PATH": os.environ.get("PATH", ""), "HOME": str(self.root), "JIDOKA_HOME": str(self.home),
+                **fixture.system_variables(os.environ, fixture.WINDOWS)}
 
     def command(self, wait: str) -> list[str]:
-        return [str(LAUNCHER), str(UI), "start", "--jidoka-home", str(self.home), "--wait", wait]
+        return fixture.launch_command(LAUNCHER, [str(UI), "start", "--jidoka-home", str(self.home), "--wait", wait])
 
     def start(self, wait: str) -> subprocess.CompletedProcess:
         return subprocess.run(self.command(wait), capture_output=True, text=True, encoding="utf-8",
@@ -122,6 +121,9 @@ class JidokaUiStartTests(unittest.TestCase):
     def end_started_app(self) -> None:
         pid = self.started_pid()
         if pid is None:
+            return
+        if fixture.WINDOWS:
+            fixture.end_process(pid)
             return
         try:
             os.killpg(pid, signal.SIGKILL)
@@ -163,6 +165,7 @@ class JidokaUiStartTests(unittest.TestCase):
         self.assertEqual(str(self.app_folder), run["cwd"])
         self.assertEqual(str(self.home), run["jidoka_home"])
 
+    @unittest.skipIf(fixture.WINDOWS, "Windows has no sessions")
     def test_the_started_app_outlives_the_script_in_a_session_of_its_own(self):
         self.start(WAIT_SECONDS)
 

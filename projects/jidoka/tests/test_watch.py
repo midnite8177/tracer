@@ -29,13 +29,15 @@ class WatchCase(StopCase):
         environment = {key: value for key, value in os.environ.items() if key != "T3CODE_CLI_PATH"}
         if t3_path is not None:
             environment["T3CODE_CLI_PATH"] = t3_path
-        watcher = subprocess.Popen([str(LAUNCHER), str(WATCH), self.epic, "--interval", "1", *extra], cwd=self.repo,
+        command = fixture.launch_command(LAUNCHER, [str(WATCH), self.epic, "--interval", "1", *extra])
+        watcher = subprocess.Popen(command, cwd=self.repo,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
                                    env={**environment, "PATH": fixture.path_with(self.bin),
                                         "JIDOKA_HOME": str(self.home), "BEADS_ACTOR": HUMAN})
-        self.addCleanup(watcher.kill)
         self.addCleanup(watcher.stdout.close)
         self.addCleanup(watcher.stderr.close)
+        self.addCleanup(watcher.wait)
+        self.addCleanup(fixture.end_process, watcher.pid)
         began = watcher.stderr.readline()
         self.assertIn("watching", began, began)
         return watcher

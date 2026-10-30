@@ -8,11 +8,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import jidoka_fixture as fixture  # noqa: E402
-import test_design_findings  # noqa: E402
-import test_gate  # noqa: E402
-import test_scheduler  # noqa: E402
-import test_validation  # noqa: E402
+import jidoka_fixture as fixture
+import test_design_findings
+import test_gate
+import test_scheduler
+import test_validation
 
 GATE_PAGE = test_scheduler.PLUGIN / "scripts" / "gate_page.py"
 SECTIONS = ["In short", "Before and after", "How it works", "What changed", "Evidence", "Assumptions",
@@ -230,19 +230,28 @@ class ChangedFilesTests(GatePageCase):
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", self.file_block(html, "page.html"))
         self.assertNotIn("<script", html)
 
-
-    def test_a_file_whose_name_holds_a_double_quote_or_a_backslash_is_listed_under_its_real_name(self):
+    def files_added_and_listed(self, names: list) -> list:
+        """Commits a file for each name on the epic branch, and gives the data-path of each file the page lists."""
         epic, _, branch, _ = self.epic_with_changes()
-        tree = self.root / "quoted-edit"
+        tree = self.root / "named-edit"
         test_scheduler.git(self.repo, "worktree", "add", "-q", str(tree), branch)
-        for name in ('say "hi".txt', "back\\slash.txt"):
-            (tree / name).write_text("quoted\n", encoding="utf-8")
-        fixture.git_commit_all(tree, "Add files with names git quotes")
+        for name in names:
+            (tree / name).write_text("named\n", encoding="utf-8")
+        fixture.git_commit_all(tree, "Add files with names git may quote")
         test_scheduler.git(self.repo, "worktree", "remove", "--force", str(tree))
 
-        html = self.page_for(epic)
+        return re.findall(r'<details class="file" data-path="([^"]*)">', self.page_for(epic))
 
-        listed = re.findall(r'<details class="file" data-path="([^"]*)">', html)
+    def test_a_file_whose_name_holds_an_ampersand_or_a_letter_beyond_ascii_is_listed_under_its_real_name(self):
+        listed = self.files_added_and_listed(["fish & chips.txt", "café.txt"])
+
+        self.assertIn("fish &amp; chips.txt", listed)
+        self.assertIn("café.txt", listed)
+
+    @unittest.skipIf(fixture.WINDOWS, "a Windows file name cannot hold a double quote or a backslash")
+    def test_a_file_whose_name_holds_a_double_quote_or_a_backslash_is_listed_under_its_real_name(self):
+        listed = self.files_added_and_listed(['say "hi".txt', "back\\slash.txt"])
+
         self.assertIn("say &quot;hi&quot;.txt", listed)
         self.assertIn("back\\slash.txt", listed)
 

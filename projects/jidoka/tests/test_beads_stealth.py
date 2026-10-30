@@ -2,7 +2,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,7 +10,12 @@ sys.path.insert(0, str(HERE))
 
 import jidoka_fixture as fixture  # noqa: E402
 
+sys.path.insert(0, str(fixture.PROJECT / "plugin" / "jidoka" / "scripts"))
+
+import beads_stealth  # noqa: E402
+
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
+
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 STEALTH_SCRIPT = PLUGIN / "scripts" / "beads_stealth.py"
 BD_ALONE_FILES = [".agents/skills/beads/SKILL.md", ".agents/skills/beads/agents/openai.yaml",
@@ -43,7 +47,6 @@ def exclude_lines(repo: Path) -> list[str]:
 
 
 def drop_lines(file: Path, *starts: str) -> None:
-    """Rewrites the file without the lines that begin with any of starts."""
     lines = file.read_text(encoding="utf-8").splitlines(keepends=True)
     file.write_text("".join(line for line in lines if not line.startswith(starts)), encoding="utf-8", newline="")
 
@@ -52,25 +55,53 @@ def prepend(file: Path, text: str) -> None:
     file.write_text(text + file.read_text(encoding="utf-8"), encoding="utf-8", newline="")
 
 
+class BdRemoteUrlTests(unittest.TestCase):
+    def test_a_windows_folder_origin_becomes_a_file_url(self):
+        for origin, url in [(r"C:\Users\me\shop.git", "file:///C:/Users/me/shop.git"),
+                            ("C:/Users/me/shop.git", "file:///C:/Users/me/shop.git"),
+                            (r"C:\Users\me\my shop.git", "file:///C:/Users/me/my%20shop.git"),
+                            (r"\\server\share\shop.git", "file://server/share/shop.git"),
+                            ("//server/share/shop.git", "file://server/share/shop.git")]:
+            with self.subTest(origin=origin):
+                self.assertEqual(url, beads_stealth.bd_remote_url(origin))
+
+    def test_any_other_origin_is_left_as_it_is(self):
+        for origin in ["file:///C:/Users/me/shop.git", "https://host/o/r.git", "ssh://git@host/o/r.git",
+                       "git@host:o/r.git", "/tmp/shop.git"]:
+            with self.subTest(origin=origin):
+                self.assertEqual(origin, beads_stealth.bd_remote_url(origin))
+
+
 class BeadsStealthTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name).resolve()
+        self.root = fixture.bd_folder(self.addCleanup).resolve()
         self.home = self.root / "jidoka-home"
         self.home.mkdir()
         (self.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
         self.repo = self.root / "shop"
         committed_repo(self.repo)
 
-    def tearDown(self):
-        self.tmp.cleanup()
-
     def env(self) -> dict:
-        return {"PATH": os.environ["PATH"], "JIDOKA_HOME": str(self.home), "HOME": str(self.home)}
+        return {"PATH": os.environ["PATH"], "JIDOKA_HOME": str(self.home), **fixture.home_variables(self.home),
+                **fixture.system_variables(os.environ, fixture.WINDOWS)}
+
+    def keep_crlf_in_the_index(self) -> None:
+        fixture.run(["git", "config", "core.autocrlf", "false"], self.repo)
+
+    def check_out_with_crlf(self, *names: str) -> None:
+        """Gives the files the CRLF line endings that Windows git writes to disk while its index holds LF."""
+        fixture.run(["git", "config", "core.autocrlf", "true"], self.repo)
+        for name in names:
+            file = self.repo / name
+            file.write_bytes(file.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+
+    def assert_git_sees_no_changes(self) -> None:
+        quiet = subprocess.run(["git", "diff", "--quiet"], cwd=self.repo, capture_output=True)
+        self.assertEqual(0, quiet.returncode, quiet.stderr)
 
     def switch(self, cwd: Path) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(STEALTH_SCRIPT)], capture_output=True, text=True,
-                              encoding="utf-8", env=self.env(), cwd=cwd)
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(STEALTH_SCRIPT)]), capture_output=True,
+                              text=True, encoding="utf-8", env=self.env(), cwd=cwd)
 
     def add_bare_origin(self) -> Path:
         origin = self.root / "shop.git"
@@ -121,7 +152,7 @@ class BeadsStealthTests(unittest.TestCase):
         again = self.switch(clone)
 
         listing = subprocess.run(["bd", "list", "--json"], capture_output=True, text=True, encoding="utf-8",
-                                 cwd=clone)
+                                 cwd=clone, env=fixture.environment_for("bd", os.environ.copy()))
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(0, again.returncode, again.stderr)
         for output in (done.stdout, again.stdout):
@@ -246,6 +277,7 @@ class BeadsStealthTests(unittest.TestCase):
         self.assertNotIn("/CLAUDE.md", exclude_lines(self.repo))
 
     def test_rules_files_with_crlf_line_endings_lose_bds_blocks_and_keep_crlf_in_what_remains(self):
+        self.keep_crlf_in_the_index()
         fixture.add_committed_bd_init(self.repo)
         drop_lines(self.repo / "AGENTS.md", "<!-- BEGIN BEADS INTEGRATION")
         for name in ("CLAUDE.md", "AGENTS.md"):
@@ -268,6 +300,64 @@ class BeadsStealthTests(unittest.TestCase):
             self.assertNotIn(b"## Beads Issue Tracker", data)
             staged = subprocess.run(["git", "show", f":{name}"], cwd=self.repo, capture_output=True, check=True)
             self.assertEqual(data, staged.stdout)
+
+    def test_rules_files_that_git_stores_as_lf_and_holds_as_crlf_on_disk_lose_bds_blocks_and_keep_crlf_on_disk(self):
+        fixture.add_committed_bd_init(self.repo)
+        drop_lines(self.repo / "AGENTS.md", "<!-- BEGIN BEADS INTEGRATION")
+        for name in ("CLAUDE.md", "AGENTS.md"):
+            prepend(self.repo / name, "# Shop rules\n\nShip on Fridays.\n\n")
+        fixture.git_commit_all(self.repo, "Add the shop's rules")
+        self.check_out_with_crlf("CLAUDE.md", "AGENTS.md")
+        self.assert_git_sees_no_changes()
+
+        done = self.switch(self.repo)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        lines = status(self.repo).splitlines()
+        for name in ("CLAUDE.md", "AGENTS.md"):
+            self.assertIn(f"M  {name}", lines)
+            data = (self.repo / name).read_bytes()
+            self.assertTrue(data.startswith(b"# Shop rules\r\n\r\nShip on Fridays.\r\n\r\n# "), data)
+            self.assertEqual(data.count(b"\n"), data.count(b"\r\n"), name)
+            self.assertNotIn(b"BEADS", data)
+            staged = subprocess.run(["git", "show", f":{name}"], cwd=self.repo, capture_output=True, check=True)
+            self.assertNotIn(b"\r", staged.stdout)
+            self.assertNotIn(b"BEADS", staged.stdout)
+
+    def test_a_stock_rules_file_that_git_stores_as_lf_and_holds_as_crlf_on_disk_is_untracked_whole(self):
+        fixture.add_committed_bd_init(self.repo)
+        self.check_out_with_crlf("CLAUDE.md", "AGENTS.md")
+        self.assert_git_sees_no_changes()
+
+        done = self.switch(self.repo)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        lines = status(self.repo).splitlines()
+        self.assertIn("D  CLAUDE.md", lines)
+        self.assertIn("D  AGENTS.md", lines)
+
+    def test_refuses_when_git_reports_a_change_to_a_crlf_rules_file_that_git_stores_as_lf(self):
+        fixture.add_committed_bd_init(self.repo)
+        self.check_out_with_crlf("CLAUDE.md")
+        with open(self.repo / "CLAUDE.md", "a", encoding="utf-8", newline="") as handle:
+            handle.write("Ship on Fridays.\r\n")
+
+        done = self.switch(self.repo)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("CLAUDE.md", done.stderr)
+        self.assertEqual([" M CLAUDE.md"], status(self.repo).splitlines())
+
+    def test_output_that_holds_an_em_dash_is_written_as_utf_8_when_the_console_code_page_is_not(self):
+        kiosk = self.root / "shop—kiosk"
+        committed_repo(kiosk)
+        fixture.add_stealth_beads(kiosk)
+
+        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(STEALTH_SCRIPT)]), capture_output=True,
+                              env={**self.env(), "PYTHONUTF8": "0", "PYTHONIOENCODING": "cp1252"}, cwd=kiosk)
+
+        self.assertEqual(0, done.returncode, done.stderr.decode("utf-8", "replace"))
+        self.assertIn(str(kiosk).encode("utf-8"), done.stdout)
 
     def test_a_rules_file_left_with_only_stock_text_after_a_block_without_begin_line_is_untracked_whole(self):
         fixture.add_committed_bd_init(self.repo)
@@ -380,7 +470,8 @@ class BeadsStealthTests(unittest.TestCase):
             on_disk = (clone / path).read_text(encoding="utf-8")
             if path == ".beads/config.yaml":
                 self.assertTrue(on_disk.startswith(committed), "bd bootstrap only adds its sync.remote line")
-                self.assertIn(f'sync.remote: "{origin}"', on_disk)
+                remote = origin.as_uri() if fixture.WINDOWS else str(origin)
+                self.assertIn(f'sync.remote: "{remote}"', on_disk)
             else:
                 self.assertEqual(committed, on_disk, path)
         self.assertTrue(os.access(clone / ".beads" / "hooks" / "pre-commit", os.X_OK))

@@ -7,6 +7,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import jidoka_fixture as fixture  # noqa: E402
 import test_cleanup  # noqa: E402
 import test_review  # noqa: E402
 import test_scheduler  # noqa: E402
@@ -28,13 +29,13 @@ SESSION = "session-of-the-manager"
 
 
 def tokens(model: str, input_tokens: int, output_tokens: int, cache_read: int, cache_creation: int) -> dict:
-    """What the lap mod writes for one agent id: the sums of its steps."""
+    """What the lap mod writes for one agent id, the sums of its steps."""
     return {"model": model, "steps": 3, "input_tokens": input_tokens, "output_tokens": output_tokens,
             "cache_read_input_tokens": cache_read, "cache_creation_input_tokens": cache_creation}
 
 
 def price(input_price: float, output_price: float, cache_read: float | None, cache_write: float | None) -> dict:
-    """A list price as the lookup prints it and the cache holds it: dollars for a million tokens of each kind."""
+    """A list price as the lookup prints it and the cache holds it, in dollars for a million tokens of each kind."""
     return {"input": input_price, "output": output_price, "cache_read": cache_read, "cache_write": cache_write}
 
 
@@ -65,7 +66,8 @@ class LedgerBooks:
 class LedgerCase(LedgerBooks, SchedulerCase):
     def launch_at(self, now: int, *scheduler_args: str) -> subprocess.CompletedProcess:
         """Runs the scheduler on a clock that reads `now`."""
-        return subprocess.run([str(LAUNCHER), str(PLUGIN / "scripts" / "scheduler.py"), *scheduler_args],
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"),
+                                                                *scheduler_args]),
                               capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
                               cwd=self.repo, env={**self.caller_env(self.home), "JIDOKA_NOW": str(now)})
 
@@ -252,8 +254,9 @@ class TheLedgerPricesWithTheCachedListPricesTests(LedgerCase):
         """Reports the lap's build with a worker that used a million input tokens of the model, with the pages read
         from the folder, and returns the dollars of its row and what the report said on stderr."""
         self.leave_tokens("agent-1", tokens(model, 1_000_000, 0, 0, 0))
-        done = subprocess.run([str(LAUNCHER), str(PLUGIN / "scripts" / "scheduler.py"), "report", lap.epic, lap.task,
-                               "failed", "--agent", "agent-1", "--why", "red"],
+        command = fixture.launch_command(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"), "report", lap.epic,
+                                                    lap.task, "failed", "--agent", "agent-1", "--why", "red"])
+        done = subprocess.run(command,
                               capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
                               cwd=self.repo, env={**self.caller_env(self.home), "JIDOKA_NOW": str(now),
                                                   "JIDOKA_PRICE_PAGES": str(pages)})
@@ -398,14 +401,15 @@ class TheEpicsRunningTotalTests(LedgerCase):
 
 class TheManagersRequestsTests(LedgerCase):
     def request(self, *flags: str) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(LEDGER), "request", "--session", SESSION, *flags],
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(LEDGER), "request", "--session", SESSION, *flags]),
                               capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
                               cwd=self.repo, env=self.caller_env(self.home))
 
     def test_a_request_of_the_session_that_manages_an_epic_writes_a_row_on_that_epic(self):
         lap = self.open_one_lap()
         (self.home / "heartbeat" / f"{lap.epic}.json").unlink(missing_ok=True)
-        claimed = subprocess.run([str(LAUNCHER), str(PLUGIN / "scripts" / "scheduler.py"), "next", lap.epic],
+        command = fixture.launch_command(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"), "next", lap.epic])
+        claimed = subprocess.run(command,
                                  capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
                                  cwd=self.repo, env={**self.caller_env(self.home), "JIDOKA_SESSION_ID": SESSION})
         self.assertEqual(0, claimed.returncode, claimed.stderr)

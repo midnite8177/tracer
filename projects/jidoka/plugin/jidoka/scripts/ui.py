@@ -4,8 +4,8 @@
 `start --jidoka-home <home> --wait <seconds>` reads the `ui` record that the installer keeps in the machine settings:
 the dotnet that published jidoka-ui, the published app and its port. It asks http://localhost:<port>/ for an
 answer, and any HTTP answer counts. When the address answers, it starts nothing. Otherwise it runs
-`<dotnet> <app> --port <port>` in the app's folder, in a session of its own so that the factory's session never
-holds it, with JIDOKA_HOME set to the home, its output in <home>/ui/jidoka-ui.log and its pid in
+`<dotnet> <app> --port <port>` in the app's folder, in a session of its own (on Windows, a process with no window or console of the caller) so that the factory's
+session never holds it, with JIDOKA_HOME set to the home, its output in <home>/ui/jidoka-ui.log and its pid in
 <home>/ui/jidoka-ui.pid. It then waits until the address answers, the app exits, or the wait passes, and returns.
 An app that has not answered by then keeps running, and the reason names its pid.
 
@@ -24,7 +24,6 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import subprocess
@@ -32,11 +31,11 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+import file_lock
+import processes
 import routes
 
 UI_FOLDER = "ui"
@@ -100,18 +99,6 @@ def answers(address: str) -> bool:
         return False
 
 
-@contextmanager
-def ui_locked(home: Path) -> Iterator[None]:
-    lock = home / LOCK_FILE
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock, "a", encoding="utf-8") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
-
-
 def log_tail(log: Path) -> str:
     try:
         lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -128,7 +115,7 @@ def start(published: Published, home: Path, wait: float) -> Outcome:
         process = subprocess.Popen([published.dotnet, str(published.app), "--port", str(published.port)],
                                    cwd=published.app.parent, env={**os.environ, "JIDOKA_HOME": str(home)},
                                    stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
-                                   start_new_session=True)
+                                   **processes.detached_options())
     (folder / PID_FILE).write_text(f"{process.pid}\n", encoding="utf-8")
     deadline = time.monotonic() + wait
     while True:
@@ -150,7 +137,7 @@ def ensure_answering(home: Path, wait: float) -> Outcome:
     published = published_in(home)
     if isinstance(published, str):
         return Outcome("not installed", None, published, None)
-    with ui_locked(home):
+    with file_lock.exclusive(home / LOCK_FILE):
         if answers(published.address):
             return Outcome("answering", published.address, None, None)
         return start(published, home, wait)

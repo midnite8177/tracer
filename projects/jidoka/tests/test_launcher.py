@@ -24,13 +24,15 @@ class LauncherTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def launch(self, args: list, env: dict) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), *args], capture_output=True, text=True, encoding="utf-8", env=env)
+        return subprocess.run(fixture.launch_command(LAUNCHER, args), capture_output=True, text=True,
+                              encoding="utf-8", env=env)
 
     def record(self, python: str) -> None:
         (self.home / "python").write_text(python + "\n", encoding="utf-8")
 
     def env(self) -> dict:
-        return {"PATH": os.environ["PATH"], "JIDOKA_HOME": str(self.home), "HOME": str(self.root)}
+        return {"PATH": os.environ["PATH"], "JIDOKA_HOME": str(self.home), "HOME": str(self.root),
+                **fixture.system_variables(os.environ, fixture.WINDOWS)}
 
     def test_it_runs_the_script_with_the_recorded_python_and_passes_the_arguments_through(self):
         recorded = self.root / "recorded-python"

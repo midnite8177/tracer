@@ -5,17 +5,18 @@ The lap mod denies a worker a shell `kill`, so a worker that starts its app any 
 then holds its port after the worker ends, and the next run meets a port in use or the old build.
 
 `start <app> [--env NAME=VALUE ...]` runs the `run` command that the repo settings give the app, in the folder the
-script runs in, in a process group of its own, with the variables added to its environment. It prints one line and
+script runs in, in a process group of its own (on Windows, a process with no window), with the variables added to its environment. It prints one line and
 returns at once; the worker waits for the app through the app's way in. The app's output goes to
-`.scratch/apps/<app>.log` in that folder. An app that an earlier start left running is stopped first, so a start
+`.scratch/apps/<app>.log` in that folder. It first stops an app that an earlier start left running, so a start
 always gives the build of the folder as it is now.
 
 `stop <app>` ends the process group that `start` recorded, with SIGTERM and then SIGKILL, and deletes the record.
-It succeeds when the app is not running.
+On Windows, where there are no process groups to signal, the record names the shell that runs the command, and `stop`
+ends that process with the processes it started. It succeeds when the app is not running.
 
 The lap mod allows this script to a check worker, whose arguments it does not read, so the script trusts nothing that
-the worker can write. The record of a start, the process group and the second its leader began, is a file under
-jidoka's home, in a folder keyed by the worktree, which the worker cannot write. `stop` signals the group only when
+the worker can write. The record of a start, the process group and the moment its leader began, as `processes.started_at` gives
+it, is a file under jidoka's home, in a folder keyed by the worktree, which the worker cannot write. `stop` signals the group only when
 the group's leader is still the process that `start` recorded, or is gone and the group lives on, which no other
 process can have taken the id of. The settings file is the one under jidoka's home, which is $JIDOKA_HOME, else
 ~/.jidoka, and there is no flag to name another. A variable `--env` adds must be named by a word of the repo
@@ -34,19 +35,16 @@ import hashlib
 import json
 import os
 import re
-import signal
 import subprocess
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import processes
 import repo_settings
 from commands import COMMAND_TIMEOUT_SECONDS, SCRATCH_FOLDER
 
 APPS_FOLDER = "apps"
-STOP_WAIT_SECONDS = 3.0
-STOP_POLL_SECONDS = 0.05
 APP_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 LOADING_NAMES = ("PATH", "SHELL", "HOME", "IFS", "ENV")
@@ -59,8 +57,8 @@ class AppProcessError(Exception):
 
 @dataclass(frozen=True)
 class Recorded:
-    """What a start recorded of the app it started: the process group, and the second its leader began, as `ps`
-    prints it, or None when `ps` printed none."""
+    """What a start recorded of the app it started: the process group, and the moment its leader began, as
+    `processes.started_at` gives it, or None when it gave none."""
     group: int
     started: str | None
 
@@ -110,16 +108,6 @@ def log_path(app: str, folder: Path) -> Path:
     return folder / SCRATCH_FOLDER / APPS_FOLDER / f"{app}.log"
 
 
-def started_at(pid: int) -> str | None:
-    """The second the process began, as `ps` prints it; None when no such process runs."""
-    try:
-        done = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True,
-                              timeout=COMMAND_TIMEOUT_SECONDS)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return done.stdout.strip() or None
-
-
 def recorded_group(record: Path) -> Recorded | None:
     """The process group a start recorded, or None when there is no record or it cannot be read."""
     try:
@@ -127,7 +115,7 @@ def recorded_group(record: Path) -> Recorded | None:
         group, started = shown.get("group"), shown.get("started")
     except (OSError, ValueError, AttributeError):
         return None
-    if not isinstance(group, int) or group <= 1 or group == os.getpgrp():
+    if not isinstance(group, int) or group <= 1 or group == processes.own_group():
         return None
     return Recorded(group, started if isinstance(started, str) else None)
 
@@ -135,35 +123,8 @@ def recorded_group(record: Path) -> Recorded | None:
 def is_what_start_recorded(recorded: Recorded) -> bool:
     """True when the group's leader began when the record says, or is gone. A pid that heads or holds a living group
     is never given to another process, so a group that outlives its leader is still the one that start made."""
-    leader = started_at(recorded.group)
+    leader = processes.started_at(recorded.group)
     return leader is None or leader == recorded.started
-
-
-def group_is_alive(group: int) -> bool:
-    try:
-        os.killpg(group, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def signal_group(group: int, signal_number: int) -> None:
-    try:
-        os.killpg(group, signal_number)
-    except ProcessLookupError:
-        return
-
-
-def end_group(group: int) -> None:
-    """Ends the group with SIGTERM, then with SIGKILL when it is still there after the wait."""
-    signal_group(group, signal.SIGTERM)
-    deadline = time.monotonic() + STOP_WAIT_SECONDS
-    while group_is_alive(group) and time.monotonic() < deadline:
-        time.sleep(STOP_POLL_SECONDS)
-    if group_is_alive(group):
-        signal_group(group, signal.SIGKILL)
 
 
 def stop(app: str, home: Path, folder: Path) -> bool:
@@ -172,8 +133,8 @@ def stop(app: str, home: Path, folder: Path) -> bool:
     recorded = recorded_group(record)
     was_running = False
     if recorded is not None and is_what_start_recorded(recorded):
-        was_running = group_is_alive(recorded.group)
-        end_group(recorded.group)
+        was_running = processes.group_is_alive(recorded.group)
+        processes.end_group(recorded.group)
     record.unlink(missing_ok=True)
     return was_running
 
@@ -186,10 +147,10 @@ def start(app: str, command: str, variables: dict[str, str], home: Path, folder:
     with log.open("xb") as output:
         process = subprocess.Popen(command, shell=True, cwd=folder, env={**os.environ, **variables},
                                    stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
-                                   start_new_session=True)
+                                   **processes.detached_options())
     record = record_path(app, home, folder)
     record.parent.mkdir(parents=True, exist_ok=True)
-    record.write_text(json.dumps({"app": app, "group": process.pid, "started": started_at(process.pid),
+    record.write_text(json.dumps({"app": app, "group": process.pid, "started": processes.started_at(process.pid),
                                   "command": command}) + "\n", encoding="utf-8")
     return process.pid
 

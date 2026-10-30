@@ -9,10 +9,13 @@ public sealed class ServedPageAddressTests
     [Fact]
     public void NamesTheKindTheBeadAndTheProjectThatHoldsIt()
     {
-        var bead = new BeadAddress(ProjectPath.From("/work/shop front"), "b-7");
+        var tempFolder = Path.TrimEndingDirectorySeparator(Path.GetTempPath());
+        var project = ProjectPath.From(Path.Combine(tempFolder, "shop front"));
+        var bead = new BeadAddress(project, "b-7");
+        var escapedSeparator = Path.DirectorySeparatorChar == '/' ? "%2F" : "%5C";
 
         Assert.Equal(
-            "jidoka-page/question/b-7?project=%2Fwork%2Fshop%20front",
+            $"jidoka-page/question/b-7?project={Uri.EscapeDataString(tempFolder)}{escapedSeparator}shop%20front",
             ServedPageAddress.Of(JidokaPageKind.Question, bead));
     }
 

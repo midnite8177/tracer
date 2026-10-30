@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -8,7 +9,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import jidoka_fixture as fixture  # noqa: E402
+import jidoka_fixture as fixture
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
@@ -61,8 +62,7 @@ class SessionStartTests(unittest.TestCase):
         cls.plain_worktree = root / "plain-feature"
         fixture.run(["git", "worktree", "add", "-q", "-b", "feature", str(cls.plain_worktree)], cls.plain_repo)
 
-        cls.not_a_repo = root / "folder"
-        cls.not_a_repo.mkdir()
+        cls.not_a_repo = fixture.folder_without_beads_above([root, Path(root.anchor)], Path(root.anchor))
 
         cls.beads_folder_above_the_repo = root / "outer"
         (cls.beads_folder_above_the_repo / ".beads").mkdir(parents=True)
@@ -71,12 +71,14 @@ class SessionStartTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        fixture.remove_tree_quietly(cls.not_a_repo)
         cls.tmp.cleanup()
 
     def start(self, stdin: str, process_cwd: Path, path: str) -> subprocess.CompletedProcess:
-        env = {"PATH": path, "JIDOKA_HOME": str(self.home), "HOME": str(self.home)}
-        return subprocess.run([str(LAUNCHER), str(HOOK)], input=stdin, capture_output=True, text=True,
-                              encoding="utf-8", env=env, cwd=process_cwd)
+        env = {"PATH": path, "JIDOKA_HOME": str(self.home), "HOME": str(self.home),
+               **fixture.system_variables(os.environ, fixture.WINDOWS)}
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(HOOK)]), input=stdin, capture_output=True,
+                              text=True, encoding="utf-8", env=env, cwd=process_cwd)
 
     def session(self, cwd: Path) -> subprocess.CompletedProcess:
         event = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd)}
@@ -85,14 +87,15 @@ class SessionStartTests(unittest.TestCase):
     def session_with_env_file(self, cwd: Path, env_file: Path, session_id: str) -> subprocess.CompletedProcess:
         event = {"session_id": session_id, "hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd)}
         env = {"PATH": self.path, "JIDOKA_HOME": str(self.home), "HOME": str(self.home),
-               "CLAUDE_ENV_FILE": str(env_file)}
-        return subprocess.run([str(LAUNCHER), str(HOOK)], input=json.dumps(event), capture_output=True, text=True,
-                              encoding="utf-8", env=env, cwd=self.not_a_repo)
+               "CLAUDE_ENV_FILE": str(env_file), **fixture.system_variables(os.environ, fixture.WINDOWS)}
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(HOOK)]), input=json.dumps(event),
+                              capture_output=True, text=True, encoding="utf-8", env=env, cwd=self.not_a_repo)
 
     def exported_by(self, env_file: Path) -> str:
         """The value of JIDOKA_SESSION_ID in a shell that sources the env file."""
-        return subprocess.run(["sh", "-c", f". '{env_file}' && printf %s \"$JIDOKA_SESSION_ID\""],
-                              capture_output=True, text=True, encoding="utf-8").stdout
+        source = f". '{env_file.as_posix()}' && printf %s \"$JIDOKA_SESSION_ID\""
+        return subprocess.run([fixture.real_shell(), "-c", source], capture_output=True, text=True,
+                              encoding="utf-8").stdout
 
     def test_a_session_start_exports_the_session_id_to_the_calls_the_session_makes(self):
         env_file = Path(self.tmp.name) / "session-env.sh"

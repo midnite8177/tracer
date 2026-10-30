@@ -62,15 +62,16 @@ class StopCase(unittest.TestCase):
                     "apps": [{"name": "shop", "kind": "program", "way_in": "its command line", "build": "make",
                               "run": None, "test": "true", "test_target": "-k <name>", "test_full": None,
                               "hand_run": [], "acceptance": "specs/acceptance"}]}
-        done = subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), "write"], input=json.dumps(settings),
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
+        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), "write"]),
+                              input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
+                              timeout=RUN_TIMEOUT_SECONDS,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)},
                               cwd=self.repo)
         self.assertEqual(0, done.returncode, done.stderr)
 
     def script(self, script: Path, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(script), *args], capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), capture_output=True,
+                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
                                    "BEADS_ACTOR": HUMAN})
 

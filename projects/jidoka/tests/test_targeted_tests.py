@@ -73,8 +73,8 @@ def git(repo: Path, *args: str) -> str:
 
 
 class TargetedTestsCase(unittest.TestCase):
-    """The shop repo, its repo settings, the fake bd first on the script's PATH, and the helpers of the targeted tests
-    script tests.
+    """The shop repo, its repo settings, the fake bd first on the script's PATH, and the helpers that the targeted tests
+    script's tests share.
 
     Each subclass sets up its own.
     """
@@ -143,8 +143,8 @@ class TargetedTestsCase(unittest.TestCase):
                  "run": None, "test": None, "test_full": None, "test_target": None, "hand_run": []},
             ],
         }
-        done = subprocess.run([str(LAUNCHER), str(SETTINGS_SCRIPT), "write"], input=json.dumps(settings),
-                              capture_output=True, text=True, encoding="utf-8",
+        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), "write"]),
+                              input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
                               env={**os.environ, "JIDOKA_HOME": str(cls.home)}, cwd=cls.repo)
         if done.returncode != 0:
             raise fixture.FixtureError(done.stderr)
@@ -180,10 +180,10 @@ class TargetedTestsCase(unittest.TestCase):
 
     def targeted_tests_on(self, bead: Bead, app: str, test_filter: str, home: Path,
                           base: str, *flags: str) -> subprocess.CompletedProcess:
-        return subprocess.run([str(LAUNCHER), str(TARGETED_TESTS), "--bead", bead.id,
-                               "--worktree", str(bead.worktree), "--base", base, "--app", app,
-                               "--filter", test_filter, "--jidoka-home", str(home), *flags],
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
+        command = fixture.launch_command(LAUNCHER, [
+            str(TARGETED_TESTS), "--bead", bead.id, "--worktree", str(bead.worktree), "--base", base, "--app", app,
+            "--filter", test_filter, "--jidoka-home", str(home), *flags])
+        return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
                               env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home)},
                               cwd=self.root)
 

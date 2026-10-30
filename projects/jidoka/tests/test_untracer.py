@@ -9,6 +9,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import jidoka_fixture  # noqa: E402
 import tracer_fixture as fixture  # noqa: E402
 
 SCRIPT = HERE.parent / "untracer.py"
@@ -91,21 +92,21 @@ class InstalledRepoTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.template_dir = tempfile.TemporaryDirectory()
-        cls.template = Path(cls.template_dir.name) / "repo"
+        cls.template = cls.make_folder(cls.addClassCleanup) / "repo"
         cls.build_template()
+
+    @staticmethod
+    def make_folder(add_cleanup) -> Path:
+        folder = tempfile.TemporaryDirectory()
+        add_cleanup(folder.cleanup)
+        return Path(folder.name)
 
     @classmethod
     def build_template(cls) -> None:
         fixture.build_fake_bd_repo(cls.template, cls.template.parent / "bin")
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.template_dir.cleanup()
-
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = self.make_folder(self.addCleanup)
         self.home = self.root / "jidoka-home"
         self.repo = self.root / "work" / "shop"
         self.repo.parent.mkdir()
@@ -113,9 +114,6 @@ class InstalledRepoTests(unittest.TestCase):
 
     def install(self) -> None:
         fixture.make_with_tracer(self.template, self.repo, self.REVISION)
-
-    def tearDown(self):
-        self.tmp.cleanup()
 
     def backups(self) -> list:
         return sorted((self.home / "untracer").glob("*/*"))
@@ -127,6 +125,10 @@ class InstalledRepoTests(unittest.TestCase):
 class RealBdTemplate:
     """Builds the template with the real bd, for the tests that check the bytes bd writes: its hooks, its marked block
     in CLAUDE.md, its info/exclude heading and its workspace."""
+
+    @staticmethod
+    def make_folder(add_cleanup) -> Path:
+        return jidoka_fixture.bd_folder(add_cleanup)
 
     @classmethod
     def build_template(cls) -> None:
@@ -346,9 +348,8 @@ class BdWrittenRemovalTests(RealBdTemplate, InstalledRepoTests):
         self.assertIn("BEGIN BEADS INTEGRATION", before["CLAUDE.md"].decode("utf-8"))
         for path in untouched:
             self.assertEqual(before[path], after[path], path)
-        listed = subprocess.run(["bd", "list", "--json"], cwd=self.repo, capture_output=True, text=True)
-        self.assertEqual(0, listed.returncode, listed.stderr)
-        self.assertEqual(["Carry on"], [bead["title"] for bead in json.loads(listed.stdout)])
+        listed = fixture.run(["bd", "list", "--json"], self.repo)
+        self.assertEqual(["Carry on"], [bead["title"] for bead in json.loads(listed)])
 
     def test_the_plan_names_each_kept_item_the_repo_has(self):
         done = run_untracer(self.repo, self.home)

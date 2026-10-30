@@ -15,8 +15,8 @@ then each error and failure with its traceback and buffered output, then
 none was skipped.
 
 Every worker sees the same folder in JIDOKA_SUITE_SHARED_FOLDER, for
-fixtures that one run makes once and every worker reuses. The folder is
-removed when the run ends.
+fixtures that one run makes once and every worker reuses. The run removes
+the folder when it ends.
 """
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ from pathlib import Path
 SHARED_FOLDER = "JIDOKA_SUITE_SHARED_FOLDER"
 SUITE = Path(__file__).resolve().parent
 NO_TESTS_EXIT_CODE = 5
+WINDOWS_WORKER_LIMIT = 61
 SEPARATOR_1 = "=" * 70
 SEPARATOR_2 = "-" * 70
 
@@ -59,6 +60,15 @@ class ClassOutcome:
 
     def successful(self) -> bool:
         return not self.errors and not self.failures and not self.unexpected_successes
+
+
+def worker_count(class_count: int, cpu_count: int | None, windows: bool) -> int:
+    """How many worker processes a run starts: one per class up to one per CPU, and on Windows at most 61.
+
+    ProcessPoolExecutor refuses more than 61 workers there, whatever the machine has.
+    """
+    limit = min(class_count, cpu_count or 1)
+    return min(limit, WINDOWS_WORKER_LIMIT) if windows else limit
 
 
 def select_pattern(pattern: str) -> str:
@@ -178,12 +188,13 @@ def main(argv: list[str]) -> int:
             in_this_process.append(test)
     longest_first = sorted(classes, key=lambda key: len(classes[key]), reverse=True)
     outcomes: dict[str, ClassOutcome] = {}
-    with tempfile.TemporaryDirectory(prefix="jidoka-suite-") as shared:
+    windows = os.name == "nt"
+    with tempfile.TemporaryDirectory(prefix="jidoka-suite-", ignore_cleanup_errors=windows) as shared:
         os.environ[SHARED_FOLDER] = shared
         unloadable = run_tests(unittest.TestSuite(in_this_process))
         report_progress(unloadable)
         if classes:
-            with ProcessPoolExecutor(max_workers=min(len(classes), os.cpu_count() or 1)) as pool:
+            with ProcessPoolExecutor(max_workers=worker_count(len(classes), os.cpu_count(), windows)) as pool:
                 futures = {pool.submit(run_class, classes[key]): key for key in longest_first}
                 for future in as_completed(futures):
                     key = futures[future]

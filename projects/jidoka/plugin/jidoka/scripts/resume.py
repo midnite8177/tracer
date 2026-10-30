@@ -7,24 +7,22 @@ A factory is stopped on an epic when the epic is one the factory runs, it has op
 human, the factory has started on it before, and its heartbeat is not fresh. A parked epic, one at the acceptance
 gate and one whose only open tasks are parked wait on the human, not on a restart.
 
-An orphan worker is a process that a dead host left running in a lap's worktree: its parent is the init process, so
-no host owns it. A person's shell or editor in the worktree has a parent and is left alone.
+An orphan worker is a process that a dead host left running in a lap's worktree: its parent is the init process, or on
+Windows a process that has ended, so no host owns it. A person's shell or editor in the worktree has a parent and is left alone.
 
 A merge lock is dead when the process that took it is gone. The lock file holds that process's id; a file with no
-readable id is dead once it is older than LOCK_UNRECORDED_SECONDS, which a live holder never needs to write it.
+readable id is dead once it is older than LOCK_UNRECORDED_SECONDS, which is longer than a live holder needs to write it.
 """
 from __future__ import annotations
 
 import os
-import signal
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import heartbeat
 import lap_record
-from commands import (FACTORY_LABEL, CommandError, bd_list, bd_show, capture, is_labeled_for_human, metadata_of,
-                      run)
+import processes
+from commands import FACTORY_LABEL, bd_list, bd_show, is_labeled_for_human, metadata_of, run
 from epic_branch import branch_head
 from epic_reader import EPIC_TYPE, read_epic
 from epics import is_running
@@ -32,10 +30,7 @@ from land import merge_lock
 from merge_gate import contains
 
 FACTORY_COMMAND = "/jidoka:factory"
-INIT_PROCESS = 1
 LOCK_UNRECORDED_SECONDS = 60
-STOP_WAIT_SECONDS = 3.0
-STOP_POLL_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -49,16 +44,6 @@ class StoppedEpic:
         plural = "task" if self.open_tasks == 1 else "tasks"
         return (f"jidoka: {self.title} ({self.id}) stopped with {self.open_tasks} open {plural} left. "
                 f"Resume it with {FACTORY_COMMAND} {self.id}")
-
-
-def process_is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 def recorded_holder(lock: Path) -> int | None:
@@ -75,7 +60,7 @@ def clear_dead_merge_lock(home: Path, now: float) -> str | None:
         return None
     holder = recorded_holder(lock)
     if holder is not None:
-        dead = not process_is_alive(holder)
+        dead = not processes.is_alive(holder)
     else:
         try:
             dead = now - lock.stat().st_mtime > LOCK_UNRECORDED_SECONDS
@@ -88,52 +73,15 @@ def clear_dead_merge_lock(home: Path, now: float) -> str | None:
     return f"the merge lock at {lock} was held by {who}, which is gone, so it is cleared"
 
 
-def parent_of(pid: int) -> int | None:
-    done = capture(["ps", "-o", "ppid=", "-p", str(pid)], Path.cwd(), None)
-    try:
-        return int(done.stdout.strip())
-    except ValueError:
-        return None
-
-
-def pids_with_cwd_in(worktree: Path) -> list[int]:
-    """The processes whose working folder is the worktree or a folder under it, as lsof lists them."""
-    root = worktree.resolve()
-    try:
-        done = capture(["lsof", "-a", "-d", "cwd", "-Fpn"], Path.cwd(), None)
-    except CommandError:
-        return []
-    found: list[int] = []
-    pid: int | None = None
-    for line in done.stdout.splitlines():
-        if line.startswith("p") and line[1:].isdigit():
-            pid = int(line[1:])
-        elif line.startswith("n") and pid is not None:
-            folder = Path(line[1:])
-            if folder == root or root in folder.parents:
-                found.append(pid)
-    return found
-
-
 def stop_orphans(worktree: Path) -> list[int]:
     """Stops each orphan worker left in the worktree and returns their ids.
 
-    Each gets SIGTERM, and SIGKILL when it is still there after STOP_WAIT_SECONDS.
+    Each gets SIGTERM, and SIGKILL when it is still there after the wait. On Windows each ends at once, with the
+    processes it started.
     """
-    orphans = [pid for pid in pids_with_cwd_in(worktree) if pid != os.getpid() and parent_of(pid) == INIT_PROCESS]
+    orphans = processes.orphans_in(worktree, os.getpid())
     for pid in orphans:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            continue
-        deadline = time.monotonic() + STOP_WAIT_SECONDS
-        while process_is_alive(pid) and time.monotonic() < deadline:
-            time.sleep(STOP_POLL_SECONDS)
-        if process_is_alive(pid):
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        processes.end_process(pid)
     return orphans
 
 

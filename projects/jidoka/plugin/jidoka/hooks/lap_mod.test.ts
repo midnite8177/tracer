@@ -1,6 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
+import { jidokaScriptsIn, runsCheckScripts, runsScheduler } from './lap_mod.js'
 
 const WORKTREE = '/repo/.worktrees/lap-t1'
 const HOST_VERDICT = { decision: 'ask', reason: 'the host decides' } as const
@@ -8,8 +9,8 @@ const HOST_VERDICT = { decision: 'ask', reason: 'the host decides' } as const
 const LAP_LIST = ['dotnet build App.slnx', 'TMPDIR=/tmp python3 tests/run_suite.py', 'dotnet test App.slnx']
 
 type Launched = {
+  /** The plugin's folder as a command words it for Git Bash, with forward slashes, since an unquoted backslash is an escape. */
   pluginRoot: string
-  /** The worker kinds the lap-lists script was run for, in order. */
   asked: string[]
 }
 
@@ -20,11 +21,35 @@ type Launched = {
  * folder is read off the launcher's path.
  */
 function engineBeneath(on: On, commands: unknown[] | undefined): Launched {
-  return engineWith(on, commands, { places: {}, statFails: false, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+  return engineWith(on, commands, { ...NOTHING, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
 }
 
+/**
+ * The place a path names, as a POSIX literal such as `/repo/.worktrees/lap-t1`,
+ * whatever spelling the engine hands the file system calls. The engine hands a
+ * path as the platform's `path.resolve` writes it: as the mod wrote it on a
+ * Mac, and on Windows with a drive and backslashes
+ * (`C:\repo\.worktrees\lap-t1`). The fakes key on the literal so that one test
+ * reads the same on both.
+ */
+function literal(path: string): string {
+  return path.replace(/^\\\\\?\\/, '').replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')
+}
+
+/** How the engine spells a real location. It takes a POSIX literal and answers what `realPath` holds. */
+type Spelling = (literal: string) => string
+
+const AS_POSIX: Spelling = place => place
+const WITH_BACKSLASHES: Spelling = place => `C:${place.replaceAll('/', '\\')}`
+const WITH_EXTENDED_PREFIX: Spelling = place => `\\\\?\\c:${place.replaceAll('/', '\\')}`
+
 type World = {
-  /** Every path exists and is its own real location, except a path here and what lies beneath it: it lands at the place named, or nowhere for null. */
+  /** How the engine spells the real location of a path that no entry of `places` names. */
+  spelling: Spelling
+  /**
+   * Every path exists and is its own real location, except a path here and what lies beneath it: it lands at the
+   * place named, spelled just as given, or nowhere for null. A path is a POSIX literal.
+   */
   places: Record<string, string | null>
   statFails: boolean
   spawn: () => Promise<{ model: string; agentId: string } | { deny: string }>
@@ -35,11 +60,16 @@ function engineWith(on: On, commands: unknown[] | undefined, world: World): Laun
   const { places } = world
   on('fs.stat', (_, e) => {
     if (world.statFails) throw new Error('stat failed')
+    const path = literal(e.path)
     const at = Object.keys(places)
-      .filter(place => e.path === place || e.path.startsWith(`${place}/`))
+      .filter(place => path === place || path.startsWith(`${place}/`))
       .sort((a, b) => b.length - a.length)[0]
-    const target = at === undefined ? e.path : places[at]
-    const real = at === undefined || typeof target !== 'string' ? target : `${target}${e.path.slice(at.length)}`
+    const target = at === undefined ? world.spelling(path) : places[at]
+    const beneath = path.slice(at?.length ?? path.length)
+    const real =
+      at === undefined || typeof target !== 'string'
+        ? target
+        : `${target}${target.includes('\\') ? beneath.replaceAll('/', '\\') : beneath}`
     return { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false, realPath: real ?? undefined } }
   })
   on('agent.spawn', () => world.spawn())
@@ -47,7 +77,7 @@ function engineWith(on: On, commands: unknown[] | undefined, world: World): Laun
   on('process.run', (_, e) => {
     const [shell, launcher = '', script = '', kind = ''] = e.argv
     const root = launcher.slice(0, -'/bin/jidoka-run'.length)
-    launched.pluginRoot = root
+    launched.pluginRoot = root.replaceAll('\\', '/')
     const isLapLists =
       shell === 'sh' &&
       launcher.endsWith('/bin/jidoka-run') &&
@@ -485,10 +515,10 @@ test('a lap record of another shape denies the worker\'s calls instead of leavin
   expect(hostVerdict).toEqual(HOST_VERDICT)
 })
 
-const NOTHING: Pick<World, 'places' | 'statFails'> = { places: {}, statFails: false }
+const NOTHING: Pick<World, 'spelling' | 'places' | 'statFails'> = { spelling: AS_POSIX, places: {}, statFails: false }
 
-function engineWithPlaces(on: On, places: World['places']): Launched {
-  return engineWith(on, LAP_LIST, { ...NOTHING, places, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+function engineWithPlaces(on: On, places: World['places'], spelling: Spelling): Launched {
+  return engineWith(on, LAP_LIST, { ...NOTHING, spelling, places, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
 }
 
 /**
@@ -542,53 +572,153 @@ test('a lap worker that never started leaves no claim on the next unrecorded age
   expect(verdict).toEqual(HOST_VERDICT)
 })
 
-test('a write through a symlink inside the worktree that points outside it is denied', async ($, on) => {
-  engineWithPlaces(on, { [`${WORKTREE}/escape`]: '/repo/secrets' })
-  await startLap($, WORKTREE)
+type Form = {
+  name: string
+  spelling: Spelling
+}
 
-  const throughLink = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/escape/new.txt`, content: '' }, agentId: 'a1' })
-  const ordinary = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/src/new.txt`, content: '' }, agentId: 'a1' })
+const FORMS: Form[] = [
+  { name: 'a POSIX path', spelling: AS_POSIX },
+  { name: 'a drive path with backslashes', spelling: WITH_BACKSLASHES },
+  { name: 'a lower-case drive path with the extended prefix', spelling: WITH_EXTENDED_PREFIX },
+]
 
-  expect(throughLink.decision).toBe('deny')
-  expect(throughLink.reason).toContain(`${WORKTREE}/escape/new.txt`)
-  expect(ordinary.decision).toBe('allow')
-})
+/**
+ * Records a lap of `worktree` for agent a1 as the mod keeps it. A spawn cannot start a worker in a Windows path on a
+ * Mac, whose engine takes it for a relative one, and hands the file system calls such a path beneath the current
+ * folder; so a test of a Windows worktree path reaches the mod's reading of paths but not its file system calls.
+ */
+function recordLap(on: On, worktree: string): void {
+  on('state.get', () => ({ value: { value: { worktree, kind: 'lap', commands: [] }, version: 1 } }))
+}
 
-test('a write to a symlinked file that points outside the worktree is denied', async ($, on) => {
-  engineWithPlaces(on, { [`${WORKTREE}/config.toml`]: '/repo/config.toml' })
-  await startLap($, WORKTREE)
+async function writeTo($: Engine, file_path: string): Promise<{ decision: string; reason?: string }> {
+  return $.tool.check({ tool: 'Write', input: { file_path, content: '' }, agentId: 'a1' })
+}
 
-  const verdict = await $.tool.check({
-    tool: 'Edit',
-    input: { file_path: `${WORKTREE}/config.toml`, old_string: 'a', new_string: 'b' },
-    agentId: 'a1',
+for (const form of FORMS) {
+  const { spelling } = form
+  const worktree = WORKTREE
+
+  test(`a write through a symlink inside the worktree that points outside it is denied when the engine spells a real location as ${form.name}`, async ($, on) => {
+    engineWithPlaces(on, { [`${WORKTREE}/escape`]: spelling('/repo/secrets') }, spelling)
+    await startLap($, worktree)
+
+    const throughLink = await writeTo($, `${worktree}/escape/new.txt`)
+    const ordinary = await writeTo($, `${worktree}/src/new.txt`)
+
+    expect(throughLink.decision).toBe('deny')
+    expect(throughLink.reason).toContain(`${worktree}/escape/new.txt`)
+    expect(ordinary.decision).toBe('allow')
   })
 
-  expect(verdict.decision).toBe('deny')
-})
+  test(`a write through a symlink whose real location is inside the worktree is allowed when the engine spells a real location as ${form.name}`, async ($, on) => {
+    engineWithPlaces(on, { [`${WORKTREE}/shortcut`]: spelling(`${WORKTREE}/src`) }, spelling)
+    await startLap($, worktree)
 
-test('a worktree that is itself reached through a symlink still takes writes inside it', async ($, on) => {
-  engineWithPlaces(on, { [WORKTREE]: '/volume/lap-t1' })
-  await startLap($, WORKTREE)
+    const verdict = await writeTo($, `${worktree}/shortcut/new.txt`)
 
-  const verdict = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/src/a.py`, content: '' }, agentId: 'a1' })
-
-  expect(verdict.decision).toBe('allow')
-})
-
-test('a write to a file in folders not made yet is placed by the nearest folder that exists', async ($, on) => {
-  engineWithPlaces(on, {
-    [`${WORKTREE}/fresh`]: null,
-    [`${WORKTREE}/escape`]: '/repo/secrets',
-    [`${WORKTREE}/escape/fresh`]: null,
+    expect(verdict.decision).toBe('allow')
   })
+
+  test(`a write to a symlinked file that points outside the worktree is denied when the engine spells a real location as ${form.name}`, async ($, on) => {
+    engineWithPlaces(on, { [`${WORKTREE}/config.toml`]: spelling('/repo/config.toml') }, spelling)
+    await startLap($, worktree)
+
+    const verdict = await $.tool.check({
+      tool: 'Edit',
+      input: { file_path: `${worktree}/config.toml`, old_string: 'a', new_string: 'b' },
+      agentId: 'a1',
+    })
+
+    expect(verdict.decision).toBe('deny')
+  })
+
+  test(`a worktree that is itself reached through a symlink still takes writes inside it when the engine spells a real location as ${form.name}`, async ($, on) => {
+    engineWithPlaces(on, { [WORKTREE]: spelling('/volume/lap-t1') }, spelling)
+    await startLap($, worktree)
+
+    const verdict = await writeTo($, `${worktree}/src/a.py`)
+
+    expect(verdict.decision).toBe('allow')
+  })
+
+  test(`a write to a file in folders not made yet is placed by the nearest folder that exists when the engine spells a real location as ${form.name}`, async ($, on) => {
+    engineWithPlaces(
+      on,
+      {
+        [`${WORKTREE}/fresh`]: null,
+        [`${WORKTREE}/escape`]: spelling('/repo/secrets'),
+        [`${WORKTREE}/escape/fresh`]: null,
+      },
+      spelling,
+    )
+    await startLap($, worktree)
+
+    const inside = await writeTo($, `${worktree}/fresh/deep/a.py`)
+    const outside = await writeTo($, `${worktree}/escape/fresh/a.py`)
+
+    expect(inside.decision).toBe('allow')
+    expect(outside.decision).toBe('deny')
+  })
+}
+
+test('a write whose real location is on a network share, a device or a volume name is denied', async ($, on) => {
+  const places = {
+    [`${WORKTREE}/share`]: '\\\\server\\share\\data',
+    [`${WORKTREE}/unc`]: '\\\\?\\UNC\\server\\share\\data',
+    [`${WORKTREE}/volume`]: '\\\\?\\Volume{0b6f1a52-3c1d-4d5e-9d70-2c0e4f1a7a10}\\data',
+    [`${WORKTREE}/device`]: '\\\\.\\PhysicalDrive0',
+  }
+  engineWithPlaces(on, places, AS_POSIX)
   await startLap($, WORKTREE)
 
-  const inside = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/fresh/deep/a.py`, content: '' }, agentId: 'a1' })
-  const outside = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/escape/fresh/a.py`, content: '' }, agentId: 'a1' })
+  for (const link of ['share', 'unc', 'volume', 'device']) {
+    expect((await writeTo($, `${WORKTREE}/${link}/new.txt`)).decision).toBe('deny')
+  }
+})
 
-  expect(inside.decision).toBe('allow')
-  expect(outside.decision).toBe('deny')
+test('a write whose real location the engine gives as no absolute path is denied', async ($, on) => {
+  engineWithPlaces(on, { [`${WORKTREE}/odd`]: 'repo/.worktrees/lap-t1/src' }, AS_POSIX)
+  await startLap($, WORKTREE)
+
+  expect((await writeTo($, `${WORKTREE}/odd/new.txt`)).decision).toBe('deny')
+})
+
+test('a write to a path that Windows reads against a drive or a share the mod cannot vouch for is denied', async ($, on) => {
+  engineWithPlaces(on, {}, WITH_BACKSLASHES)
+  recordLap(on, 'C:\\repo\\.worktrees\\lap-t1')
+
+  const paths = [
+    'C:notes.md',
+    'c:src\\a.py',
+    '\\\\server\\share\\repo\\.worktrees\\lap-t1\\src\\a.py',
+    '//server/share/repo/.worktrees/lap-t1/src/a.py',
+    '\\\\?\\UNC\\server\\share\\a.py',
+    '\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\a.py',
+  ]
+  const decisions: string[] = []
+  for (const path of paths) decisions.push((await writeTo($, path)).decision)
+
+  expect(decisions).toEqual(paths.map(() => 'deny'))
+})
+
+test('a write inside a Windows worktree is allowed in each form of its path', async ($, on) => {
+  engineWithPlaces(on, {}, WITH_BACKSLASHES)
+  recordLap(on, 'C:\\repo\\.worktrees\\lap-t1')
+
+  const paths = [
+    'C:\\repo\\.worktrees\\lap-t1\\src\\a.py',
+    'c:\\REPO\\.worktrees\\lap-t1\\src\\a.py',
+    'C:/repo/.worktrees/lap-t1/src/a.py',
+    '\\\\?\\C:\\repo\\.worktrees\\lap-t1\\src\\a.py',
+    '\\\\?\\c:\\repo\\.worktrees\\lap-t1\\src\\a.py',
+    'src\\a.py',
+  ]
+  const decisions: string[] = []
+  for (const path of paths) decisions.push((await writeTo($, path)).decision)
+
+  expect(decisions).toEqual(paths.map(() => 'allow'))
 })
 
 test('a write whose location cannot be resolved is denied', async ($, on) => {
@@ -927,7 +1057,7 @@ function engineThatSteps(on: On, env: Record<string, string>, usage: typeof STEP
     return { answer: '', toolUses: [], usage }
   })
   on('fs.write', (_, e) => {
-    files.set(e.path, e.text)
+    files.set(literal(e.path), e.text)
     return { value: undefined }
   })
   return files
@@ -964,7 +1094,7 @@ test("a lap worker's steps are summed under its agent id in the tokens folder of
 test('each lap worker keeps sums of its own, in the folder JIDOKA_HOME names', async ($, on) => {
   const files = engineThatSteps(on, { HOME: '/home/t', JIDOKA_HOME: '/data/jidoka' }, STEP)
   let started = 0
-  engineWith(on, LAP_LIST, { places: {}, statFails: false, spawn: () => Promise.resolve({ model: 'sonnet', agentId: `w${++started}` }) })
+  engineWith(on, LAP_LIST, { ...NOTHING, spawn: () => Promise.resolve({ model: 'sonnet', agentId: `w${++started}` }) })
   await startLap($, WORKTREE)
   await startLap($, WORKTREE)
 
@@ -993,6 +1123,36 @@ test('a step whose usage the host did not report still counts as a step', async 
   await step($, 'a1')
 
   expect(sumsAt(files, '/home/t/.jidoka/tokens/a1.json')).toMatchObject({ steps: 1, input_tokens: 0 })
+})
+
+test("a lap worker's sums go to the user profile's jidoka home when the host sets USERPROFILE and no HOME", async ($, on) => {
+  const files = engineThatSteps(on, { USERPROFILE: '/profile/t' }, STEP)
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  await step($, 'a1')
+
+  expect(sumsAt(files, '/profile/t/.jidoka/tokens/a1.json')).toMatchObject({ steps: 1, input_tokens: 100 })
+})
+
+test('HOME names the home of the sums before USERPROFILE does', async ($, on) => {
+  const files = engineThatSteps(on, { HOME: '/home/t', USERPROFILE: '/profile/t' }, STEP)
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  await step($, 'a1')
+
+  expect([...files.keys()]).toEqual(['/home/t/.jidoka/tokens/a1.json'])
+})
+
+test('a lap worker writes no sums where the host names no home at all', async ($, on) => {
+  const files = engineThatSteps(on, { HOME: '', USERPROFILE: '' }, STEP)
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  await step($, 'a1')
+
+  expect([...files.keys()]).toEqual([])
 })
 
 /** Stands for the host of a manager: its folder, its session, the scripts run beneath it, and a turn that ends. */
@@ -1086,11 +1246,20 @@ function managerCalling(
   reported: () => unknown,
   canWrite: boolean,
 ): { files: Map<string, string>; launcher: () => string } {
+  return managerCallingWith(on, { HOME: '/home/t' }, reported, canWrite)
+}
+
+function managerCallingWith(
+  on: On,
+  env: Record<string, string>,
+  reported: () => unknown,
+  canWrite: boolean,
+): { files: Map<string, string>; launcher: () => string } {
   const files = new Map<string, string>()
-  mock.env(on, { HOME: '/home/t' })
+  mock.env(on, env)
   on('fs.write', (_, e) => {
     if (!canWrite) throw new Error('disk full')
-    files.set(e.path, e.text)
+    files.set(literal(e.path), e.text)
     return { value: undefined }
   })
   const launched = engineBeneath(on, LAP_LIST)
@@ -1115,6 +1284,15 @@ test("a manager's call of the scheduler writes the account's usage windows to th
     five_hour: { used_percent: 91, resets_at: 3600 },
     seven_day: { used_percent: 40, resets_at: 86400 },
   })
+})
+
+test("a manager's usage reading goes to the user profile's jidoka home when the host sets USERPROFILE and no HOME", async ($, on) => {
+  const world = managerCallingWith(on, { USERPROFILE: '/profile/t' }, () => usageAt(91, 40), true)
+  await startLap($, WORKTREE)
+
+  await callScript(world, $, 'scheduler.py')
+
+  expect(sumsAt(world.files, '/profile/t/.jidoka/usage/claude.json')).toMatchObject({ five_hour: { used_percent: 91 } })
 })
 
 test('the account is read again on every call of the scheduler', async ($, on) => {
@@ -1198,4 +1376,53 @@ test('a usage reading that cannot be written still lets the scheduler run', asyn
   const verdict = await callScript(world, $, 'scheduler.py')
 
   expect(verdict.decision).toBe('allow')
+})
+
+const WINDOWS_ROOT = 'C:\\Users\\jeff\\.jidoka\\plugins\\0.1.31\\jidoka'
+const SCRIPTS = 'c:/users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts'
+
+test('a launcher call on a Windows plugin root is recognized in each form Git Bash receives the path', () => {
+  const calls = [
+    'C:/Users/jeff/.jidoka/plugins/0.1.31/jidoka/bin/jidoka-run C:/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py next e1',
+    'sh C:/Users/jeff/.jidoka/plugins/0.1.31/jidoka/bin/jidoka-run C:/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py next e1',
+    '/c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/bin/jidoka-run /c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py next e1',
+    'sh /C/users/JEFF/.jidoka/plugins/0.1.31/jidoka/bin/jidoka-run /c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py',
+    'sh "C:\\Users\\jeff\\.jidoka\\plugins\\0.1.31\\jidoka\\bin\\jidoka-run" "C:\\Users\\jeff\\.jidoka\\plugins\\0.1.31\\jidoka\\scripts\\scheduler.py" next e1',
+    "sh 'C:\\Users\\jeff\\.jidoka\\plugins\\0.1.31\\jidoka\\bin\\jidoka-run' 'C:\\Users\\jeff\\.jidoka\\plugins\\0.1.31\\jidoka\\scripts\\scheduler.py'",
+    'sh "/c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/skills/bench/../../bin/jidoka-run" /c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py',
+  ]
+
+  for (const call of calls) {
+    expect(jidokaScriptsIn(call, WINDOWS_ROOT)).toEqual([`${SCRIPTS}/scheduler.py`])
+    expect(runsScheduler(call, WINDOWS_ROOT)).toBe(true)
+  }
+})
+
+test('a launcher call on a Windows plugin root that names another file is not recognized', () => {
+  const root = 'C:/Users/jeff/.jidoka/plugins/0.1.31/jidoka'
+  const calls = [
+    'sh C:\\Users\\jeff\\.jidoka\\plugins\\0.1.31\\jidoka\\bin\\jidoka-run C:\\Users\\jeff\\.jidoka\\plugins\\0.1.31\\jidoka\\scripts\\scheduler.py',
+    '/d/Users/jeff/.jidoka/plugins/0.1.31/jidoka/bin/jidoka-run /d/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py',
+    '/c/Users/jeff/.jidoka/plugins/0.1.30/jidoka/bin/jidoka-run /c/Users/jeff/.jidoka/plugins/0.1.30/jidoka/scripts/scheduler.py',
+    `/c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/bin/jidoka-run ${root}/scripts/../../elsewhere.py`,
+    `${root}/bin/jidoka-run /c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/../../../../../../../../elsewhere.py`,
+    '/cc/Users/jeff/.jidoka/plugins/0.1.31/jidoka/bin/jidoka-run /cc/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py',
+    '/c/../Users/jeff/.jidoka/plugins/0.1.31/jidoka/bin/jidoka-run /c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py',
+    '/Users/jeff/.jidoka/plugins/0.1.31/jidoka/bin/jidoka-run /Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py',
+    '/c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/bin/jidoka-run /c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py && rm -rf /',
+  ]
+
+  for (const call of calls) {
+    expect(jidokaScriptsIn(call, WINDOWS_ROOT)).toBeUndefined()
+    expect(jidokaScriptsIn(call, root)).toBeUndefined()
+  }
+})
+
+test('a check worker may run the holdouts script on a Windows plugin root in either slash form and no other', () => {
+  const run = (script: string): string =>
+    `sh /c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/bin/jidoka-run ${script} read e1`
+
+  expect(runsCheckScripts(run('/c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/holdouts.py'), WINDOWS_ROOT)).toBe(true)
+  expect(runsCheckScripts(run('C:/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/app_process.py'), WINDOWS_ROOT)).toBe(true)
+  expect(runsCheckScripts(run('/c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py'), WINDOWS_ROOT)).toBe(false)
 })

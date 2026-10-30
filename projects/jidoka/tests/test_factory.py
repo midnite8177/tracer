@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -12,7 +13,8 @@ sys.path.insert(0, str(HERE))
 import jidoka_fixture as fixture  # noqa: E402
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
-SYSTEM_PATH = "/usr/bin:/bin"
+SYSTEM_PATH = (str(Path(os.environ["SystemRoot"]) / "System32") if fixture.WINDOWS
+               else f"/usr/bin{os.pathsep}/bin")
 RUN_TIMEOUT_SECONDS = 60
 
 JIDOKA_ENABLED = {"id": "jidoka@jidoka", "version": "0.1.12", "scope": "user", "enabled": True}
@@ -65,12 +67,13 @@ class FactoryCheckCase(unittest.TestCase):
         hooks.write_text(json.dumps(settings), encoding="utf-8")
 
     def check(self, config_dir: Path | None) -> subprocess.CompletedProcess:
-        env = {"PATH": f"{self.bin}:{SYSTEM_PATH}", "HOME": str(self.home), "JIDOKA_HOME": str(self.jidoka_home)}
+        env = {"PATH": f"{self.bin}{os.pathsep}{SYSTEM_PATH}", "HOME": str(self.home),
+               "USERPROFILE": str(self.home), "JIDOKA_HOME": str(self.jidoka_home), **fixture.system_variables(os.environ, fixture.WINDOWS)}
         if config_dir is not None:
             env["CLAUDE_CONFIG_DIR"] = str(config_dir)
-        return subprocess.run(["/bin/sh", str(self.plugin / "bin" / "jidoka-run"),
-                               str(self.plugin / "scripts" / "factory.py"), "check"],
-                              capture_output=True, text=True, encoding="utf-8", env=env, cwd=self.root,
+        command = fixture.launch_command(self.plugin / "bin" / "jidoka-run",
+                                         [str(self.plugin / "scripts" / "factory.py"), "check"])
+        return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", env=env, cwd=self.root,
                               timeout=RUN_TIMEOUT_SECONDS)
 
 
