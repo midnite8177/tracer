@@ -8,6 +8,9 @@ scheduler opens the next ready task's lap in the freed slot.
 
 A worker never asks live. A stage that needs a decision ends with a question
 report, the JSON file `question.json` in the lap's scratch folder:
+  question     the question in one sentence, which the page shows as its
+               heading and the comment shows first. A report without it is
+               refused.
   found        what the worker found, in plain words.
   options      two or more, each with a `name` and a `confidence`, the whole
                number of percent, from 0 to 100, that it is the right answer.
@@ -17,7 +20,7 @@ Three keys are optional, and the page and the comment show them when present:
   why          a list of short steps that explain why, in order.
   next         on an option, what happens next if the human picks it.
 Posting the question writes its page (question_page.py) in the jidoka home,
-then comments on the task what was found, the optional words, every option with
+then comments on the task the question, what was found, the optional words, every option with
 its confidence, the recommendation and the page's link, and sets the task's
 metadata `question.options` to the options as JSON and `question.recommended` to
 the recommended name. The comment holds the whole question without the page.
@@ -33,7 +36,8 @@ report adds two keys:
   call     the call the lap mod denied, as the denial printed it.
   pattern  the command prefix that would allow it: one simple command whose
            words appear in the call.
-Its options are exactly the three lists, `epic` (the epic's factory rules),
+Jidoka writes its question itself from the pattern, "May lap workers run
+<pattern>?", so its report needs no `question`. Its options are exactly the three lists, `epic` (the epic's factory rules),
 `repo` (the repo settings' worker commands) and `built-in` (the built-in
 list's additions on this machine). The task's metadata gets `question.call`
 and `question.pattern`, both empty after any other question. The answer
@@ -112,11 +116,12 @@ class Denial:
 
 @dataclass(frozen=True)
 class Question:
-    """What a worker found, the options it offers and the name of the one it recommends.
+    """The question in one sentence, what a worker found, the options it offers and the name of the one it recommends.
 
     `shown` is what the app shows and `why` the steps that explain it, "" and empty when the worker gave none. A
-    permission question also holds the denial it is about.
+    permission question also holds the denial it is about, and its sentence is written from that denial.
     """
+    question: str
     found: str
     shown: str
     why: tuple[str, ...]
@@ -186,6 +191,10 @@ def denial_of(report: dict, option_names: list[str]) -> Denial | None:
     return Denial(call, pattern)
 
 
+def permission_sentence(denial: Denial) -> str:
+    return f"May lap workers run {denial.pattern}?"
+
+
 def read_question(scratch: Path) -> Question:
     """The question report in the lap's scratch folder; raises QuestionError when it is missing or unusable."""
     path = scratch / QUESTION_REPORT
@@ -202,8 +211,10 @@ def read_question(scratch: Path) -> Question:
     recommended = text_of(report.get("recommended"), "recommended")
     if recommended not in names:
         raise QuestionError(f"recommended must be the name of one option: {', '.join(names)}")
-    return Question(text_of(report.get("found"), "found"), optional_text(report, "shown", "shown"), steps_of(report),
-                    options, recommended, denial_of(report, names))
+    denial = denial_of(report, names)
+    sentence = permission_sentence(denial) if denial is not None else text_of(report.get("question"), "question")
+    return Question(sentence, text_of(report.get("found"), "found"), optional_text(report, "shown", "shown"),
+                    steps_of(report), options, recommended, denial)
 
 
 def denial_paragraph(denial: Denial) -> str:
@@ -226,7 +237,7 @@ def question_comment(question: Question, page: Path, worktree: Path, branch: str
     why = f"Why: {' -> '.join(question.why)}\n\n" if question.why else ""
     options = "\n".join(option_line(option) for option in question.options)
     recommendation = question.recommendation
-    return (f"{QUESTION_PREFIX}{question.found}\n\n{shown}{why}{denial}"
+    return (f"{QUESTION_PREFIX}{question.question}\n\n{question.found}\n\n{shown}{why}{denial}"
             f"Options, each with the worker's confidence in percent that it is the right answer:\n{options}\n\n"
             f"Recommended: {recommendation.name} ({recommendation.confidence}%).\n\n"
             f"Page: {page.as_uri()}\n\n"
@@ -314,10 +325,9 @@ def park(task: str, tries: int, comment: str, metadata: list[tuple[str, str]], m
 
 def write_page(task: str, question: Question, home: Path, main_tree: Path) -> Path:
     """Writes the question's page; raises QuestionError when the file cannot be written."""
-    title = str(read_bead(task, main_tree).get("title") or task)
     cards = tuple(question_page.Card(option.name, option.confidence, option.next_step,
                                      option.name == question.recommended) for option in question.options)
-    page = question_page.QuestionPage(task, title, question.found, question.shown, question.why, cards)
+    page = question_page.QuestionPage(task, question.question, question.found, question.shown, question.why, cards)
     try:
         return question_page.write(page, home, main_tree)
     except OSError as error:

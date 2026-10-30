@@ -1076,11 +1076,13 @@ class ParkedLapTests(SchedulerCase):
 
 
 class QuestionTests(SchedulerCase):
+    QUESTION = "Should the receipt round to five cents like the till?"
     FOUND = "The till already rounds to five cents and the task does not say whether receipts should."
     OPTIONS = [{"name": "round receipts too", "confidence": 60}, {"name": "print exact cents", "confidence": 35}]
 
     def leave_question(self, lap: OpenLap, **changes: object) -> None:
-        report = {"found": self.FOUND, "options": self.OPTIONS, "recommended": "round receipts too", **changes}
+        report = {"question": self.QUESTION, "found": self.FOUND, "options": self.OPTIONS,
+                  "recommended": "round receipts too", **changes}
         self.leave_in(lap.worktree, ".scratch/question.json", json.dumps(report))
 
     def test_a_question_report_parks_its_task_with_the_human_label_a_comment_and_the_options_in_metadata(self):
@@ -1139,7 +1141,8 @@ class QuestionTests(SchedulerCase):
         opened = {action["task"]: action for action in self.next_printed(epic)["actions"]}
         self.assertEqual([asking, other], sorted(opened))
         self.leave_in(Path(opened[asking]["worktree"]), ".scratch/question.json",
-                      json.dumps({"found": self.FOUND, "options": self.OPTIONS, "recommended": "print exact cents"}))
+                      json.dumps({"question": self.QUESTION, "found": self.FOUND, "options": self.OPTIONS,
+                                  "recommended": "print exact cents"}))
 
         printed = self.report_printed(epic, asking, "question")
 
@@ -1159,6 +1162,17 @@ class QuestionTests(SchedulerCase):
         self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
         self.assertTrue(any("the question could not be posted" in text for text in self.texts(lap.task)))
         self.assertNotIn("human", self.shown(lap.task).get("labels") or [])
+
+    def test_a_question_report_without_the_question_counts_a_try_and_posts_nothing(self):
+        lap = self.open_one_lap()
+        report = {"found": self.FOUND, "options": self.OPTIONS, "recommended": "round receipts too"}
+        self.leave_in(lap.worktree, ".scratch/question.json", json.dumps(report))
+
+        self.report_printed(lap.epic, lap.task, "question")
+
+        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
+        self.assertTrue(any("question must be a non-empty string" in text for text in self.texts(lap.task)))
+        self.assertEqual([], [text for text in self.texts(lap.task) if text.startswith("Question: ")])
 
     def test_a_question_report_whose_recommendation_is_not_one_of_its_options_counts_a_try(self):
         lap = self.open_one_lap()
@@ -1651,7 +1665,7 @@ class DiscoveredWorkTests(SchedulerCase):
         [action] = self.next_printed(epic)["actions"]
         lap = OpenLap(epic, task, "", Path(action["worktree"]))
         self.leave_in(lap.worktree, ".scratch/question.json", json.dumps(
-            {"found": "Which rounding?", "options": [{"name": "five cents", "confidence": 60},
+            {"question": "Which rounding?", "found": "The till and the receipt round differently.", "options": [{"name": "five cents", "confidence": 60},
                                                       {"name": "exact", "confidence": 30}],
              "recommended": "five cents"}))
         self.report_printed(epic, task, "question")

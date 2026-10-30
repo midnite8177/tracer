@@ -183,7 +183,7 @@ own failure.
      because no comment came. The worker builds on the worktree as it
      stands, with its commits, and takes the answer as the decision. When a
      comment asks something back instead of deciding, the worker answers it
-     in the `found` of a new question report and ends with the question
+     in the `question` and `found` of a new question report and ends with the question
      outcome, so the task parks again;
    - the paths of `<skill folder>/../tdd/SKILL.md` and
      `<skill folder>/../unslop/SKILL.md`, absolute, to read before
@@ -224,7 +224,10 @@ own failure.
      `{"outcome": "failed", "why": "<one line>"}`. Or
      `{"outcome": "question"}`, after writing the question report to
      `question.json` in the scratch folder. The report is a JSON object
-     with `found`, what the worker found; `options`, two or more, each
+     with `question`, the question in one sentence, which the page shows
+     as its heading and the comment shows first, and without which the
+     scheduler refuses the report and counts a try; `found`, what the
+     worker found; `options`, two or more, each
      `{"name": "<option>", "confidence": <percent>}`, the worker's
      confidence in whole percent that it is the right answer; and
      `recommended`, the name of the one option it recommends. The report
@@ -242,7 +245,9 @@ own failure.
      A permission question is the question about a denied call that has no
      other way round. Its report adds `call`, the denied call as the
      denial printed it, and `pattern`, the command prefix that would allow
-     it: one simple command whose words appear in `call`. Its `options`
+     it: one simple command whose words appear in `call`. Its report needs no
+     `question`, because the scheduler writes "May lap workers run
+     <pattern>?" itself. Its `options`
      are exactly `epic` (the epic's factory rules), `repo` (the repo's
      list) and `built-in` (the built-in list, for every repo on the
      machine), each with its confidence. The human's answer names one

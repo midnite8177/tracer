@@ -10,6 +10,7 @@ sys.path.insert(0, str(HERE))
 import jidoka_fixture as fixture  # noqa: E402
 import test_permission_question as permission  # noqa: E402
 
+QUESTION = "Should the receipt round to five cents like the till?"
 FOUND = "The till already rounds to five cents and the task does not say whether receipts should."
 SHOWN = "The receipt prints 4.97 while the till screen says 4.95."
 WHY = ["The till rounds the total", "The receipt prints the unrounded sum", "The two totals differ"]
@@ -22,7 +23,7 @@ class QuestionPageCase(permission.PermissionCase):
     """A temporary git repo with the fake bd's beads and a temporary jidoka home, as the permission tests set up."""
 
     def plain_report(self, **changes: object) -> dict:
-        return {"found": FOUND, "options": OPTIONS, "recommended": "round receipts too", **changes}
+        return {"question": QUESTION, "found": FOUND, "options": OPTIONS, "recommended": "round receipts too", **changes}
 
     def ask_plain(self, task: str, **changes: object):
         scratch = self.root / f"scratch-{task}"
@@ -56,6 +57,14 @@ class QuestionPageTests(QuestionPageCase):
         self.assertEqual(self.home / "pages" / "shop", page.parent)
         self.assertEqual("", fixture.run(["git", "status", "--porcelain"], self.repo))
         self.assertEqual([], list(self.repo.rglob("*.html")))
+
+    def test_the_page_heading_is_the_question_and_not_the_title_of_the_bead(self):
+        task = self.asked_plain()
+
+        html = self.page_of(task).read_text(encoding="utf-8")
+
+        self.assertEqual([QUESTION], re.findall(r"<h1>([^<]*)</h1>", html))
+        self.assertNotIn("Read the card", html)
 
     def test_the_page_has_an_in_short_box_with_what_the_worker_found(self):
         page = self.page_of(self.asked_plain())
@@ -146,6 +155,13 @@ class QuestionCommentTests(QuestionPageCase):
         self.assertIsNotNone(link)
         self.assertEqual(self.page_of(task).as_uri(), link.group(1))
 
+    def test_the_comment_opens_with_the_question_in_one_sentence(self):
+        task = self.asked_plain()
+
+        first_line = self.question_text(task).splitlines()[0]
+
+        self.assertEqual(f"Question: {QUESTION}", first_line)
+
     def test_the_comment_carries_the_whole_question_without_the_page(self):
         task = self.asked_plain(shown=SHOWN, why=WHY)
 
@@ -180,6 +196,22 @@ class QuestionPageRefusalTests(QuestionPageCase):
 
         self.assertEqual(1, done.returncode)
         self.assertIn("why must be a list of non-empty strings", done.stderr)
+        self.assertEqual([], self.comments(task))
+        self.assertEqual([], list((self.home / "pages").rglob("*.html")))
+
+    def test_a_report_without_a_question_is_refused_and_parks_and_writes_nothing(self):
+        _, task = self.new_task()
+        scratch = self.root / f"scratch-{task}"
+        scratch.mkdir()
+        report = self.plain_report()
+        del report["question"]
+        (scratch / "question.json").write_text(json.dumps(report), encoding="utf-8")
+
+        done = self.script(permission.PARK, "question", task, "--scratch", str(scratch), "--worktree",
+                           str(self.repo / ".worktrees" / f"lap-{task}"), "--branch", f"lap/{task}", "--tries", "0")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("question must be a non-empty string", done.stderr)
         self.assertEqual([], self.comments(task))
         self.assertEqual([], list((self.home / "pages").rglob("*.html")))
 

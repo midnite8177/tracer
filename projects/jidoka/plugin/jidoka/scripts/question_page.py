@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The page that sits beside a question on its bead.
 
-park.py imports it. The page shows the options of a question: what the worker found, what the app shows, why step by
+park.py imports it. The page shows the options of a question under the question as its heading: what the worker found, what the app shows, why step by
 step, and a card for each option. The words are the worker's, from the question report, and are escaped here. The
 bead's comment holds the same words in plain text, so the page can fall behind it and the bead still wins. page.py
 says where a page lives and how it looks.
@@ -33,9 +33,10 @@ class Card:
 
 @dataclass(frozen=True)
 class QuestionPage:
-    """What a question page shows. `shown` is "" and `why` is empty when the worker gave neither."""
+    """What a question page shows. `question` is its heading, the question in one sentence, so the page says what it
+    asks. `shown` is "" and `why` is empty when the worker gave neither."""
     task: str
-    title: str
+    question: str
     found: str
     shown: str
     why: tuple[str, ...]
@@ -63,5 +64,5 @@ def body(page: QuestionPage) -> str:
 
 def write(page: QuestionPage, home: Path, main_tree: Path) -> Path:
     """Writes the page and returns its path; raises OSError when the stylesheet cannot be read or the file written."""
-    head = shared.PageHead(KIND, page.task, "Question", f"Question on {page.task}", page.title)
+    head = shared.PageHead(KIND, page.task, "Question", f"Question on {page.task}", page.question)
     return shared.write(head, body(page), home, main_tree)

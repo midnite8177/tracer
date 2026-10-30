@@ -270,7 +270,8 @@ _Avoid_: Side quest, follow-up, tech debt
 
 **Question**:
 A worker's request for a decision from the human, which parks its task or
-its epic. It says what the worker found, the options, each with the
+its epic. It asks in one sentence, which is the heading of its page and the
+first line of its comment, and says what the worker found, the options, each with the
 worker's confidence in percent that it is the right answer, and the one it
 recommends; unparking without an answer takes the recommendation. A worker
 never asks live: its stage ends with a question report in its scratch

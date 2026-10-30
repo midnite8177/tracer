@@ -24,7 +24,7 @@ HUMAN = "Pat Human"
 USER_KEY = "u-pat"
 APP_TOKEN = "a-jidoka"
 UI_URL = "http://board.example:5099"
-FOUND = "Should the till round to five cents?"
+QUESTION = "Should the till round to five cents?"
 
 
 class PushoverStandIn(http.server.ThreadingHTTPServer):
@@ -106,7 +106,8 @@ class NotifyCase(unittest.TestCase):
     def park_with_question(self, task: str) -> None:
         scratch = self.root / f"scratch-{task}"
         scratch.mkdir(exist_ok=True)
-        report = {"found": FOUND, "options": [{"name": "yes", "confidence": 60}, {"name": "no", "confidence": 40}],
+        report = {"question": QUESTION, "found": "The till rounds and the receipt does not.",
+                  "options": [{"name": "yes", "confidence": 60}, {"name": "no", "confidence": 40}],
                   "recommended": "yes"}
         (scratch / "question.json").write_text(json.dumps(report), encoding="utf-8")
         done = self.script(PARK, "question", task, "--scratch", str(scratch), "--worktree",
@@ -140,7 +141,7 @@ class ParkedTaskTests(NotifyCase):
         [message] = self.sent_to_pushover()
         self.assertEqual((USER_KEY, APP_TOKEN), (message["user"], message["token"]))
         self.assertEqual("Task parked: Read the card", message["title"])
-        self.assertIn(FOUND, message["message"])
+        self.assertIn(QUESTION, message["message"])
         self.assertEqual(self.link_to(task), message["url"])
 
     def test_the_same_park_is_not_announced_twice(self):
@@ -188,7 +189,7 @@ class ParkedTaskTests(NotifyCase):
         self.notify("task-parked", task)
 
         [entry] = self.notified(epic).values()
-        self.assertEqual(("Task parked: Read the card", FOUND), (entry["title"], entry["text"]))
+        self.assertEqual(("Task parked: Read the card", QUESTION), (entry["title"], entry["text"]))
         self.assertTrue(entry["fingerprint"])
 
     def test_an_entry_that_is_a_bare_fingerprint_stays_and_counts_as_sent(self):
@@ -210,7 +211,7 @@ class ParkedTaskTests(NotifyCase):
 
         done = self.notify("task-parked", task)
 
-        self.assertEqual(f"jidoka: Task parked: Read the card. {FOUND} ({task})\n", done.stdout)
+        self.assertEqual(f"jidoka: Task parked: Read the card. {QUESTION} ({task})\n", done.stdout)
 
     def test_a_task_that_is_not_parked_sends_nothing(self):
         self.configure_pushover()

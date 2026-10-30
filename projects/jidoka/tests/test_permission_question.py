@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -144,6 +145,15 @@ class PermissionQuestionTests(PermissionCase):
         self.assertEqual(["human"], shown["labels"])
         self.assertEqual((CALL, PATTERN), (shown["metadata"]["question.call"], shown["metadata"]["question.pattern"]))
 
+    def test_jidoka_writes_the_question_from_the_denial_for_the_page_heading_and_the_comments_first_line(self):
+        _, task = self.asked()
+
+        [question] = [comment for comment in self.comments(task) if str(comment["text"]).startswith("Question: ")]
+        html = next((self.home / "pages").rglob("*.html")).read_text(encoding="utf-8")
+
+        self.assertEqual("Question: May lap workers run make lint?", str(question["text"]).splitlines()[0])
+        self.assertEqual(["May lap workers run make lint?"], re.findall(r"<h1>([^<]*)</h1>", html))
+
     def test_a_pattern_whose_words_are_not_in_the_call_is_refused_and_parks_nothing(self):
         _, task = self.new_task()
 
@@ -248,7 +258,7 @@ class PermissionAnswerTests(PermissionCase):
         _, task = self.asked()
         scratch = self.root / f"scratch-{task}"
         (scratch / "question.json").write_text(json.dumps({
-            "found": "Round receipts?", "recommended": "yes",
+            "question": "Should receipts round?", "found": "Round receipts?", "recommended": "yes",
             "options": [{"name": "yes", "confidence": 60}, {"name": "no", "confidence": 40}]}), encoding="utf-8")
         parked = self.script(PARK, "question", task, "--scratch", str(scratch), "--worktree",
                              str(self.repo), "--branch", f"lap/{task}", "--tries", "0")

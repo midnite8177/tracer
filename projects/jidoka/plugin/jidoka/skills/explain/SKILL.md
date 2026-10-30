@@ -30,6 +30,9 @@ recommended option. Change the look here and nowhere else.
 A script makes every part it can count or list. The worker writes only the
 words and the steps of the picture.
 
+0. **The heading.** The report's `question`, the question in one
+   sentence, so the page says what it asks. The worker writes it as a
+   question the human can answer with one of the options.
 1. **In short.** A box at the top that holds the question's `found`.
 2. **What the app shows.** What a user sees today, from the report's
    `shown`. Left out when the worker gave none.
