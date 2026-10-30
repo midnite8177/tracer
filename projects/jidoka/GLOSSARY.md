@@ -272,8 +272,10 @@ _Avoid_: Side quest, follow-up, tech debt
 A worker's request for a decision from the human, which parks its task or
 its epic. It asks in one sentence, which is the heading of its page and the
 first line of its comment, and says what the worker found, the options, each with the
-worker's confidence in percent that it is the right answer, and the one it
-recommends; unparking without an answer takes the recommendation. A worker
+worker's confidence in percent that it is the right answer and what happens
+next if the human picks it, and the one it recommends. A report where an
+option lacks what happens next is refused and counts a try; jidoka writes
+that line itself for a permission question's options. Unparking without an answer takes the recommendation. A worker
 never asks live: its stage ends with a question report in its scratch
 folder, and a script posts it on the task. A worker makes the choice as an
 assumption instead when the bead, the epic, the glossary or an ADR already

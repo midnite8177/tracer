@@ -107,7 +107,8 @@ class NotifyCase(unittest.TestCase):
         scratch = self.root / f"scratch-{task}"
         scratch.mkdir(exist_ok=True)
         report = {"question": QUESTION, "found": "The till rounds and the receipt does not.",
-                  "options": [{"name": "yes", "confidence": 60}, {"name": "no", "confidence": 40}],
+                  "options": [{"name": "yes", "confidence": 60, "next": "The receipt rounds."},
+                              {"name": "no", "confidence": 40, "next": "The receipt keeps cents."}],
                   "recommended": "yes"}
         (scratch / "question.json").write_text(json.dumps(report), encoding="utf-8")
         done = self.script(PARK, "question", task, "--scratch", str(scratch), "--worktree",

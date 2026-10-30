@@ -228,12 +228,14 @@ own failure.
      as its heading and the comment shows first, and without which the
      scheduler refuses the report and counts a try; `found`, what the
      worker found; `options`, two or more, each
-     `{"name": "<option>", "confidence": <percent>}`, the worker's
-     confidence in whole percent that it is the right answer; and
+     `{"name": "<option>", "confidence": <percent>, "next": "<what happens
+     if the human picks it>"}`, where `confidence` is the worker's
+     confidence in whole percent that it is the right answer and `next` is
+     required on every option, so the scheduler refuses a report with an
+     option that lacks it and counts a try; and
      `recommended`, the name of the one option it recommends. The report
-     may add `shown`, what the app shows the user today; `why`, a list of
-     short steps that explain why, in order; and, on an option, `next`,
-     what happens next if the human picks it. The scheduler writes the
+     may add `shown`, what the app shows the user today, and `why`, a list
+     of short steps that explain why, in order. The scheduler writes the
      question's page from them, and the worker reads
      `<skill folder>/../explain/SKILL.md` for the page's parts and runs
      those words through unslop. A worker asks only when the bead, the
@@ -250,13 +252,13 @@ own failure.
      <pattern>?" itself. Its `options`
      are exactly `epic` (the epic's factory rules), `repo` (the repo's
      list), `built-in` (the built-in list, for every repo on the
-     machine) and `none` (no list changes), each with its confidence.
-     The human's answer names one list, and the scheduler puts the
-     pattern on it before the next lap, so the next lap's mod allows the
-     call. An answer that names no list is `none`: the pattern goes on
-     no list, and the worker reads the comment and carries on without the
-     call. When the answer arrives for a call the worker asked about, the
-     worker runs it.
+     machine) and `none` (no list changes), each with its confidence and
+     no `next`, which the scheduler writes. The human's answer names one
+     list, and the scheduler puts the pattern on it before the next lap,
+     so the next lap's mod allows the call. An answer that names no list
+     is `none`: the pattern goes on no list, and the worker reads the
+     comment and carries on without the call. When the answer arrives for
+     a call the worker asked about, the worker runs it.
 
      A worker that finds work outside its task never files a bead. It
      lists each finding in `discovered.json` in the scratch folder, a JSON

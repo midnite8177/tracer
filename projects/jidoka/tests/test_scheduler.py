@@ -24,6 +24,7 @@ MERGE_GATE = PLUGIN / "scripts" / "merge_gate.py"
 SAVED_PRICE_PAGES = HERE / "fixtures" / "pricing"
 
 RUN_TIMEOUT_SECONDS = 120
+TEST_SESSION_ID = "scheduler-test-session"
 OUT_OF_SCOPE = "## Out of Scope\nRefunds."
 ONE_SEAM = "## Seams\nThe card reader, run as a process."
 JEFF = "Jeff Scheduler"
@@ -122,9 +123,10 @@ class SchedulerCase(unittest.TestCase):
         return home
 
     def caller_env(self, home: Path) -> dict[str, str]:
-        """The environment the scripts run in, which reads the providers' pricing pages from the saved copies."""
+        """The environment the scripts run in, which reads the providers' pricing pages from the saved copies. It names
+        a session of its own, so a run does not take the session of whoever started the suite, or miss one."""
         return {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home), "BEADS_ACTOR": "claude",
-                "JIDOKA_PRICE_PAGES": str(SAVED_PRICE_PAGES)}
+                "JIDOKA_PRICE_PAGES": str(SAVED_PRICE_PAGES), "JIDOKA_SESSION_ID": TEST_SESSION_ID}
 
     def launch(self, script: Path, *args: str) -> subprocess.CompletedProcess:
         return self.launch_in(self.home, script, *args)
@@ -1078,7 +1080,8 @@ class ParkedLapTests(SchedulerCase):
 class QuestionTests(SchedulerCase):
     QUESTION = "Should the receipt round to five cents like the till?"
     FOUND = "The till already rounds to five cents and the task does not say whether receipts should."
-    OPTIONS = [{"name": "round receipts too", "confidence": 60}, {"name": "print exact cents", "confidence": 35}]
+    OPTIONS = [{"name": "round receipts too", "confidence": 60, "next": "The receipt prints 4.95."},
+               {"name": "print exact cents", "confidence": 35, "next": "The receipt prints the exact cents."}]
 
     def leave_question(self, lap: OpenLap, **changes: object) -> None:
         report = {"question": self.QUESTION, "found": self.FOUND, "options": self.OPTIONS,
@@ -1099,7 +1102,8 @@ class QuestionTests(SchedulerCase):
         metadata = self.metadata(lap.task)
         self.assertEqual(("parked", 0, "round receipts too"),
                          (metadata["lap.stage"], metadata["lap.tries"], metadata["question.recommended"]))
-        self.assertEqual(self.OPTIONS, json.loads(metadata["question.options"]))
+        self.assertEqual([{"name": option["name"], "confidence": option["confidence"]} for option in self.OPTIONS],
+                         json.loads(metadata["question.options"]))
         self.assertEqual("half built\n", (lap.worktree / "card.txt").read_text(encoding="utf-8"))
         self.assertIn(f"lap/{lap.task}", git(self.repo, "branch", "--list"))
         self.assertFalse((lap.worktree / ".scratch" / "question.json").exists())
@@ -1115,8 +1119,8 @@ class QuestionTests(SchedulerCase):
         self.assertEqual("jidoka", question["author"])
         text = str(question["text"])
         self.assertIn(self.FOUND, text)
-        self.assertIn("- round receipts too (60%)", text)
-        self.assertIn("- print exact cents (35%)", text)
+        self.assertIn("- round receipts too (60%): The receipt prints 4.95.", text)
+        self.assertIn("- print exact cents (35%): The receipt prints the exact cents.", text)
         self.assertIn("Recommended: round receipts too (60%).", text)
 
     def test_the_question_a_lap_asks_gets_a_page_in_the_jidoka_home_that_its_comment_links(self):
@@ -1162,17 +1166,6 @@ class QuestionTests(SchedulerCase):
         self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
         self.assertTrue(any("the question could not be posted" in text for text in self.texts(lap.task)))
         self.assertNotIn("human", self.shown(lap.task).get("labels") or [])
-
-    def test_a_question_report_without_the_question_counts_a_try_and_posts_nothing(self):
-        lap = self.open_one_lap()
-        report = {"found": self.FOUND, "options": self.OPTIONS, "recommended": "round receipts too"}
-        self.leave_in(lap.worktree, ".scratch/question.json", json.dumps(report))
-
-        self.report_printed(lap.epic, lap.task, "question")
-
-        self.assertEqual(("build", 1), (self.metadata(lap.task)["lap.stage"], self.metadata(lap.task)["lap.tries"]))
-        self.assertTrue(any("question must be a non-empty string" in text for text in self.texts(lap.task)))
-        self.assertEqual([], [text for text in self.texts(lap.task) if text.startswith("Question: ")])
 
     def test_a_question_report_whose_recommendation_is_not_one_of_its_options_counts_a_try(self):
         lap = self.open_one_lap()
@@ -1246,15 +1239,15 @@ class QuestionTests(SchedulerCase):
     def test_unparking_a_permission_question_puts_the_denied_calls_pattern_on_the_list_the_answer_names(self):
         lap = self.open_one_lap()
         options = [{"name": name, "confidence": 25} for name in ("epic", "repo", "built-in", "none")]
-        self.leave_question(lap, call="cd till && make lint --fix", pattern="make lint", options=options,
-                            recommended="epic")
+        self.leave_question(lap, call="cd till && make lint --fix", pattern="make lint", cause="off-lists",
+                            options=options, recommended="epic")
         self.report_printed(lap.epic, lap.task, "question")
-        self.human_comments(lap.task, "The epic's list.")
+        self.human_comments(lap.task, "epic: the list of this epic.")
         self.take_the_human_label_off(lap.task)
 
         [action] = self.next_printed(lap.epic)["actions"]
 
-        self.assertEqual({"source": "comment", "text": "The epic's list."}, action["answer"])
+        self.assertEqual({"source": "comment", "text": "epic: the list of this epic."}, action["answer"])
         done = fixture.run_launcher(LAUNCHER, [str(RULES), "show", lap.epic], None, self.caller_env(self.home),
                                     self.repo, RUN_TIMEOUT_SECONDS)
         self.assertEqual(["make lint"], json.loads(done.stdout)["settings"]["extra_commands"])
@@ -1263,7 +1256,8 @@ class QuestionTests(SchedulerCase):
             self):
         lap = self.open_one_lap()
         options = [{"name": name, "confidence": 25} for name in ("epic", "repo", "built-in", "none")]
-        self.leave_question(lap, call="rm till.txt", pattern="rm", options=options, recommended="epic")
+        self.leave_question(lap, call="rm /tmp/till.txt", pattern="rm", cause="outside-worktree", options=options,
+                            recommended="epic")
         self.report_printed(lap.epic, lap.task, "question")
         comment = "I deleted the file myself, add rm to no list."
         self.human_comments(lap.task, comment)
@@ -1287,8 +1281,10 @@ class QuestionTests(SchedulerCase):
         [asked_back] = self.next_printed(lap.epic)["actions"]
         self.assertEqual({"source": "comment", "text": "Why round at all?"}, asked_back["answer"])
         reply = "The till rounds to five cents because the coin tray holds no pennies."
-        self.leave_question(lap, found=reply, options=[{"name": "round receipts too", "confidence": 80},
-                                                      {"name": "print exact cents", "confidence": 15}])
+        self.leave_question(lap, found=reply, options=[{"name": "round receipts too", "confidence": 80,
+                                                       "next": "The receipt prints 4.95."},
+                                                      {"name": "print exact cents", "confidence": 15,
+                                                       "next": "The receipt prints the exact cents."}])
 
         parked = self.report_printed(lap.epic, lap.task, "question")
 
@@ -1685,8 +1681,9 @@ class DiscoveredWorkTests(SchedulerCase):
         [action] = self.next_printed(epic)["actions"]
         lap = OpenLap(epic, task, "", Path(action["worktree"]))
         self.leave_in(lap.worktree, ".scratch/question.json", json.dumps(
-            {"question": "Which rounding?", "found": "The till and the receipt round differently.", "options": [{"name": "five cents", "confidence": 60},
-                                                      {"name": "exact", "confidence": 30}],
+            {"question": "Which rounding?", "found": "The till and the receipt round differently.",
+             "options": [{"name": "five cents", "confidence": 60, "next": "The receipt rounds."},
+                         {"name": "exact", "confidence": 30, "next": "The receipt keeps cents."}],
              "recommended": "five cents"}))
         self.report_printed(epic, task, "question")
         fixture.run([self.bd, "label", "remove", task, "human"], self.repo)

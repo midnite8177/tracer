@@ -12,13 +12,14 @@ report, the JSON file `question.json` in the lap's scratch folder:
                heading and the comment shows first. A report without it is
                refused.
   found        what the worker found, in plain words.
-  options      two or more, each with a `name` and a `confidence`, the whole
-               number of percent, from 0 to 100, that it is the right answer.
+  options      two or more, each with a `name`, a `confidence`, the whole
+               number of percent, from 0 to 100, that it is the right answer,
+               and a `next`, what happens next if the human picks it. A report
+               where any option lacks `next` is refused.
   recommended  the `name` of the one option the worker recommends.
-Three keys are optional, and the page and the comment show them when present:
+Two keys are optional, and the page and the comment show them when present:
   shown        what the app shows the user today.
   why          a list of short steps that explain why, in order.
-  next         on an option, what happens next if the human picks it.
 Posting the question writes its page (question_page.py) in the jidoka home,
 then comments on the task the question, what was found, the optional words, every option with
 its confidence, the recommendation and the page's link, and sets the task's
@@ -42,8 +43,8 @@ three lists, `epic` (the epic's factory rules), `repo` (the repo settings'
 worker commands) and `built-in` (the built-in list's additions on this
 machine), and `none`, which changes no list. Jidoka writes each option's card itself, on the page and in the
 comment: the change the list makes in plain words, what the next lap does,
-and the list's name as the answer word to type. The worker's `next` on such
-an option is not shown. The task's metadata gets `question.call`
+and the list's name as the answer word to type. Such an option needs no
+`next` from the worker, and one it gives is not shown. The task's metadata gets `question.call`
 and `question.pattern`, both empty after any other question. The answer
 names one list, and the pattern goes onto it, so the next lap's mod allows
 the call. An answer that names no list is `none`: no list changes, and the
@@ -108,8 +109,8 @@ class QuestionError(Exception):
 @dataclass(frozen=True)
 class Option:
     """One answer a question offers, the worker's confidence in percent that it is the right one and what happens
-    next if the human picks it ("" when the worker gave none). A permission option also holds `change`, the change
-    its list makes in plain words, and its name is then the answer word the human types ("" for any other option)."""
+    next if the human picks it. A permission option also holds `change`, the change its list makes in plain words,
+    and its name is then the answer word the human types ("" for any other option)."""
     name: str
     confidence: int
     next_step: str
@@ -245,6 +246,10 @@ def read_question(scratch: Path) -> Question:
     denial = denial_of(report, names)
     if denial is None:
         sentence = text_of(report.get("question"), "question")
+        for option in options:
+            if not option.next_step:
+                raise QuestionError(f"next of the option {option.name} is missing; every option must say what "
+                                    "happens next if the human picks it")
     else:
         sentence = permission_sentence(denial)
         options = tuple(permission_option(option, denial) for option in options)

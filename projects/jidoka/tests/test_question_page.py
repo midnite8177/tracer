@@ -176,19 +176,30 @@ class QuestionCommentTests(QuestionPageCase):
         self.assertNotIn("<", text)
 
     def test_a_report_without_the_page_words_still_posts_and_names_each_option_with_its_confidence(self):
-        bare = [{"name": "round receipts too", "confidence": 60}, {"name": "print exact cents", "confidence": 35}]
-        task = self.asked_plain(options=bare)
+        task = self.asked_plain()
 
         text = self.question_text(task)
 
-        self.assertIn("- round receipts too (60%)\n", text)
-        self.assertIn("- print exact cents (35%)\n", text)
+        self.assertIn("- round receipts too (60%): The receipt prints 4.95 and the test pins it.", text)
+        self.assertIn("- print exact cents (35%): The till screen shows the exact cents.", text)
         self.assertNotIn("What the app shows", text)
         self.assertNotIn("Why:", text)
         self.assertEqual(2, self.page_of(task).read_text(encoding="utf-8").count('<article class="option'))
 
 
 class QuestionPageRefusalTests(QuestionPageCase):
+    def test_an_option_without_a_next_is_refused_and_posts_nothing(self):
+        _, task = self.new_task()
+        options = [OPTIONS[0], {"name": "print exact cents", "confidence": 35}]
+
+        done = self.ask_plain(task, options=options)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("next of the option print exact cents is missing", done.stderr)
+        self.assertEqual([], self.comments(task))
+        self.assertNotIn("human", self.shown(task).get("labels") or [])
+        self.assertEqual([], list((self.home / "pages").rglob("*.html")))
+
     def test_steps_of_why_that_are_not_a_list_of_text_are_refused_and_park_and_write_nothing(self):
         _, task = self.new_task()
 

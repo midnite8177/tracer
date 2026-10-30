@@ -329,7 +329,8 @@ class PermissionAnswerTests(PermissionCase):
         scratch = self.root / f"scratch-{task}"
         (scratch / "question.json").write_text(json.dumps({
             "question": "Should receipts round?", "found": "Round receipts?", "recommended": "yes",
-            "options": [{"name": "yes", "confidence": 60}, {"name": "no", "confidence": 40}]}), encoding="utf-8")
+            "options": [{"name": "yes", "confidence": 60, "next": "Receipts round."},
+                        {"name": "no", "confidence": 40, "next": "Receipts keep cents."}]}), encoding="utf-8")
         parked = self.script(PARK, "question", task, "--scratch", str(scratch), "--worktree",
                              str(self.repo), "--branch", f"lap/{task}", "--tries", "0")
         self.assertEqual(0, parked.returncode, parked.stderr)
