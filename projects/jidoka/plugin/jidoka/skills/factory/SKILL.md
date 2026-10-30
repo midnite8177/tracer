@@ -249,11 +249,14 @@ own failure.
      `question`, because the scheduler writes "May lap workers run
      <pattern>?" itself. Its `options`
      are exactly `epic` (the epic's factory rules), `repo` (the repo's
-     list) and `built-in` (the built-in list, for every repo on the
-     machine), each with its confidence. The human's answer names one
-     list, and the scheduler puts the pattern on it before the next lap,
-     so the next lap's mod allows the call. When the answer arrives for
-     a call the worker asked about, the worker runs it.
+     list), `built-in` (the built-in list, for every repo on the
+     machine) and `none` (no list changes), each with its confidence.
+     The human's answer names one list, and the scheduler puts the
+     pattern on it before the next lap, so the next lap's mod allows the
+     call. An answer that names no list is `none`: the pattern goes on
+     no list, and the worker reads the comment and carries on without the
+     call. When the answer arrives for a call the worker asked about, the
+     worker runs it.
 
      A worker that finds work outside its task never files a bead. It
      lists each finding in `discovered.json` in the scratch folder, a JSON

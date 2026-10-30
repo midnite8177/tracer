@@ -589,9 +589,14 @@ _Avoid_: Permission hook, guard, sandbox, allowlist
 **Permission question**:
 A question about a call the lap mod denied, when the worker has no other
 way round it. It names the denied call and a pattern, the command prefix
-that would allow it, and its options are the three lists: the epic's
-factory rules, the repo's list and the built-in list. The answer names one
-list, the pattern goes onto it, and the next lap's mod allows the call.
+that would allow it, and its options are the three lists, the epic's
+factory rules, the repo's list and the built-in list, and `none`. The
+answer names one list, the pattern goes onto it, and the next lap's mod
+allows the call. An answer that names no list is `none`: the pattern goes
+on no list, and the next lap's build carries the comment.
+Jidoka writes each option's card: the change the list makes in plain words,
+what the next lap does, and the list's name as the answer word the human
+types.
 _Avoid_: Permission prompt, approval request
 
 ### Repos

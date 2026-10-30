@@ -40,13 +40,14 @@ Jidoka writes its question itself from the pattern, "May lap workers run
 <pattern>?", so its report needs no `question`. Its options are exactly the
 three lists, `epic` (the epic's factory rules), `repo` (the repo settings'
 worker commands) and `built-in` (the built-in list's additions on this
-machine). Jidoka writes each option's card itself, on the page and in the
+machine), and `none`, which changes no list. Jidoka writes each option's card itself, on the page and in the
 comment: the change the list makes in plain words, what the next lap does,
 and the list's name as the answer word to type. The worker's `next` on such
 an option is not shown. The task's metadata gets `question.call`
 and `question.pattern`, both empty after any other question. The answer
 names one list, and the pattern goes onto it, so the next lap's mod allows
-the call. The scheduler adds the pattern when it opens the lap that follows
+the call. An answer that names no list is `none`: no list changes, and the
+next lap's build carries the comment. The scheduler adds the pattern when it opens the lap that follows
 the answer, and `answer` does the same from a command line.
 
 `question <task> --scratch <folder> --worktree <path> --branch <name> --tries <n>`
@@ -91,7 +92,9 @@ RECOMMENDED_KEY = "question.recommended"
 CALL_KEY = "question.call"
 PATTERN_KEY = "question.pattern"
 EPIC_LIST, REPO_LIST, BUILT_IN_LIST = "epic", "repo", "built-in"
+NO_LIST = "none"
 PERMISSION_LISTS = (EPIC_LIST, REPO_LIST, BUILT_IN_LIST)
+PERMISSION_ANSWERS = (*PERMISSION_LISTS, NO_LIST)
 SHELL_SYNTAX = re.compile(r"[;&|<>`\n]|\$\(")
 LEAST_OPTIONS = 2
 LEAST_CONFIDENCE = 0
@@ -186,9 +189,9 @@ def denial_of(report: dict, option_names: list[str]) -> Denial | None:
         return None
     call = text_of(report.get("call"), "call")
     pattern = text_of(report.get("pattern"), "pattern")
-    if sorted(option_names) != sorted(PERMISSION_LISTS):
-        raise QuestionError(f"the options of a permission question must be the three lists, one each: "
-                            f"{', '.join(PERMISSION_LISTS)}")
+    if sorted(option_names) != sorted(PERMISSION_ANSWERS):
+        raise QuestionError(f"the options of a permission question must be the four answers, one each: "
+                            f"{', '.join(PERMISSION_ANSWERS)}")
     if SHELL_SYNTAX.search(pattern):
         raise QuestionError("pattern must be one simple command, with no separator, redirect or substitution")
     wanted, spoken = words_of(pattern, "pattern"), words_of(call, "call")
@@ -215,6 +218,9 @@ def permission_option(option: Option, denial: Denial) -> Option:
         BUILT_IN_LIST: (f"Every lap in every repo on this machine may run {pattern}",
                         f"The next lap starts with {pattern} on the built-in list, and so does every later lap in "
                         "every repo on this machine."),
+        NO_LIST: (f"No list changes, and no lap may run {pattern}",
+                  f"The next lap starts with every list as it was, so {pattern} is still denied, and its build "
+                  "carries your comment."),
     }
     change, next_step = changes[option.name]
     return Option(option.name, option.confidence, next_step, change)
@@ -248,7 +254,7 @@ def read_question(scratch: Path) -> Question:
 
 def denial_paragraph(denial: Denial) -> str:
     return (f"The lap mod denied the call `{denial.call}`. Answer with the answer word of the one list that should "
-            f"allow `{denial.pattern}` from now on.\n\n")
+            f"allow `{denial.pattern}` from now on, or with none to change no list.\n\n")
 
 
 def option_line(option: Option) -> str:
@@ -394,12 +400,13 @@ def denial_in(metadata: dict) -> Denial | None:
 
 
 def list_named(answer: Answer) -> str:
-    """The one list an answer names; raises QuestionError when it names none or more than one."""
+    """The one list an answer names, or `none` when it names no list; raises QuestionError when it names more than
+    one."""
     named = {match.group(1) for match in re.finditer(r"(?<![\w-])(epic|repo|built-in)(?![\w-])", answer.text.lower())}
-    if len(named) != 1:
-        raise QuestionError(f"the answer must name exactly one list of {', '.join(PERMISSION_LISTS)}, and "
+    if len(named) > 1:
+        raise QuestionError(f"the answer must name at most one list of {', '.join(PERMISSION_LISTS)}, and "
                             f"{answer.text!r} names {len(named)}")
-    return named.pop()
+    return named.pop() if named else NO_LIST
 
 
 @dataclass(frozen=True)
@@ -411,7 +418,9 @@ class Allowed:
 
 
 def allow(chosen: str, pattern: str, epic: str, home: Path, main_tree: Path) -> bool:
-    """Adds the pattern to the chosen list; False when the list already holds it."""
+    """Adds the pattern to the chosen list; False when the list already holds it or the answer chose no list."""
+    if chosen == NO_LIST:
+        return False
     if chosen == EPIC_LIST:
         return rules.allow_extra_command(epic, pattern, home, main_tree)
     if chosen == REPO_LIST:

@@ -1245,7 +1245,7 @@ class QuestionTests(SchedulerCase):
 
     def test_unparking_a_permission_question_puts_the_denied_calls_pattern_on_the_list_the_answer_names(self):
         lap = self.open_one_lap()
-        options = [{"name": name, "confidence": 30} for name in ("epic", "repo", "built-in")]
+        options = [{"name": name, "confidence": 25} for name in ("epic", "repo", "built-in", "none")]
         self.leave_question(lap, call="cd till && make lint --fix", pattern="make lint", options=options,
                             recommended="epic")
         self.report_printed(lap.epic, lap.task, "question")
@@ -1258,6 +1258,26 @@ class QuestionTests(SchedulerCase):
         done = fixture.run_launcher(LAUNCHER, [str(RULES), "show", lap.epic], None, self.caller_env(self.home),
                                     self.repo, RUN_TIMEOUT_SECONDS)
         self.assertEqual(["make lint"], json.loads(done.stdout)["settings"]["extra_commands"])
+
+    def test_unparking_a_permission_question_answered_with_no_list_carries_the_comment_changes_no_list_and_prints_no_error(
+            self):
+        lap = self.open_one_lap()
+        options = [{"name": name, "confidence": 25} for name in ("epic", "repo", "built-in", "none")]
+        self.leave_question(lap, call="rm till.txt", pattern="rm", options=options, recommended="epic")
+        self.report_printed(lap.epic, lap.task, "question")
+        comment = "I deleted the file myself, add rm to no list."
+        self.human_comments(lap.task, comment)
+        self.take_the_human_label_off(lap.task)
+
+        done = self.next_moves(lap.epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        [action] = json.loads(done.stdout)["actions"]
+        self.assertEqual({"source": "comment", "text": comment}, action["answer"])
+        self.assertEqual("", done.stderr)
+        done = fixture.run_launcher(LAUNCHER, [str(RULES), "show", lap.epic], None, self.caller_env(self.home),
+                                    self.repo, RUN_TIMEOUT_SECONDS)
+        self.assertNotIn("extra_commands", json.loads(done.stdout)["settings"])
 
     def test_a_comment_that_asks_back_gets_a_reply_from_the_stage_which_parks_again_and_the_next_unpark_answers_the_reply(
             self):

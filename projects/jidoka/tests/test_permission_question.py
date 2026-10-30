@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from html import unescape
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -24,12 +25,16 @@ HUMAN = "Pat Human"
 CALL = "cd packages/till && make lint --fix"
 PATTERN = "make lint"
 FOUND = "The build needs make lint, and the lap mod denied it."
-LISTS = ["epic", "repo", "built-in"]
+ANSWERS = ["epic", "repo", "built-in", "none"]
+CHANGES = [("Only this epic's laps may run make lint", "epic", 50),
+           ("Every lap in this repo may run make lint", "repo", 30),
+           ("Every lap in every repo on this machine may run make lint", "built-in", 5),
+           ("No list changes, and no lap may run make lint", "none", 15)]
 
 
 def report(**changes: object) -> dict:
-    options = [{"name": "epic", "confidence": 55}, {"name": "repo", "confidence": 30},
-               {"name": "built-in", "confidence": 5}]
+    options = [{"name": "epic", "confidence": 50}, {"name": "repo", "confidence": 30},
+               {"name": "built-in", "confidence": 5}, {"name": "none", "confidence": 15}]
     return {"found": FOUND, "call": CALL, "pattern": PATTERN, "options": options, "recommended": "epic", **changes}
 
 
@@ -129,7 +134,7 @@ class PermissionCase(unittest.TestCase):
 
 
 class PermissionQuestionTests(PermissionCase):
-    def test_the_question_names_the_denied_call_the_pattern_and_the_three_lists(self):
+    def test_the_question_names_the_denied_call_the_pattern_and_the_four_answers(self):
         _, task = self.asked()
 
         [question] = [comment for comment in self.comments(task) if str(comment["text"]).startswith("Question: ")]
@@ -137,10 +142,9 @@ class PermissionQuestionTests(PermissionCase):
         self.assertIn(FOUND, text)
         self.assertIn(f"`{CALL}`", text)
         self.assertIn(f"`{PATTERN}`", text)
-        for name in LISTS:
-            self.assertIn(f"- {name}: ", text)
-            self.assertIn(f"- {name} (", text)
-        self.assertIn("Recommended: epic (55%).", text)
+        for name in ANSWERS:
+            self.assertIn(f"Answer word: {name}.", text)
+        self.assertIn("Recommended: epic (50%).", text)
         shown = self.shown(task)
         self.assertEqual(["human"], shown["labels"])
         self.assertEqual((CALL, PATTERN), (shown["metadata"]["question.call"], shown["metadata"]["question.pattern"]))
@@ -153,6 +157,42 @@ class PermissionQuestionTests(PermissionCase):
 
         self.assertEqual("Question: May lap workers run make lint?", str(question["text"]).splitlines()[0])
         self.assertEqual(["May lap workers run make lint?"], re.findall(r"<h1>([^<]*)</h1>", html))
+
+    def test_the_comment_leads_each_option_with_the_change_it_makes_and_says_what_the_next_lap_does(self):
+        _, task = self.asked()
+
+        [question] = [comment for comment in self.comments(task) if str(comment["text"]).startswith("Question: ")]
+        lines = [line for line in str(question["text"]).splitlines() if line.startswith("- ")]
+
+        self.assertEqual(4, len(lines))
+        for line, (change, name, percent) in zip(lines, CHANGES):
+            self.assertTrue(line.startswith(f"- {change} ({percent}%)."), line)
+            self.assertIn(f"Answer word: {name}.", line)
+            self.assertIn("The next lap", line)
+            self.assertIn(PATTERN, line)
+
+    def test_the_page_card_of_each_option_leads_with_the_change_and_shows_the_answer_word_apart(self):
+        _, task = self.asked()
+
+        html = next((self.home / "pages").rglob("*.html")).read_text(encoding="utf-8")
+        cards = re.findall(r'(?s)<article class="option[^"]*">(.*?)</article>', html)
+
+        self.assertEqual(4, len(cards))
+        for card, (change, name, percent) in zip(cards, CHANGES):
+            self.assertEqual([change], [unescape(heading) for heading in re.findall(r"<h3>([^<]*)</h3>", card)])
+            self.assertEqual([name], re.findall(r'<code class="answer-word">([^<]*)</code>', card))
+            self.assertIn(f"{percent}%", card)
+            self.assertRegex(card, r"(?s)What happens next.*The next lap")
+
+    def test_a_next_the_worker_wrote_on_a_permission_option_does_not_replace_the_change_or_the_next_lap(self):
+        _, task = self.new_task()
+        options = [{"name": name, "confidence": 30, "next": "Worker words."} for name in ANSWERS]
+
+        done = self.ask(task, options=options)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        html = next((self.home / "pages").rglob("*.html")).read_text(encoding="utf-8")
+        self.assertNotIn("Worker words.", html)
 
     def test_a_pattern_whose_words_are_not_in_the_call_is_refused_and_parks_nothing(self):
         _, task = self.new_task()
@@ -173,13 +213,13 @@ class PermissionQuestionTests(PermissionCase):
         self.assertIn("pattern must be one simple command", done.stderr)
         self.assertEqual([], self.comments(task))
 
-    def test_options_other_than_the_three_lists_are_refused(self):
+    def test_options_other_than_the_four_answers_are_refused(self):
         _, task = self.new_task()
 
         done = self.ask(task, options=[{"name": "epic", "confidence": 60}, {"name": "repo", "confidence": 40}])
 
         self.assertEqual(1, done.returncode)
-        self.assertIn("the options of a permission question must be the three lists", done.stderr)
+        self.assertIn("the options of a permission question must be the four answers", done.stderr)
         self.assertEqual([], self.comments(task))
 
 
@@ -239,17 +279,47 @@ class PermissionAnswerTests(PermissionCase):
         self.assertFalse(json.loads(again.stdout)["changed"])
         self.assertEqual(1, self.settings_shown()["worker_commands"].count(PATTERN))
 
-    def test_an_answer_that_names_no_list_or_two_writes_nothing(self):
+    def test_an_answer_that_names_no_list_is_none_and_writes_no_list(self):
         epic, task = self.asked()
-        self.human_answers(task, "Not sure, what do you think?")
+        self.human_answers(task, "I deleted the file myself, add rm to no list.")
 
-        none = self.answer(task)
-        self.bd("comment", task, "epic or repo, either")
-        two = self.answer(task)
+        done = self.answer(task)
 
-        for done in (none, two):
-            self.assertEqual(1, done.returncode)
-            self.assertIn("the answer must name exactly one list", done.stderr)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({"task": task, "list": "none", "pattern": PATTERN, "changed": False}, json.loads(done.stdout))
+        self.assertNotIn("extra_commands", self.rules_shown(epic)["settings"])
+        self.assertNotIn(PATTERN, self.settings_shown()["worker_commands"])
+        self.assertNotIn(PATTERN, self.built_in_additions())
+
+    def test_an_answer_naming_none_writes_no_list(self):
+        epic, task = self.asked()
+        self.human_answers(task, "none")
+
+        done = self.answer(task)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("none", json.loads(done.stdout)["list"])
+        self.assertNotIn("extra_commands", self.rules_shown(epic)["settings"])
+
+    def test_without_a_comment_a_recommended_none_writes_no_list(self):
+        epic, task = self.new_task()
+        self.assertEqual(0, self.ask(task, recommended="none").returncode)
+        self.human_answers(task)
+
+        done = self.answer(task)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("none", json.loads(done.stdout)["list"])
+        self.assertNotIn("extra_commands", self.rules_shown(epic)["settings"])
+
+    def test_an_answer_that_names_two_lists_writes_nothing(self):
+        epic, task = self.asked()
+        self.human_answers(task, "epic or repo, either")
+
+        done = self.answer(task)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("the answer must name at most one list", done.stderr)
         self.assertNotIn("extra_commands", self.rules_shown(epic)["settings"])
         self.assertNotIn(PATTERN, self.settings_shown()["worker_commands"])
         self.assertNotIn(PATTERN, self.built_in_additions())
