@@ -37,9 +37,13 @@ report adds two keys:
   pattern  the command prefix that would allow it: one simple command whose
            words appear in the call.
 Jidoka writes its question itself from the pattern, "May lap workers run
-<pattern>?", so its report needs no `question`. Its options are exactly the three lists, `epic` (the epic's factory rules),
-`repo` (the repo settings' worker commands) and `built-in` (the built-in
-list's additions on this machine). The task's metadata gets `question.call`
+<pattern>?", so its report needs no `question`. Its options are exactly the
+three lists, `epic` (the epic's factory rules), `repo` (the repo settings'
+worker commands) and `built-in` (the built-in list's additions on this
+machine). Jidoka writes each option's card itself, on the page and in the
+comment: the change the list makes in plain words, what the next lap does,
+and the list's name as the answer word to type. The worker's `next` on such
+an option is not shown. The task's metadata gets `question.call`
 and `question.pattern`, both empty after any other question. The answer
 names one list, and the pattern goes onto it, so the next lap's mod allows
 the call. The scheduler adds the pattern when it opens the lap that follows
@@ -101,10 +105,12 @@ class QuestionError(Exception):
 @dataclass(frozen=True)
 class Option:
     """One answer a question offers, the worker's confidence in percent that it is the right one and what happens
-    next if the human picks it ("" when the worker gave none)."""
+    next if the human picks it ("" when the worker gave none). A permission option also holds `change`, the change
+    its list makes in plain words, and its name is then the answer word the human types ("" for any other option)."""
     name: str
     confidence: int
     next_step: str
+    change: str
 
 
 @dataclass(frozen=True)
@@ -149,7 +155,7 @@ def option_of(value: object) -> Option:
         raise QuestionError(f"the confidence of an option must be a whole number of percent from "
                             f"{LEAST_CONFIDENCE} to {MOST_CONFIDENCE}, not {confidence!r}")
     return Option(text_of(value.get("name"), "the name of an option"), confidence,
-                  optional_text(value, "next", "next of an option"))
+                  optional_text(value, "next", "next of an option"), "")
 
 
 def optional_text(report: dict, key: str, what: str) -> str:
@@ -195,6 +201,25 @@ def permission_sentence(denial: Denial) -> str:
     return f"May lap workers run {denial.pattern}?"
 
 
+def permission_option(option: Option, denial: Denial) -> Option:
+    """The option with the change its list makes and what the next lap does, both written here from the pattern; the
+    worker's own `next` is dropped, for it cannot know what the list does."""
+    pattern = denial.pattern
+    changes = {
+        EPIC_LIST: (f"Only this epic's laps may run {pattern}",
+                    f"The next lap starts with {pattern} allowed for this epic's laps. Laps of other epics are still "
+                    "denied it."),
+        REPO_LIST: (f"Every lap in this repo may run {pattern}",
+                    f"The next lap starts with {pattern} on this repo's list, and so does every later lap in this "
+                    "repo, whatever its epic."),
+        BUILT_IN_LIST: (f"Every lap in every repo on this machine may run {pattern}",
+                        f"The next lap starts with {pattern} on the built-in list, and so does every later lap in "
+                        "every repo on this machine."),
+    }
+    change, next_step = changes[option.name]
+    return Option(option.name, option.confidence, next_step, change)
+
+
 def read_question(scratch: Path) -> Question:
     """The question report in the lap's scratch folder; raises QuestionError when it is missing or unusable."""
     path = scratch / QUESTION_REPORT
@@ -212,20 +237,23 @@ def read_question(scratch: Path) -> Question:
     if recommended not in names:
         raise QuestionError(f"recommended must be the name of one option: {', '.join(names)}")
     denial = denial_of(report, names)
-    sentence = permission_sentence(denial) if denial is not None else text_of(report.get("question"), "question")
+    if denial is None:
+        sentence = text_of(report.get("question"), "question")
+    else:
+        sentence = permission_sentence(denial)
+        options = tuple(permission_option(option, denial) for option in options)
     return Question(sentence, text_of(report.get("found"), "found"), optional_text(report, "shown", "shown"),
                     steps_of(report), options, recommended, denial)
 
 
 def denial_paragraph(denial: Denial) -> str:
-    return (f"The lap mod denied the call `{denial.call}`. Answer with the one list that should allow "
-            f"`{denial.pattern}` from now on:\n"
-            f"- {EPIC_LIST}: this epic's factory rules, so only this epic's laps may run it\n"
-            f"- {REPO_LIST}: the repo's list, so every lap in this repo may run it\n"
-            f"- {BUILT_IN_LIST}: the built-in list, so every lap in every repo on this machine may run it\n\n")
+    return (f"The lap mod denied the call `{denial.call}`. Answer with the answer word of the one list that should "
+            f"allow `{denial.pattern}` from now on.\n\n")
 
 
 def option_line(option: Option) -> str:
+    if option.change:
+        return f"- {option.change} ({option.confidence}%). Answer word: {option.name}. {option.next_step}"
     line = f"- {option.name} ({option.confidence}%)"
     return f"{line}: {option.next_step}" if option.next_step else line
 
@@ -325,8 +353,9 @@ def park(task: str, tries: int, comment: str, metadata: list[tuple[str, str]], m
 
 def write_page(task: str, question: Question, home: Path, main_tree: Path) -> Path:
     """Writes the question's page; raises QuestionError when the file cannot be written."""
-    cards = tuple(question_page.Card(option.name, option.confidence, option.next_step,
-                                     option.name == question.recommended) for option in question.options)
+    cards = tuple(question_page.Card(option.change or option.name, option.name if option.change else "",
+                                     option.confidence, option.next_step, option.name == question.recommended)
+                  for option in question.options)
     page = question_page.QuestionPage(task, question.question, question.found, question.shown, question.why, cards)
     try:
         return question_page.write(page, home, main_tree)
