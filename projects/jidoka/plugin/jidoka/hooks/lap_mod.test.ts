@@ -65,9 +65,9 @@ type World = {
   spawn: () => Promise<{ model: string; agentId: string } | { deny: string }>
 }
 
-/** How a stand-in for the engine's file system fails a call: with an errno code, as the engine's message leads with it. */
+/** How a stand-in for the engine's file system fails a call: in the engine's words, which end with the errno code. */
 function errno(code: string, path: string): { deny: string } {
-  return { deny: `${code}: stat '${path}'` }
+  return { deny: `jidoka: $.fs.stat(${path}) failed: ${code}` }
 }
 
 function isBeneath(path: string, place: string): boolean {

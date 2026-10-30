@@ -84,14 +84,15 @@ function isInside(path: string, worktree: string): boolean {
 
 /**
  * True for the errors that say a path is not there: ENOENT, or ENOTDIR when a
- * file stands where a folder should. The engine's error leads its message with
- * the errno code and may carry no `code` of its own, so either one counts.
+ * file stands where a folder should. The engine's error carries no `code` and
+ * ends its message with the errno code, as in `$.fs.stat(<path>) failed:
+ * ENOENT`; Node's own error leads with it, so a code at either end counts.
  */
 function isMissing(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false
   const { code, message } = error as { code?: unknown; message?: unknown }
   if (code === 'ENOENT' || code === 'ENOTDIR') return true
-  return typeof message === 'string' && /(?:^|: )(?:ENOENT|ENOTDIR):/.test(message)
+  return typeof message === 'string' && /^(?:ENOENT|ENOTDIR):|: (?:ENOENT|ENOTDIR)$/.test(message)
 }
 
 /**
