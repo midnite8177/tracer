@@ -33,7 +33,10 @@ function engineBeneath(on: On, commands: unknown[] | undefined): Launched {
  * reads the same on both.
  */
 function literal(path: string): string {
-  return path.replace(/^\\\\\?\\/, '').replace(/^[A-Za-z]:/, '').replaceAll('\\', '/')
+  return path
+    .replace(/^\\\\\?\\/, '')
+    .replace(/^.*?(?:^|[\\/])[A-Za-z]:(?=[\\/]|$)/, '')
+    .replaceAll('\\', '/')
 }
 
 /** How the engine spells a real location. It takes a POSIX literal and answers what `realPath` holds. */
@@ -48,29 +51,49 @@ type World = {
   spelling: Spelling
   /**
    * Every path exists and is its own real location, except a path here and what lies beneath it: it lands at the
-   * place named, spelled just as given, or nowhere for null. A path is a POSIX literal.
+   * place named, spelled just as given, or is missing for null, which the file system reports with ENOENT. A path is a
+   * POSIX literal.
    */
   places: Record<string, string | null>
-  statFails: boolean
+  /** A path here and what lies beneath it fails with the errno code given, as the engine's file system does. A path is a POSIX literal. */
+  failures: Record<string, string>
+  /**
+   * Whether the file system tells `Notes` from `notes`, as a Windows folder with per-folder case sensitivity does. When
+   * it does not, a path and a place of `places` match whatever their case, and a real location comes back in lower case.
+   */
+  caseSensitive: boolean
   spawn: () => Promise<{ model: string; agentId: string } | { deny: string }>
+}
+
+/** How a stand-in for the engine's file system fails a call: with an errno code, as the engine's message leads with it. */
+function errno(code: string, path: string): { deny: string } {
+  return { deny: `${code}: stat '${path}'` }
+}
+
+function isBeneath(path: string, place: string): boolean {
+  return path === place || path.startsWith(place.endsWith('/') ? place : `${place}/`)
 }
 
 function engineWith(on: On, commands: unknown[] | undefined, world: World): Launched {
   const launched: Launched = { pluginRoot: '', asked: [] }
   const { places } = world
   on('fs.stat', (_, e) => {
-    if (world.statFails) throw new Error('stat failed')
-    const path = literal(e.path)
+    const named = literal(e.path)
+    const path = world.caseSensitive ? named : named.toLowerCase()
+    const same = (place: string): string => (world.caseSensitive ? place : place.toLowerCase())
+    const failing = Object.keys(world.failures).find(place => isBeneath(path, same(place)))
+    if (failing !== undefined) return errno(world.failures[failing] ?? 'EIO', e.path)
     const at = Object.keys(places)
-      .filter(place => path === place || path.startsWith(`${place}/`))
+      .filter(place => isBeneath(path, same(place)))
       .sort((a, b) => b.length - a.length)[0]
     const target = at === undefined ? world.spelling(path) : places[at]
+    if (target === null) return errno('ENOENT', e.path)
     const beneath = path.slice(at?.length ?? path.length)
     const real =
       at === undefined || typeof target !== 'string'
         ? target
         : `${target}${target.includes('\\') ? beneath.replaceAll('/', '\\') : beneath}`
-    return { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false, realPath: real ?? undefined } }
+    return { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false, realPath: real } }
   })
   on('agent.spawn', () => world.spawn())
   on('tool.check', () => HOST_VERDICT)
@@ -515,7 +538,12 @@ test('a lap record of another shape denies the worker\'s calls instead of leavin
   expect(hostVerdict).toEqual(HOST_VERDICT)
 })
 
-const NOTHING: Pick<World, 'spelling' | 'places' | 'statFails'> = { spelling: AS_POSIX, places: {}, statFails: false }
+const NOTHING: Pick<World, 'spelling' | 'places' | 'failures' | 'caseSensitive'> = {
+  spelling: AS_POSIX,
+  places: {},
+  failures: {},
+  caseSensitive: false,
+}
 
 function engineWithPlaces(on: On, places: World['places'], spelling: Spelling): Launched {
   return engineWith(on, LAP_LIST, { ...NOTHING, spelling, places, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
@@ -721,13 +749,66 @@ test('a write inside a Windows worktree is allowed in each form of its path', as
   expect(decisions).toEqual(paths.map(() => 'allow'))
 })
 
+test('a write to a drive path is judged by where the folder it names, in the case it names it, leads', async ($, on) => {
+  engineWith(on, LAP_LIST, {
+    ...NOTHING,
+    spelling: WITH_BACKSLASHES,
+    caseSensitive: true,
+    places: { [`${WORKTREE}/Notes`]: WITH_BACKSLASHES('/repo/secrets') },
+    spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }),
+  })
+  recordLap(on, 'C:\\repo\\.worktrees\\lap-t1')
+
+  const throughNotes = await writeTo($, 'C:\\repo\\.worktrees\\lap-t1\\Notes\\a.txt')
+  const throughNotesInLowerCase = await writeTo($, 'C:\\repo\\.worktrees\\lap-t1\\notes\\a.txt')
+
+  expect([throughNotes.decision, throughNotesInLowerCase.decision]).toEqual(['deny', 'allow'])
+})
+
 test('a write whose location cannot be resolved is denied', async ($, on) => {
-  engineWith(on, LAP_LIST, { ...NOTHING, statFails: true, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
+  engineWith(on, LAP_LIST, { ...NOTHING, failures: { '/': 'EIO' }, spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }) })
   await startLap($, WORKTREE)
 
   const verdict = await $.tool.check({ tool: 'Write', input: { file_path: `${WORKTREE}/src/a.py`, content: '' }, agentId: 'a1' })
 
   expect(verdict.decision).toBe('deny')
+})
+
+test('a write whose path the file system refuses for any reason but a missing path is denied, and one into folders not made yet is allowed', async ($, on) => {
+  engineWith(on, LAP_LIST, {
+    ...NOTHING,
+    places: { [`${WORKTREE}/fresh`]: null },
+    failures: {
+      [`${WORKTREE}/locked`]: 'EACCES',
+      [`${WORKTREE}/unreachable`]: 'EIO',
+      [`${WORKTREE}/loop`]: 'ELOOP',
+      [`${WORKTREE}/long`]: 'ENAMETOOLONG',
+    },
+    spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }),
+  })
+  await startLap($, WORKTREE)
+
+  const refused = []
+  for (const folder of ['locked', 'unreachable', 'loop', 'long']) {
+    refused.push((await writeTo($, `${WORKTREE}/${folder}/deep/a.py`)).decision)
+  }
+  const notMadeYet = await writeTo($, `${WORKTREE}/fresh/deep/a.py`)
+
+  expect(refused).toEqual(['deny', 'deny', 'deny', 'deny'])
+  expect(notMadeYet.decision).toBe('allow')
+})
+
+test('a write beneath a file, which the file system reports with ENOTDIR, is placed by the nearest part that exists', async ($, on) => {
+  engineWith(on, LAP_LIST, {
+    ...NOTHING,
+    failures: { [`${WORKTREE}/file.txt/inner`]: 'ENOTDIR' },
+    spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }),
+  })
+  await startLap($, WORKTREE)
+
+  const verdict = await writeTo($, `${WORKTREE}/file.txt/inner/a.py`)
+
+  expect(verdict.decision).toBe('allow')
 })
 
 const HOST_FOLDER = '/repo'

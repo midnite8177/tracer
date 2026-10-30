@@ -4,16 +4,25 @@
 T3 ends the session of an idle host after 30 minutes, and a manager that waits on a pause or a parked task goes
 quiet for longer. The manager records the T3 thread it runs in, the session_end hook starts a detached waker when
 T3 ends that session, and the waker sends the thread the prompt that makes the manager run the scheduler's
-carry-on. T3 resumes the same Claude session for that turn.
+carry-on. T3 resumes the same Claude session for that turn, under a new session id, and the scheduler's next call
+in it claims the epic's heartbeat with that id. The record keeps only the thread: the session of the manager is
+the one the heartbeat names, so the next release matches the heartbeat again.
+
+T3 ends an idle host with the session end reason `other` (releases_host); /clear, a resume and a logout end a
+session for another reason and start no waker. At most one waker runs for an epic: its pid is kept in
+<jidoka-home>/t3-thread/<epic>.waker, and a session end while that process runs starts nothing. `forget` deletes
+the record and that file, as landing or dropping the epic does.
 
   t3_wake.py record <epic> --thread <id> --jidoka-home <folder>
-      Writes <jidoka-home>/t3-thread/<epic>.json: `epic`, `thread`, and `session`, the id of the session the call
-      runs in, from $JIDOKA_SESSION_ID (null when unset).
+      Writes <jidoka-home>/t3-thread/<epic>.json: `epic` and `thread`.
   t3_wake.py wait <epic> --thread <id> --jidoka-home <folder> [--interval <seconds>]
       Reads the epic's beads every --interval seconds and, at the first unpark, new task or end of a pause, runs
       `t3 thread send <id> <prompt>` and exits 0. A merge is no reason to wake: the watch goes on from what the
-      epic holds then. It exits 0 and sends nothing once the factory no longer holds the epic: it landed or was
-      dropped. It exits 1 when the beads or the send fail, with the reason on stderr.
+      epic holds then. While it waits it renews the epic's heartbeat at each read, with the session the heartbeat
+      names, so a waiting factory does not show as stopped and no second manager starts. A heartbeat that names no
+      session, such as one a stop left stale, is not renewed. It exits 0 and sends nothing once the factory no
+      longer holds the epic: it landed or was dropped. It exits 1 when the beads or the send fail, with the reason
+      on stderr.
 
 The `t3` command is $T3CODE_CLI_PATH, else `t3` on the PATH.
 
@@ -30,9 +39,12 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
+import clock
 import epics
+import file_lock
 import heartbeat
 import processes
 import repo_settings
@@ -41,6 +53,7 @@ from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError, label
 from epic_reader import EpicReadError, shown_epic
 
 THREAD_FOLDER = "t3-thread"
+RELEASE_REASON = "other"
 DEFAULT_INTERVAL_SECONDS = watch.DEFAULT_INTERVAL_SECONDS
 SEND_TIMEOUT_SECONDS = 120
 GIT_TIMEOUT_SECONDS = 5
@@ -53,26 +66,89 @@ def record_path(home: Path, epic: str) -> Path:
     return home / THREAD_FOLDER / f"{epic}.json"
 
 
-def record(home: Path, epic: str, thread: str, session: str | None) -> None:
-    path = record_path(home, epic)
+@dataclass(frozen=True)
+class ThreadRecord:
+    """The T3 thread that the manager of an epic runs in."""
+    epic: str
+    thread: str
+
+
+def read_json(path: Path) -> dict | None:
+    """The JSON object in the file, or None when the file is missing, unreadable or holds anything else."""
+    try:
+        held = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return held if isinstance(held, dict) else None
+
+
+def write_json_atomically(path: Path, value: dict) -> None:
+    """Writes the object through a temporary file beside the path, so a reader never finds half of it."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    scratch = path.with_suffix(".json.tmp")
-    scratch.write_text(json.dumps({"epic": epic, "thread": thread, "session": session}), encoding="utf-8")
+    scratch = path.with_name(f"{path.name}.tmp")
+    scratch.write_text(json.dumps(value), encoding="utf-8")
     os.replace(scratch, path)
 
 
+def read_record(home: Path, epic: str) -> ThreadRecord | None:
+    """The epic's thread record, or None when it is missing, unreadable or names no thread."""
+    held = read_json(record_path(home, epic))
+    if held is None:
+        return None
+    named, thread = held.get("epic"), held.get("thread")
+    if isinstance(named, str) and isinstance(thread, str) and thread:
+        return ThreadRecord(named, thread)
+    return None
+
+
+def record(home: Path, epic: str, thread: str) -> None:
+    write_json_atomically(record_path(home, epic), {"epic": epic, "thread": thread})
+
+
+def waker_path(home: Path, epic: str) -> Path:
+    return home / THREAD_FOLDER / f"{epic}.waker"
+
+
+def lock_path(home: Path, epic: str) -> Path:
+    return home / THREAD_FOLDER / f"{epic}.lock"
+
+
+def forget(home: Path, epic: str) -> None:
+    """Deletes the epic's thread record, the file that names its waker and the lock beside them, whichever exist."""
+    for path in (record_path(home, epic), waker_path(home, epic), lock_path(home, epic)):
+        path.unlink(missing_ok=True)
+
+
+def waker_is_running(home: Path, epic: str) -> bool:
+    """True while the process that the epic's waker file names runs. A process of that pid that began at another
+    moment is not the waker."""
+    held = read_json(waker_path(home, epic))
+    if held is None:
+        return False
+    try:
+        pid, began = int(held["pid"]), held["started"]
+    except (KeyError, ValueError, TypeError):
+        return False
+    return processes.is_alive(pid) and (began is None or processes.started_at(pid) == began)
+
+
+def write_waker(home: Path, epic: str, pid: int) -> None:
+    write_json_atomically(waker_path(home, epic), {"pid": pid, "started": processes.started_at(pid)})
+
+
+def releases_host(reason: object) -> bool:
+    """True when a session end with this reason is T3 releasing an idle host."""
+    return reason == RELEASE_REASON
+
+
 def threads_of_session(home: Path, session: str) -> list[tuple[str, str]]:
-    """The (epic, thread) pairs that a manager of this session recorded."""
+    """The (epic, thread) pairs of the epics whose heartbeat names this session as its manager's."""
     found: list[tuple[str, str]] = []
     folder = home / THREAD_FOLDER
     for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
-        try:
-            held = json.loads(path.read_text(encoding="utf-8"))
-            epic, thread = held["epic"], held["thread"]
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-        if held.get("session") == session and isinstance(epic, str) and isinstance(thread, str) and thread:
-            found.append((epic, thread))
+        held = read_record(home, path.stem)
+        if held is not None and heartbeat.beat_session(home, held.epic) == session:
+            found.append((held.epic, held.thread))
     return found
 
 
@@ -87,8 +163,17 @@ def carry_on_prompt(epic: str, event: str, home: Path) -> str:
             "step 4 of the factory skill.")
 
 
-def under_t3() -> bool:
-    return bool(os.environ.get(T3_VARIABLE, "").strip())
+def beating(home: Path, epic: str, read: Callable[[], watch.Snapshot], now: Callable[[], int]
+            ) -> Callable[[], watch.Snapshot]:
+    """A read that first renews the epic's heartbeat with the session it names, the one T3 resumes when the waker
+    sends the thread its prompt. The lap mod of a released host writes no beat, so without this one jidoka-ui shows a
+    waiting factory as stopped and the scheduler lets a second manager start."""
+    def read_and_beat() -> watch.Snapshot:
+        session = heartbeat.beat_session(home, epic)
+        if session is not None:
+            heartbeat.write_beat(home, epic, now(), session)
+        return read()
+    return read_and_beat
 
 
 def t3_command() -> str:
@@ -109,7 +194,7 @@ def wait_and_send(epic: str, thread: str, home: Path, interval_seconds: int, rea
                   held: Callable[[], bool], pacing: watch.Pacing, sender: Callable[[str, str], None]) -> str | None:
     """Blocks until the epic can move again and sends the prompt, returning the event; returns None when the
     factory no longer holds the epic."""
-    change = watch.watch(epic, read, interval_seconds, None, frozenset(WAKE_EVENTS), lambda: not held(), pacing)
+    change = watch.watch(epic, read, interval_seconds, frozenset(WAKE_EVENTS), lambda: not held(), pacing)
     if change.event == watch.STOPPED:
         return None
     sender(thread, carry_on_prompt(epic, change.event, home))
@@ -117,8 +202,9 @@ def wait_and_send(epic: str, thread: str, home: Path, interval_seconds: int, rea
 
 
 def start_wakers(home: Path, session: str, folder: Path) -> None:
-    """Starts a `wait` process for each epic that a manager of this session recorded a thread for and that the
-    factory still holds. The process is detached from the host's session or console, so it outlives the host."""
+    """Starts a `wait` process for each epic that a manager of this session recorded a thread for, that the
+    factory still holds and that has no waker running. The process is detached from the host's session or console,
+    so it outlives the host."""
     threads = threads_of_session(home, session)
     if not threads:
         return
@@ -131,8 +217,12 @@ def start_wakers(home: Path, session: str, folder: Path) -> None:
         interval = os.environ.get(INTERVAL_VARIABLE, "").strip()
         if interval:
             command += ["--interval", interval]
-        subprocess.Popen(command, cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, **processes.detached_options())
+        with file_lock.exclusive(lock_path(home, epic)):
+            if waker_is_running(home, epic):
+                continue
+            waker = subprocess.Popen(command, cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL, **processes.detached_options())
+            write_waker(home, epic, waker.pid)
 
 
 def main(argv: list[str]) -> int:
@@ -153,7 +243,7 @@ def main(argv: list[str]) -> int:
         parser.error("--thread needs a thread id")
     if args.mode == "record":
         try:
-            record(home, args.epic, thread, heartbeat.session_of_environment())
+            record(home, args.epic, thread)
         except OSError as error:
             print(f"t3_wake: {error}", file=sys.stderr)
             return 1
@@ -162,7 +252,8 @@ def main(argv: list[str]) -> int:
         parser.error("--interval needs a whole number of seconds from 1 up")
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        wait_and_send(args.epic, thread, home, args.interval, lambda: watch.snapshot_of(args.epic, main_tree),
+        wait_and_send(args.epic, thread, home, args.interval,
+                      beating(home, args.epic, lambda: watch.snapshot_of(args.epic, main_tree), clock.now),
                       lambda: is_held(args.epic, main_tree), watch.REAL_PACING, send)
     except (EpicReadError, CommandError, repo_settings.SettingsError, OSError) as error:
         print(f"t3_wake: {error}", file=sys.stderr)

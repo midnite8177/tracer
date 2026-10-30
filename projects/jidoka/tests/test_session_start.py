@@ -69,6 +69,11 @@ class SessionStartTests(unittest.TestCase):
         cls.repo_under_it = cls.beads_folder_above_the_repo / "inner"
         init_committed_repo(cls.repo_under_it)
 
+        cls.home_with_beads = root / "home-with-beads"
+        (cls.home_with_beads / ".beads").mkdir(parents=True)
+        cls.plain_folder_under_home = cls.home_with_beads / "notes" / "drafts"
+        cls.plain_folder_under_home.mkdir(parents=True)
+
     @classmethod
     def tearDownClass(cls):
         fixture.remove_tree_quietly(cls.not_a_repo)
@@ -161,6 +166,18 @@ class SessionStartTests(unittest.TestCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual("", done.stdout)
+
+    def test_a_beads_folder_in_a_parent_does_not_make_a_plain_folder_outside_any_repo_a_beads_repo(self):
+        done = self.session(self.plain_folder_under_home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("", done.stdout)
+
+    def test_a_session_in_a_plain_folder_that_holds_a_beads_folder_gets_the_rules(self):
+        done = self.session(self.home_with_beads)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("Planning, Factory, Acceptance and Bench", done.stdout)
 
     def test_a_session_in_a_folder_that_is_not_a_repo_prints_nothing_and_exits_cleanly(self):
         done = self.session(self.not_a_repo)

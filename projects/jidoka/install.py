@@ -13,7 +13,9 @@ it runs under, the config dirs, a native route for each tier, except for a
 tier whose route is already recorded, which /jidoka:setup may have set, and
 jidoka's source repo in <jidoka-home>, then adds the snapshot as a local marketplace
 and installs the plugin at user scope into each named config dir, and into
-Codex when codex is on the PATH. A snapshot is never rewritten. A version
+Codex when codex is on the PATH. Codex gets its own copy of the snapshot in <jidoka-home>/codex/<version>/,
+whose hooks/hooks.json names no modules, because Codex refuses a hooks file that has the field and loads none
+of the hooks. A snapshot is never rewritten. A version
 whose snapshot came from different plugin content is refused until
 release.py gives the change a new version. The source repo is the main
 worktree of the repo this file is in, found with git, so an install from a
@@ -65,6 +67,7 @@ REQUIRED_TOOLS = ["git", "bd", "claude"]
 MARKETPLACE = "jidoka"
 PLUGIN_ID = "jidoka@jidoka"
 PLUGIN_MANIFEST = Path("jidoka") / ".claude-plugin" / "plugin.json"
+PLUGIN_HOOKS = Path("jidoka") / "hooks" / "hooks.json"
 TREE_FILE = "plugin-tree-id"
 OWNED_SETTINGS = ["python", "config_dirs", "routes", "source_repo", "ui"]
 PUSHOVER_FILE = "pushover.json"
@@ -317,19 +320,32 @@ def building_beside(target: Path) -> Path:
     return Path(tempfile.mkdtemp(prefix=f".{target.name}-", dir=target.parent))
 
 
-def write_snapshot(git: str, plugin_folder: Path, tree: str, target: Path) -> None:
-    """Builds the snapshot beside target and renames it into place, so target is never half written."""
+def built_in_place(target: Path, fill: Callable[[Path], Path], appeared: str) -> None:
+    """Builds target beside itself and renames it into place, so target is never half written.
+
+    Fill gets a new empty folder and returns the folder inside it to move to target. The folder fill got is removed
+    whether the build succeeded or not, and appeared is the refusal when target exists by the time the build ends.
+    """
     building = building_beside(target)
     try:
+        built = fill(building)
+        built.chmod(0o755)
+        if target.exists():
+            raise InstallerError(appeared)
+        built.rename(target)
+    finally:
+        shutil.rmtree(building, ignore_errors=True)
+
+
+def write_snapshot(git: str, plugin_folder: Path, tree: str, target: Path) -> None:
+    """Builds the snapshot beside target and renames it into place, so target is never half written."""
+    def fill(building: Path) -> Path:
         extract_head(git, plugin_folder, building)
         (building / TREE_FILE).write_text(tree + "\n", encoding="utf-8", newline="\n")
-        building.chmod(0o755)
-        if target.exists():
-            raise InstallerError(f"{target} appeared while the snapshot was being built, and a snapshot is never rewritten")
-        building.rename(target)
-    except BaseException:
-        shutil.rmtree(building, ignore_errors=True)
-        raise
+        return building
+
+    built_in_place(target, fill,
+                   f"{target} appeared while the snapshot was being built, and a snapshot is never rewritten")
 
 
 def ensure_snapshot(git: str, plugin_folder: Path, jidoka_home: Path, version: str) -> Path:
@@ -351,11 +367,41 @@ def ensure_snapshot(git: str, plugin_folder: Path, jidoka_home: Path, version: s
     return target
 
 
+def without_modules(hooks_file: Path) -> None:
+    """Rewrites a hooks.json without its modules list, the field that only Claude Code reads."""
+    try:
+        hooks = json.loads(hooks_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        raise InstallerError(f"{hooks_file} cannot be read as JSON: {err}") from err
+    if not isinstance(hooks, dict):
+        raise InstallerError(f"{hooks_file} does not hold a JSON object")
+    hooks.pop("modules", None)
+    hooks_file.write_text(json.dumps(hooks, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+
+
+def ensure_codex_snapshot(snapshot: Path, jidoka_home: Path, version: str) -> Path:
+    """The folder <jidoka-home>/codex/<version>/, a copy of the snapshot whose hooks/hooks.json names no modules.
+
+    Codex refuses a hooks.json that has a field other than description and hooks, and so loads none of the hooks.
+    The snapshot Claude Code reads keeps its modules, which name the lap mod. An existing copy is reused, because
+    the snapshot it came from is never rewritten.
+    """
+    target = jidoka_home / "codex" / version
+    if target.exists():
+        return target
+    def fill(building: Path) -> Path:
+        shutil.copytree(snapshot, building, symlinks=True, dirs_exist_ok=True)
+        without_modules(building / PLUGIN_HOOKS)
+        return building
+
+    built_in_place(target, fill, f"{target} appeared while the copy for Codex was being built")
+    return target
+
+
 def write_published_ui(git: str, dotnet: str, ui_folder: Path, target: Path) -> None:
     """Publishes what HEAD holds of jidoka-ui beside target and renames the result into place, so target is never
     half written and an uncommitted edit never reaches the app the factory starts."""
-    building = building_beside(target)
-    try:
+    def fill(building: Path) -> Path:
         source = building / "source"
         output = building / "app"
         extract_head(git, ui_folder, source)
@@ -363,9 +409,9 @@ def write_published_ui(git: str, dotnet: str, ui_folder: Path, target: Path) -> 
                           "--output", str(output)], dict(os.environ))
         if not (output / UI_APP).is_file():
             raise InstallerError(f"dotnet publish wrote no {UI_APP} in {output}")
-        output.rename(target)
-    finally:
-        shutil.rmtree(building, ignore_errors=True)
+        return output
+
+    built_in_place(target, fill, f"{target} appeared while jidoka-ui was being published")
 
 
 def publish_ui(git: str, dotnet: str | None, checkout: Path, jidoka_home: Path, previous: dict) -> PublishedUi:
@@ -421,7 +467,7 @@ def codex_marketplace_source(codex: str, env: dict[str, str]) -> str | None:
 
 def install_into_codex(codex: str, snapshot: Path) -> None:
     """Codex refuses to add a marketplace whose name it already has from another source,
-    so this first removes a jidoka marketplace that points at an older snapshot."""
+    so this first removes a jidoka marketplace that points at an older copy of the snapshot."""
     env = dict(os.environ)
     source = codex_marketplace_source(codex, env)
     if source is not None and source != str(snapshot):
@@ -492,7 +538,7 @@ def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[in
         install_into_claude(tools.claude, config_dir, snapshot)
         print(f"Installed jidoka {version} into {config_dir}")
     if tools.codex is not None:
-        install_into_codex(tools.codex, snapshot)
+        install_into_codex(tools.codex, ensure_codex_snapshot(snapshot, jidoka_home, version))
         print(f"Installed jidoka {version} into Codex")
     print(ask_for_pushover(jidoka_home, terminal))
     if unnamed:

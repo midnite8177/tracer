@@ -69,13 +69,11 @@ def session_folder(raw: str) -> Path:
 
 
 def beads_folder_above(folder: Path) -> bool:
-    """Looks for .beads from the folder up to the top of its repo, so a .beads in a parent folder such as the home folder does not count."""
-    for parent in [folder, *folder.parents]:
-        if (parent / ".beads").is_dir():
-            return True
-        if (parent / ".git").exists():
-            return False
-    return False
+    """Looks for .beads from the folder up to the top of its repo, so a .beads in a parent folder such as the home
+    folder does not count. Outside any repo it looks at the folder alone, because a walk would reach the drive root."""
+    chain = [folder, *folder.parents]
+    top = next((index for index, parent in enumerate(chain) if (parent / ".git").exists()), 0)
+    return any((parent / ".beads").is_dir() for parent in chain[:top + 1])
 
 
 def scripts_on_path() -> None:
@@ -87,7 +85,6 @@ def scripts_on_path() -> None:
 
 
 def repo_settings():
-    """The settings script."""
     scripts_on_path()
     import repo_settings as script
     return script

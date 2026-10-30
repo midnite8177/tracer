@@ -115,7 +115,7 @@ public sealed class FactoryWatchTests : IDisposable
         await watch.CheckAsync();
 
         Lists(atHome, ParkedTask("f1"));
-        Lists(atWork, EpicThatRecorded($$"""{"acceptance-gate:a": {{Entry("g1", "Ready for acceptance: The parser", "Merge it.")}}}"""));
+        Lists(atWork, EpicThatRecorded($$"""{"acceptance-gate:a": {{Entry("g1", "Ready for acceptance: The parser", "Merge it or drop it, or send it back with /jidoka:accept.")}}}"""));
         await watch.CheckAsync();
 
         Assert.Equal(

@@ -519,6 +519,18 @@ class NoTestsExecutedTests(TargetedTestsCase):
         self.assertEqual({}, self.metadata(bead))
         self.assertEqual([], self.comments(bead))
 
+    def test_a_run_that_executed_no_tests_says_the_filter_is_one_expression_and_joins_alternatives_with_a_pipe(self):
+        bead = self.new_bead()
+        self.queue_outputs(bead, NO_TEST_MATCHES)
+
+        done = self.targeted_tests(bead, "dotnet-shop", "CartTests, PriceTests", self.home)
+
+        self.assertEqual(FILTER_REFUSED_EXIT_CODE, done.returncode, done.stderr)
+        self.assertIn("one expression", done.stderr)
+        self.assertIn("not a list of filters", done.stderr)
+        self.assertIn("A|B", done.stderr)
+        self.assertEqual({}, self.metadata(bead))
+
     def test_a_run_that_executed_no_tests_names_the_hand_run_groups_the_test_target_leaves_out(self):
         bead = self.new_bead()
         self.queue_outputs(bead, NO_TEST_MATCHES)

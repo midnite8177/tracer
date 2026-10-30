@@ -78,6 +78,15 @@ class InstallerTestCase(unittest.TestCase):
     def snapshot(self, version: str) -> Path:
         return self.home.resolve() / "plugins" / version
 
+    def codex_snapshot(self, version: str) -> Path:
+        return self.home.resolve() / "codex" / version
+
+    def hooks_path(self, snapshot: Path) -> Path:
+        return snapshot / "jidoka" / "hooks" / "hooks.json"
+
+    def hooks_file(self, snapshot: Path) -> dict:
+        return json.loads(self.hooks_path(snapshot).read_text(encoding="utf-8"))
+
     def commit_plugin_edit(self) -> None:
         domain = self.repo / "plugin" / "jidoka" / "docs" / "domain.md"
         domain.write_text(domain.read_text(encoding="utf-8") + "\nAn edit made after the install.\n", encoding="utf-8")
@@ -106,7 +115,31 @@ class InstallIntoConfigDirTests(InstallerTestCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(["plugin", "add", "jidoka@jidoka"], [call["argv"] for call in self.calls("codex")])
-        self.assertEqual({"jidoka": str(self.snapshot("0.1.0"))}, self.codex_marketplaces())
+        self.assertEqual({"jidoka": str(self.codex_snapshot("0.1.0"))}, self.codex_marketplaces())
+
+    def test_the_hooks_file_codex_reads_names_no_modules_and_keeps_every_hook(self):
+        done = self.install(fixture.ALL_TOOLS, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        source = self.codex_marketplaces()["jidoka"]
+        for_codex = self.hooks_file(Path(source))
+        self.assertNotIn("modules", for_codex)
+        self.assertEqual(self.hooks_file(self.snapshot("0.1.0"))["hooks"], for_codex["hooks"])
+        self.assertIn("PreToolUse", for_codex["hooks"])
+
+    def test_the_hooks_file_claude_reads_still_names_the_lap_mod(self):
+        self.install(fixture.ALL_TOOLS, [self.config_a], "")
+
+        self.assertEqual(["./lap_mod.ts"], self.hooks_file(self.snapshot("0.1.0"))["modules"])
+
+    def test_running_it_again_at_the_same_version_keeps_the_codex_hooks_file_as_it_was(self):
+        self.install(fixture.ALL_TOOLS, [self.config_a], "")
+        written = self.hooks_path(self.codex_snapshot("0.1.0")).read_bytes()
+
+        done = self.install(fixture.ALL_TOOLS, [self.config_a], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(written, self.hooks_path(self.codex_snapshot("0.1.0")).read_bytes())
 
     def test_an_install_after_a_release_moves_codex_to_the_new_snapshot(self):
         self.install(fixture.ALL_TOOLS, [self.config_a], "")
@@ -115,7 +148,7 @@ class InstallIntoConfigDirTests(InstallerTestCase):
         done = self.install(fixture.ALL_TOOLS, [self.config_a], "")
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual({"jidoka": str(self.snapshot("0.1.1"))}, self.codex_marketplaces())
+        self.assertEqual({"jidoka": str(self.codex_snapshot("0.1.1"))}, self.codex_marketplaces())
 
     def test_running_it_again_at_the_same_version_keeps_the_codex_marketplace_instead_of_removing_it(self):
         self.install(fixture.ALL_TOOLS, [self.config_a], "")
@@ -364,7 +397,7 @@ class SnapshotTests(InstallerTestCase):
         self.assertIn("An edit made after the install.", (second / "jidoka" / "docs" / "domain.md").read_text(encoding="utf-8"))
         self.assertEqual(["0.1.0", "0.1.1"], sorted(path.name for path in (self.home / "plugins").iterdir()))
         self.assertEqual(["plugin", "marketplace", "add", str(second)], self.calls("claude")[0]["argv"])
-        self.assertEqual({"jidoka": str(second)}, self.codex_marketplaces())
+        self.assertEqual({"jidoka": str(self.codex_snapshot("0.1.1"))}, self.codex_marketplaces())
 
 
 class RecordedSettingsTests(InstallerTestCase):

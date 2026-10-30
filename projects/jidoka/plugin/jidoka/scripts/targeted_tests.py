@@ -57,6 +57,8 @@ PLACEHOLDER = re.compile(r"<[^<>]+>")
 DOTNET_SUMMARY = re.compile(r"[A-Za-z]+!\s+-\s+Failed:\s*\d+,\s*Passed:\s*\d+,\s*Skipped:\s*\d+,\s*Total:\s*(\d+)")
 DOTNET_NO_MATCH = "No test matches the given testcase filter"
 UNITTEST_SUMMARY = re.compile(r"^Ran (\d+) tests? in ", re.MULTILINE)
+ONE_EXPRESSION = ("The filter is one expression for the test_target, not a list of filters. To select several "
+                  "tests, join them with the test command's own syntax for or, such as A|B for dotnet test")
 
 
 class Integration(enum.Enum):
@@ -347,8 +349,8 @@ def targeted_tests(bead: str, worktree: Path, base_branch: str, how: Integration
         raise FilterRefused(f"the run on the worktree {how.participle} {base_branch} at {error.base} executed no "
                             f"tests, so "
                             f"nothing is recorded on the bead. Check the --filter {test_filter!r} against the "
-                            f"test_target of app {app!r}, {settings.test_target!r}, and the output above"
-                            f"{left_out(settings)}") from error
+                            f"test_target of app {app!r}, {settings.test_target!r}, and the output above. "
+                            f"{ONE_EXPRESSION}{left_out(settings)}") from error
     record(bead, outcome, main_tree, env)
     return outcome.recorded
 

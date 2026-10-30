@@ -29,6 +29,11 @@ import time
 
 behavior = json.loads(open(os.environ["CODEX_FAKE"], encoding="utf-8").read())
 argv = sys.argv[1:]
+for index, each in enumerate(argv):
+    if each == "-c" and argv[index + 1].startswith("model_providers.openai."):
+        print("Error: model_providers contains reserved built-in provider IDs: openai. "
+              "Built-in providers cannot be overridden.", file=sys.stderr)
+        sys.exit(1)
 if "child_pid_file" in behavior:
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     with open(behavior["child_pid_file"], "w", encoding="utf-8") as written:
@@ -100,7 +105,7 @@ class CodexLaneCase(test_ledger.LedgerBooks, test_review.ReviewCase):
 
 
 class TheSpecLaneRunsInCodexTests(CodexLaneCase):
-    def test_codex_exec_runs_read_only_in_the_review_worktree_with_its_connection_retries_bounded(self):
+    def test_codex_exec_runs_read_only_in_the_review_worktree_without_overriding_a_built_in_provider(self):
         epic, printed = self.finish_epic_at_the_review()
         action = self.spec_action_of(printed)
         self.codex_ends(message="[]", usage=USAGE)
@@ -112,8 +117,7 @@ class TheSpecLaneRunsInCodexTests(CodexLaneCase):
         argv = call["argv"]
         self.assertEqual(["exec", "--sandbox", "read-only"], argv[:3])
         self.assertEqual(action["worktree"], argv[argv.index("--cd") + 1])
-        self.assertIn("model_providers.openai.request_max_retries=0", argv)
-        self.assertIn("model_providers.openai.stream_max_retries=0", argv)
+        self.assertEqual([], [each for each in argv if each.startswith("model_providers")])
         self.assertEqual("gpt-5.5", argv[argv.index("--model") + 1])
         self.assertIn('model_reasoning_effort="high"', argv)
         self.assertIn(f"git diff {action['base']} {action['head']}", call["stdin"])

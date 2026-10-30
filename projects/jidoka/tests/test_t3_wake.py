@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -13,9 +14,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import jidoka_fixture as fixture  # noqa: E402
-from test_stop import HUMAN, LAUNCHER, PLUGIN, RUN_TIMEOUT_SECONDS, StopCase  # noqa: E402
+from test_stop import HUMAN, LAUNCHER, PLUGIN, RUN_TIMEOUT_SECONDS, SCHEDULER, StopCase  # noqa: E402
 
 sys.path.insert(0, str(PLUGIN / "scripts"))
+import heartbeat  # noqa: E402
 import t3_wake  # noqa: E402
 import watch  # noqa: E402
 
@@ -23,6 +25,8 @@ T3_WAKE = PLUGIN / "scripts" / "t3_wake.py"
 SESSION_END = PLUGIN / "hooks" / "session_end.py"
 SESSION = "session-1"
 THREAD = "thread-7"
+T3_RELEASE = "other"
+SETTLE_SECONDS = 2.5
 WAIT_SECONDS = 60
 
 
@@ -43,16 +47,26 @@ class WakeCase(StopCase):
             environment["JIDOKA_SESSION_ID"] = session
         return environment
 
+    def claim_the_epic(self, session: str) -> None:
+        claimed = self.script_in_session(SCHEDULER, session, "next", self.epic)
+        self.assertEqual(0, claimed.returncode, claimed.stderr)
+
     def record(self, thread: str) -> None:
+        self.claim_the_epic(SESSION)
         command = fixture.launch_command(LAUNCHER, [str(T3_WAKE), "record", self.epic, "--thread", thread])
         done = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
                               cwd=self.repo, env=self.environment(SESSION))
         self.assertEqual(0, done.returncode, done.stderr)
 
-    def end_session(self, session: str) -> subprocess.CompletedProcess:
+    def end_session(self, session: str, reason: str) -> subprocess.CompletedProcess:
         return subprocess.run(fixture.launch_command(LAUNCHER, [str(SESSION_END)]), input=json.dumps(
-            {"session_id": session, "cwd": str(self.repo), "reason": "other"}), capture_output=True, text=True,
+            {"session_id": session, "cwd": str(self.repo), "reason": reason}), capture_output=True, text=True,
             encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo, env=self.environment(None))
+
+    def script_in_session(self, script: Path, session: str, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), capture_output=True, text=True,
+                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
+                              env=self.environment(session))
 
     def sent_lines(self) -> list[str]:
         return self.sent.read_text(encoding="utf-8").splitlines() if self.sent.exists() else []
@@ -73,7 +87,8 @@ class WakeCase(StopCase):
         if fixture.WINDOWS:
             fixture.end_orphans_in(self.repo)
             return
-        subprocess.run(["pkill", "-f", f"t3_wake.py wait {self.epic}"], capture_output=True)
+        subprocess.run(["pkill", "-f", f"t3_wake.py wait {self.epic} .*--jidoka-home {self.home}$"],
+                       capture_output=True)
 
 
 class TheSessionEndHookTests(WakeCase):
@@ -85,7 +100,7 @@ class TheSessionEndHookTests(WakeCase):
         self.record(THREAD)
 
         began = time.monotonic()
-        done = self.end_session(SESSION)
+        done = self.end_session(SESSION, T3_RELEASE)
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertLess(time.monotonic() - began, 20)
         self.assert_nothing_sent_for(2.5)
@@ -97,7 +112,7 @@ class TheSessionEndHookTests(WakeCase):
         self.assertIn(f"scheduler carry-on {self.epic}", line)
 
     def test_a_session_with_no_recorded_thread_starts_no_waker(self):
-        done = self.end_session(SESSION)
+        done = self.end_session(SESSION, T3_RELEASE)
         self.assertEqual(0, done.returncode, done.stderr)
 
         self.create("Read the card 9", "--type=task", "--parent", self.epic)
@@ -106,7 +121,7 @@ class TheSessionEndHookTests(WakeCase):
 
     def test_a_session_other_than_the_recorded_one_starts_no_waker(self):
         self.record(THREAD)
-        self.end_session("session-2")
+        self.end_session("session-2", T3_RELEASE)
 
         self.create("Read the card 9", "--type=task", "--parent", self.epic)
 
@@ -115,12 +130,98 @@ class TheSessionEndHookTests(WakeCase):
     def test_an_epic_the_factory_no_longer_holds_starts_no_waker(self):
         self.record(THREAD)
         self.bd("close", self.epic)
-        done = self.end_session(SESSION)
+        done = self.end_session(SESSION, T3_RELEASE)
         self.assertEqual(0, done.returncode, done.stderr)
 
         self.create("Read the card 9", "--type=task", "--parent", self.epic)
 
         self.assert_nothing_sent_for(4)
+
+    def test_a_session_end_that_is_not_t3_releasing_the_host_starts_no_waker(self):
+        self.record(THREAD)
+        for reason in ("clear", "resume", "logout", "prompt_input_exit"):
+            done = self.end_session(SESSION, reason)
+            self.assertEqual(0, done.returncode, done.stderr)
+
+        self.create("Read the card 9", "--type=task", "--parent", self.epic)
+
+        self.assert_nothing_sent_for(4)
+
+    def test_a_second_session_end_while_a_waker_waits_starts_no_second_waker(self):
+        self.record(THREAD)
+        self.end_session(SESSION, T3_RELEASE)
+        self.end_session(SESSION, T3_RELEASE)
+        self.assert_nothing_sent_for(SETTLE_SECONDS)
+
+        self.create("Read the card 9", "--type=task", "--parent", self.epic)
+
+        self.wait_for_send()
+        time.sleep(4)
+        self.assertEqual(1, len(self.sent_lines()), self.sent_lines())
+
+    def test_a_session_end_after_the_waker_sent_its_prompt_starts_a_new_waker(self):
+        self.record(THREAD)
+        self.end_session(SESSION, T3_RELEASE)
+        self.assert_nothing_sent_for(SETTLE_SECONDS)
+        self.create("Read the card 9", "--type=task", "--parent", self.epic)
+        self.wait_for_send()
+        time.sleep(SETTLE_SECONDS)
+
+        self.end_session(SESSION, T3_RELEASE)
+        time.sleep(SETTLE_SECONDS)
+        self.create("Read the card 10", "--type=task", "--parent", self.epic)
+
+        deadline = time.monotonic() + WAIT_SECONDS
+        while len(self.sent_lines()) < 2 and time.monotonic() < deadline:
+            time.sleep(0.5)
+        self.assertEqual(2, len(self.sent_lines()), self.sent_lines())
+
+    def test_a_session_resumed_under_a_new_session_id_still_matches_its_epic_s_record(self):
+        self.record(THREAD)
+        heartbeat.write_beat(self.home, self.epic, 0, SESSION)
+        self.claim_the_epic("session-2")
+
+        self.end_session("session-2", T3_RELEASE)
+        self.assert_nothing_sent_for(SETTLE_SECONDS)
+        self.create("Read the card 9", "--type=task", "--parent", self.epic)
+
+        [line] = self.wait_for_send()
+        self.assertTrue(line.startswith(f"thread send {THREAD} "), line)
+
+
+class TheWakerHeartbeatTests(WakeCase):
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(self.kill_wakers)
+
+    def beat(self) -> dict | None:
+        path = self.home / "heartbeat" / f"{self.epic}.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def wait_for_beat(self, accepts) -> dict:
+        deadline = time.monotonic() + WAIT_SECONDS
+        while time.monotonic() < deadline:
+            held = self.beat()
+            if held is not None and accepts(held):
+                return held
+            time.sleep(0.5)
+        self.fail(f"the heartbeat never became what was asked: {self.beat()}")
+
+    def test_a_waiting_waker_beats_the_epic_with_the_session_it_will_wake_and_goes_on_beating(self):
+        self.record(THREAD)
+        claimed = self.beat()
+        self.assertEqual(SESSION, claimed["session"])
+
+        self.end_session(SESSION, T3_RELEASE)
+
+        first = self.wait_for_beat(lambda held: held["time"] > claimed["time"])
+        self.assertEqual(self.epic, first["epic"])
+        self.assertEqual(SESSION, first["session"])
+        later = self.wait_for_beat(lambda held: held["time"] > first["time"])
+        self.assertEqual(SESSION, later["session"])
 
 
 TASKS = frozenset({"t-1", "t-2"})
@@ -149,9 +250,39 @@ class FakeEpic:
         self.sent.append((thread, prompt))
 
     def wait_and_send(self, now: int) -> str | None:
-        pacing = watch.Pacing(self.sleep, lambda: now, lambda: 0.0)
+        pacing = watch.Pacing(self.sleep, lambda: now)
         with contextlib.redirect_stderr(io.StringIO()):
             return t3_wake.wait_and_send("epic-1", THREAD, Path("/home"), 30, self.read, self.held, pacing, self.send)
+
+
+class TheWakerBeatTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.home = Path(folder.name)
+
+    def read_and_beat(self, now: int) -> None:
+        t3_wake.beating(self.home, "epic-1", lambda: QUIET, lambda: now)()
+
+    def test_a_beat_keeps_the_session_that_the_heartbeat_names(self):
+        heartbeat.write_beat(self.home, "epic-1", 1000, "session-2")
+
+        self.read_and_beat(1030)
+
+        self.assertEqual(0, heartbeat.beat_age_seconds(self.home, "epic-1", 1030))
+        self.assertEqual("session-2", heartbeat.beat_session(self.home, "epic-1"))
+
+    def test_a_heartbeat_that_names_no_session_is_left_as_it_is(self):
+        heartbeat.write_beat(self.home, "epic-1", 1000, None)
+
+        self.read_and_beat(1030)
+
+        self.assertEqual(30, heartbeat.beat_age_seconds(self.home, "epic-1", 1030))
+
+    def test_a_beat_starts_no_heartbeat_for_an_epic_that_has_none(self):
+        self.read_and_beat(1030)
+
+        self.assertIsNone(heartbeat.beat_age_seconds(self.home, "epic-1", 1030))
 
 
 class TheWakerTests(unittest.TestCase):

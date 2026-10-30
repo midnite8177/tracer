@@ -36,7 +36,8 @@ value that reads as a JSON number, true, false or null is stored as that,
 and anything else as the text given, as bd stores it. A task's id is its
 parent's id and a number. Each bare id --deps names is a bead the new one
 waits on, as bd reads a bare id there, and each discovered-from:<id> is a
-link that waits on nothing. bd keeps one link per pair of beads, so a --deps
+link that waits on nothing. A task created under a parent starts with the parent's labels, as bd copies them, besides any
+--labels it is given. bd keeps one link per pair of beads, so a --deps
 entry that names the --parent is dropped and only parent-child stays. A
 bead is ready when it is open and waits on no bead that is still open, and
 blocked when it is not closed and waits on one; blocked prints the ids of
@@ -300,6 +301,7 @@ def create(store: dict, flags: Flags) -> bool:
     if not title:
         raise Refused("bd create needs --title")
     parent = flags.one("--parent")
+    inherited: list[str] = []
     if parent is None:
         bead_id = f"{store['prefix']}-{store['next']}"
         store["next"] += 1
@@ -307,6 +309,7 @@ def create(store: dict, flags: Flags) -> bool:
         under = bead_in(store, parent)
         under["children"] += 1
         bead_id = f"{parent}.{under['children']}"
+        inherited = list(under["labels"])
     priority = flags.one("--priority")
     labels = flags.one("--labels")
     blockers, origins = [], []
@@ -323,7 +326,8 @@ def create(store: dict, flags: Flags) -> bool:
             "priority": int(priority) if priority is not None else DEFAULT_PRIORITY,
             "issue_type": flags.one("--type") or DEFAULT_TYPE, "assignee": "", "close_reason": "",
             "description": flags.one("--description") or "",
-            "metadata": {}, "labels": [label for label in (labels or "").split(",") if label],
+            "metadata": {}, "labels": [*inherited, *(label for label in (labels or "").split(",")
+                                                       if label and label not in inherited)],
             "parent": parent or "", "blocked_by": blockers, "discovered_from": origins, "children": 0}
     store["beads"][bead_id] = bead
     print(json.dumps(plain(bead), indent=2))

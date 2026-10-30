@@ -9,6 +9,8 @@ import jidoka_fixture as fixture  # noqa: E402
 import test_gate  # noqa: E402
 from test_gate import GATE, git  # noqa: E402
 
+T3_WAKE = test_gate.test_scheduler.PLUGIN / "scripts" / "t3_wake.py"
+
 
 class DroppingTheEpicTests(test_gate.GateCase):
     def drop(self, epic: str):
@@ -68,6 +70,17 @@ class DroppingTheEpicTests(test_gate.GateCase):
         self.assertEqual(1, done.returncode)
         self.assertIn("acceptance gate", done.stderr)
         self.assertEqual("open", self.shown(epic)["status"])
+
+    def test_dropping_deletes_the_epic_s_t3_thread_record(self):
+        epic, _, _ = self.epic_at_the_gate()
+        recorded = self.launch(T3_WAKE, "record", epic, "--thread", "thread-7")
+        self.assertEqual(0, recorded.returncode, recorded.stderr)
+        self.assertTrue((self.home / "t3-thread" / f"{epic}.json").is_file())
+
+        done = self.drop(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertFalse((self.home / "t3-thread" / f"{epic}.json").exists())
 
     def test_the_merge_refuses_a_dropped_epic(self):
         epic, _, _ = self.epic_at_the_gate()

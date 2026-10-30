@@ -182,6 +182,15 @@ def start_holder(folder: Path) -> subprocess.Popen:
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def start_file_holder(file: Path, folder: Path) -> subprocess.Popen:
+    """A process that runs in another folder, holds the file open, and sleeps once it prints that it does."""
+    code = f"held = open({str(file)!r}); print('open', flush=True); {fixture.SLEEP_FOR_AN_HOUR}"
+    holder = subprocess.Popen([sys.executable, "-c", code], cwd=folder, stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    holder.stdout.readline()
+    return holder
+
+
 def start_holder_after_its_parent_ended(folder: Path) -> int:
     """The id of a process that runs in the folder and sleeps, whose parent has already ended."""
     code = "\n".join([
@@ -253,6 +262,46 @@ class BdFolderTests(unittest.TestCase):
         holder = start_holder(elsewhere)
         self.addCleanup(holder.wait)
         self.addCleanup(holder.kill)
+
+        self.assertNotIn(holder.pid, fixture.holders_in(self.folder, set()))
+
+    def holding_a_file_from_elsewhere(self, file: Path) -> subprocess.Popen:
+        """A process that runs in a folder of its own, holds the file open, and is ended when the test ends."""
+        elsewhere = Path(tempfile.mkdtemp())
+        self.addCleanup(fixture.remove_tree_quietly, elsewhere)
+        holder = start_file_holder(file, elsewhere)
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.stdout.close)
+        self.addCleanup(holder.kill)
+        return holder
+
+    @unittest.skipUnless(fixture.WINDOWS, "only Windows finds a process by the file it holds open")
+    def test_a_process_that_runs_elsewhere_and_holds_a_file_open_in_the_folder_is_a_holder(self):
+        held = self.folder / ".beads" / "dolt" / "manifest"
+        held.parent.mkdir(parents=True)
+        held.write_text("x\n", encoding="utf-8")
+        holder = self.holding_a_file_from_elsewhere(held)
+
+        self.assertIn(holder.pid, fixture.holders_in(self.folder, set()))
+
+    @unittest.skipUnless(fixture.WINDOWS, "only Windows finds a process by the file it holds open")
+    def test_a_process_that_runs_elsewhere_and_holds_a_file_open_in_the_folder_is_ended_and_the_folder_is_removed(self):
+        held = self.folder / "dolt-lock"
+        held.write_text("x\n", encoding="utf-8")
+        holder = self.holding_a_file_from_elsewhere(held)
+
+        fixture.remove_bd_folder(self.folder)
+
+        self.assertTrue(wait_until_gone(holder.pid))
+        self.assertFalse(self.folder.exists())
+
+    @unittest.skipUnless(fixture.WINDOWS, "only Windows finds a process by the file it holds open")
+    def test_a_process_that_holds_a_file_open_in_another_folder_is_not_a_holder(self):
+        other_folder = Path(tempfile.mkdtemp())
+        self.addCleanup(fixture.remove_tree_quietly, other_folder)
+        other = other_folder / "file"
+        other.write_text("x\n", encoding="utf-8")
+        holder = self.holding_a_file_from_elsewhere(other)
 
         self.assertNotIn(holder.pid, fixture.holders_in(self.folder, set()))
 

@@ -216,7 +216,11 @@ own failure.
      the app and the filter that run the build's targeted tests. The
      filter is only the text that fills the `test_target`'s placeholder:
      for `-k <name>` it is `test_validation`, never `-k test_validation`.
-     Or
+     It is one expression, not a list of filters: to run several tests,
+     join them with the test command's own syntax for or, such as
+     `A|B` for dotnet test, in the one placeholder. Filters joined by a
+     comma or a space select no tests, and the scheduler counts that as
+     a try. Or
      `{"outcome": "failed", "why": "<one line>"}`. Or
      `{"outcome": "question"}`, after writing the question report to
      `question.json` in the scratch folder. The report is a JSON object
@@ -494,9 +498,11 @@ own failure.
    each run from the tokens the lap mod summed under its agent id, and
    writes it with no task. A `spec` lane that ran in codex has no agent id,
    and its script wrote its row, so the review's report names no `--worker`
-   for it. A `spec` lane that reran as an agent after the fallback is named
-   with the tier `deep`, whose route is the same native Opus, so that its row
-   does not read as codex.
+   for it. A worker that reran on the native route after `route fallback` is
+   named with the tier it failed on and the word `native` after it, as
+   `--worker <agent id> second native`, so that its row is priced as the
+   native route's model, not as codex. A task report names it with
+   `--route native` beside `--tier`.
 
    A test cleanup worker's reply that ends with `{"outcome": "done"}` is
    reported with `scheduler report-cleanup <epic-id> --jidoka-home ...`, which
@@ -592,10 +598,10 @@ own failure.
    or blocked tasks. Write `<epic-id>: waiting`, then start the watcher
    in the background (`run_in_background: true`) with
    `watcher <epic-id>` and wait. It exits when a task is unparked, a task is
-   added, a task merges, or the pause is over, and prints which. Under T3
-   it also exits with the event `restart` after 30 minutes with no change:
-   write `<epic-id>: still waiting`, start the watcher again the same way,
-   and wait; do not run `carry-on`. On any other event run
+   added, a task merges, or the pause is over, and prints which. Write
+   nothing more while it waits. Under T3, let the host be released: the T3
+   waker wakes the thread when a task is unparked, a task is added or the
+   pause is over. On any event run
    `scheduler carry-on <epic-id> --jidoka-home ...`, which opens what fits,
    with no restart, and go on from step 4. A prompt that starts with
    `jidoka: the last turn ended on an API error` wakes you the same way: run

@@ -41,7 +41,7 @@ FIELD = {
 
 def bd(*args):
     try:
-        out = subprocess.run(["bd", *args, "--json"], capture_output=True, text=True, check=True).stdout
+        out = subprocess.run(["bd", *args, "--json"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout
     except subprocess.CalledProcessError as e:
         sys.stderr.write(f"bd {' '.join(args)} failed: {e.stderr.strip()}\n"); return []
     except FileNotFoundError:

@@ -98,6 +98,7 @@ import lap_record
 import pass_ledger
 import repo_settings
 import rules
+import t3_wake
 from acceptance import branch_and_head_at_the_gate, moved_since_validation
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, MAIN_REF, CommandError, capture,
                       env_as_git_user, labels_of, metadata_of, read_bead, run, set_metadata, unset_metadata,
@@ -263,7 +264,18 @@ def remove_branches(epic: EpicAtTheGate, main_tree: Path) -> None:
             run(["git", "branch", "-D", name], main_tree, None)
 
 
-def close_out(epic: EpicAtTheGate, message: str, sha: str, main_tree: Path) -> Landed:
+def release_from_factory(epic: EpicAtTheGate, home: Path, main_tree: Path, env: dict[str, str]) -> list[str]:
+    """Takes the factory and human labels off the epic and forgets its T3 record and waker, as landing or dropping the
+    epic does, and returns the label steps that failed."""
+    failed: list[str] = []
+    for label in (FACTORY_LABEL, HUMAN_LABEL):
+        if label in epic.labels:
+            attempt(f"bd label remove {label}", ["bd", "label", "remove", epic.id, label], main_tree, env, failed)
+    t3_wake.forget(home, epic.id)
+    return failed
+
+
+def close_out(epic: EpicAtTheGate, message: str, sha: str, home: Path, main_tree: Path) -> Landed:
     """Records the decision, closes the epic and removes its labels and branches, each step on its own."""
     env = env_as_git_user(main_tree)
     failed: list[str] = []
@@ -278,9 +290,7 @@ def close_out(epic: EpicAtTheGate, message: str, sha: str, main_tree: Path) -> L
     if HOLDOUTS_KEY in epic.metadata:
         attempt("retire the holdouts", ["bd", "update", epic.id, "--unset-metadata", HOLDOUTS_KEY], main_tree, env,
                 failed)
-    for label in (FACTORY_LABEL, HUMAN_LABEL):
-        if label in epic.labels:
-            attempt(f"bd label remove {label}", ["bd", "label", "remove", epic.id, label], main_tree, env, failed)
+    failed += release_from_factory(epic, home, main_tree, env)
     if closed:
         try:
             remove_branches(epic, main_tree)
@@ -298,7 +308,8 @@ def merge(epic_id: str, message: str, home: Path, main_tree: Path) -> tuple[Land
     acquire_lock(lock)
     try:
         sha = epic.landed or land_on_main(epic, message, settings, home, checkout, main_tree)
-        return close_out(epic, message, sha, main_tree), settings
+        landed = close_out(epic, message, sha, home, main_tree)
+        return landed, settings
     finally:
         release_lock(lock)
 
@@ -390,7 +401,7 @@ def send_epic_back(epic_id: str, notes: list[str], proposals: Path, main_tree: P
     return gate_send_back.printed_lines(epic.id, filed)
 
 
-def drop_epic(epic_id: str, main_tree: Path) -> str:
+def drop_epic(epic_id: str, home: Path, main_tree: Path) -> str:
     """Closes the epic without landing it, ends the laps still open on its tasks, and keeps its epic branch."""
     epic = epic_waiting(epic_id, main_tree)
     env = env_as_git_user(main_tree)
@@ -398,8 +409,9 @@ def drop_epic(epic_id: str, main_tree: Path) -> str:
     ended = gate_drop.end_laps(epic.id, main_tree)
     run(["bd", "close", epic.id, "--reason", f"Dropped at the acceptance gate. The epic branch {epic.branch} stays."],
         main_tree, env)
-    for label in (FACTORY_LABEL, HUMAN_LABEL):
-        run(["bd", "label", "remove", epic.id, label], main_tree, env)
+    failed = release_from_factory(epic, home, main_tree, env)
+    if failed:
+        raise CommandError("; ".join(failed))
     laps = f" The laps of {', '.join(ended)} ended." if ended else ""
     return f"{epic.id} is dropped and closed.{laps} Its epic branch {epic.branch} stays until you delete it."
 
@@ -409,7 +421,7 @@ def decide(args: argparse.Namespace, home: Path, main_tree: Path) -> str:
     if args.mode == SEND_BACK:
         return send_epic_back(args.epic, args.note, Path(args.proposals), main_tree)
     if args.mode == DROP:
-        return drop_epic(args.epic, main_tree)
+        return drop_epic(args.epic, home, main_tree)
     if args.mode == ITEMS:
         return shown_items(args.epic, main_tree)
     if args.mode == WRONG:

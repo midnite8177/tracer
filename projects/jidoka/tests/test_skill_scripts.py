@@ -119,6 +119,33 @@ class ShopIssuesTests(SkillScriptCase):
                 self.assertEqual(0, done.returncode, done.stderr)
                 self.assertEqual("", done.stderr)
 
+    def run_issues_under_a_locale_that_reads_only_ascii(self, args: list, bin_dir: Path) -> subprocess.CompletedProcess:
+        """Runs issues.py as a Windows console does, where text read from a child process is decoded with a code page
+        that is not UTF-8."""
+        env = {**os.environ, "PATH": fixture.path_with(bin_dir), "JIDOKA_HOME": str(self.home),
+               **fixture.home_variables(str(Path.home())), "LC_ALL": "C", "LANG": "C",
+               "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
+        return subprocess.run(fixture.launch_command(LAUNCHER, [str(ISSUES), *args]), capture_output=True,
+                              text=True, encoding="utf-8", env=env, cwd=self.repo)
+
+    def test_issues_shows_a_bead_whose_title_holds_characters_the_console_code_page_lacks(self):
+        """The bd here prints the em dash as the UTF-8 bytes that real bd prints; the fake bd escapes it to ASCII."""
+        bead = ('[{"id":"shop-9","title":"Print the greeting \\342\\200\\224 twice","status":"open",'
+                '"issue_type":"task","priority":2}]')
+        bin_dir = self.root / "bd-with-an-em-dash"
+        bin_dir.mkdir()
+        fixture.write_executable(bin_dir / "bd", "#!/bin/sh\n"
+                                 f"case \"$1 $2\" in\n  'list --status=open'|'ready --json'|show*) printf '{bead}' ;;\n"
+                                 "  *) printf '[]' ;;\nesac\n")
+
+        for args in [[], ["shop-9"]]:
+            with self.subTest(args=args):
+                done = self.run_issues_under_a_locale_that_reads_only_ascii(args, bin_dir)
+
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assertEqual("", done.stderr)
+                self.assertIn("Print the greeting — twice", done.stdout)
+
     def test_issues_never_points_a_ready_unplanned_or_blocked_bead_at_a_tracer_command(self):
         for args in [[], [self.greeting], [self.farewell], [self.goodbye]]:
             with self.subTest(args=args):

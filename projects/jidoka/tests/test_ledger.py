@@ -24,7 +24,8 @@ OLD_SONNET = "claude-sonnet-4-6"
 HAIKU_3_5 = "claude-haiku-3-5"
 DAY = 86400
 ROUTES = {"routes": {"standard": {"harness": "claude", "model": "sonnet", "version": "5.5", "effort": "high"},
-                     "deep": {"harness": "claude", "model": "opus", "version": "5.5", "effort": "max"}}}
+                     "deep": {"harness": "claude", "model": "opus", "version": "5.5", "effort": "max"},
+                     "second": {"harness": "codex", "model": None, "version": None, "effort": None}}}
 SESSION = "session-of-the-manager"
 
 
@@ -65,7 +66,6 @@ class LedgerBooks:
 
 class LedgerCase(LedgerBooks, SchedulerCase):
     def launch_at(self, now: int, *scheduler_args: str) -> subprocess.CompletedProcess:
-        """Runs the scheduler on a clock that reads `now`."""
         return subprocess.run(fixture.launch_command(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"),
                                                                 *scheduler_args]),
                               capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
@@ -120,6 +120,36 @@ class TheLedgerPricesEveryWorkerRunTests(LedgerCase):
                          [(row["agent"], row["model"], row["input_tokens"], row["output_tokens"], row["dollars"])
                           for row in rows])
         self.assertEqual([1, 2], [row["try"] for row in rows])
+
+    def test_a_stage_that_reran_on_the_native_route_is_priced_as_the_model_it_ran_on_not_as_the_failed_route(self):
+        lap = self.open_one_lap()
+        self.leave_tokens("agent-1", tokens(OPUS, 0, 1_000_000, 0, 0))
+
+        self.report_at(lap, "failed", 5, "--agent", "agent-1", "--tier", "second", "--route", "native",
+                       "--why", "red")
+
+        [row] = self.listed(lap.epic)["rows"]
+        self.assertEqual(("second", "claude", OPUS, "high"),
+                         (row["tier"], row["harness"], row["model"], row["effort"]))
+        self.assertAlmostEqual(20.0, row["dollars"], places=6)
+
+    def test_a_stage_that_ran_on_its_tiers_own_route_keeps_that_routes_harness(self):
+        lap = self.open_one_lap()
+        self.leave_tokens("agent-1", tokens(OPUS, 0, 1_000_000, 0, 0))
+
+        self.report_at(lap, "failed", 5, "--agent", "agent-1", "--tier", "second", "--why", "red")
+
+        [row] = self.listed(lap.epic)["rows"]
+        self.assertEqual(("second", "codex", OPUS), (row["tier"], row["harness"], row["model"]))
+
+    def test_a_route_other_than_native_is_refused_and_writes_no_row(self):
+        lap = self.open_one_lap()
+
+        done = self.launch(test_scheduler.SCHEDULER, "report", lap.epic, lap.task, "failed", "--tier", "second",
+                           "--route", "codex")
+
+        self.assertEqual(2, done.returncode)
+        self.assertEqual([], self.listed(lap.epic)["rows"])
 
     def test_a_stage_that_ran_past_its_wall_clock_is_priced_as_cut_off_whatever_the_worker_reported(self):
         lap = self.open_one_lap()
@@ -603,6 +633,37 @@ class TheReviewAndFixWorkersArePricedTests(PassRowsAre, LedgerBooks, test_review
         self.assertEqual(1, refused.returncode)
         self.assertIn("sideways", refused.stderr)
         self.assertEqual([], self.passes_of(epic))
+
+
+class ASpecLaneThatRanOnTheNativeRouteIsPricedTests(PassRowsAre, LedgerBooks, test_review.ReviewCase):
+    def row_of(self, epic: str, agent: str) -> dict:
+        [row] = [row for row in self.passes_of(epic) if row["agent"] == agent]
+        return row
+
+    def test_a_spec_lane_that_reran_on_the_native_route_is_priced_as_the_model_it_ran_on(self):
+        epic, printed = self.finish_epic_at_the_review()
+        self.write_lanes(printed, {})
+        self.leave_tokens("native-spec-agent", tokens(OPUS, 0, 1_000_000, 0, 0))
+
+        done = self.launch(test_scheduler.SCHEDULER, "report-review", epic,
+                           *worker("native-spec-agent", "second"), "native")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        row = self.row_of(epic, "native-spec-agent")
+        self.assertEqual(("second", "claude", OPUS, "high", "done"),
+                         (row["tier"], row["harness"], row["model"], row["effort"], row["outcome"]))
+        self.assertAlmostEqual(20.0, row["dollars"], places=6)
+
+    def test_a_native_lane_can_carry_its_own_ending_after_the_route(self):
+        epic, printed = self.finish_epic_at_the_review()
+        self.write_lanes(printed, {})
+
+        done = self.launch(test_scheduler.SCHEDULER, "report-review", epic, "--ended", "failed",
+                           *worker("ended-spec-agent", "second"), "native", "cut-off")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        row = self.row_of(epic, "ended-spec-agent")
+        self.assertEqual(("claude", "cut off"), (row["harness"], row["outcome"]))
 
 
 class TheValidationWorkerIsPricedTests(PassRowsAre, LedgerBooks, test_validation.ValidationHoldoutsCase):

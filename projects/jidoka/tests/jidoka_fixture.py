@@ -37,6 +37,7 @@ from importlib.util import find_spec
 from pathlib import Path, PurePath
 
 import fake_bd
+import windows_file_holders
 from run_suite import SHARED_FOLDER
 
 WINDOWS = os.name == "nt"
@@ -456,22 +457,28 @@ def own_lineage() -> set[int]:
 
 
 def holders_in(folder: Path, spared: set[int]) -> list[int]:
-    """The processes, other than the spared ones, whose working folder is the folder or a folder under it.
+    """The processes, other than the spared ones, whose working folder is the folder or a folder under it, and on
+    Windows also those that hold a file open under it.
 
-    A process counts whether or not its parent still runs; processes.orphans_in finds only an orphan.
+    A process counts whether or not its parent still runs; processes.orphans_in finds only an orphan. bd can leave
+    a database server that works elsewhere and still holds files in the folder, which on Windows keeps the folder
+    from being removed.
     """
     if WINDOWS:
         root = comparable(folder)
-        return sorted(pid for pid in windows_processes.process_table()
-                      if pid not in spared and is_inside(windows_processes.current_folder_of(pid), root))
-    return sorted(set(processes.pids_with_cwd_in(folder)) - spared)
+        in_folder = {pid for pid in windows_processes.process_table()
+                     if pid not in spared and is_inside(windows_processes.current_folder_of(pid), root)}
+        found = in_folder | windows_file_holders.holders_under(folder)
+    else:
+        found = set(processes.pids_with_cwd_in(folder))
+    return sorted(found - spared)
 
 
 def let_bd_go_of(folder: Path) -> None:
-    """Ends each process that runs in the folder, except this process and the ones above it.
+    """Ends each process that runs in the folder or holds a file open in it, except this process and the ones above it.
 
-    On Windows a process that runs in a folder keeps the folder from being removed, and bd leaves some running:
-    its database server, and processes whose parent ended or still runs.
+    On Windows a process that runs in a folder or holds a file in it keeps the folder from being removed, and bd
+    leaves some running: its database server, and processes whose parent ended or still runs.
     """
     for pid in holders_in(folder, own_lineage()):
         end_process(pid)

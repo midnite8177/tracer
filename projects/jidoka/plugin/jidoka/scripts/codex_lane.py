@@ -4,7 +4,7 @@
 `codex_lane.py <epic> --worktree <review worktree> --report <review-spec.json> --base <sha> --head <sha> --file <path>
 ...` is what the manager runs in place of an agent for the lane's action, passing the action's own fields. It starts
 `codex exec` in the review worktree in a read-only sandbox, with the route's model and effort when the route names
-them, with the retries of a lost connection turned off, and under the stage's wall clock, and sends it the lane's
+them, and under the stage's wall clock, which bounds codex's own retries of a lost connection, and sends it the lane's
 prompt on stdin. A read-only sandbox cannot write the lane's report, so the script writes it from codex's last message:
 a JSON list of findings, read as the review's settle reads a native lane's report. A report that settle would refuse
 is a failed run, and the script leaves no report behind for a failed run.
@@ -50,7 +50,6 @@ LANE_TIER = routes.SECOND_TIER
 OUTPUT_NAME = "last-message.txt"
 STDERR_TAIL_LINES = 5
 FENCED_BLOCK = re.compile(r"```[A-Za-z]*\s*\n(.*?)```", re.DOTALL)
-RETRY_SETTINGS = ("model_providers.openai.request_max_retries=0", "model_providers.openai.stream_max_retries=0")
 CODE_REVIEW_SKILL = Path("skills") / "code-review" / "SKILL.md"
 
 
@@ -106,8 +105,6 @@ def prompt_of(lane: Lane, epic: dict, plugin: Path) -> str:
 def codex_command(route: dict, lane: Lane, last_message: Path) -> list[str]:
     command = ["codex", "exec", "--sandbox", "read-only", "--cd", str(lane.worktree), "--json",
                "--output-last-message", str(last_message)]
-    for setting in RETRY_SETTINGS:
-        command += ["-c", setting]
     if route.get("model"):
         command += ["--model", str(route["model"])]
     if route.get("effort"):
@@ -205,7 +202,7 @@ def record(home: Path, main_tree: Path, lane: Lane, route: dict, tokens: Tokens,
     model, effort = ledger.text_or_none(route.get("model")), ledger.text_or_none(route.get("effort"))
     ran = ledger.Ran(tokens, CODEX, model, effort)
     where = replace(ledger.Where.of_pass(REVIEW_STAGE), wall_seconds=seconds)
-    ledger.record_ran_or_say(home, main_tree, lane.epic, where, ledger.Worker(None, LANE_TIER), ran, outcome,
+    ledger.record_ran_or_say(home, main_tree, lane.epic, where, ledger.Worker(None, LANE_TIER, False), ran, outcome,
                              clock.now())
 
 

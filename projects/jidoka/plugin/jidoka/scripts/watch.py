@@ -11,11 +11,9 @@ first of these, printing one JSON object with `epic`, `event` and `bead`:
   merged     a task that was open when the watch began is closed.
   pause-over the epic was paused when the watch began, and the pause's wait is over. The manager has no clock of
              its own to wait on, so the watcher keeps it.
-  restart    only under T3 (see t3_wake.under_t3): --restart-after seconds passed with no change. The manager
-             starts the watcher again, and each start is a turn, which keeps T3 from releasing the host. Outside
-             T3 the watcher never ends on this event.
-The manager then runs `scheduler.py carry-on` after any event but restart. The first line on stderr says the
-watch began, so a caller knows the snapshot is taken.
+The watcher ends on no other ground, so a factory that waits for a human takes no turn until one of these
+happens. The manager then runs `scheduler.py carry-on`. The first line on stderr says the watch began, so a
+caller knows the snapshot is taken.
 
 Exit codes:
   0  a change was found.
@@ -42,11 +40,9 @@ UNPARKED = "unparked"
 NEW_TASK = "new-task"
 MERGED = "merged"
 PAUSE_OVER = "pause-over"
-RESTART = "restart"
 STOPPED = "stopped"
 CHANGE_EVENTS = frozenset({UNPARKED, NEW_TASK, MERGED, PAUSE_OVER})
 DEFAULT_INTERVAL_SECONDS = 30
-DEFAULT_RESTART_AFTER_SECONDS = 30 * 60
 
 
 @dataclass(frozen=True)
@@ -67,14 +63,13 @@ class Change:
 
 @dataclass(frozen=True)
 class Pacing:
-    """How a watch waits and tells time: its sleep, the wall-clock second, and a monotonic clock. A test hands in
-    fakes so that a watch runs without real waiting."""
+    """How a watch waits and tells time: its sleep and the wall-clock second. A test hands in fakes so that a
+    watch runs without real waiting."""
     sleep: Callable[[float], None]
     now: Callable[[], int]
-    monotonic: Callable[[], float]
 
 
-REAL_PACING = Pacing(time.sleep, clock.now, time.monotonic)
+REAL_PACING = Pacing(time.sleep, clock.now)
 
 
 def snapshot_of(epic: str, main_tree: Path) -> Snapshot:
@@ -100,14 +95,12 @@ def change_between(before: Snapshot, after: Snapshot, now: int) -> Change | None
     return None
 
 
-def watch(epic: str, read: Callable[[], Snapshot], interval_seconds: int, restart_after_seconds: int | None,
-          ends_on: frozenset[str], should_stop: Callable[[], bool], pacing: Pacing) -> Change:
+def watch(epic: str, read: Callable[[], Snapshot], interval_seconds: int, ends_on: frozenset[str],
+          should_stop: Callable[[], bool], pacing: Pacing) -> Change:
     """Blocks until a change whose event is in ends_on, and returns it. A change of another event moves the
-    baseline past it, and the watch goes on. Returns the RESTART event once restart_after_seconds pass, when that
-    is not None, and the STOPPED event once should_stop() is true."""
+    baseline past it, and the watch goes on. Returns the STOPPED event once should_stop() is true."""
     if should_stop():
         return Change(STOPPED, "")
-    began = pacing.monotonic()
     before = read()
     print(f"watch: watching {epic}, every {interval_seconds} seconds", file=sys.stderr, flush=True)
     while True:
@@ -117,32 +110,24 @@ def watch(epic: str, read: Callable[[], Snapshot], interval_seconds: int, restar
             if change.event in ends_on:
                 return change
             before = after
-        if restart_after_seconds is not None and pacing.monotonic() - began >= restart_after_seconds:
-            return Change(RESTART, "")
         pacing.sleep(interval_seconds)
         if should_stop():
             return Change(STOPPED, "")
 
 
 def main(argv: list[str]) -> int:
-    from t3_wake import under_t3
     parser = argparse.ArgumentParser(prog="watch.py", description="Wait until the epic changes in a way the "
                                                                    "factory can act on.")
     parser.add_argument("epic")
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_SECONDS,
                         help="seconds between two reads of the beads")
-    parser.add_argument("--restart-after", type=int, default=DEFAULT_RESTART_AFTER_SECONDS,
-                        help="seconds without a change after which the watcher ends with a restart event; "
-                             "it applies under T3 only")
     args = parser.parse_args(argv)
     if args.interval < 1:
         parser.error("--interval needs a whole number of seconds from 1 up")
-    if args.restart_after < 1:
-        parser.error("--restart-after needs a whole number of seconds from 1 up")
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         change = watch(args.epic, lambda: snapshot_of(args.epic, main_tree), args.interval,
-                       args.restart_after if under_t3() else None, CHANGE_EVENTS, lambda: False, REAL_PACING)
+                       CHANGE_EVENTS, lambda: False, REAL_PACING)
     except (EpicReadError, CommandError, repo_settings.SettingsError, OSError) as error:
         print(f"watch: {error}", file=sys.stderr)
         return 1

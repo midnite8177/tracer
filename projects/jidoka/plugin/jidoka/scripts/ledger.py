@@ -119,9 +119,12 @@ class LedgerError(Exception):
 @dataclass(frozen=True)
 class Worker:
     """What the manager knows of the worker whose report it takes: the agent id the host gave it, which names the
-    tokens the lap mod summed for it, and the tier it ran on. Either is None when the report names none."""
+    tokens the lap mod summed for it, and the tier it ran on. Either is None when the report names none. `on_native`
+    is true when the report says the worker ran on the tier's native route, because the tier's own route failed: the
+    row is then priced from the native route, not from the route the machine records for the tier."""
     agent: str | None
     tier: str | None
+    on_native: bool
 
 
 @dataclass(frozen=True)
@@ -193,11 +196,13 @@ def tokens_of(home: Path, agent: str | None) -> Used:
                        count_of(written.get("cache_creation_input_tokens"))))
 
 
-def route_of(home: Path, tier: str | None) -> dict:
-    """The tier's route from the machine settings, or an empty one when the settings cannot give it: a run is priced
-    whatever the settings hold."""
+def route_of(home: Path, tier: str | None, on_native: bool) -> dict:
+    """The route the worker ran on: the tier's native route when it fell back to it, else the tier's route from the
+    machine settings, or an empty one when the settings cannot give it: a run is priced whatever the settings hold."""
     if not tier:
         return {}
+    if on_native:
+        return routes.native_route_of(tier)
     try:
         return routes.recorded_route(tier, home)
     except (routes.RouteError, OSError):
@@ -259,7 +264,7 @@ class Ran:
 def ran_by(home: Path, worker: Worker) -> Ran:
     """The run of the worker. The model is the one its steps ran on, else the route's of its tier."""
     used = tokens_of(home, worker.agent)
-    route = route_of(home, worker.tier)
+    route = route_of(home, worker.tier, worker.on_native)
     return Ran(used.tokens, text_or_none(route.get("harness")), used.model or text_or_none(route.get("model")),
                text_or_none(route.get("effort")))
 

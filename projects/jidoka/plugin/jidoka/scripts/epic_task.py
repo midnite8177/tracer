@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import lap_record
-from commands import created_id, env_as_factory, run
+from commands import created_id, env_as_factory, labels_of, read_bead, run
 
 DISCOVERED_FROM = "discovered-from"
 
@@ -23,11 +23,14 @@ class NewTask:
 
 def file_task(epic: str, task: NewTask, found_in: str | None, env: dict[str, str], main_tree: Path) -> str:
     """Files a task in the epic, linked discovered-from to the bead it was found in when there is one, and returns its
-    id. The bead is written under the actor of `env`, which the caller chooses."""
+    id. The bead is written under the actor of `env`, which the caller chooses. bd copies the epic's labels onto a child
+    and the task asks for none, so they come off: a human label from a parked epic would park the task."""
     origin = [] if found_in is None else ["--deps", f"{DISCOVERED_FROM}:{found_in}"]
     created = run(["bd", "create", "--title", task.title, "--description", task.description, "--type=task",
                    "--parent", epic, *origin, "--json"], main_tree, env)
     filed = created_id(created)
+    for inherited in labels_of(read_bead(filed, main_tree)):
+        run(["bd", "label", "remove", filed, inherited], main_tree, env)
     run(["bd", "update", filed, *lap_record.assigning(task.track, task.area)], main_tree, env)
     return filed
 

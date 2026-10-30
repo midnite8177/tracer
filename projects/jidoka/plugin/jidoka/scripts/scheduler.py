@@ -10,7 +10,7 @@ which this text names where a mode hands over to it.
 the epic's heartbeat is fresh, because a manager already runs it. Each call of a manager that succeeds claims the
 epic with a fresh heartbeat that records the session in $JIDOKA_SESSION_ID, as heartbeat.py describes. It takes
 every open lap at a worker stage for one an earlier session left with no worker, unless the human's brake holds it.
-Git wins where it disagrees with the record: a lap whose branch git shows merged into the epic branch closes its
+Git wins where it disagrees with the record. A lap whose branch git shows merged into the epic branch closes its
 task as a merge does, and the records of worktrees whose folders are gone are dropped. For each other lap it stops
 the orphan workers left in its worktree, abandons a rebase left half done, and ends the lap interrupted as `stop`
 does, which counts no cutoff and no try, so that the task is ready again with a new lap on the work it left. A merge
@@ -221,6 +221,7 @@ SCRIPT = "scheduler"
 PASS_ENDINGS = ("failed", "cut-off")
 PASS_OUTCOMES = {"failed": FAILED, "cut-off": CUT_OFF}
 WORKER_OUTCOMES = {"done": DONE, **PASS_OUTCOMES}
+NATIVE_ROUTE = "native"
 OUTCOMES = [DONE, FAILED, CUT_OFF, QUESTION, SEND_BACK, BLOCKED, PASS, CANNOT_JUDGE]
 FIRST_SLOT = 1
 SECONDS_PER_MINUTE = 60
@@ -870,13 +871,20 @@ def stop(bead: str, home: Path, main_tree: Path) -> dict:
 
 
 def workers_of(args: argparse.Namespace) -> list[PassWorker]:
-    """The workers a report names, each `AGENT TIER` with an optional ending after them."""
+    """The workers a report names, each `AGENT TIER`, then `native` when the worker ran on the tier's native route,
+    then optionally the worker's ending."""
     workers = []
     for given in args.worker:
-        if len(given) not in (2, 3) or (len(given) == 3 and given[2] not in WORKER_OUTCOMES):
-            raise SchedulerError(f"--worker takes an agent id, a tier and optionally the worker's ending, one of "
-                                 f"{', '.join(WORKER_OUTCOMES)}, not {' '.join(given)}, and nothing was written")
-        workers.append(PassWorker(ledger.Worker(given[0], given[1]), given[2] if len(given) == 3 else None))
+        if len(given) < 2:
+            raise SchedulerError(f"--worker takes an agent id and a tier, not {' '.join(given)}, and nothing was "
+                                 "written")
+        on_native = given[2:3] == [NATIVE_ROUTE]
+        after = given[3:] if on_native else given[2:]
+        if len(after) > 1 or (after and after[0] not in WORKER_OUTCOMES):
+            raise SchedulerError(f"--worker takes an agent id, a tier, optionally {NATIVE_ROUTE} and optionally the "
+                                 f"worker's ending, one of {', '.join(WORKER_OUTCOMES)}, not {' '.join(given)}, and "
+                                 "nothing was written")
+        workers.append(PassWorker(ledger.Worker(given[0], given[1], on_native), after[0] if after else None))
     return workers
 
 
@@ -888,8 +896,9 @@ def main(argv: list[str]) -> int:
                                                                        "handed-off epic.")
     modes = parser.add_subparsers(dest="mode", required=True)
     worked = argparse.ArgumentParser(add_help=False)
-    worked.add_argument("--worker", nargs="+", action="append", metavar="AGENT TIER [ENDING]", default=[],
-                        help="the agent id the host gave a worker, which names its tokens, the tier it ran on and "
+    worked.add_argument("--worker", nargs="+", action="append", metavar="AGENT TIER [native] [ENDING]", default=[],
+                        help="the agent id the host gave a worker, which names its tokens, the tier it ran on, "
+                             "native when it ran on the tier's native route because its own route failed, and "
                              "optionally how it ended (done, failed or cut-off), which stands for --ended; once for "
                              "each worker the report covers")
     modes.add_parser("next", parents=[shared], help="restart the laps left at the build, open the laps that fit "
@@ -914,6 +923,8 @@ def main(argv: list[str]) -> int:
     reporting.add_argument("--why", help="with failed, the why of the worker's failed block")
     reporting.add_argument("--agent", help="the agent id the host gave the worker, which names its tokens")
     reporting.add_argument("--tier", help="the tier the worker ran on")
+    reporting.add_argument("--route", choices=[NATIVE_ROUTE], help="native, when the worker ran on the tier's "
+                                                                   "native route because its own route failed")
     args = parser.parse_args(argv)
 
     try:
@@ -930,7 +941,8 @@ def main(argv: list[str]) -> int:
             printed = stop(args.epic, home, main_tree)
         else:
             said = WorkerReport(args.outcome, args.app, args.filter, args.cause, args.why)
-            printed = report(args.epic, args.task, said, ledger.Worker(args.agent, args.tier), home, main_tree)
+            worker = ledger.Worker(args.agent, args.tier, args.route == NATIVE_ROUTE)
+            printed = report(args.epic, args.task, said, worker, home, main_tree)
     except (SchedulerError, NotAWholeNumber, PassError, EpicReadError, BenchError, CommandError,
             repo_settings.SettingsError, holdouts.HoldoutsError, private_docs.ClashError, OSError) as error:
         print(f"scheduler: {error}", file=sys.stderr)

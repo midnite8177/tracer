@@ -50,7 +50,7 @@ public sealed class ServedPageMarkupTests : BunitContext
         <html><head><title>Acceptance gate</title></head><body>
         <h1>Gate of e-1</h1>
         <section class="answer-slot" data-jidoka-slot="decide-panel">
-        <p>jidoka-ui draws Merge and Send back here.</p>
+        <p>jidoka-ui draws Merge and Drop here. Send back runs in /jidoka:accept.</p>
         </section>
         </body></html>
         """;
@@ -268,7 +268,7 @@ public sealed class ServedPageMarkupTests : BunitContext
         var page = TheServedPageOf("gate", TheEpicAtTheGate);
 
         var slot = page.Find(".jidoka-page [data-jidoka-slot='send-back-panel']");
-        Assert.Contains("jidoka-ui draws Merge and Send back here.", slot.TextContent, StringComparison.Ordinal);
+        Assert.Contains("jidoka-ui draws Merge and Drop here. Send back runs in /jidoka:accept.", slot.TextContent, StringComparison.Ordinal);
         Assert.Empty(page.FindAll(".gate-box"));
     }
 

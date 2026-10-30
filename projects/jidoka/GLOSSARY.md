@@ -35,7 +35,7 @@ _Avoid_: Pairing, implement, manual mode, attended mode
 ### Units of work
 
 **Milestone**:
-A bead that holds only epics: a container for planning, which the factory
+A bead that holds only epics, a container for planning, which the factory
 never takes. Milestones wait only on milestones, as epics wait only on
 epics and tasks only on tasks. A wayfinder map is the one milestone that
 holds other beads, the questions it resolves before its outcome becomes
@@ -400,9 +400,22 @@ first call writes it with the id of the host session it runs in, and the lap
 mod of that session rewrites it every minute while the host lives. A beat
 from any other session open in the repo writes nothing. It holds the second
 of the last beat, so a heartbeat that stops getting younger shows a stopped
-factory. It holds the limit of a fresh beat too, so jidoka-ui reads the limit and keeps no copy. An epic handed off with no manager
-has none.
+factory. It holds the limit of a fresh beat too, so jidoka-ui reads the limit
+and keeps no copy. An epic handed off with no manager has none. Under T3 a
+released host has no lap mod, so the **Waker** beats the epic while it
+waits, with the session the heartbeat names.
 _Avoid_: Pulse, ping, keep-alive
+
+**Waker**:
+The detached background script that wakes a manager T3 released. It starts
+when T3 ends the session of an idle host and a manager of that session
+recorded its T3 thread for an epic the factory still holds. It reads the
+epic's beads like the watcher does, beats the epic's heartbeat while it
+waits, and at the first unpark, new task or end of a pause sends the thread
+the prompt that makes the manager run `scheduler carry-on`. At most one
+waker runs for an epic, and landing or dropping the epic deletes its thread
+record and waker file.
+_Avoid_: Daemon, resumer
 
 **Watcher**:
 The background script the manager starts when nothing can run. It exits

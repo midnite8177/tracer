@@ -94,13 +94,13 @@ public sealed class JidokaMetadataTests : IDisposable
         var bead = await TheBead("""
             "metadata": {"notification": {
               "task-parked:a.1": {"fingerprint": "f1", "title": "Task parked: Read the header", "text": "Pick a format."},
-              "acceptance-gate:a": {"fingerprint": "f2", "title": "Ready for acceptance: The parser", "text": "Merge it."}}}
+              "acceptance-gate:a": {"fingerprint": "f2", "title": "Ready for acceptance: The parser", "text": "Merge it or drop it, or send it back with /jidoka:accept."}}}
             """);
 
         Assert.Equal(
             [
                 new RecordedEvent("task-parked", "a.1", "f1", "Task parked: Read the header", "Pick a format."),
-                new RecordedEvent("acceptance-gate", "a", "f2", "Ready for acceptance: The parser", "Merge it."),
+                new RecordedEvent("acceptance-gate", "a", "f2", "Ready for acceptance: The parser", "Merge it or drop it, or send it back with /jidoka:accept."),
             ],
             JidokaMetadata.EventsOn(bead));
     }

@@ -201,6 +201,13 @@ class Play:
         self.ready("list the ready beads")
         self.blocked("list the blocked beads")
         self.primed("prime a session")
+        parked = self.create("create an epic with a label", "parked", "--title", "Park the till", "--type=epic",
+                             "--labels", "human")
+        self.create("create a task under an epic that carries a label", "inheriting", "--title", "Count the till",
+                    "--type=task", "--parent", parked)
+        self.create("create a task with a label of its own under an epic that carries a label", "mixed", "--title",
+                    "Lock the till", "--type=task", "--parent", parked, "--labels", "urgent")
+        self.show("show the tasks created under an epic that carries a label", f"{parked}.1", f"{parked}.2")
         return self
 
 
@@ -236,6 +243,15 @@ class FakeBdContractTests(unittest.TestCase):
     def test_create_prints_the_new_bead_s_id(self):
         for step in ("create an epic", "create a task with a label and a priority", "create a task"):
             self.assert_same(step)
+
+    def test_a_task_created_under_an_epic_starts_with_the_labels_of_the_epic_besides_its_own(self):
+        for step in ("create a task under an epic that carries a label",
+                     "create a task with a label of its own under an epic that carries a label",
+                     "show the tasks created under an epic that carries a label"):
+            self.assert_same(step)
+        [inheriting, mixed] = self.fake.calls["show the tasks created under an epic that carries a label"].printed
+        self.assertEqual(["human"], inheriting["labels"])
+        self.assertEqual(["human", "urgent"], mixed["labels"])
 
     def test_a_task_s_id_is_its_epic_s_id_and_a_number(self):
         def children(play: Play) -> list[str]:

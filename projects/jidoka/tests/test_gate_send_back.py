@@ -51,7 +51,6 @@ class SendBackCase(test_gate.GateCase):
 
 
     def epic_at_the_gate_after_a_cleanup_and_a_tidy(self) -> str:
-        """An epic whose task added two tests, brought to the gate through its test cleanup and its tidy."""
         epic = self.new_epic()
         task = self.new_task_under(epic)
         self.hand_off(epic, {task: "till"})
@@ -89,6 +88,12 @@ class EachNoteBecomesATaskTests(SendBackCase):
         full = self.metadata(filed["Add the tax before the total is read"])
         self.assertEqual(("till", "simple"), (simple["lap.area"], simple["lap.track"]))
         self.assertEqual(("receipt", "full"), (full["lap.area"], full["lap.track"]))
+
+    def test_a_new_task_carries_none_of_the_labels_the_epic_held_at_the_gate(self):
+        _, filed = self.sent_back_with_two_notes()
+
+        for bead in filed.values():
+            self.assertNotIn("labels", self.shown(bead))
 
     def test_a_note_pinned_to_a_diff_line_names_the_file_and_the_line_in_its_task(self):
         _, filed = self.sent_back_with_two_notes()
