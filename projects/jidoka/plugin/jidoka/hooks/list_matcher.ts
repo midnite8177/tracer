@@ -58,16 +58,22 @@ export function entriesOf(value: unknown): ListEntry[] {
   })
 }
 
+/** `word` as the shell reads it back as one word: bare when it is plain, else in single quotes. */
+function quoted(word: string): string {
+  return /^[\w@%+=:,./~-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`
+}
+
 /**
- * A text entry split into one entry for each simple command it holds, with
- * the quotes taken off; an entry object stays as it is, and a text that holds
- * a command substitution, a process substitution, an output redirect or an
- * unclosed quote adds nothing, because no list entry can vouch for it.
+ * A text entry split into one entry for each simple command it holds, each
+ * word quoted so that it reads back as the same word; an entry object stays
+ * as it is, and a text that holds a command substitution, a process
+ * substitution, an output redirect or an unclosed quote adds nothing, because
+ * no list entry can vouch for it.
  */
 export function splitIntoSimpleCommands(entries: readonly ListEntry[]): ListEntry[] {
   return entries.flatMap((entry): ListEntry[] =>
     typeof entry !== 'string'
       ? [entry]
-      : (simpleCommands(entry) ?? []).filter(words => words.length > 0).map(words => words.join(' ')),
+      : (simpleCommands(entry) ?? []).filter(words => words.length > 0).map(words => words.map(quoted).join(' ')),
   )
 }

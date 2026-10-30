@@ -340,6 +340,33 @@ test('a merge worker\'s git call that could run code, open an editor or write a 
   expect(await bash($, 'git status && sh -c "rm -rf /"')).toBe('deny')
 })
 
+test("a lap worker's list value that holds more than one simple command allows each of them", async ($, on) => {
+  engineBeneath(on, ['cd app && pytest'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'cd app && pytest')).toBe('allow')
+  expect(await bash($, 'pytest -k test_lap')).toBe('allow')
+  expect(await bash($, 'cd app && rm -rf /')).toBe('deny')
+})
+
+test("a lap worker's list value the lap mod cannot vouch for allows nothing", async ($, on) => {
+  engineBeneath(on, ['echo $(id)', 'echo a > b'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'echo $(id)')).toBe('deny')
+  expect(await bash($, 'echo hi')).toBe('deny')
+  expect(await bash($, 'echo a')).toBe('deny')
+})
+
+test("a quoted word that holds a space stays one word of a lap worker's list value", async ($, on) => {
+  engineBeneath(on, ['dotnet test App.slnx --filter "x y" && dotnet build App.slnx'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'dotnet test App.slnx --filter "x y"')).toBe('allow')
+  expect(await bash($, "dotnet test App.slnx --filter 'x y' -v q")).toBe('allow')
+  expect(await bash($, 'dotnet test App.slnx --filter x y')).toBe('deny')
+})
+
 test('a list entry matches whole words only', async ($, on) => {
   engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
@@ -1069,7 +1096,8 @@ test("a check worker's app values are split into simple commands, and one it can
   await startCheck($, 'jidoka:validation')
   const launcher = `${launched.pluginRoot}/bin/jidoka-run`
 
-  expect(await bash($, 'make my target')).toBe('allow')
+  expect(await bash($, 'make "my target"')).toBe('allow')
+  expect(await bash($, 'make my target')).toBe('deny')
   expect(await bash($, 'make seed')).toBe('allow')
   expect(await bash($, 'curl localhost:8080 -s')).toBe('allow')
   expect(await bash($, 'make run')).toBe('allow')

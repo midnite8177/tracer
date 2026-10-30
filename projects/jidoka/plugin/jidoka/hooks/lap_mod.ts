@@ -48,14 +48,13 @@ function jsonIn(text: string): unknown {
 /**
  * The commands a worker of this kind may run besides what the tools mark
  * read-only, from jidoka's lap-lists script run in the worktree; none when
- * the script cannot print them. The script prints a check worker's app values
- * whole, and this function splits them.
+ * the script cannot print them.
  */
 async function commandsFor($: EngineInterface, kind: LapWorker['kind'], worktree: string): Promise<ListEntry[]> {
   const shown = await runScript($, 'lap_lists', [kind], worktree)
   if (shown === undefined || shown.exitCode !== 0) return []
   const listed = entriesOf(jsonIn(shown.stdout))
-  return kind === 'check' ? splitIntoSimpleCommands(listed) : listed
+  return splitIntoSimpleCommands(listed)
 }
 
 export { jidokaScriptsIn }

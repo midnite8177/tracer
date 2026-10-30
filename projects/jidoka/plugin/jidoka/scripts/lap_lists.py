@@ -14,10 +14,13 @@ JSON list. The kind is the lap mod's kind of worker:
          the epic is the one the folder names, and there is no merge grant.
          Any other folder names no epic.
   check  a validation or app check worker. Its list holds each app's `build`,
-         `run` and `way_in` and the repo settings' `worker_commands`, each
-         value whole. The lap mod splits a value into its simple commands, as
-         it splits every command it decides on. The worktree can be any folder
-         of the repo.
+         `run` and `way_in` and the repo settings' `worker_commands`. The
+         worktree can be any folder of the repo.
+
+Each list prints its values whole. The lap mod splits a value into its simple
+commands, as it splits every command it decides on, and a value it cannot
+split, such as one with a command substitution or an output redirect, adds
+nothing.
 
 A text entry allows its words with any words after them. An object entry is
 `{"command", "then"}`, which allows its words with nothing after them when
