@@ -36,6 +36,7 @@ from epics import HOLDOUTS_PENDING_KEY, PENDING, awaits_holdouts
 from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, count_of, park_epic, worktree_at
 from report_text import shortened_title
+from repo_settings import apps_of
 from validation import FAIL, PASS, RESULT_KEY, RUNS_KEY, ValidationError
 from worktrees import remove_worktree
 
@@ -165,8 +166,7 @@ def holdout_title(app: str, saw: str) -> str:
 def file_holdout_failure(epic: str, verdict: Verdict, settings: dict, main_tree: Path) -> str:
     """Files the task that says what a user saw, with neither the holdout's scenario nor its steps."""
     app = verdict.holdout.app
-    way_in = next((str(each.get("way_in")) for each in settings.get("apps") or []
-                   if isinstance(each, dict) and each.get("name") == app and each.get("way_in")), "its way in")
+    way_in = next((each.way_in for each in apps_of(settings) if each.name == app and each.way_in), "its way in")
     task = NewTask(holdout_title(app, verdict.saw), holdout_description(app, way_in, verdict.saw), app, SIMPLE_TRACK)
     return file_task(epic, task, None, env_as_factory(), main_tree)
 

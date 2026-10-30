@@ -74,7 +74,24 @@ function isBeneath(path: string, place: string): boolean {
   return path === place || path.startsWith(place.endsWith('/') ? place : `${place}/`)
 }
 
-function engineWith(on: On, commands: unknown[] | undefined, world: World): Launched {
+/** The environment of the host that `withEnv` last set, which the stand-in for `repo_settings.py home` reads. */
+let hostEnv: Record<string, string> = {}
+
+function withEnv(on: On, env: Record<string, string>): void {
+  hostEnv = env
+  mock.env(on, env)
+}
+
+/** What `repo_settings.py home` prints: `JIDOKA_HOME`, else `.jidoka` in `HOME` or `USERPROFILE`; nothing when none is set. */
+function homeThatTheScriptPrints(): string | undefined {
+  const set = (name: string): string | undefined => (hostEnv[name] === '' ? undefined : hostEnv[name])
+  const named = set('JIDOKA_HOME')
+  if (named !== undefined) return named
+  const home = set('HOME') ?? set('USERPROFILE')
+  return home === undefined ? undefined : `${home}/.jidoka`
+}
+
+function engineWith(on: On,commands: unknown[] | undefined, world: World): Launched {
   const launched: Launched = { pluginRoot: '', asked: [] }
   const { places } = world
   on('fs.stat', (_, e) => {
@@ -101,6 +118,10 @@ function engineWith(on: On, commands: unknown[] | undefined, world: World): Laun
     const [shell, launcher = '', script = '', kind = ''] = e.argv
     const root = launcher.slice(0, -'/bin/jidoka-run'.length)
     launched.pluginRoot = root.replaceAll('\\', '/')
+    if (script === `${root}/scripts/repo_settings.py` && kind === 'home') {
+      const home = homeThatTheScriptPrints()
+      return { value: { ...RAN, exitCode: home === undefined ? 1 : 0, stdout: home ?? '' } }
+    }
     const isLapLists =
       shell === 'sh' &&
       launcher.endsWith('/bin/jidoka-run') &&
@@ -1133,7 +1154,7 @@ const STEP = { model: SONNET, input_tokens: 100, output_tokens: 10, cache_read_i
  * none, and a write lands in `files` by path. */
 function engineThatSteps(on: On, env: Record<string, string>, usage: typeof STEP | null): Map<string, string> {
   const files = new Map<string, string>()
-  mock.env(on, env)
+  withEnv(on, env)
   on('turn.step', async function* () {
     return { answer: '', toolUses: [], usage }
   })
@@ -1320,7 +1341,7 @@ function usageAt(fiveHour: number, sevenDay: number): unknown {
 /**
  * Stands for the engine beneath the plugin when the manager calls a jidoka script: the clock reads NOW_MS, the
  * account has the usage `reported` returns (or the usage call fails when it throws), and a write lands in `files`.
- * The plugin's folder is learned from the launcher call of a lap spawn.
+ * The plugin's folder comes from the launcher call of a lap spawn.
  */
 function managerCalling(
   on: On,
@@ -1337,7 +1358,7 @@ function managerCallingWith(
   canWrite: boolean,
 ): { files: Map<string, string>; launcher: () => string } {
   const files = new Map<string, string>()
-  mock.env(on, env)
+  withEnv(on, env)
   on('fs.write', (_, e) => {
     if (!canWrite) throw new Error('disk full')
     files.set(literal(e.path), e.text)

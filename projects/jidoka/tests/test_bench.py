@@ -67,8 +67,7 @@ class BenchCase(unittest.TestCase):
                 "BEADS_ACTOR": "claude"}
 
     def bench(self, env: dict[str, str], *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(BENCH), *args]), capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=env, cwd=self.repo)
+        return fixture.run_launcher(LAUNCHER, [str(BENCH), *args], None, env, self.repo, RUN_TIMEOUT_SECONDS)
 
     def shown(self, bead: str) -> dict:
         return json.loads(fixture.run([self.bd, "show", bead, "--json"], self.repo))[0]
@@ -83,10 +82,8 @@ class BenchCase(unittest.TestCase):
                               "run": None, "test": "make test", "test_target": "-k <name>", "test_full": None,
                               "hand_run": []}],
                     "glossary_and_adrs": glossary_and_adrs}
-        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), "write"]),
-                              input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
-                              timeout=RUN_TIMEOUT_SECONDS, env={**os.environ, "JIDOKA_HOME": str(cls.home)},
-                              cwd=cls.repo)
+        done = fixture.run_launcher(LAUNCHER, [str(SETTINGS_SCRIPT), "write"], json.dumps(settings),
+                                    {**os.environ, "JIDOKA_HOME": str(cls.home)}, cls.repo, RUN_TIMEOUT_SECONDS)
         if done.returncode != 0:
             raise fixture.FixtureError(f"repo_settings.py write failed: {done.stderr}")
 

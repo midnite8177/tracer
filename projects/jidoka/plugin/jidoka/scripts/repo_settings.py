@@ -5,7 +5,8 @@ The settings live in <jidoka-home>/repos/<key>.json, where the key comes from
 the path of the repo's main worktree, so every worktree of the repo finds the
 same file. Moving or renaming the main worktree leaves its settings behind
 under the old key. The home is --jidoka-home, else $JIDOKA_HOME, else
-~/.jidoka.
+~/.jidoka. `home` prints that folder, so that the lap mod, which writes into
+it, asks this script and holds no copy of the rule.
 
 `write` reads one JSON object on stdin. Its keys replace the stored ones and
 the stored keys it leaves out stay. The script checks the merged settings
@@ -66,6 +67,7 @@ import os
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import git_exclude
@@ -99,6 +101,30 @@ SWITCH_COMMAND = f'sh "{SCRIPTS.parent / "bin" / "jidoka-run"}" "{SCRIPTS / "bea
 
 class SettingsError(Exception):
     """A reason the script writes nothing, worded for the person who reads stderr."""
+
+
+@dataclass(frozen=True)
+class App:
+    """One app of the repo as the stored settings hold it. A field is None when the app has none of it."""
+    name: str
+    build: str | None
+    run: str | None
+    test: str | None
+    way_in: str | None
+    acceptance: str | None
+
+
+def text_of(value: object) -> str | None:
+    return value if is_text(value) else None
+
+
+def apps_of(settings: dict) -> list[App]:
+    """The apps of stored settings, in the order the settings list them. Settings with no apps give none, and an
+    entry that is not a JSON object is left out."""
+    listed = settings.get("apps")
+    return [App(str(app.get("name") or ""), text_of(app.get("build")), text_of(app.get("run")),
+                text_of(app.get("test")), text_of(app.get("way_in")), text_of(app.get("acceptance")))
+            for app in (listed if isinstance(listed, list) else []) if isinstance(app, dict)]
 
 
 def jidoka_home(flag: str | None) -> Path:
@@ -513,8 +539,12 @@ def main(argv: list[str]) -> int:
     modes = parser.add_subparsers(dest="mode", required=True)
     modes.add_parser("write", parents=[shared], help="merge the JSON object on stdin into the settings")
     modes.add_parser("show", parents=[shared], help="print the settings")
+    modes.add_parser("home", parents=[shared], help="print jidoka's home")
     args = parser.parse_args(argv)
     home = jidoka_home(args.jidoka_home)
+    if args.mode == "home":
+        print(home)
+        return 0
     cwd = Path.cwd()
     try:
         if args.mode == "write":

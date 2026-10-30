@@ -781,6 +781,14 @@ def launch_command(launcher: Path, arguments: list) -> list:
     return [str(launcher), *arguments]
 
 
+def run_launcher(launcher: Path, arguments: list, stdin: str | None, env: dict, cwd: Path | None,
+                 timeout: float | None) -> subprocess.CompletedProcess:
+    """Runs the jidoka-run launcher with arguments to the end and returns its result, output decoded as UTF-8. The
+    stdin text, when there is some, is what the launcher reads."""
+    return subprocess.run(launch_command(launcher, arguments), input=stdin, capture_output=True, text=True,
+                          encoding="utf-8", timeout=timeout, env=env, cwd=cwd)
+
+
 def script_env(bin_dir: Path, home_dir: Path) -> dict:
     return {"PATH": str(bin_dir), **home_variables(home_dir),
             **system_variables(os.environ, WINDOWS), **git_bash_variable(WINDOWS)}

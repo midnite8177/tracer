@@ -214,11 +214,10 @@ class ValidationHoldoutsCase(ValidationCase):
         """An epic with one task and one holdout for each scenario; returns the epic, the task and the printed moves
         of the build's report, which ends with the holdouts action."""
         epic, task, _ = self.finish_epic_but_for_the_last_report()
-        written = subprocess.run(fixture.launch_command(test_scheduler.LAUNCHER, [str(HOLDOUTS), "write", epic]),
-                                 input=json.dumps([{"app": "shop", "tasks": [task], "scenario": each}
+        written = fixture.run_launcher(test_scheduler.LAUNCHER, [str(HOLDOUTS), "write", epic],
+                                       json.dumps([{"app": "shop", "tasks": [task], "scenario": each}
                                                    for each in scenarios]),
-                                 capture_output=True, text=True, encoding="utf-8", env=self.caller_env(self.home),
-                                 cwd=self.repo)
+                                       self.caller_env(self.home), self.repo, None)
         self.assertEqual(0, written.returncode, written.stderr)
         return epic, task, self.build_done(epic, task)
 
@@ -298,6 +297,7 @@ class ValidationHoldoutsTests(ValidationHoldoutsCase):
         self.assertEqual(("fail", action["task"]), (moved["validation"]["result"], moved["validation"]["filed"]))
         self.assertEqual(epic, filed["parent"])
         self.assertIn(WHAT_A_USER_SAW, filed["description"])
+        self.assertIn("reaching it through its command line", filed["description"])
         for hidden in (SCENARIO, SECOND_SCENARIO, "Run `till total`"):
             self.assertNotIn(hidden, filed["description"] + filed["title"])
         self.assertEqual(("build", "shop", "in_progress"),
@@ -419,10 +419,10 @@ class ValidationHoldoutsTests(ValidationHoldoutsCase):
 
     def test_a_red_suite_runs_no_holdouts(self):
         epic, task, _ = self.finish_epic_but_for_the_last_report()
-        subprocess.run(fixture.launch_command(test_scheduler.LAUNCHER, [str(HOLDOUTS), "write", epic]),
-                       input=json.dumps([{"app": "shop", "tasks": [task], "scenario": SCENARIO}]),
-                       capture_output=True, text=True, encoding="utf-8", env=self.caller_env(self.home),
-                       cwd=self.repo, check=True)
+        written = fixture.run_launcher(test_scheduler.LAUNCHER, [str(HOLDOUTS), "write", epic],
+                                       json.dumps([{"app": "shop", "tasks": [task], "scenario": SCENARIO}]),
+                                       self.caller_env(self.home), self.repo, None)
+        self.assertEqual(0, written.returncode, written.stderr)
         self.queue_validation_exit_codes(epic, 1)
 
         printed = self.build_done(epic, task)

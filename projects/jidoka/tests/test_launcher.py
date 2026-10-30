@@ -24,8 +24,7 @@ class LauncherTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def launch(self, args: list, env: dict) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, args), capture_output=True, text=True,
-                              encoding="utf-8", env=env)
+        return fixture.run_launcher(LAUNCHER, args, None, env, None, None)
 
     def record(self, python: str) -> None:
         (self.home / "python").write_text(python + "\n", encoding="utf-8")

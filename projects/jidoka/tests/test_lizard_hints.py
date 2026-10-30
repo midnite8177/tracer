@@ -55,9 +55,8 @@ class LizardScriptCase(unittest.TestCase):
         self.assertEqual(0, done.returncode, done.stderr)
 
     def launch(self, script: Path, *args: str, stdin: str = "") -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), input=stdin,
-                              capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT_SECONDS,
-                              cwd=self.repo, env={**os.environ, "JIDOKA_HOME": str(self.home)})
+        return fixture.run_launcher(LAUNCHER, [str(script), *args], stdin,
+                                    {**os.environ, "JIDOKA_HOME": str(self.home)}, self.repo, TIMEOUT_SECONDS)
 
     def commit(self, files: dict[str, str]) -> str:
         for name, text in files.items():
@@ -158,10 +157,9 @@ class DesignLaneHintsTests(test_review.ReviewCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        command = fixture.launch_command(test_scheduler.LAUNCHER, [str(test_scheduler.SETTINGS_SCRIPT), "write"])
-        done = subprocess.run(command, input=json.dumps({"lizard_limits": LIMITS}), capture_output=True, text=True,
-                              encoding="utf-8", timeout=TIMEOUT_SECONDS, cwd=cls.repo,
-                              env={**os.environ, "JIDOKA_HOME": str(cls.home)})
+        done = fixture.run_launcher(test_scheduler.LAUNCHER, [str(test_scheduler.SETTINGS_SCRIPT), "write"],
+                                    json.dumps({"lizard_limits": LIMITS}),
+                                    {**os.environ, "JIDOKA_HOME": str(cls.home)}, cls.repo, TIMEOUT_SECONDS)
         if done.returncode != 0:
             raise fixture.FixtureError(f"repo_settings.py write failed: {done.stderr}")
 

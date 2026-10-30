@@ -82,8 +82,7 @@ class SessionStartTests(unittest.TestCase):
     def start(self, stdin: str, process_cwd: Path, path: str) -> subprocess.CompletedProcess:
         env = {"PATH": path, "JIDOKA_HOME": str(self.home), "HOME": str(self.home),
                **fixture.system_variables(os.environ, fixture.WINDOWS)}
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(HOOK)]), input=stdin, capture_output=True,
-                              text=True, encoding="utf-8", env=env, cwd=process_cwd)
+        return fixture.run_launcher(LAUNCHER, [str(HOOK)], stdin, env, process_cwd, None)
 
     def session(self, cwd: Path) -> subprocess.CompletedProcess:
         event = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd)}
@@ -93,8 +92,7 @@ class SessionStartTests(unittest.TestCase):
         event = {"session_id": session_id, "hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd)}
         env = {"PATH": self.path, "JIDOKA_HOME": str(self.home), "HOME": str(self.home),
                "CLAUDE_ENV_FILE": str(env_file), **fixture.system_variables(os.environ, fixture.WINDOWS)}
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(HOOK)]), input=json.dumps(event),
-                              capture_output=True, text=True, encoding="utf-8", env=env, cwd=self.not_a_repo)
+        return fixture.run_launcher(LAUNCHER, [str(HOOK)], json.dumps(event), env, self.not_a_repo, None)
 
     def exported_by(self, env_file: Path) -> str:
         """The value of JIDOKA_SESSION_ID in a shell that sources the env file."""

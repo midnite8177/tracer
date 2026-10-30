@@ -97,10 +97,8 @@ class SchedulerCase(unittest.TestCase):
                     "apps": [{"name": "shop", "kind": "program", "way_in": "its command line", "build": "make",
                               "run": None, "test": cls.test_command, "test_target": "-k <name>",
                               "test_full": None, "hand_run": [], "acceptance": ACCEPTANCE}], **extra}
-        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), "write"]),
-                              input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
-                              timeout=RUN_TIMEOUT_SECONDS, env={**os.environ, "JIDOKA_HOME": str(cls.home)},
-                              cwd=cls.repo)
+        done = fixture.run_launcher(LAUNCHER, [str(SETTINGS_SCRIPT), "write"], json.dumps(settings),
+                                    {**os.environ, "JIDOKA_HOME": str(cls.home)}, cls.repo, RUN_TIMEOUT_SECONDS)
         if done.returncode != 0:
             raise fixture.FixtureError(f"repo_settings.py write failed: {done.stderr}")
 
@@ -136,9 +134,8 @@ class SchedulerCase(unittest.TestCase):
         return self.launch_in(self.home, script, *args)
 
     def launch_in(self, home: Path, script: Path, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), capture_output=True,
-                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.caller_env(home),
-                              cwd=self.repo)
+        return fixture.run_launcher(LAUNCHER, [str(script), *args], None, self.caller_env(home), self.repo,
+                                    RUN_TIMEOUT_SECONDS)
 
     def hand_off(self, epic: str, areas: dict[str, str]) -> str:
         """Hands the epic to the factory through handoff.py, and returns its epic branch."""
@@ -148,9 +145,8 @@ class SchedulerCase(unittest.TestCase):
         return json.loads(done.stdout)["branch"]
 
     def rules(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(RULES), *args]), input=stdin,
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              env=self.caller_env(self.home), cwd=self.repo)
+        return fixture.run_launcher(LAUNCHER, [str(RULES), *args], stdin, self.caller_env(self.home), self.repo,
+                                    RUN_TIMEOUT_SECONDS)
 
     def rules_set(self, epic: str, *settings: str) -> dict:
         done = self.rules("set", epic, *settings)
@@ -829,9 +825,8 @@ class MergeWorkerTests(SchedulerCase):
         self.build_done(lap.epic, lap.task)
         git(lap.worktree, "checkout", "-q", "--detach")
 
-        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(RULES), "lap-commands"]), capture_output=True,
-                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              env=self.caller_env(self.home), cwd=lap.worktree)
+        done = fixture.run_launcher(LAUNCHER, [str(RULES), "lap-commands"], None, self.caller_env(self.home),
+                                    lap.worktree, RUN_TIMEOUT_SECONDS)
 
         self.assertEqual(1, done.returncode)
         self.assertIn("is not a lap worktree", done.stderr)
@@ -1250,9 +1245,8 @@ class QuestionTests(SchedulerCase):
         [action] = self.next_printed(lap.epic)["actions"]
 
         self.assertEqual({"source": "comment", "text": "The epic's list."}, action["answer"])
-        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(RULES), "show", lap.epic]), capture_output=True,
-                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              env=self.caller_env(self.home), cwd=self.repo)
+        done = fixture.run_launcher(LAUNCHER, [str(RULES), "show", lap.epic], None, self.caller_env(self.home),
+                                    self.repo, RUN_TIMEOUT_SECONDS)
         self.assertEqual(["make lint"], json.loads(done.stdout)["settings"]["extra_commands"])
 
     def test_a_comment_that_asks_back_gets_a_reply_from_the_stage_which_parks_again_and_the_next_unpark_answers_the_reply(
@@ -2483,9 +2477,8 @@ class AppCheckTests(FullTrackCase):
     SAW = "The till printed no receipt after a payment of 2.00, where receipt 2 should have printed."
 
     def write_holdouts(self, epic: str, holdouts: list[dict]) -> None:
-        command = fixture.launch_command(LAUNCHER, [str(PLUGIN / "scripts" / "holdouts.py"), "write", epic])
-        done = subprocess.run(command, input=json.dumps(holdouts), capture_output=True, text=True, encoding="utf-8",
-                              timeout=RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home), cwd=self.repo)
+        done = fixture.run_launcher(LAUNCHER, [str(PLUGIN / "scripts" / "holdouts.py"), "write", epic],
+                                    json.dumps(holdouts), self.caller_env(self.home), self.repo, RUN_TIMEOUT_SECONDS)
         if done.returncode != 0:
             raise fixture.FixtureError(f"holdouts.py write failed: {done.stderr}")
 

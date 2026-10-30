@@ -147,9 +147,8 @@ class LandingCase(unittest.TestCase):
             "lap_limit": 3,
             "apps": cls.apps(),
         }
-        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), "write"]),
-                              input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
-                              env={**os.environ, "JIDOKA_HOME": str(cls.home)}, cwd=cls.repo)
+        done = fixture.run_launcher(LAUNCHER, [str(SETTINGS_SCRIPT), "write"], json.dumps(settings),
+                                    {**os.environ, "JIDOKA_HOME": str(cls.home)}, cls.repo, None)
         if done.returncode != 0:
             raise fixture.FixtureError(done.stderr)
 

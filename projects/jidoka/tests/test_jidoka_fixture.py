@@ -109,6 +109,21 @@ class WindowsExecutableTests(unittest.TestCase):
 
         self.assertEqual("".join(f"[{word}]\n" for word in given), done.stdout)
 
+    def test_a_launcher_run_gives_the_launcher_its_arguments_stdin_environment_and_folder(self):
+        launcher = self.root / "report"
+        launcher.write_text('#!/bin/sh\nprintf "[%s][%s][%s]" "$1" "$(cat)" "$REPORT_VARIABLE"; pwd >&2\n',
+                            encoding="utf-8", newline="\n")
+        launcher.chmod(0o755)
+        folder = self.root / "work"
+        folder.mkdir()
+        environment = {**os.environ, "REPORT_VARIABLE": "set"}
+
+        done = fixture.run_launcher(launcher, ["first"], "typed in", environment, folder, 30)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("[first][typed in][set]", done.stdout)
+        self.assertEqual(folder.resolve(), Path(done.stderr.strip()).resolve())
+
 
 class FolderWithoutBeadsAboveTests(unittest.TestCase):
     """The folders under test sit below a user folder that holds a .beads, as a temporary folder does on a machine whose
@@ -177,7 +192,6 @@ WAIT_FOR_PROCESS_POLL_SECONDS = 0.1
 
 
 def start_holder(folder: Path) -> subprocess.Popen:
-    """A process of this one that runs in the folder and sleeps."""
     return subprocess.Popen([sys.executable, "-c", fixture.SLEEP_FOR_AN_HOUR], cwd=folder,
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -192,7 +206,6 @@ def start_file_holder(file: Path, folder: Path) -> subprocess.Popen:
 
 
 def start_holder_after_its_parent_ended(folder: Path) -> int:
-    """The id of a process that runs in the folder and sleeps, whose parent has already ended."""
     code = "\n".join([
         "import subprocess, sys",
         f"child = subprocess.Popen([sys.executable, '-c', {fixture.SLEEP_FOR_AN_HOUR!r}], cwd={str(folder)!r},",

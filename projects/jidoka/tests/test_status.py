@@ -10,7 +10,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import jidoka_fixture as fixture  # noqa: E402
+import jidoka_fixture as fixture
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
@@ -44,10 +44,9 @@ class StatusCase(unittest.TestCase):
         (self.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
 
     def script(self, script: Path, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), capture_output=True,
-                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
-                              env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
-                                   "BEADS_ACTOR": HUMAN})
+        return fixture.run_launcher(LAUNCHER, [str(script), *args], None,
+                                    {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
+                                     "BEADS_ACTOR": HUMAN}, self.repo, RUN_TIMEOUT_SECONDS)
 
     def bd(self, *args: str) -> str:
         return fixture.run([self.fake_bd, *args], self.repo)
@@ -168,10 +167,9 @@ class HeartbeatTests(StatusCase):
         outside = self.root / "elsewhere"
         outside.mkdir()
 
-        command = fixture.launch_command(LAUNCHER, [str(HEARTBEAT), "beat", "--session", MANAGER_SESSION])
-        done = subprocess.run(command, capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=outside,
-                              env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)})
+        done = fixture.run_launcher(LAUNCHER, [str(HEARTBEAT), "beat", "--session", MANAGER_SESSION], None,
+                                    {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)},
+                                    outside, RUN_TIMEOUT_SECONDS)
 
         self.assertNotEqual(0, done.returncode)
         self.assertIn("not inside a git repo", done.stderr)

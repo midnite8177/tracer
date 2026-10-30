@@ -66,10 +66,9 @@ class LedgerBooks:
 
 class LedgerCase(LedgerBooks, SchedulerCase):
     def launch_at(self, now: int, *scheduler_args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"),
-                                                                *scheduler_args]),
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              cwd=self.repo, env={**self.caller_env(self.home), "JIDOKA_NOW": str(now)})
+        return fixture.run_launcher(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"), *scheduler_args], None,
+                                    {**self.caller_env(self.home), "JIDOKA_NOW": str(now)}, self.repo,
+                                    RUN_TIMEOUT_SECONDS)
 
     def report_at(self, lap, outcome: str, seconds_after_start: int, *flags: str) -> dict:
         started = int(self.metadata(lap.task)["lap.started"])
@@ -284,12 +283,10 @@ class TheLedgerPricesWithTheCachedListPricesTests(LedgerCase):
         """Reports the lap's build with a worker that used a million input tokens of the model, with the pages read
         from the folder, and returns the dollars of its row and what the report said on stderr."""
         self.leave_tokens("agent-1", tokens(model, 1_000_000, 0, 0, 0))
-        command = fixture.launch_command(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"), "report", lap.epic,
-                                                    lap.task, "failed", "--agent", "agent-1", "--why", "red"])
-        done = subprocess.run(command,
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              cwd=self.repo, env={**self.caller_env(self.home), "JIDOKA_NOW": str(now),
-                                                  "JIDOKA_PRICE_PAGES": str(pages)})
+        done = fixture.run_launcher(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"), "report", lap.epic,
+                                               lap.task, "failed", "--agent", "agent-1", "--why", "red"], None,
+                                    {**self.caller_env(self.home), "JIDOKA_NOW": str(now),
+                                     "JIDOKA_PRICE_PAGES": str(pages)}, self.repo, RUN_TIMEOUT_SECONDS)
         self.assertEqual(0, done.returncode, done.stderr)
         [row] = self.listed(lap.epic)["rows"]
         return row["dollars"], done.stderr
@@ -431,17 +428,15 @@ class TheEpicsRunningTotalTests(LedgerCase):
 
 class TheManagersRequestsTests(LedgerCase):
     def request(self, *flags: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(LEDGER), "request", "--session", SESSION, *flags]),
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              cwd=self.repo, env=self.caller_env(self.home))
+        return fixture.run_launcher(LAUNCHER, [str(LEDGER), "request", "--session", SESSION, *flags], None,
+                                    self.caller_env(self.home), self.repo, RUN_TIMEOUT_SECONDS)
 
     def test_a_request_of_the_session_that_manages_an_epic_writes_a_row_on_that_epic(self):
         lap = self.open_one_lap()
         (self.home / "heartbeat" / f"{lap.epic}.json").unlink(missing_ok=True)
-        command = fixture.launch_command(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"), "next", lap.epic])
-        claimed = subprocess.run(command,
-                                 capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                                 cwd=self.repo, env={**self.caller_env(self.home), "JIDOKA_SESSION_ID": SESSION})
+        claimed = fixture.run_launcher(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"), "next", lap.epic], None,
+                                       {**self.caller_env(self.home), "JIDOKA_SESSION_ID": SESSION}, self.repo,
+                                       RUN_TIMEOUT_SECONDS)
         self.assertEqual(0, claimed.returncode, claimed.stderr)
 
         done = self.request("--model", OPUS, "--input", "0", "--output", "200000", "--cache-read", "0",

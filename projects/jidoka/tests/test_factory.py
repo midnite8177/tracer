@@ -71,10 +71,9 @@ class FactoryCheckCase(unittest.TestCase):
                "USERPROFILE": str(self.home), "JIDOKA_HOME": str(self.jidoka_home), **fixture.system_variables(os.environ, fixture.WINDOWS)}
         if config_dir is not None:
             env["CLAUDE_CONFIG_DIR"] = str(config_dir)
-        command = fixture.launch_command(self.plugin / "bin" / "jidoka-run",
-                                         [str(self.plugin / "scripts" / "factory.py"), "check"])
-        return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", env=env, cwd=self.root,
-                              timeout=RUN_TIMEOUT_SECONDS)
+        return fixture.run_launcher(self.plugin / "bin" / "jidoka-run",
+                                    [str(self.plugin / "scripts" / "factory.py"), "check"], None, env, self.root,
+                                    RUN_TIMEOUT_SECONDS)
 
 
 class FactoryCheckPassesTests(FactoryCheckCase):

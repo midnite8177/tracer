@@ -65,9 +65,7 @@ class SetupCase(unittest.TestCase):
     def setup_script(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
         env = {name: value for name, value in os.environ.items() if name not in KEY_VARIABLES}
         env.update({"PATH": f"{self.bin}{os.pathsep}{SYSTEM_PATH}", "JIDOKA_HOME": str(self.home), **self.keys})
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(SETUP), *args]), input=stdin,
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=env,
-                              cwd=self.repo)
+        return fixture.run_launcher(LAUNCHER, [str(SETUP), *args], stdin, env, self.repo, RUN_TIMEOUT_SECONDS)
 
     def proposal(self) -> dict:
         done = self.setup_script("propose")

@@ -301,6 +301,38 @@ class LargeFindingTests(ReviewCase):
         self.assertEqual("open", self.shown(task)["status"])
 
 
+class DesignFindingFilingTests(ReviewCase):
+    @staticmethod
+    def design_large(title: str) -> dict[str, list[dict]]:
+        return {"design": [finding(title, "large", "medium")]}
+
+    def open_design_findings(self) -> list[dict]:
+        done = self.launch(test_scheduler.PLUGIN / "scripts" / "design_findings.py", "--open")
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_a_large_finding_of_the_design_lane_is_filed_as_a_design_finding_the_open_list_shows(self):
+        epic, printed = self.finish_epic_at_the_review()
+
+        moved = self.reviewed(printed, self.design_large("Till mixes pricing with printing"))
+
+        [task] = moved["review"]["filed"]
+        self.assertEqual((None, {("discovered-from", epic)}), (self.shown(task).get("parent"), self.links_of(task)))
+        self.assertIn("design", self.shown(task)["labels"])
+        self.assertEqual([(task, BUILT_FILE, 1)],
+                         [(each["bead"], each["file"], each["sightings"]) for each in self.open_design_findings()
+                          if each["bead"] == task])
+
+    def test_a_large_finding_of_another_lane_is_not_a_design_finding(self):
+        epic, printed = self.finish_epic_at_the_review()
+
+        moved = self.reviewed(printed, {"spec": [finding("Unasked flag", "large", "high")]})
+
+        [task] = moved["review"]["filed"]
+        self.assertNotIn("design", self.shown(task).get("labels") or [])
+        self.assertEqual([], [each for each in self.open_design_findings() if each["bead"] == task])
+
+
 class LaterReviewTests(ReviewCase):
     def test_a_later_review_runs_only_the_diff_lanes_over_the_diff_since_the_last_review(self):
         epic, printed = self.finish_epic_at_the_review()

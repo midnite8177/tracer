@@ -30,14 +30,11 @@ MERGE_GRANT = [
 
 
 def lap_lists(kind: str, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
-    return subprocess.run(fixture.launch_command(test_scheduler.LAUNCHER, [str(LAP_LISTS), kind]),
-                          capture_output=True, text=True, encoding="utf-8",
-                          timeout=test_scheduler.RUN_TIMEOUT_SECONDS, env=env, cwd=cwd)
+    return fixture.run_launcher(test_scheduler.LAUNCHER, [str(LAP_LISTS), kind], None, env, cwd,
+                                test_scheduler.RUN_TIMEOUT_SECONDS)
 
 
 def with_bd_refusing(bead: str, env: dict[str, str], folder: Path, fake_bd: str) -> dict[str, str]:
-    """The environment with a bd first on its PATH that refuses every call naming the bead and hands the rest to the
-    fake bd."""
     folder.mkdir()
     fixture.write_executable(folder / "bd", f"""#!/bin/sh
 for arg in "$@"; do
@@ -52,12 +49,9 @@ exec "{fake_bd}" "$@"
 
 
 def write_settings_in(home: Path, settings: dict, repo: Path) -> Path:
-    """Writes the repo's settings into the home, as onboarding does, and returns the file that holds them."""
-    command = fixture.launch_command(test_scheduler.LAUNCHER, [str(test_scheduler.SETTINGS_SCRIPT), "write"])
-    done = subprocess.run(command,
-                          input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
-                          timeout=test_scheduler.RUN_TIMEOUT_SECONDS, env={**os.environ, "JIDOKA_HOME": str(home)},
-                          cwd=repo)
+    done = fixture.run_launcher(test_scheduler.LAUNCHER, [str(test_scheduler.SETTINGS_SCRIPT), "write"],
+                                json.dumps(settings), {**os.environ, "JIDOKA_HOME": str(home)}, repo,
+                                test_scheduler.RUN_TIMEOUT_SECONDS)
     if done.returncode != 0:
         raise fixture.FixtureError(f"repo_settings.py write failed: {done.stderr}")
     [written] = (home / "repos").glob("*.json")
@@ -194,9 +188,8 @@ class LapListsTests(test_scheduler.SchedulerCase):
         self.assertIn("the built-in list", done.stderr)
 
     def test_a_call_with_no_worker_kind_is_a_usage_error(self):
-        done = subprocess.run(fixture.launch_command(test_scheduler.LAUNCHER, [str(LAP_LISTS)]),
-                              capture_output=True, text=True, encoding="utf-8", timeout=test_scheduler.RUN_TIMEOUT_SECONDS,
-                              env=self.caller_env(self.home), cwd=self.repo)
+        done = fixture.run_launcher(test_scheduler.LAUNCHER, [str(LAP_LISTS)], None, self.caller_env(self.home),
+                                    self.repo, test_scheduler.RUN_TIMEOUT_SECONDS)
 
         self.assertEqual(2, done.returncode)
 

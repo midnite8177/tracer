@@ -53,20 +53,18 @@ class WakeCase(StopCase):
 
     def record(self, thread: str) -> None:
         self.claim_the_epic(SESSION)
-        command = fixture.launch_command(LAUNCHER, [str(T3_WAKE), "record", self.epic, "--thread", thread])
-        done = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              cwd=self.repo, env=self.environment(SESSION))
+        done = fixture.run_launcher(LAUNCHER, [str(T3_WAKE), "record", self.epic, "--thread", thread], None,
+                                    self.environment(SESSION), self.repo, RUN_TIMEOUT_SECONDS)
         self.assertEqual(0, done.returncode, done.stderr)
 
     def end_session(self, session: str, reason: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(SESSION_END)]), input=json.dumps(
-            {"session_id": session, "cwd": str(self.repo), "reason": reason}), capture_output=True, text=True,
-            encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo, env=self.environment(None))
+        return fixture.run_launcher(LAUNCHER, [str(SESSION_END)],
+                                    json.dumps({"session_id": session, "cwd": str(self.repo), "reason": reason}),
+                                    self.environment(None), self.repo, RUN_TIMEOUT_SECONDS)
 
     def script_in_session(self, script: Path, session: str, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), capture_output=True, text=True,
-                              encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
-                              env=self.environment(session))
+        return fixture.run_launcher(LAUNCHER, [str(script), *args], None, self.environment(session), self.repo,
+                                    RUN_TIMEOUT_SECONDS)
 
     def sent_lines(self) -> list[str]:
         return self.sent.read_text(encoding="utf-8").splitlines() if self.sent.exists() else []

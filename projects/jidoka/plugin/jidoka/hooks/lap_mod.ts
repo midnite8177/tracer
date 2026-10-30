@@ -1,5 +1,6 @@
 import type { EngineInterface, Register, Timer, TurnUsage } from 'claude-code'
 import type { Grant, LapWorker, ListEntry } from '../types/index'
+import { isAbsolute, isInside, isReallyInside, resolved, withDrive } from './path_placement.js'
 
 const LAP_LINE = /^jidoka lap worktree: (.+?)\s*$/
 
@@ -15,7 +16,6 @@ function isCheckWorker(subagentType: string | undefined): boolean {
   return subagentType !== undefined && CHECK_WORKERS.has(subagentType.replace(/^jidoka:/, ''))
 }
 
-const DRIVE = /^[A-Za-z]:/
 const HOST_ONLY = new Set(['ToolSearch', 'SendMessage', 'ListAgents', 'SubagentHandback'])
 const ASKS_LIVE = 'AskUserQuestion'
 const STARTS_WORKERS = new Set(['Agent', 'Workflow'])
@@ -25,119 +25,6 @@ const FILE_PATH_FIELD: ReadonlyMap<string, string> = new Map([
   ['Edit', 'file_path'],
   ['NotebookEdit', 'notebook_path'],
 ])
-
-function isAbsolute(path: string): boolean {
-  return /^([A-Za-z]:)?[/\\]/.test(path)
-}
-
-/** The `\\?\` or `\\.\` prefix that Windows puts before a drive path, which names the same place without it. */
-const EXTENDED_DRIVE_PREFIX = /^[\\/]{2}[?.][\\/](?=[A-Za-z]:([\\/]|$))/
-
-/** A path that starts with a drive letter and no separator, which Windows reads against that drive's own current folder. */
-const DRIVE_RELATIVE = /^[A-Za-z]:(?![/])/
-
-/**
- * The path with forward slashes and its `.` and `..` segments resolved, in the
- * case it was written, a relative one taken from `base`; undefined when `..`
- * climbs above the root, and for a place that no drive path can vouch for: a
- * network share, a device or volume name, or a drive-relative path such as
- * `C:notes`. A `\\?\` prefix before a drive path is dropped. The file system is
- * asked about this spelling, because a Windows folder can tell `Notes` from
- * `notes`.
- */
-function spelled(path: string, base: string): string | undefined {
-  const own = path.replace(EXTENDED_DRIVE_PREFIX, '')
-  const slashed = own.replaceAll('\\', '/')
-  const root = base.replace(EXTENDED_DRIVE_PREFIX, '').replaceAll('\\', '/').replace(/\/+$/, '')
-  const whole = isAbsolute(own) ? slashed : `${root}/${slashed}`
-  if (DRIVE_RELATIVE.test(slashed) || DRIVE_RELATIVE.test(whole) || whole.startsWith('//')) return undefined
-  const drive = DRIVE.exec(whole)?.[0] ?? ''
-  const segments: string[] = []
-  for (const segment of whole.slice(drive.length).split('/')) {
-    if (segment === '' || segment === '.') continue
-    if (segment !== '..') segments.push(segment)
-    else if (segments.pop() === undefined) return undefined
-  }
-  return `${drive}/${segments.join('/')}`
-}
-
-/**
- * `spelled`, with a drive-letter path lowercased: Windows paths compare
- * case-insensitively, so this is the form that two paths are compared in, never
- * the one the file system is asked about.
- */
-function resolved(path: string, base: string): string | undefined {
-  const own = spelled(path, base)
-  return own !== undefined && DRIVE.test(own) ? own.toLowerCase() : own
-}
-
-function contains(root: string, file: string): boolean {
-  return file === root || file.startsWith(root.endsWith('/') ? root : `${root}/`)
-}
-
-function isInside(path: string, worktree: string): boolean {
-  const root = resolved(worktree, '/')
-  const file = resolved(path, worktree)
-  if (root === undefined || file === undefined) return false
-  return contains(root, file)
-}
-
-/**
- * True for the errors that say a path is not there: ENOENT, or ENOTDIR when a
- * file stands where a folder should. The engine's error carries no `code` and
- * ends its message with the errno code, as in `$.fs.stat(<path>) failed:
- * ENOENT`; Node's own error leads with it, so a code at either end counts.
- */
-function isMissing(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false
-  const { code, message } = error as { code?: unknown; message?: unknown }
-  if (code === 'ENOENT' || code === 'ENOTDIR') return true
-  return typeof message === 'string' && /^(?:ENOENT|ENOTDIR):|: (?:ENOENT|ENOTDIR)$/.test(message)
-}
-
-/**
- * Where `path` really lands, in the form `resolved` gives: the nearest part of
- * it that exists is resolved through its links and the rest is placed beneath
- * that, so a file or folder not made yet sits where its parent is. Only a
- * missing path sends the climb to the parent; a path the file system refuses
- * for any other reason is not placed. Undefined where nothing of the path can
- * be resolved, or where a link on it leads nowhere, because a write would then
- * land wherever the link points.
- */
-async function realLocation($: EngineInterface, path: string, base: string): Promise<string | undefined> {
-  const lexical = spelled(path, base)
-  if (lexical === undefined) return undefined
-  const parts = lexical.split('/')
-  for (let cut = parts.length; cut > 0; cut--) {
-    const head = parts.slice(0, cut).join('/')
-    const isRoot = head === '' || (DRIVE.test(head) && !head.includes('/'))
-    const spot = isRoot ? `${head}/` : head
-    const looked = await $.fs.stat(spot, { resolve: true }).then(
-      stat => ({ real: stat.realPath }),
-      (error: unknown) => (isMissing(error) ? { real: undefined } : undefined),
-    )
-    if (looked === undefined) return undefined
-    const { real } = looked
-    if (real !== undefined) {
-      if (!isAbsolute(real.replace(EXTENDED_DRIVE_PREFIX, ''))) return undefined
-      return resolved(`${real.replace(/[\\/]+$/, '')}/${parts.slice(cut).join('/')}`, '/')
-    }
-    const link = await $.fs.stat(spot).then(
-      stat => stat.isLink,
-      (error: unknown) => !isMissing(error),
-    )
-    if (link) return undefined
-  }
-  return undefined
-}
-
-/** True when `path` really lands inside the worktree, whatever links lie on the way. */
-async function isReallyInside($: EngineInterface, path: string, worktree: string): Promise<boolean> {
-  const root = await realLocation($, worktree, '/')
-  const file = await realLocation($, path, worktree)
-  if (root === undefined || file === undefined) return false
-  return contains(root, file)
-}
 
 function filePathOf(field: string, input: unknown): string | undefined {
   if (typeof input !== 'object' || input === null) return undefined
@@ -320,18 +207,6 @@ async function commandsFor($: EngineInterface, kind: LapWorker['kind'], worktree
   if (shown === undefined || shown.exitCode !== 0) return []
   const listed = entriesOf(jsonIn(shown.stdout))
   return kind === 'check' ? splitIntoSimpleCommands(listed) : listed
-}
-
-const GIT_BASH_DRIVE = /^\/([A-Za-z])(?=\/)/
-
-/**
- * `path` with a Git Bash drive prefix, `/c/...`, written as the drive path it
- * stands for, `c:/...`, which `resolved` compares with the other Windows forms.
- * A command's words are the only paths that come this way; a tool's own
- * `file_path` never does.
- */
-function withDrive(path: string): string {
-  return path.replace(GIT_BASH_DRIVE, '$1:')
 }
 
 function scriptPlace(pluginRoot: string, name: string): string | undefined {
@@ -544,23 +419,14 @@ const agentSums = new Map<string, Sums>()
 let requestSums = emptySums()
 let requestStartedAt: number | undefined
 
-/** `value` unless it is empty, which an environment variable that is set to nothing reads as. */
-function present(value: string | undefined): string | undefined {
-  return value === '' ? undefined : value
-}
-
 /**
- * Jidoka's home as the launcher finds it: `JIDOKA_HOME`, else `.jidoka` in the
- * user's home, which is `HOME`, or `USERPROFILE` where the host on Windows sets
- * no `HOME`.
+ * Jidoka's home as `repo_settings.py home` prints it, so that the rule for
+ * finding it stays in that script; undefined when the script cannot say.
  */
 async function jidokaHome($: EngineInterface): Promise<string | undefined> {
-  const named = present(await $.env.get('JIDOKA_HOME').catch(() => undefined))
-  if (named !== undefined) return named
-  const home =
-    present(await $.env.get('HOME').catch(() => undefined)) ??
-    present(await $.env.get('USERPROFILE').catch(() => undefined))
-  return home === undefined ? undefined : `${home.replace(/[\\/]+$/, '')}/.jidoka`
+  const printed = await runScript($, 'repo_settings', ['home'], $.plugin.root)
+  const home = printed?.exitCode === 0 ? printed.stdout.trim() : ''
+  return home === '' ? undefined : home
 }
 
 /**
@@ -676,6 +542,74 @@ async function recordUsage($: EngineInterface): Promise<void> {
   }
 }
 
+type Verdict = { decision: 'allow' } | { decision: 'deny'; reason: string }
+
+/** A tool call as the policy reads it. */
+type ToolCall = { tool: string; input: unknown; isReadOnly: boolean | undefined }
+
+/**
+ * The manager's own call: allowed, after the usage is recorded when it runs the
+ * scheduler, when it runs jidoka's launcher on a script inside the plugin;
+ * undefined for every other call, which the host decides.
+ */
+async function managerVerdict($: EngineInterface, tool: string, input: unknown): Promise<Verdict | undefined> {
+  const command = tool === 'Bash' ? commandOf(input) : ''
+  if (tool !== 'Bash' || !runsJidokaScripts(command, $.plugin.root)) return undefined
+  if (runsScheduler(command, $.plugin.root)) await recordUsage($)
+  return { decision: 'allow' }
+}
+
+/**
+ * What a lap or check worker's tool call gets: allowed or denied with a reason,
+ * or undefined for the host's own tools, which the host decides. `landsInside`
+ * says whether a path really lands inside the worker's worktree.
+ */
+async function workerVerdict(
+  lap: LapWorker,
+  call: ToolCall,
+  pluginRoot: string,
+  landsInside: (path: string) => Promise<boolean>,
+): Promise<Verdict | undefined> {
+  const { tool } = call
+  if (HOST_ONLY.has(tool)) return undefined
+  if (tool === ASKS_LIVE) {
+    return {
+      decision: 'deny',
+      reason:
+        lap.kind === 'check'
+          ? 'jidoka: a check worker never asks live. Say what you could not test in your report.'
+          : 'jidoka: a lap worker never asks live. End the stage with a question report in the scratch folder ' +
+            'and the outcome question.',
+    }
+  }
+  if (STARTS_WORKERS.has(tool)) {
+    return { decision: 'deny', reason: `jidoka: a lap worker starts no workers, so its ${tool} call is denied.` }
+  }
+  if (tool === LOADS_A_SKILL) {
+    return {
+      decision: 'deny',
+      reason:
+        "jidoka: a lap worker never calls Skill. Read the skill's SKILL.md with Read instead, " +
+        'and follow it as the prompt says.',
+    }
+  }
+  const pathField = FILE_PATH_FIELD.get(tool)
+  if (pathField !== undefined) {
+    const path = filePathOf(pathField, call.input)
+    if (path === undefined) return { decision: 'deny', reason: `jidoka: ${tool} names no ${pathField}.` }
+    return (await landsInside(path))
+      ? { decision: 'allow' }
+      : { decision: 'deny', reason: `jidoka: ${tool} of ${path} is outside the lap's worktree ${lap.worktree}.` }
+  }
+  if (call.isReadOnly === true) return { decision: 'allow' }
+  if (tool === 'Bash') {
+    const command = commandOf(call.input)
+    const isCheckScript = lap.kind === 'check' && runsCheckScripts(command, pluginRoot)
+    return isCheckScript || isListed(command, lap.commands) ? { decision: 'allow' } : offTheLists(lap, `\`${command}\``)
+  }
+  return offTheLists(lap, tool)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     startHeartbeat($)
@@ -730,49 +664,14 @@ export const register: Register = on => {
 
   on('tool.check', async ($, e, next) => {
     if (e.agentId === undefined) {
-      const command = e.tool === 'Bash' ? commandOf(e.input) : ''
-      const isJidokaScript = e.tool === 'Bash' && runsJidokaScripts(command, $.plugin.root)
-      if (isJidokaScript && runsScheduler(command, $.plugin.root)) await recordUsage($)
-      return isJidokaScript ? { decision: 'allow' } : next(e)
+      const allowed = await managerVerdict($, e.tool, e.input)
+      return allowed ?? next(e)
     }
     const lap = await lapOf($, e.agentId)
-    if (lap === undefined || HOST_ONLY.has(e.tool)) return next(e)
-    if (e.tool === ASKS_LIVE) {
-      return {
-        decision: 'deny',
-        reason:
-          lap.kind === 'check'
-            ? 'jidoka: a check worker never asks live. Say what you could not test in your report.'
-            : 'jidoka: a lap worker never asks live. End the stage with a question report in the scratch folder ' +
-              'and the outcome question.',
-      }
-    }
-    if (STARTS_WORKERS.has(e.tool)) {
-      return { decision: 'deny', reason: `jidoka: a lap worker starts no workers, so its ${e.tool} call is denied.` }
-    }
-    if (e.tool === LOADS_A_SKILL) {
-      return {
-        decision: 'deny',
-        reason:
-          "jidoka: a lap worker never calls Skill. Read the skill's SKILL.md with Read instead, " +
-          'and follow it as the prompt says.',
-      }
-    }
-    const pathField = FILE_PATH_FIELD.get(e.tool)
-    if (pathField !== undefined) {
-      const path = filePathOf(pathField, e.input)
-      if (path === undefined) return { decision: 'deny', reason: `jidoka: ${e.tool} names no ${pathField}.` }
-      return (await isReallyInside($, path, lap.worktree))
-        ? { decision: 'allow' }
-        : { decision: 'deny', reason: `jidoka: ${e.tool} of ${path} is outside the lap's worktree ${lap.worktree}.` }
-    }
-    if (e.isReadOnly === true) return { decision: 'allow' }
-    if (e.tool === 'Bash') {
-      const command = commandOf(e.input)
-      const isCheckScript = lap.kind === 'check' && runsCheckScripts(command, $.plugin.root)
-      return isCheckScript || isListed(command, lap.commands) ? { decision: 'allow' } : offTheLists(lap, `\`${command}\``)
-    }
-    return offTheLists(lap, e.tool)
+    if (lap === undefined) return next(e)
+    const call = { tool: e.tool, input: e.input, isReadOnly: e.isReadOnly }
+    const verdict = await workerVerdict(lap, call, $.plugin.root, path => isReallyInside($, path, lap.worktree))
+    return verdict ?? next(e)
   }).catch(($, e, next) =>
     e.agentId === undefined
       ? next(e)

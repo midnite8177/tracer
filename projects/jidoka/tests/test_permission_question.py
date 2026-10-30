@@ -60,11 +60,9 @@ class PermissionCase(unittest.TestCase):
 
     def script(self, script: Path, *args: str, stdin: str | None = None,
                cwd: Path | None = None) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), input=stdin,
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              cwd=cwd or self.repo,
-                              env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
-                                   "BEADS_ACTOR": HUMAN})
+        return fixture.run_launcher(LAUNCHER, [str(script), *args], stdin,
+                                    {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
+                                     "BEADS_ACTOR": HUMAN}, cwd or self.repo, RUN_TIMEOUT_SECONDS)
 
     def bd(self, *args: str) -> str:
         return fixture.run([self.fake_bd, *args], self.repo)

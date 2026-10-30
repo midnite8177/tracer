@@ -66,21 +66,19 @@ class ResumeCase(unittest.TestCase):
                     "apps": [{"name": "shop", "kind": "program", "way_in": "its command line", "build": "make",
                               "run": None, "test": "true", "test_target": "-k <name>", "test_full": None,
                               "hand_run": [], "acceptance": "specs/acceptance"}]}
-        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), "write"]),
-                              input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
-                              timeout=RUN_TIMEOUT_SECONDS,
-                              env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)},
-                              cwd=self.repo)
+        done = fixture.run_launcher(LAUNCHER, [str(SETTINGS_SCRIPT), "write"], json.dumps(settings),
+                                    {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)},
+                                    self.repo, RUN_TIMEOUT_SECONDS)
         self.assertEqual(0, done.returncode, done.stderr)
 
     def script(self, script: Path, *args: str) -> subprocess.CompletedProcess:
         return self.script_with(MANAGER_SESSION, {}, script, *args)
 
     def script_with(self, session: str, env: dict[str, str], script: Path, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(script), *args]), capture_output=True,
-                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, cwd=self.repo,
-                              env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
-                                   "BEADS_ACTOR": HUMAN, "JIDOKA_SESSION_ID": session, **env})
+        return fixture.run_launcher(LAUNCHER, [str(script), *args], None,
+                                    {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
+                                     "BEADS_ACTOR": HUMAN, "JIDOKA_SESSION_ID": session, **env},
+                                    self.repo, RUN_TIMEOUT_SECONDS)
 
     def beat_as(self, session: str) -> subprocess.CompletedProcess:
         return self.script(HEARTBEAT, "beat", "--session", session)
@@ -447,10 +445,9 @@ class SecondManagerTests(ResumeCase):
 class SessionStartTests(ResumeCase):
     def session(self) -> str:
         event = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "startup", "cwd": str(self.repo)}
-        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(HOOK)]), input=json.dumps(event),
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              cwd=self.root,
-                              env={**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)})
+        done = fixture.run_launcher(LAUNCHER, [str(HOOK)], json.dumps(event),
+                                    {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)},
+                                    self.root, RUN_TIMEOUT_SECONDS)
         self.assertEqual(0, done.returncode, done.stderr)
         return done.stdout
 

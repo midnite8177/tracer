@@ -142,8 +142,7 @@ class OnboardingFixture:
                 **fixture.home_variables(self.home), **fixture.system_variables(os.environ, fixture.WINDOWS)}
 
     def settings_script(self, cwd: Path, args: list, stdin: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), *args]), input=stdin,
-                              capture_output=True, text=True, encoding="utf-8", env=self.env(), cwd=cwd)
+        return fixture.run_launcher(LAUNCHER, [str(SETTINGS_SCRIPT), *args], stdin, self.env(), cwd, None)
 
     def write(self, cwd: Path, settings: dict) -> subprocess.CompletedProcess:
         return self.settings_script(cwd, ["write"], json.dumps(settings))
@@ -157,8 +156,7 @@ class OnboardingFixture:
 
     def session(self, cwd: Path) -> subprocess.CompletedProcess:
         event = {"session_id": "s1", "hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd)}
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(HOOK)]), input=json.dumps(event),
-                              capture_output=True, text=True, encoding="utf-8", env=self.env(), cwd=self.root)
+        return fixture.run_launcher(LAUNCHER, [str(HOOK)], json.dumps(event), self.env(), self.root, None)
 
 
 class SettingsStorageTests(OnboardingFixture, unittest.TestCase):
@@ -181,6 +179,12 @@ class SettingsStorageTests(OnboardingFixture, unittest.TestCase):
         stored = json.loads(shop_file.read_text(encoding="utf-8"))
         self.assertEqual(str(self.repo), stored["main_worktree"])
         self.assertEqual(["tracer-ui", "site-builder", "jidoka"], [app["name"] for app in stored["apps"]])
+
+    def test_home_prints_the_folder_that_holds_jidoka_state(self):
+        done = self.settings_script(self.repo, ["home"], "")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(str(self.home.resolve()), done.stdout.strip())
 
     def test_the_repo_build_runs_every_app_build_in_order_and_skips_an_app_without_one(self):
         self.write(self.repo, tracer_settings())
@@ -556,9 +560,8 @@ class TrackedBeadsTests(OnboardingFixture, unittest.TestCase):
 
     def test_writes_settings_once_the_switch_has_untracked_the_beads(self):
         repo = self.committed_beads_repo()
-        switched = subprocess.run(fixture.launch_command(LAUNCHER, [str(STEALTH_SCRIPT)]), capture_output=True,
-                                  text=True, encoding="utf-8", env={**self.env(), "PATH": os.environ["PATH"]},
-                                  cwd=repo)
+        switched = fixture.run_launcher(LAUNCHER, [str(STEALTH_SCRIPT)], None,
+                                        {**self.env(), "PATH": os.environ["PATH"]}, repo, None)
 
         done = self.write(repo, tracer_settings())
 

@@ -100,8 +100,7 @@ class BeadsStealthTests(unittest.TestCase):
         self.assertEqual(0, quiet.returncode, quiet.stderr)
 
     def switch(self, cwd: Path) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(STEALTH_SCRIPT)]), capture_output=True,
-                              text=True, encoding="utf-8", env=self.env(), cwd=cwd)
+        return fixture.run_launcher(LAUNCHER, [str(STEALTH_SCRIPT)], None, self.env(), cwd, None)
 
     def add_bare_origin(self) -> Path:
         origin = self.root / "shop.git"

@@ -73,9 +73,8 @@ class HandoffCase(unittest.TestCase):
     def write_settings(cls, home: Path, apps: list) -> None:
         settings = {"lap_test_scope": "targeted", "worker_commands": [], "slot_use": None, "lap_limit": 1,
                     "apps": apps}
-        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), "write"]),
-                              input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
-                              timeout=RUN_TIMEOUT_SECONDS, env={**os.environ, "JIDOKA_HOME": str(home)}, cwd=cls.repo)
+        done = fixture.run_launcher(LAUNCHER, [str(SETTINGS_SCRIPT), "write"], json.dumps(settings),
+                                    {**os.environ, "JIDOKA_HOME": str(home)}, cls.repo, RUN_TIMEOUT_SECONDS)
         if done.returncode != 0:
             raise fixture.FixtureError(f"repo_settings.py write failed: {done.stderr}")
 
@@ -99,17 +98,15 @@ class HandoffCase(unittest.TestCase):
         return self.handoff_in(self.home, *args)
 
     def handoff_in(self, home: Path, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(HANDOFF), *args]), capture_output=True,
-                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.caller_env(home),
-                              cwd=self.repo)
+        return fixture.run_launcher(LAUNCHER, [str(HANDOFF), *args], None, self.caller_env(home), self.repo,
+                                    RUN_TIMEOUT_SECONDS)
 
     def holdouts(self, mode: str, epic: str, stdin: str = "") -> subprocess.CompletedProcess:
         return self.holdouts_in(self.home, mode, epic, stdin)
 
     def holdouts_in(self, home: Path, mode: str, epic: str, stdin: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(HOLDOUTS), mode, epic]), input=stdin,
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              env=self.caller_env(home), cwd=self.repo)
+        return fixture.run_launcher(LAUNCHER, [str(HOLDOUTS), mode, epic], stdin, self.caller_env(home), self.repo,
+                                    RUN_TIMEOUT_SECONDS)
 
     def write_holdouts(self, epic: str, holdouts: list) -> None:
         done = self.holdouts("write", epic, stdin=json.dumps(holdouts))
@@ -741,9 +738,8 @@ class HoldoutsTests(HandoffCase):
                    {"app": "shop", "tasks": [first, second], "scenario": "A shopper cancels and is charged nothing."}]
         self.write_holdouts(epic, written)
 
-        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(HOLDOUTS), "read", epic, "--task", second]),
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              env=self.caller_env(self.home), cwd=self.repo)
+        done = fixture.run_launcher(LAUNCHER, [str(HOLDOUTS), "read", epic, "--task", second], None,
+                                    self.caller_env(self.home), self.repo, RUN_TIMEOUT_SECONDS)
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual([{"holdout": 2, **written[1]}, {"holdout": 3, **written[2]}], json.loads(done.stdout))
@@ -845,9 +841,8 @@ class HoldoutsBriefTests(HandoffCase):
 
 class HoldoutsGuardTests(HandoffCase):
     def guard(self, call: dict) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(HOLDOUTS_GUARD)]), input=json.dumps(call),
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              env=self.caller_env(self.home), cwd=self.repo)
+        return fixture.run_launcher(LAUNCHER, [str(HOLDOUTS_GUARD)], json.dumps(call), self.caller_env(self.home),
+                                    self.repo, RUN_TIMEOUT_SECONDS)
 
     def script_call(self, arguments: str = "read tracer-1", **who: str) -> dict:
         command = f"{LAUNCHER} {HOLDOUTS} {arguments}"
@@ -907,9 +902,8 @@ class HoldoutsGuardTests(HandoffCase):
         self.assert_goes_on(self.guard(call))
 
     def test_input_that_is_not_a_call_goes_on(self):
-        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(HOLDOUTS_GUARD)]), input="not json",
-                              capture_output=True, text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS,
-                              env=self.caller_env(self.home), cwd=self.repo)
+        done = fixture.run_launcher(LAUNCHER, [str(HOLDOUTS_GUARD)], "not json", self.caller_env(self.home),
+                                    self.repo, RUN_TIMEOUT_SECONDS)
 
         self.assert_goes_on(done)
 

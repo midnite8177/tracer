@@ -25,7 +25,9 @@ unusable. A finding of low confidence is never fixed: it joins the epic's `revie
 A small or medium finding of high or medium confidence goes to the one fix worker, as the `fix` action, kept in
 `review.fixes` until the fix settles. A large finding becomes an open task outside the epic, linked discovered-from
 to it, for a bench or a later epic, filed when the review settles; the epic keeps only the tasks it was planned
-with. The settled review records the head it covered as `review.head` and counts its pass through pass_ledger.py.
+with. A large finding of the Design lane goes to design_findings, so it is a design finding, and a later epic that
+meets the same problem adds a sighting to it. The settled review records the head it covered as `review.head` and
+counts its pass through pass_ledger.py.
 
 The fix worker, on the standard tier, fixes those findings in a detached worktree at .worktrees/fix-<epic> and
 commits nothing. `settle_fix` refuses, writing nothing, when the worktree changed a path outside the epic's files that
@@ -42,6 +44,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import design_findings
 import lizard_hints
 import pass_ledger
 import pass_support
@@ -51,7 +54,7 @@ from epic_branch import required_head
 from epic_task import file_outside
 from pass_support import (MAIN_BRANCH, Committed, PassError, Stage, StageToRun, accepts_any_change, epic_files,
                           every_file, worktree_at)
-from report_text import ReportError, listed_report, located_texts, shortened_title
+from report_text import ReportError, listed_report, located_texts
 from worktrees import remove_worktree, stage_worktree
 
 COMMENTS = "comments"
@@ -302,7 +305,7 @@ def fix_to_run(epic: str, shown: dict, branch: str, settings: dict, home: Path, 
 
 
 def task_title(finding: Finding) -> str:
-    return shortened_title(f"{finding.title} in {finding.file}")
+    return design_findings.Problem(finding.file, finding.line, finding.title, finding.note).bead_title
 
 
 def task_description(epic: str, finding: Finding) -> str:
@@ -316,9 +319,14 @@ def task_description(epic: str, finding: Finding) -> str:
 
 
 def file_large(epic: str, large: list[Finding], main_tree: Path) -> list[str]:
-    """Files a task outside the epic for each large finding, linked discovered-from to the epic, for a bench or a
-    later epic. It has no area, so no lap of this epic takes it."""
-    return [file_outside(task_title(each), task_description(epic, each), epic, [], main_tree) for each in large]
+    """Files each large finding outside the epic, linked discovered-from to the epic, for a bench or a later epic. The
+    Design lane's findings go to design_findings, which keys and sights them; the others become tasks with no area,
+    so no lap of this epic takes them."""
+    others = [file_outside(task_title(each), task_description(epic, each), epic, [], main_tree)
+              for each in large if each.lane != DESIGN]
+    problems = [design_findings.Problem(each.file, each.line, each.title, each.note)
+                for each in large if each.lane == DESIGN]
+    return others + [each.bead for each in design_findings.settle(epic, problems, main_tree)]
 
 
 def review_comment(owed: ReviewToRun, findings: list[Finding], fixes: list[Finding], large: list[Finding],

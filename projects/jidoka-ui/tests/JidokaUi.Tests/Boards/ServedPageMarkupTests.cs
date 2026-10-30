@@ -11,7 +11,7 @@ using ServedPage = JidokaUi.Web.Components.Pages.ServedPage;
 namespace JidokaUi.Tests.Boards;
 
 /// <summary>
-/// A jidoka page as a browser draws it: the file that jidoka wrote beside its bead, with the
+/// A jidoka page as a browser draws it, meaning the file that jidoka wrote beside its bead, with the
 /// controls of the app in the slots that the file marks, and those controls gray once the bead
 /// has moved on. The pages here are written to a temporary folder that stands for jidoka's home.
 /// </summary>
@@ -205,7 +205,7 @@ public sealed class ServedPageMarkupTests : BunitContext
 
         var slot = page.Find(".jidoka-page [data-jidoka-slot='decide-panel']");
         Assert.Equal(["Merge", "Drop"], slot.QuerySelectorAll(".gate-box button").Select(press => press.TextContent));
-        Assert.DoesNotContain("jidoka-ui draws Merge and Send back here", page.Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("jidoka-ui draws Merge and Drop here", page.Markup, StringComparison.Ordinal);
         Assert.Empty(page.FindAll(".answer-panel"));
     }
 

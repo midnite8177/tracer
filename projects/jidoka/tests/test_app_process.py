@@ -73,18 +73,16 @@ class AppProcessTests(unittest.TestCase):
                 for app in apps]
         settings = {"lap_test_scope": "targeted", "worker_commands": [], "slot_use": self.slot_use, "lap_limit": 1,
                     "apps": full}
-        done = subprocess.run(fixture.launch_command(LAUNCHER, [str(SETTINGS_SCRIPT), "write"]),
-                              input=json.dumps(settings), capture_output=True, text=True, encoding="utf-8",
-                              timeout=RUN_TIMEOUT_SECONDS, env=self.env(), cwd=self.repo)
+        done = fixture.run_launcher(LAUNCHER, [str(SETTINGS_SCRIPT), "write"], json.dumps(settings), self.env(),
+                                    self.repo, RUN_TIMEOUT_SECONDS)
         self.assertEqual(0, done.returncode, done.stderr)
 
     def env(self) -> dict[str, str]:
         return {**os.environ, "JIDOKA_HOME": str(self.home), "PIDS": str(self.pids)}
 
     def app_process(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(fixture.launch_command(LAUNCHER, [str(APP_PROCESS), *args]), capture_output=True,
-                              text=True, encoding="utf-8", timeout=RUN_TIMEOUT_SECONDS, env=self.env(),
-                              cwd=self.repo)
+        return fixture.run_launcher(LAUNCHER, [str(APP_PROCESS), *args], None, self.env(), self.repo,
+                                    RUN_TIMEOUT_SECONDS)
 
     def app_pids(self) -> list[int]:
         """The pids the app has written so far, waiting for the app to write both. The file exists, empty, from the

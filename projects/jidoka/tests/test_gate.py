@@ -27,11 +27,8 @@ class GateCase(test_validation.ValidationCase):
     """The shop repo with an epic that validation brought to the acceptance gate."""
 
     def epic_at_the_gate(self) -> tuple[str, str, str]:
-        """An epic that waits at the gate; returns the epic, its task and its epic branch.
-
-        The task's work is a file of its own, because the tests share one repo and main keeps what earlier tests
-        landed.
-        """
+        """An epic that waits at the gate; returns the epic, its task and its epic branch. The task's work is a file of
+        its own, because the tests share one repo and main keeps what earlier tests landed."""
         epic = self.new_epic()
         task = self.new_task_under(epic)
         branch = self.hand_off(epic, {task: "till"})
@@ -124,11 +121,9 @@ class MergeLandsTheEpicTests(GateCase):
 
     def test_merge_retires_the_epic_s_holdouts_and_keeps_its_other_metadata(self):
         epic, task, branch = self.epic_at_the_gate()
-        written = subprocess.run(fixture.launch_command(test_scheduler.LAUNCHER, [str(HOLDOUTS), "write", epic]),
-                                 input=json.dumps([{"app": "shop", "tasks": [task], "scenario": "Pay 5.00."}]),
-                                 capture_output=True, text=True, encoding="utf-8",
-                                 timeout=test_scheduler.RUN_TIMEOUT_SECONDS, env=self.caller_env(self.home),
-                                 cwd=self.repo)
+        written = fixture.run_launcher(test_scheduler.LAUNCHER, [str(HOLDOUTS), "write", epic],
+                                       json.dumps([{"app": "shop", "tasks": [task], "scenario": "Pay 5.00."}]),
+                                       self.caller_env(self.home), self.repo, test_scheduler.RUN_TIMEOUT_SECONDS)
         self.assertEqual(0, written.returncode, written.stderr)
         self.assertIn("holdouts", self.metadata(epic))
 
