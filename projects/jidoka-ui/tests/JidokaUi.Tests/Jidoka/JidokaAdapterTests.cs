@@ -67,7 +67,8 @@ public sealed class JidokaAdapterTests : IDisposable
             .Prints("gate.py keep-finding b-1 b-9", string.Empty)
             .Prints("gate.py close-finding b-1 b-8", string.Empty)
             .Prints("gate.py wrong b-1 2 --why=It is a guess", string.Empty)
-            .Prints("gate.py restore b-1 AddsTwo --file=MathTests.cs", string.Empty);
+            .Prints("gate.py restore b-1 AddsTwo --file=MathTests.cs", string.Empty)
+            .Prints("gate.py promote b-1 2", string.Empty);
 
         var outcomes = new[]
         {
@@ -75,6 +76,7 @@ public sealed class JidokaAdapterTests : IDisposable
             await adapter.DecideAsync(epic, GateDecision.CloseFinding("b-8")),
             await adapter.DecideAsync(epic, GateDecision.Wrong(2, "It is a guess")),
             await adapter.DecideAsync(epic, GateDecision.Restore("AddsTwo", "MathTests.cs")),
+            await adapter.DecideAsync(epic, GateDecision.Promote(2)),
         };
 
         Assert.All(outcomes, outcome => Assert.True(outcome.Wrote, outcome.Message));
@@ -284,12 +286,17 @@ public sealed class JidokaAdapterTests : IDisposable
              "assumptions": [{"number": 1, "bead": "b-1", "title": "The site", "text": "Dates are UTC"},
                              {"number": 2, "bead": "b-2", "title": "Add two", "text": "Rounds half up"}],
              "removed": [{"test": "AddsTwo", "file": "MathTests.cs", "covered_by": "AddsThree"}],
+             "holdouts": [{"number": 1, "app": "shop", "scenario": "Pay 5.00 by card", "promoted": false},
+                          {"number": 2, "app": "shop", "scenario": "Pay 5.00 in cash", "promoted": true}],
              "outside": [{"bead": "b-9", "title": "Split the module", "found_in": "b-2"}]}
             """);
 
         var read = await adapter.GateItemsAsync(epic);
 
         var items = Assert.IsType<Read<GateItems>.Given>(read).Value;
+        Assert.Equal(
+            [new GateHoldout(1, "shop", "Pay 5.00 by card", false), new GateHoldout(2, "shop", "Pay 5.00 in cash", true)],
+            items.Holdouts);
         Assert.Equal([new GateAssumption(1, "b-1", "The site", "Dates are UTC"), new GateAssumption(2, "b-2", "Add two", "Rounds half up")], items.Assumptions);
         Assert.Equal([new RemovedTest("AddsTwo", "MathTests.cs", "AddsThree")], items.RemovedTests);
         Assert.Equal([new FoundOutsideTheEpic("b-9", "Split the module", "b-2")], items.FoundOutside);

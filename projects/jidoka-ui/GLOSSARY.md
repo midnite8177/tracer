@@ -22,7 +22,7 @@ _Avoid_: Host, endpoint, listen address, URL
 **LAN mode**:
 The state of an app that the `--listen` flag started. It binds every
 interface, so every machine that reaches this one reaches the board, and
-it asks for no password. It is therefore for a trusted network only.
+it asks for no password. It is for a trusted network only.
 Every page shows a marker while it holds.
 _Avoid_: Network mode, remote access, public mode
 
@@ -161,7 +161,7 @@ for Save, so several of them change as one. The title, the
 description and the acceptance criteria follow the same rule, each with
 the box that its own text wants: one line for the title, and the box
 beside the live preview for the other two. The notes are the exception,
-because bd keeps no earlier copy of them. The page therefore never
+because bd keeps no earlier copy of them. The page never
 carries a form that repeats a fact it already states. See
 [ADR 0012](docs/adr/0012-press-to-edit-on-the-detail-page.md).
 _Avoid_: Inline edit, click to edit, editable field
@@ -731,9 +731,10 @@ _Avoid_: Failed project, offline project, error
 A web page that jidoka wrote for one bead, which the app serves at an
 address of its own beside that bead and fills with its own controls. The
 file sits in jidoka's home, in the folder named for the repository that
-holds the bead, and the app only reads it. It is one of three kinds: the
-question page of a task, the gate page of an epic and the handoff page of
-an epic. The detail page of a bead links to each page that sits beside it.
+holds the bead, and the app only reads it. It is one of four kinds: the
+question page of a task, the gate page of an epic, the handoff page of
+an epic and the spec approval page of an epic, which shows each test case
+that planning proposed beside its plain reading. The detail page of a bead links to each page that sits beside it.
 The app draws the page inside an element of its own, with the stylesheet of
 the page scoped to that element, so the page restyles nothing else. Once
 the bead has moved on, the page stays readable and its controls stop
@@ -749,7 +750,8 @@ _Avoid_: Placeholder, hole, mount point
 
 **Moved on**:
 The state of a bead that no longer waits on what a jidoka page asks. For a
-question page it means the bead lost the human label or closed. For a gate
+question page or a spec approval page it means the bead lost the human label
+or closed. For a gate
 page it means the epic no longer waits at the acceptance gate. The page
 then draws its controls grayed and taking no press, and says so. It
 stands on the bead as `bd` shows it, so a reload, a press that answered and
@@ -765,7 +767,7 @@ comments the option on the bead through `bd`, then takes the human label
 off, and it posts the comment once even when the label comes off on a
 second press. The panel reads no jidoka page, so it works for a bead that
 has none. The same panel appears on the detail page, in the needs-you view
-and in the answer-panel slot of a question page. On a question page whose
+and in the answer-panel slot of a question page or a spec approval page. On a question page whose
 bead has moved on, the panel shows its options grayed.
 _Avoid_: Reply box, answer form
 
@@ -863,9 +865,11 @@ _Avoid_: Decision panel, gate form, merge bar
 **Gate items box**:
 The box beside the gate box that holds the gate's small decisions. Wrong
 sits beside each numbered assumption and asks for a reason first, Restore
-beside each test that the test cleanup removed, and Keep and Close beside
-each open bead found outside the epic. The gate script lists the three
-(`gate.py items`), because it numbers the assumptions and finds the beads,
+beside each test that the test cleanup removed, Promote beside each of the
+epic's holdouts until it is promoted, and Keep and Close beside each open
+bead found outside the epic. The gate script lists the four
+(`gate.py items`), because it numbers the assumptions and the holdouts and
+finds the beads,
 and each press runs the same script. A list with no entry draws no heading,
 and the box reads the lists again after a press.
 _Avoid_: Findings panel, assumptions table

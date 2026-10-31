@@ -188,7 +188,12 @@ public sealed class JidokaAdapter
                 [.. root.GetProperty("outside").EnumerateArray().Select(each => new FoundOutsideTheEpic(
                     TextOf(each, "bead"),
                     TextOf(each, "title"),
-                    TextOf(each, "found_in")))]));
+                    TextOf(each, "found_in")))],
+                [.. root.GetProperty("holdouts").EnumerateArray().Select(each => new GateHoldout(
+                    each.GetProperty("number").GetInt32(),
+                    TextOf(each, "app"),
+                    TextOf(each, "scenario"),
+                    each.GetProperty("promoted").GetBoolean()))]));
         }
         catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
         {

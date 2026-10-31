@@ -252,7 +252,9 @@ port 5099.
   its home (`~/.jidoka`, or the folder that `JIDOKA_HOME` names) open at
   `/jidoka-page/<kind>/<bead id>?project=...`. The detail page links to each
   page that sits beside the bead. The app draws the answer panel in the slot
-  that a question page marks. Once the bead has lost the human label or
+  that a question page marks, and in the slot of a spec approval page, which
+  shows each proposed test case beside its plain reading and puts Approve and
+  Ask back in the panel. Once the bead has lost the human label or
   closed, a reload shows the panel grayed and taking no press, because the
   bead wins over the page. A slot that the app has no control for keeps the
   words that the page wrote in it.
@@ -272,8 +274,9 @@ port 5099.
   waits at the acceptance gate shows a gate box. Type the commit message and
   press Merge, or press Drop and confirm. Beside it, the gate items box has
   Wrong beside each numbered assumption (it asks for a reason), Restore
-  beside each test that the test cleanup removed, and Keep and Close beside
-  each bead found outside the epic. The app draws no Send back, because the
+  beside each test that the test cleanup removed, Promote beside each of the
+  epic's holdouts (landing then files a planning bead that holds its
+  scenario), and Keep and Close beside each bead found outside the epic. The app draws no Send back, because the
   send-back worker drafts its proposals in the acceptance session. Each press
   runs jidoka's gate script, which checks the epic, writes the decision and
   says why when it refuses. An open epic that carries the `factory` label
@@ -286,7 +289,7 @@ port 5099.
   [ADR 0018](docs/adr/0018-jidokas-keys-are-written-only-through-jidokas-scripts.md).
 - **LAN mode.** The `--listen` flag binds every interface instead of the
   loopback interface, so you read the board on your phone. Without the
-  flag no other machine reaches the app. The flag adds no password, thus
+  flag no other machine reaches the app. The flag adds no password, so
   the top of every page names the mode while it holds. An argument that
   only looks like the flag stops the app with a message, so a typing
   mistake never leaves you on the loopback while you believe otherwise.

@@ -1,8 +1,8 @@
 @*
     The small decisions of the acceptance gate, on the page of an epic that waits there: Wrong
-    beside each numbered assumption, Restore beside each test that the cleanup removed, and Keep
-    and Close beside each bead found outside the epic. The gate script lists the three, because it
-    numbers the assumptions and finds the beads, and each press runs the same script, which checks
+    beside each numbered assumption, Restore beside each test that the cleanup removed, Promote
+    beside each holdout, and Keep and Close beside each bead found outside the epic. The gate
+    script lists the four, because it numbers the assumptions and the holdouts and finds the beads, and each press runs the same script, which checks
     the choice and writes it. The page writes nothing itself.
 *@
 
@@ -17,7 +17,7 @@
         <p class="text-danger bead-message gate-items-unread">@unread.Reason</p>
     </section>
 }
-else if (read is Read<GateItems>.Given { Value: var items } && (items.Assumptions.Count + items.RemovedTests.Count + items.FoundOutside.Count > 0 || WriteMessage is not null))
+else if (read is Read<GateItems>.Given { Value: var items } && (items.Assumptions.Count + items.RemovedTests.Count + items.FoundOutside.Count + items.Holdouts.Count > 0 || WriteMessage is not null))
 {
     <section class="bead-box gate-items-box" aria-label="Small decisions of the acceptance gate">
         @if (items.Assumptions.Count > 0)
@@ -72,6 +72,31 @@ else if (read is Read<GateItems>.Given { Value: var items } && (items.Assumption
                             disabled="@Writing"
                             aria-busy="@AriaBusy"
                             @onclick="() => DecideAsync(GateDecision.Restore(removed.Test, removed.File), RestoredMessage)">Restore</button>
+                </div>
+            }
+        }
+
+        @if (items.Holdouts.Count > 0)
+        {
+            <h2 class="h4 bead-section">Holdouts</h2>
+            @foreach (var holdout in items.Holdouts)
+            {
+                <div class="gate-holdout mb-2">
+                    <span class="gate-holdout-number">@holdout.Number.</span>
+                    <span class="machine-text">@holdout.App</span>
+                    @holdout.Scenario
+                    @if (holdout.Promoted)
+                    {
+                        <span class="gate-promoted">Promoted</span>
+                    }
+                    else
+                    {
+                        <button type="button"
+                                class="btn btn-sm btn-outline-primary gate-promote"
+                                disabled="@Writing"
+                                aria-busy="@AriaBusy"
+                                @onclick="() => DecideAsync(GateDecision.Promote(holdout.Number), TheScriptsLine)">Promote</button>
+                    }
                 </div>
             }
         }

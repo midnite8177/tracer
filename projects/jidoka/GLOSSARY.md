@@ -334,6 +334,13 @@ holdouts in planning, each one names the tasks it exercises, and no
 builder ever reads one.
 _Avoid_: Acceptance test, hidden test, secret test, eval
 
+**Promoted holdout**:
+A holdout the human promotes at the acceptance gate. Landing files a
+planning bead outside the epic, labeled `human`, that holds its scenario, and
+the coaching skill run on that bead starts from it. It is not a standing
+holdout: no validation runs it, and it retires with the epic's others.
+_Avoid_: Kept holdout, saved holdout
+
 **Standing holdout**:
 A holdout the human keeps at acceptance, which every later validation
 runs. An epic's other holdouts retire when the epic is accepted.
@@ -354,6 +361,45 @@ The code beneath an app's acceptance specs that reaches the running app
 through its command line, API or UI and makes the checks the specs ask
 for. Writing it fixes the app's interface.
 _Avoid_: Harness, adapter, fixture
+
+**Coaching**:
+The planning step in which an agent writes an epic's acceptance specs with
+the human. It asks rounds of questions, each with examples and a
+recommendation, and only after the human answers does it propose test
+cases. It runs after to-spec and before to-tickets, or alone on an existing
+epic, and the approved test cases go onto the spec task's description.
+_Avoid_: Interview, spec workshop, BDD session
+
+**Test case**:
+A proposed acceptance spec before the human approves it, named in the
+words of the app's users. It carries the code of the spec, a plain reading
+and its answer to the deletion question.
+_Avoid_: Scenario, story, example
+
+**Plain reading**:
+The one or two sentences that say what a test case checks, with its exact
+values, for a person who never reads the spec's code.
+_Avoid_: Description, summary, docstring
+
+**Deletion question**:
+"If this feature were deleted, would the spec still pass?" A test case
+whose answer is yes is already true or does not test the feature, and
+coaching reworks or drops it.
+_Avoid_: Mutation check, sanity check
+
+**Interface table**:
+The list, on the spec task's description, of what the test cases need
+from the app that the protocol driver does not offer yet, each row with its
+shape and the test cases that need it.
+_Avoid_: API list, driver gap
+
+**Spec approval page**:
+The page beside an epic while coaching waits on the human. It shows each
+test case with its code beside its plain reading and its answer to the
+deletion question, then the interface table, and ends in the answer panel.
+Posting it puts the human label on the epic, and a press on Approve or Ask
+back comments the answer on the epic and takes the label off.
+_Avoid_: Spec review page, approval screen
 
 **Spec time limit**:
 The seconds an app's settings allow for validation's run of its acceptance

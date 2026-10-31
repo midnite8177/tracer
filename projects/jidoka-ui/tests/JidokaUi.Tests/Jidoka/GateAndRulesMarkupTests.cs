@@ -38,6 +38,8 @@ public sealed class GateAndRulesMarkupTests : BunitContext
          "assumptions": [{"number": 1, "bead": "b", "title": "The site", "text": "Dates are UTC"},
                          {"number": 2, "bead": "b-2", "title": "Add two", "text": "Rounds half up"}],
          "removed": [{"test": "AddsTwo", "file": "MathTests.cs", "covered_by": "AddsThree"}],
+         "holdouts": [{"number": 1, "app": "shop", "scenario": "Pay 5.00 by card", "promoted": false},
+                      {"number": 2, "app": "shop", "scenario": "Pay 5.00 in cash", "promoted": true}],
          "outside": [{"bead": "b-9", "title": "Split the module", "found_in": "b-2"},
                      {"bead": "b-8", "title": "Add a test", "found_in": "b"}]}
         """;
@@ -285,11 +287,44 @@ public sealed class GateAndRulesMarkupTests : BunitContext
     }
 
     [Fact]
+    public void DrawsEachHoldoutWithItsAppAndScenarioAndAPromoteButtonUntilItIsPromoted()
+    {
+        projects.Jidoka.Prints("gate.py items b", TheItems);
+        var page = TheDetailPageOf(TheEpicAtTheGate);
+
+        page.WaitForAssertion(() => Assert.Equal(2, page.FindAll(".gate-holdout").Count));
+        var rows = page.FindAll(".gate-holdout");
+        Assert.Contains("shop", rows[0].TextContent, StringComparison.Ordinal);
+        Assert.Contains("Pay 5.00 by card", rows[0].TextContent, StringComparison.Ordinal);
+        Assert.Equal(["Promote"], rows[0].QuerySelectorAll("button").Select(press => press.TextContent));
+        Assert.Contains("Pay 5.00 in cash", rows[1].TextContent, StringComparison.Ordinal);
+        Assert.Empty(rows[1].QuerySelectorAll("button"));
+        Assert.Contains("Promoted", rows[1].TextContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RunsPromoteWithTheNumberOfTheHoldoutThatWasPressed()
+    {
+        projects.Jidoka
+            .Prints("gate.py items b", TheItems)
+            .Prints("gate.py promote b 1", "Holdout 1 of b is promoted.");
+        var page = TheDetailPageOf(TheEpicAtTheGate);
+        page.WaitForAssertion(() => Assert.Single(page.FindAll(".gate-promote")));
+
+        page.Find(".gate-promote").Click();
+
+        page.WaitForAssertion(() => Assert.Equal(["gate.py promote b 1"], TheGateRuns()));
+        page.WaitForAssertion(() =>
+            Assert.Contains("is promoted", page.Find(".gate-items-box .bead-write-message").TextContent, StringComparison.Ordinal));
+        AssertThePageWroteNoKeyThroughBd();
+    }
+
+    [Fact]
     public void DrawsNothingForASectionTheGateScriptListsNoItemOf()
     {
         projects.Jidoka.Prints(
             "gate.py items b",
-            """{"epic": "b", "assumptions": [], "removed": [], "outside": [{"bead": "b-9", "title": "Split", "found_in": "b"}]}""");
+            """{"epic": "b", "assumptions": [], "removed": [], "holdouts": [], "outside": [{"bead": "b-9", "title": "Split", "found_in": "b"}]}""");
         var page = TheDetailPageOf(TheEpicAtTheGate);
 
         page.WaitForAssertion(() => Assert.Single(page.FindAll(".gate-finding")));
@@ -398,7 +433,7 @@ public sealed class GateAndRulesMarkupTests : BunitContext
             .After("gate.py close-finding b b-9", () =>
                 projects.Jidoka.Prints(
                     "gate.py items b",
-                    """{"epic": "b", "assumptions": [], "removed": [], "outside": [{"bead": "b-8", "title": "Add a test", "found_in": "b-2"}]}"""));
+                    """{"epic": "b", "assumptions": [], "removed": [], "holdouts": [], "outside": [{"bead": "b-8", "title": "Add a test", "found_in": "b-2"}]}"""));
         var page = TheDetailPageOf(TheEpicAtTheGate);
         page.WaitForAssertion(() => Assert.Equal(2, page.FindAll(".gate-finding").Count));
 

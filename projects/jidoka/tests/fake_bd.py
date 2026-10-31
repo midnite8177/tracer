@@ -5,7 +5,7 @@ second or more, and a scheduler test makes a couple of dozen calls. This
 fake answers in the time Python takes to start.
 
 It speaks only the calls that scheduler.py, handoff.py, holdouts.py,
-targeted_tests.py, merge_gate.py, bench.py, land.py, notify.py, resume.py and the issues and
+spec_cases.py, spec_approval.py, targeted_tests.py, merge_gate.py, bench.py, land.py, notify.py, resume.py and the issues and
 context skills' scripts make, and the ones their tests make to set up and
 read beads:
   show <id>... --json
@@ -17,7 +17,7 @@ read beads:
   create --title <title> [--type <type>] [--parent <id>] [--labels <label,...>] [--priority <n>]
          [--description <text>] [--deps <id|discovered-from:id>,...] --json
   update <id> [--claim] [--status <status>] [--assignee <name>] [--parent <id>] [--add-label <label>]
-         [--set-metadata <key>=<value>]... [--unset-metadata <key>]...
+         [--description <text>] [--set-metadata <key>=<value>]... [--unset-metadata <key>]...
   label add|remove <id> <label>
   comment <id> <text>
   comments <id> --json
@@ -361,6 +361,9 @@ def update(store: dict, flags: Flags, cwd: Path) -> bool:
     if parent is not None:
         bead_in(store, parent)
         bead["parent"] = parent
+    description = flags.one("--description")
+    if description is not None:
+        bead["description"] = description
     for label in flags.values.get("--add-label", []):
         add_label(bead, label)
     for pair in flags.values.get("--set-metadata", []):
@@ -450,7 +453,8 @@ def answer(argv: list[str], cwd: Path) -> bool:
                                                               "--priority", "--description", "--deps"},
                                               {"--json"})),
         "update": lambda: update(store, parse(command, args, {"--status", "--assignee", "--parent", "--add-label",
-                                                              "--set-metadata", "--unset-metadata"},
+                                                              "--description", "--set-metadata",
+                                                              "--unset-metadata"},
                                               {"--claim"}), cwd),
         "label": lambda: label(store, parse(command, args, set(), set())),
         "comment": lambda: comment(store, parse(command, args, set(), set()), cwd),

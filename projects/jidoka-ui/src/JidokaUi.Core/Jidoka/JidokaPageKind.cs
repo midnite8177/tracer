@@ -14,6 +14,9 @@ public enum JidokaPageKind
 
     /// <summary>The page beside an epic that shows the task table of its handoff.</summary>
     Handoff,
+
+    /// <summary>The page beside an epic that shows the acceptance specs proposed for it, each case beside its plain reading.</summary>
+    SpecApproval,
 }
 
 /// <summary>The words that name the kinds of jidoka page, in file names and in addresses.</summary>
@@ -25,6 +28,7 @@ public static class JidokaPageKinds
         JidokaPageKind.Question => "question",
         JidokaPageKind.Gate => "gate",
         JidokaPageKind.Handoff => "handoff",
+        JidokaPageKind.SpecApproval => "spec-approval",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "No script writes a page of this kind."),
     };
 

@@ -19,6 +19,7 @@ LINK_FIELDS = ("id", "title", "status", "dependency_type")
 LISTED_FIELDS = ("id", "title", "status", "priority", "issue_type", "assignee", "labels", "parent", "description")
 COMMENT_FIELDS = ("text", "author")
 NOTE = "## What\nPrint the note.\n\n## Seams\nThe till's command line."
+REPLACED = f"{NOTE}\n\n## Acceptance specs\n\n1. A shopper pays by card | and the till prints a receipt"
 TESTS_BASE = "4e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d5"
 TESTS_COMMAND = '"/usr/bin/python3" "/tmp/runner.py" "/tmp/runs" -k test_card'
 MISSING = "nope-1"
@@ -185,6 +186,8 @@ class Play:
         self.call("claim a task its actor already holds", "Jeff Contract", "update", loose, "--claim")
         self.call("claim a task another actor holds", "claude", "update", loose, "--claim")
         self.show("show a task with a description and a claimed task", note, loose)
+        self.call("replace a task's description", "Jeff Contract", "update", note, f"--description={REPLACED}")
+        self.show("show a task whose description was replaced", note)
         self.call("set two metadata keys", "Jeff Contract", "update", loose, "--set-metadata", "holdouts=abc",
                   "--set-metadata", "kept=1")
         self.call("unset a metadata key", "Jeff Contract", "update", loose, "--unset-metadata", "holdouts")
@@ -282,6 +285,11 @@ class FakeBdContractTests(unittest.TestCase):
     def test_create_takes_a_description_and_the_beads_the_new_one_waits_on(self):
         self.assert_same("create a task with a description that waits on an open and a closed bead")
         self.assert_same("show a task with a description and a claimed task")
+
+    def test_update_replaces_a_description_that_runs_over_several_lines(self):
+        self.assert_same("show a task whose description was replaced")
+        [shown] = self.fake.calls["show a task whose description was replaced"].printed
+        self.assertEqual(REPLACED, shown["description"])
 
     def test_a_task_created_discovered_from_another_shows_the_link_and_waits_on_nothing(self):
         self.assert_same("create a task in the epic discovered from another")

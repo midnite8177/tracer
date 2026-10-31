@@ -29,10 +29,10 @@ and running it again once the edits are gone goes on. It fast-forwards
 local main with git merge --ff-only. It never pushes.
 
 Then, as the git user, it records gate.decision=merge and gate.landed=<sha>
-on the epic, closes the epic with the commit in the reason, retires the
-epic's holdouts by removing their metadata key, removes the
-factory and human labels, removes the worktrees and branches of the epic's
-laps and the epic branch. Each step runs on its own, so one failure stops no
+on the epic, closes the epic with the commit in the reason,
+files a planning bead for each holdout the human promoted, as gate_promote.py says, retires the epic's holdouts by
+removing their metadata key once every bead is filed, removes the factory and human labels, removes the worktrees and
+branches of the epic's laps and the epic branch. Each step runs on its own, so one failure stops no
 other. The epic branch stays while the epic is open. A rerun on an epic
 that records gate.landed repeats these steps.
 
@@ -43,8 +43,13 @@ does not wait there or that landed. Each is written as the git user.
 comment numbers the assumptions, and the script posts the assumption and the
 human's reason on the bead that recorded it.
 
-`items <epic>` writes nothing. It prints, as JSON, what wrong, restore, keep-finding and close-finding name, for an epic that waits at the
-gate: `assumptions`, each with its `number` in the gate comment, the `bead` that recorded it, that bead's `title` and
+`promote <epic> <number>` promotes the epic's holdout of that number, counted from 1 as holdouts.py counts. Landing then
+files a planning bead outside the epic, with the human label, that holds the holdout's scenario. A holdout not promoted
+retires at landing.
+
+`items <epic>` writes nothing. It prints, as JSON, what wrong, restore, promote, keep-finding and close-finding name, for
+an epic that waits at the gate: `holdouts`, each with its `number`, its `app`, its `scenario` and whether it is
+`promoted`; `assumptions`, each with its `number` in the gate comment, the `bead` that recorded it, that bead's `title` and
 its `text`; `removed`, each test the test cleanup removed, with its `file` and the test or spec that covers it
 (`covered_by`); and `outside`, each open bead found outside the epic, with its `title` and the bead it was found in
 (`found_in`). The epic is refused as the decisions refuse it.
@@ -97,6 +102,7 @@ from pathlib import Path
 
 import cleanup
 import gate_drop
+import gate_promote
 import gate_restore
 import gate_send_back
 import lap_record
@@ -112,7 +118,7 @@ from epic_branch import branch_head, required_head
 from epic_reader import EpicReadError, child_ids, recorded_branch, shown_beads
 from epics import GATE_STATE_KEY, WAITING, is_closed
 from gate_items import assumption, numbered_assumptions, outside_of
-from holdouts import HOLDOUTS_KEY
+from holdouts import HOLDOUTS_KEY, HoldoutsError
 from land import (FULL_SUITE_FAILED_EXIT_CODE, PARTLY_LANDED_EXIT_CODE, WAITING_ON_EDITS_EXIT_CODE, FullSuiteFailed,
                   LandingError, LandingSettings, WaitingOnEdits, acquire_lock, attempt, landing_settings,
                   main_checkout, merge_lock, print_hand_run, refuse_bad_message, refuse_overlapping_edits,
@@ -132,6 +138,7 @@ ITEMS = "items"
 KEEP_FINDING = "keep-finding"
 CLOSE_FINDING = "close-finding"
 SEND_BACK = "send-back"
+PROMOTE = "promote"
 DROP = "drop"
 WRONG_PREFIX = "Assumption marked wrong at the acceptance gate: "
 WORKTREE_PREFIX = "landing-"
@@ -176,8 +183,8 @@ class RebuildRefused(Exception):
 
 @dataclass(frozen=True)
 class EpicAtTheGate:
-    """The epic at the gate: its id, its title, its epic branch, what the gate recorded on it, and its rule for the
-    commits that land on main."""
+    """The epic at the gate: its id, its title, its epic branch, what the gate recorded on it, its rule for the
+    commits that land on main, and the bead as bd show printed it when the gate read the epic."""
     id: str
     title: str
     branch: str
@@ -185,6 +192,7 @@ class EpicAtTheGate:
     labels: list[str]
     closed: bool
     commits_on_main: str
+    shown: dict
 
     @property
     def landed(self) -> str:
@@ -207,7 +215,7 @@ def epic_at_the_gate(epic: str, main_tree: Path) -> EpicAtTheGate:
     shown = read_bead(epic, main_tree)
     labels = labels_of(shown)
     found = EpicAtTheGate(epic, str(shown.get("title") or ""), recorded_branch(shown), metadata_of(shown), labels,
-                          is_closed(shown), rules.of_epic(shown).commits_on_main)
+                          is_closed(shown), rules.of_epic(shown).commits_on_main, shown)
     if found.landed:
         return found
     branch_and_head_at_the_gate(epic, shown, main_tree, GateError)
@@ -312,6 +320,17 @@ def release_from_factory(epic: EpicAtTheGate, home: Path, main_tree: Path, env: 
     return failed
 
 
+def file_promoted_holdouts(epic_id: str, env: dict[str, str], main_tree: Path) -> list[str]:
+    """Files the planning beads of the promoted holdouts and returns the steps that failed. It reads the epic again,
+    because the full suite can run for minutes between the gate's read and landing, and the human can promote a
+    holdout in that time."""
+    try:
+        promoted_while_landing = read_bead(epic_id, main_tree)
+        return gate_promote.file_promoted(promoted_while_landing, env, main_tree)
+    except (CommandError, HoldoutsError, gate_promote.PromoteError) as error:
+        return [f"file the planning beads of the promoted holdouts: {error}"]
+
+
 def close_out(epic: EpicAtTheGate, message: str, sha: str, home: Path, main_tree: Path) -> Landed:
     """Records the decision, closes the epic and removes its labels and branches, each step on its own."""
     env = env_as_git_user(main_tree)
@@ -325,8 +344,11 @@ def close_out(epic: EpicAtTheGate, message: str, sha: str, home: Path, main_tree
     closed = epic.closed or attempt("bd close", ["bd", "close", epic.id, "--reason", f"{sha}: {subject(message)}"],
                                     main_tree, env, failed)
     if HOLDOUTS_KEY in epic.metadata:
-        attempt("retire the holdouts", ["bd", "update", epic.id, "--unset-metadata", HOLDOUTS_KEY], main_tree, env,
-                failed)
+        not_filed = file_promoted_holdouts(epic.id, env, main_tree)
+        failed += not_filed
+        if not not_filed:
+            attempt("retire the holdouts", ["bd", "update", epic.id, "--unset-metadata", HOLDOUTS_KEY], main_tree,
+                    env, failed)
     failed += release_from_factory(epic, home, main_tree, env)
     if closed:
         try:
@@ -376,16 +398,23 @@ def epic_waiting(epic_id: str, main_tree: Path) -> EpicAtTheGate:
 
 
 def shown_items(epic_id: str, main_tree: Path) -> str:
-    """The assumptions, the removed tests and the beads found outside the epic, as JSON, for the decisions that name
-    them."""
+    """The assumptions, the removed tests, the holdouts and the beads found outside the epic, as JSON, for the
+    decisions that name them."""
     epic = epic_waiting(epic_id, main_tree)
     return json.dumps({
         "epic": epic.id,
         "assumptions": [{"number": number, "bead": each.bead, "title": each.title, "text": each.text}
                         for number, each in numbered_assumptions(epic.id, epic.title, main_tree)],
-        "removed": [each.fields() for each in cleanup.removed_before(read_bead(epic.id, main_tree))],
+        "removed": [each.fields() for each in cleanup.removed_before(epic.shown)],
+        "holdouts": gate_promote.rows(epic.shown),
         "outside": [{"bead": each.bead, "title": each.title, "found_in": each.found_in}
                     for each in outside_of(epic.id, main_tree)]})
+
+
+def promote_holdout(epic_id: str, number: int, main_tree: Path) -> str:
+    """Records that the human promoted the numbered holdout, for landing to file as a planning bead."""
+    epic = epic_waiting(epic_id, main_tree)
+    return gate_promote.promote(epic.shown, number, env_as_git_user(main_tree), main_tree)
 
 
 def mark_wrong(epic_id: str, number: int, why: str, main_tree: Path) -> str:
@@ -421,8 +450,7 @@ def close_finding(epic_id: str, bead: str, main_tree: Path) -> str:
 def restore_test(epic_id: str, test: str, file: str | None, home: Path, main_tree: Path) -> str:
     """Puts a test the test cleanup removed back on the epic branch, and takes it out of cleanup.removed."""
     epic = epic_waiting(epic_id, main_tree)
-    shown = read_bead(epic.id, main_tree)
-    removals = cleanup.removed_before(shown)
+    removals = cleanup.removed_before(epic.shown)
     removal = gate_restore.removal_named(removals, test, file)
     head = required_head(epic.branch, main_tree, GateError)
     restored = gate_restore.restore(removal, removals, gate_restore.EpicHead(epic.id, epic.branch, head), home,
@@ -470,6 +498,8 @@ def decide(args: argparse.Namespace, home: Path, main_tree: Path) -> str:
         return send_epic_back(args.epic, args.note, Path(args.proposals), main_tree)
     if args.mode == DROP:
         return drop_epic(args.epic, home, main_tree)
+    if args.mode == PROMOTE:
+        return promote_holdout(args.epic, args.number, main_tree)
     if args.mode == ITEMS:
         return shown_items(args.epic, main_tree)
     if args.mode == WRONG:
@@ -486,7 +516,7 @@ def run_decision(args: argparse.Namespace) -> int:
         main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         home = settings_reader.jidoka_home(args.jidoka_home)
         print(decide(args, home, main_tree))
-    except (GateError, gate_restore.RestoreError, gate_send_back.SendBackError, PassError, EpicReadError, CommandError,
+    except (GateError, gate_promote.PromoteError, HoldoutsError, gate_restore.RestoreError, gate_send_back.SendBackError, PassError, EpicReadError, CommandError,
             settings_reader.SettingsError, rules.RulesError, OSError) as error:
         print(f"gate: {error}", file=sys.stderr)
         return 1
@@ -506,6 +536,9 @@ def parsed_arguments(argv: list[str]) -> argparse.Namespace:
     wrong.add_argument("epic")
     wrong.add_argument("number", type=int, help="the assumption's number in the gate comment")
     wrong.add_argument("--why", required=True, help="what is wrong with it, in the human's words")
+    promoting = modes.add_parser(PROMOTE, help="promote a holdout, so landing files it as a planning bead")
+    promoting.add_argument("epic")
+    promoting.add_argument("number", type=int, help="the holdout's number among the epic's holdouts, from 1")
     restoring = modes.add_parser(RESTORE, help="put a test the test cleanup removed back on the epic branch")
     restoring.add_argument("epic")
     restoring.add_argument("test", help="the test as the Tests removed table names it")
@@ -523,7 +556,7 @@ def parsed_arguments(argv: list[str]) -> argparse.Namespace:
                                                                  "for each note")
     dropping = modes.add_parser(DROP, help="close the epic without landing it and keep its epic branch")
     dropping.add_argument("epic")
-    for mode in (merging, listing, wrong, restoring, keeping, closing, sending_back, dropping):
+    for mode in (merging, listing, wrong, promoting, restoring, keeping, closing, sending_back, dropping):
         mode.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     return parser.parse_args(argv)
 

@@ -19,12 +19,21 @@ public sealed record RemovedTest(string Test, string File, string CoveredBy);
 /// <param name="FoundIn">The id of the epic or task it was found in.</param>
 public sealed record FoundOutsideTheEpic(string Bead, string Title, string FoundIn);
 
+/// <summary>One of the epic's holdouts, which the human can promote at the gate.</summary>
+/// <param name="Number">The number that the gate script takes to promote the holdout, counted from 1.</param>
+/// <param name="App">The name of the app the holdout reaches.</param>
+/// <param name="Scenario">What a user does to the running app and what they then see.</param>
+/// <param name="Promoted">True once the human has promoted it, so that landing files its planning bead.</param>
+public sealed record GateHoldout(int Number, string App, string Scenario, bool Promoted);
+
 /// <summary>
 /// What the small decisions of the acceptance gate name: the numbered assumptions that Wrong takes,
-/// the removed tests that Restore takes, and the beads found outside the epic that Keep and Close
-/// take. The gate script lists them, because it numbers the assumptions and finds the other two.
+/// the removed tests that Restore takes, the beads found outside the epic that Keep and Close take,
+/// and the holdouts that Promote takes. The gate script lists them, because it numbers the
+/// assumptions and the holdouts and finds the beads.
 /// </summary>
 public sealed record GateItems(
     IReadOnlyList<GateAssumption> Assumptions,
     IReadOnlyList<RemovedTest> RemovedTests,
-    IReadOnlyList<FoundOutsideTheEpic> FoundOutside);
+    IReadOnlyList<FoundOutsideTheEpic> FoundOutside,
+    IReadOnlyList<GateHoldout> Holdouts);

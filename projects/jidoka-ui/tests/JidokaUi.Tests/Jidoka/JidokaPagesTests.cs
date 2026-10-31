@@ -75,6 +75,7 @@ public sealed class JidokaPagesTests : IDisposable
     [InlineData("question", JidokaPageKind.Question)]
     [InlineData("gate", JidokaPageKind.Gate)]
     [InlineData("handoff", JidokaPageKind.Handoff)]
+    [InlineData("spec-approval", JidokaPageKind.SpecApproval)]
     public void NamesEachKindByTheWordThatItsFileStartsWith(string word, JidokaPageKind kind)
     {
         Assert.True(JidokaPageKinds.TryFrom(word, out var found));

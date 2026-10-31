@@ -20,6 +20,10 @@ public sealed record GateDecision(string Mode, IReadOnlyList<string> AfterTheEpi
     public static GateDecision Wrong(int number, string why) =>
         new("wrong", [number.ToString(System.Globalization.CultureInfo.InvariantCulture), $"--why={why}"], false);
 
+    /// <summary>Promotes the numbered holdout, so that landing files a planning bead that holds its scenario.</summary>
+    public static GateDecision Promote(int number) =>
+        new("promote", [number.ToString(System.Globalization.CultureInfo.InvariantCulture)], false);
+
     /// <summary>Puts a test that the test cleanup removed back on the epic branch.</summary>
     public static GateDecision Restore(string test, string? file) =>
         new("restore", file is null ? [test] : [test, $"--file={file}"], false);

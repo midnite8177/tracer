@@ -1,0 +1,5 @@
+interface:
+  display_name: "Coach specs"
+  short_description: "Ask rounds of questions, then propose acceptance specs and store the approved ones"
+policy:
+  allow_implicit_invocation: false

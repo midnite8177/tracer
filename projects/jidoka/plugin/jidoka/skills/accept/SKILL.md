@@ -28,8 +28,8 @@ to each run.
    the question the pass cap asks while the epic holds open tasks. If it
    does not, say so and stop. Restate the epic's title, the commits the
    latest "Acceptance gate:" comment lists, and the validation figures.
-   An epic parked at the pass cap has no "Acceptance gate:" comment:
-   restate the cap question, and say that landing it moves its open tasks
+   An epic parked at the pass cap has no "Acceptance gate:" comment.
+   Restate the cap question, and say that landing it moves its open tasks
    to a new epic.
 2. **Write the review guide.** Start one worker with the Agent tool, on
    the standard tier's route from `bench route standard`. It is no lap
@@ -77,6 +77,13 @@ to each run.
    - A bead found outside the epic: `gate keep-finding <epic-id> <bead>
      --jidoka-home ...` leaves it open for planning; `gate close-finding
      <epic-id> <bead> --jidoka-home ...` closes it.
+   - A holdout worth keeping: run `gate items <epic-id> --jidoka-home ...`
+     and read the `holdouts` list to the human, each with its number, its
+     app and its scenario. Offer Promote on each one that is not promoted
+     yet: `gate promote <epic-id> <number> --jidoka-home ...`. Landing
+     files a planning bead outside the epic, with the `human` label, that
+     holds the promoted scenario, and the coaching skill starts from it.
+     A holdout not promoted retires at landing.
    On exit 0, print the script's line. On exit 1, show its message
    verbatim, and go on with the next decision or the choice.
 5. **Ask for the choice.** The human merges the epic, sends it back with
@@ -104,7 +111,7 @@ to each run.
      main. The script posted the refusal on the epic, and the comment
      says which it was. Show the comment's conflicting files or failing
      commands. When the comment says the epic leaves the acceptance gate,
-     the script took the epic off the gate: say that the epic's pass runs
+     the script took the epic off the gate. Say that the epic's pass runs
      validation again, which catches up with main, runs the holdouts again
      and brings the epic back to the gate, and tell the human to run
      `/jidoka:factory <epic-id>` to carry it on. When it says the epic
@@ -148,7 +155,7 @@ the human's own words, and may be pinned to a line of the epic's diff.
 4. **Send it back.** Run `gate send-back <epic-id> --note "<note>"`, one
    `--note` for each note in order, `--proposals "<the send-back.json
    path>"` and `--jidoka-home ...`. On exit 0 the script printed the new
-   task for each note: print it, and say that the epic left the gate and
+   task for each note. Print it, and say that the epic left the gate and
    that its pass count starts again. Tell the human to run
    `/jidoka:factory <epic-id>` to start the next pass. On exit 1 show the
    script's message verbatim, change the file as it says, and run it
