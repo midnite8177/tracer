@@ -45,24 +45,14 @@ Its options are exactly the three lists, `epic` (the epic's factory rules),
 `repo` (the repo settings' worker commands) and `built-in` (the built-in
 list's additions on this machine), and `none`, which changes no list.
 
-Jidoka writes everything else of a permission question from the denial, in
-words that need no jidoka vocabulary: the question, "May lap workers run
-<pattern>?", so the report needs no `question`; each option's card, the
-change the list makes, what the worker does next with the denied call, and
-the list's name as the answer word to type; the situation line, which says
-what the worker tried and the rule that stopped it; and the steps of the
-diagram, which show the task, the call, the denial and the park. The worker's
-`shown` and its options' `next` are dropped. Its `why` is its reasoning for
-its pick, which goes on the recommended option's card. The task's metadata
-gets `question.call` and `question.pattern`, both empty after any other
-question.
-
-The answer names one list by opening a comment with its name, and the pattern
-goes onto that list, so the next lap's mod allows the call. Any other answer
-is `none`: no list changes, and the next lap's build carries the comment. Two
-comments that open with different list names are refused. The scheduler adds
-the pattern when it opens the lap that follows the answer, and `answer` does
-the same from a command line.
+permission_question.py writes everything else of a permission question from
+the denial, so the report needs no `question`, and reads which list the
+answer names. The worker's `shown` and its options' `next` are dropped. Its
+`why` is its reasoning for its pick, which goes on the recommended option's
+card. The task's metadata gets `question.call` and `question.pattern`, both
+empty after any other question. The scheduler adds the pattern to the list
+the answer names when it opens the lap that follows the answer, and `answer`
+does the same from a command line.
 
 `question <task> --scratch <folder> --worktree <path> --branch <name> --tries <n>`
 posts the question report in the scratch folder and parks the task.
@@ -80,15 +70,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import lap_record
+import permission_question
 import question_page
-import repo_settings
 import settings_reader
 import rules
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, HUMAN_LABEL, CommandError, bd_comments, env_as_factory,
@@ -106,17 +95,7 @@ OPTIONS_KEY = "question.options"
 RECOMMENDED_KEY = "question.recommended"
 CALL_KEY = "question.call"
 PATTERN_KEY = "question.pattern"
-EPIC_LIST, REPO_LIST, BUILT_IN_LIST = "epic", "repo", "built-in"
-NO_LIST = "none"
-PERMISSION_LISTS = (EPIC_LIST, REPO_LIST, BUILT_IN_LIST)
-PERMISSION_ANSWERS = (*PERMISSION_LISTS, NO_LIST)
-LIST_WORD = re.compile(rf"^\W*({'|'.join(re.escape(name) for name in PERMISSION_LISTS)})(?![\w-])", re.IGNORECASE)
-OFF_LISTS, OUTSIDE_WORKTREE, UNREADABLE_DELETE = "off-lists", "outside-worktree", "unreadable-delete"
-CAUSES = (OFF_LISTS, OUTSIDE_WORKTREE, UNREADABLE_DELETE)
-DELETE_CAUSES = (OUTSIDE_WORKTREE, UNREADABLE_DELETE)
 SHOWN_LABEL = "What the app shows"
-SITUATION_LABEL = "What happened"
-SHELL_SYNTAX = re.compile(r"[;&|<>`\n]|\$\(")
 LEAST_OPTIONS = 2
 LEAST_CONFIDENCE = 0
 MOST_CONFIDENCE = 100
@@ -152,34 +131,7 @@ class Option:
         return question_page.Card(self.name, None, self.confidence, self.next_step, None, recommended)
 
 
-@dataclass(frozen=True)
-class PermissionOption(Option):
-    """The option of a permission question that chooses one list. Its name is the answer word the human types.
-    `change` is the change the list makes, and `reason` is the worker's reasoning for its pick, held by the
-    recommended option and None on any other."""
-    change: str
-    reason: str | None
-
-    def line(self) -> str:
-        reason = f" The worker picks it because: {self.reason}" if self.reason is not None else ""
-        return f"- {self.change} ({self.confidence}%). Answer word: {self.name}. {self.next_step}{reason}"
-
-    def card(self, recommended: bool) -> question_page.Card:
-        return question_page.Card(self.change, self.name, self.confidence, self.next_step, self.reason, recommended)
-
-
-@dataclass(frozen=True)
-class Denial:
-    """The call the lap mod denied, and the command prefix whose entry on a list would allow it."""
-    call: str
-    pattern: str
-
-
-@dataclass(frozen=True)
-class Denied:
-    """A denial and its cause, one of CAUSES: the reason the lap mod gave for it."""
-    denial: Denial
-    cause: str
+AnyOption = Option | permission_question.PermissionOption
 
 
 @dataclass(frozen=True)
@@ -193,7 +145,7 @@ class Report:
     why: tuple[str, ...]
     options: tuple[ReportedOption, ...]
     recommended: str
-    denied: Denied | None
+    denied: permission_question.Denied | None
 
 
 @dataclass(frozen=True)
@@ -209,12 +161,12 @@ class Question:
     shown_label: str
     shown: str | None
     why: tuple[str, ...]
-    options: tuple[Option, ...]
+    options: tuple[AnyOption, ...]
     recommended: str
-    denial: Denial | None
+    denial: permission_question.Denial | None
 
     @property
-    def recommendation(self) -> Option:
+    def recommendation(self) -> AnyOption:
         return next(option for option in self.options if option.name == self.recommended)
 
 
@@ -258,28 +210,23 @@ def words_of(command: str, what: str) -> list[str]:
         raise QuestionError(f"{what} {command!r} is not a command: {error}") from error
 
 
-def denied_of(report: dict, option_names: list[str]) -> Denied | None:
+def denied_of(report: dict, option_names: list[str]) -> permission_question.Denied | None:
     """The denial a permission question report holds, or None when it holds neither call nor pattern."""
     if "call" not in report and "pattern" not in report:
         return None
     call = text_of(report.get("call"), "call")
     pattern = text_of(report.get("pattern"), "pattern")
     cause = text_of(report.get("cause"), "cause")
-    if cause not in CAUSES:
-        raise QuestionError(f"cause must be one of {', '.join(CAUSES)}, not {cause!r}")
-    if sorted(option_names) != sorted(PERMISSION_ANSWERS):
+    if cause not in permission_question.CAUSES:
+        raise QuestionError(f"cause must be one of {', '.join(permission_question.CAUSES)}, not {cause!r}")
+    if sorted(option_names) != sorted(permission_question.PERMISSION_ANSWERS):
         raise QuestionError(f"the options of a permission question must be the four answers, one each: "
-                            f"{', '.join(PERMISSION_ANSWERS)}")
-    if SHELL_SYNTAX.search(pattern):
+                            f"{', '.join(permission_question.PERMISSION_ANSWERS)}")
+    if permission_question.SHELL_SYNTAX.search(pattern):
         raise QuestionError("pattern must be one simple command, with no separator, redirect or substitution")
-    if pattern_start(words_of(pattern, "pattern"), words_of(call, "call")) is None:
+    if permission_question.pattern_start(words_of(pattern, "pattern"), words_of(call, "call")) is None:
         raise QuestionError("the words of pattern must appear in call, one after the other")
-    return Denied(Denial(call, pattern), cause)
-
-
-def pattern_start(wanted: list[str], spoken: list[str]) -> int | None:
-    """Where the words of the pattern begin in the words of the call, or None when they do not appear in a row."""
-    return next((start for start in range(len(spoken)) if spoken[start:start + len(wanted)] == wanted), None)
+    return permission_question.Denied(permission_question.Denial(call, pattern), cause)
 
 
 def read_report(scratch: Path) -> Report:
@@ -318,100 +265,28 @@ def ordinary_question(report: Report) -> Question:
                     report.recommended, None)
 
 
-def rule_of(denied: Denied) -> str:
-    """The rule that stopped the call, as a clause."""
-    rules_by_cause = {
-        OFF_LISTS: f"workers may not run {denied.denial.pattern}",
-        OUTSIDE_WORKTREE: "workers may delete only inside their worktree",
-        UNREADABLE_DELETE: "workers may delete only paths they name one by one inside their worktree",
-    }
-    return rules_by_cause[denied.cause]
-
-
-def targets_of(denial: Denial) -> list[str]:
-    """The words after the pattern in the call that are no flag, up to the first shell separator, redirect or
-    substitution."""
-    wanted, spoken = shlex.split(denial.pattern), shlex.split(denial.call)
-    start = pattern_start(wanted, spoken)
-    if start is None:
-        return []
-    targets = []
-    for word in spoken[start + len(wanted):]:
-        syntax = SHELL_SYNTAX.search(word)
-        head = word[:syntax.start()] if syntax else word
-        if head and not head.startswith("-"):
-            targets.append(head)
-        if syntax:
-            break
-    return targets
-
-
-def situation_of(denied: Denied) -> str:
-    """What the worker tried and the rule that stopped it, so the task stopped, in plain words."""
-    targets = targets_of(denied.denial) if denied.cause in DELETE_CAUSES else []
-    attempt = (f"delete {' '.join(targets)} with {denied.denial.pattern}" if targets
-               else f"run `{denied.denial.call}`")
-    rule = rule_of(denied)
-    return f"The worker tried to {attempt}. {rule[0].upper()}{rule[1:]}, so the task stopped."
-
-
-def steps_of_denial(task: str, denied: Denied) -> tuple[str, ...]:
-    """The task, the call the worker made, the denial and the park, as the steps of a diagram."""
-    return (f"The worker was building {task}",
-            f"It made the call {denied.denial.call}",
-            f"The call was denied, because {rule_of(denied)}",
-            "The task is parked and waits for your answer")
-
-
-def permission_option(option: ReportedOption, denial: Denial, reason: str | None) -> PermissionOption:
-    """The option with the change its list makes and what the worker does next with the denied call, both written
-    here from the denial; the worker's own `next` is dropped, for it cannot know what the list does. `reason` is the
-    worker's reasoning, kept on the option only when it is the recommended one."""
-    pattern, call = denial.pattern, f"`{denial.call}`"
-    changes = {
-        EPIC_LIST: (f"Only the workers on this group of tasks may run {pattern}",
-                    f"The worker starts again and runs {call}. Workers on other groups of tasks are still refused "
-                    f"{pattern}."),
-        REPO_LIST: (f"Every worker in this repo may run {pattern}",
-                    f"The worker starts again and runs {call}, and so does every later worker in this repo, whatever "
-                    "its group of tasks."),
-        BUILT_IN_LIST: (f"Every worker in every repo on this machine may run {pattern}",
-                        f"The worker starts again and runs {call}, and so does every later worker in every repo on "
-                        "this machine."),
-        NO_LIST: (f"Nothing changes, and no worker may run {pattern}",
-                  f"The worker starts again with every permission as it was, so {call} is still refused. It reads "
-                  "your comment and carries on without it."),
-    }
-    change, next_step = changes[option.name]
-    return PermissionOption(option.name, option.confidence, next_step, change, reason)
-
-
-def permission_question(report: Report, denied: Denied, task: str) -> Question:
+def asked_permission(report: Report, denied: permission_question.Denied, task: str) -> Question:
     """The question of a permission question's report, which jidoka writes from the denial: its sentence, its
     situation line, its diagram and its option cards. The worker's `shown` and `next` are dropped."""
     reason = " ".join(report.why) if report.why else None
-    options = tuple(permission_option(option, denied.denial, reason if option.name == report.recommended else None)
+    options = tuple(permission_question.permission_option(option.name, option.confidence, denied.denial,
+                                                          reason if option.name == report.recommended else None)
                     for option in report.options)
-    return Question(f"May lap workers run {denied.denial.pattern}?", report.found, SITUATION_LABEL,
-                    situation_of(denied), steps_of_denial(task, denied), options, report.recommended, denied.denial)
+    return Question(permission_question.sentence_of(denied.denial), report.found,
+                    permission_question.SITUATION_LABEL, permission_question.situation_of(denied),
+                    permission_question.steps_of_denial(task, denied), options, report.recommended, denied.denial)
 
 
 def read_question(scratch: Path, task: str) -> Question:
     """The question report in the lap's scratch folder as a question; raises QuestionError when it is missing or
     unusable."""
     report = read_report(scratch)
-    return ordinary_question(report) if report.denied is None else permission_question(report, report.denied, task)
-
-
-def denial_paragraph(denial: Denial) -> str:
-    return (f"The call `{denial.call}` was denied. Open your comment with the answer word of the one list that "
-            f"should allow `{denial.pattern}` from now on, or with none to change no list. Anything after the word "
-            "is your comment to the worker.\n\n")
+    return ordinary_question(report) if report.denied is None else asked_permission(report, report.denied, task)
 
 
 def question_comment(question: Question, page: Path, worktree: Path, branch: str) -> str:
     """The whole question in plain text; the page adds pictures and no fact."""
-    denial = denial_paragraph(question.denial) if question.denial is not None else ""
+    denial = permission_question.denial_paragraph(question.denial) if question.denial is not None else ""
     shown = f"{question.shown_label}: {question.shown}\n\n" if question.shown is not None else ""
     why = f"Why: {' -> '.join(question.why)}\n\n" if question.why else ""
     options = "\n".join(option.line() for option in question.options)
@@ -532,56 +407,20 @@ def park_on_question(lap: AskingLap, home: Path, main_tree: Path) -> None:
     question = read_question(lap.scratch, lap.task)
     page = write_page(lap.task, question, home, main_tree)
     options = json.dumps([{"name": option.name, "confidence": option.confidence} for option in question.options])
-    denial = question.denial or Denial("", "")
+    denial = question.denial or permission_question.Denial("", "")
     park(lap.task, lap.tries, question_comment(question, page, lap.worktree, lap.branch),
          [(OPTIONS_KEY, options), (RECOMMENDED_KEY, question.recommended), (CALL_KEY, denial.call),
           (PATTERN_KEY, denial.pattern)], main_tree)
     (lap.scratch / QUESTION_REPORT).unlink(missing_ok=True)
 
 
-def denial_in(metadata: dict) -> Denial | None:
+def denial_in(metadata: dict) -> permission_question.Denial | None:
     """The denial a task's metadata holds, or None when its last question was no permission question."""
     call, pattern = str(metadata.get(CALL_KEY) or ""), str(metadata.get(PATTERN_KEY) or "")
-    return Denial(call, pattern) if pattern else None
+    return permission_question.Denial(call, pattern) if pattern else None
 
 
-def list_named(answer: Answer) -> str:
-    """The one list an answer names, or `none` when it names no list. A comment names a list when it opens with the
-    list's name, and what follows is a comment to the worker; raises QuestionError when comments open with the names
-    of more than one list."""
-    named = {match.group(1).lower() for reply in answer.replies if (match := LIST_WORD.match(reply))}
-    if len(named) > 1:
-        raise QuestionError(f"the answer must name at most one list of {', '.join(PERMISSION_LISTS)}, and "
-                            f"{answer.text!r} names {len(named)}")
-    return named.pop() if named else NO_LIST
-
-
-@dataclass(frozen=True)
-class Allowed:
-    """The list a permission answer chose, the pattern, and whether the list changed."""
-    chosen: str
-    pattern: str
-    changed: bool
-
-
-def allow(chosen: str, pattern: str, epic: str, home: Path, main_tree: Path) -> bool:
-    """Adds the pattern to the chosen list; False when the list already holds it or the answer chose no list."""
-    if chosen == NO_LIST:
-        return False
-    if chosen == EPIC_LIST:
-        return rules.allow_extra_command(epic, pattern, home, main_tree)
-    if chosen == REPO_LIST:
-        return repo_settings.add_worker_command(home, main_tree, pattern)
-    return repo_settings.add_built_in_command(home, pattern)
-
-
-def allow_answered(denial: Denial, answer: Answer, epic: str, home: Path, main_tree: Path) -> Allowed:
-    """Puts the denial's pattern on the list the answer names, so the next lap's mod allows the call."""
-    chosen = list_named(answer)
-    return Allowed(chosen, denial.pattern, allow(chosen, denial.pattern, epic, home, main_tree))
-
-
-def answered_permission(task: str, home: Path, main_tree: Path) -> Allowed:
+def answered_permission(task: str, home: Path, main_tree: Path) -> permission_question.Allowed:
     """Applies the answer of the task's permission question; raises QuestionError when there is none to apply."""
     shown = read_bead(task, main_tree)
     metadata = metadata_of(shown)
@@ -591,7 +430,7 @@ def answered_permission(task: str, home: Path, main_tree: Path) -> Allowed:
     answer = answer_of(task, str(metadata.get(RECOMMENDED_KEY) or ""), main_tree)
     if answer is None:
         raise QuestionError(f"{task} holds no answered question")
-    return allow_answered(denial, answer, parent_of(shown), home, main_tree)
+    return permission_question.allow_answered(denial, answer.replies, parent_of(shown), home, main_tree)
 
 
 def main(argv: list[str]) -> int:
@@ -619,7 +458,8 @@ def main(argv: list[str]) -> int:
             allowed = answered_permission(args.task, settings_reader.jidoka_home(args.jidoka_home), main_tree)
             printed = {"task": args.task, "list": allowed.chosen, "pattern": allowed.pattern,
                        "changed": allowed.changed}
-    except (QuestionError, rules.RulesError, CommandError, settings_reader.SettingsError, OSError) as error:
+    except (QuestionError, permission_question.AnswerError, rules.RulesError, CommandError,
+            settings_reader.SettingsError, OSError) as error:
         print(f"park: {error}", file=sys.stderr)
         return 1
     print(json.dumps(printed))

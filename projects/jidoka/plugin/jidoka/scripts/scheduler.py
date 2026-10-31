@@ -211,6 +211,7 @@ import park
 import pass_ledger
 import pass_stages
 import pause
+import permission_question
 import private_docs
 import settings_reader
 import reserves
@@ -345,8 +346,8 @@ def answer_fields(lap: Lap, metadata: dict, epic: str, home: Path, main_tree: Pa
     denial = park.denial_in(metadata)
     if denial is not None:
         try:
-            park.allow_answered(denial, answer, epic, home, main_tree)
-        except (park.QuestionError, rules.RulesError, settings_reader.SettingsError) as error:
+            permission_question.allow_answered(denial, answer.replies, epic, home, main_tree)
+        except (permission_question.AnswerError, rules.RulesError, settings_reader.SettingsError) as error:
             print(f"scheduler: the answer on {lap.task} allowed no call: {error}", file=sys.stderr)
     return answer.fields()
 
