@@ -46,29 +46,8 @@ made, and a lap that would go back to a worker ends interrupted instead. A billi
 outage past an hour send the factory-paused notification through notify.py. A report without a cause from a worker,
 once the wait is over, ends the pause. The JIDOKA_NOW variable stands in for the clock, as clock.py says.
 
-lap_opening.py opens the laps, and the rest of this section is its rule. Opening a lap makes, or reuses, the worktree <main checkout>/.worktrees/lap-<task> on the branch lap/<task>, cut
-from the epic branch the epic records as `factory.branch`, and the lap's scratch folder <worktree>/.scratch. The
-repo's info/exclude gets `.worktrees/` and `/.scratch/`, so neither shows in any worktree's git status. In a repo
-whose settings keep the glossary and ADRs private, each worktree gets the links private_docs.share makes to the main
-checkout's copies, and a worktree that holds its own copy stops the call, with the reason on stderr, before any task
-is claimed. Then, with BEADS_ACTOR set to jidoka, the task goes to in_progress with the assignee jidoka, and its
-metadata gets `lap.number` (1, or one more than the number of the lap the task left parked, blocked or interrupted),
-`lap.stage` (the build, or the research on the full track while the task holds no `research brief:` comment),
-`lap.tries` (0), `lap.workspace` (the worktree), `lap.slot` (the lowest slot from 1 up that no open lap on the
-machine holds, as slots.py says) and `lap.branch`. A rerun after a failure, and the lap that follows a park, reuse
-the worktree and branch they find. A reused lap branch that lacks the epic branch's head is first rebased onto it
-under the merge lock, with the work its worktree holds uncommitted kept as it was, so the lap starts from the work
-left behind on top of the epic branch as it is now. A rebase that conflicts is aborted, and the task parks with the
-conflicting files named and no action, its worktree and branch as they were. A new lap starts with no tries, no
-cutoffs, no send-backs and no merge tries, because each is a cap on one lap.
-A lap opens for each ready task, in bd priority order and then by id, while the open laps of the epic number fewer
-than the lap limit, which is the lowest of the machine settings' lap_limit (4 when they hold none), the repo
-settings' lap_limit and the epic's own factory rule, read afresh on every call, and never for a task whose area an
-open lap already holds, whether a lap of this epic or of another running epic of the same repo. The open laps of
-every running epic on the machine, in any repo, number no more than the machine settings' lap limit together;
-slots.py holds that rule and the one that keeps each running epic at least one slot. A task is ready when every bead
-it waits on is closed, it has no open lap, no assignee and no `human` label, and its `lap.area` metadata names its
-area.
+lap_opening.py opens the laps, and its docstring holds the rule: which ready tasks get a lap within the lap limits, and
+what opening a lap makes and records.
 
 An epic whose spend has reached its budget, as budget.py describes, starts no stage: no lap opens, no pass stage runs,
 and a lap that would go back to a worker ends interrupted as a pause ends it. The stages already running finish and
@@ -193,13 +172,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import app_check
-import budget
 import caps
 import clock
 import gate_guard
 import heartbeat
 import holdouts
 import holdouts_run
+import lap_holds
 import lap_opening
 import lap_record
 import launcher
@@ -220,7 +199,7 @@ import rules
 import spec_check
 import specs
 from bench import BenchError
-from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, CommandError,
+from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError,
                       NotAWholeNumber, env_as_factory, labels_of, metadata_of,
                       run, set_metadata)
 from epic_branch import branch_head
@@ -269,11 +248,6 @@ def scheduler_problems(epic: Epic, settings: settings_reader.Settings, main_tree
     return problems
 
 
-def is_parked(epic: Epic) -> bool:
-    """The epic carries the human label, the human's brake, so no stage starts and no lap opens."""
-    return state_of(epic.shown).labeled_for_human
-
-
 def is_finished(epic: Epic) -> bool:
     """Every task of the epic is closed, and the epic waits on neither the human, the acceptance gate nor a run of
     its holdouts."""
@@ -284,13 +258,6 @@ def has_work_to_wait_for(epic: Epic) -> bool:
     """The epic has an open task and is not at the acceptance gate, so a manager with nothing running waits for a
     change instead of ending."""
     return bool(epic.tasks) and not state_of(epic.shown).at_the_gate
-
-
-def restart_clock(lap: Lap, now: int, main_tree: Path) -> Lap:
-    """A stage that reruns starts its wall clock again."""
-    restarted, arguments = lap_record.restarting_clock(lap, now)
-    run(["bd", "update", lap.task, *arguments], main_tree, env_as_factory())
-    return restarted
 
 
 def checked_epic(bead: str, settings: settings_reader.Settings, main_tree: Path) -> Epic:
@@ -361,7 +328,7 @@ def resume_laps(epic: Epic, home: Path, main_tree: Path) -> set[str]:
     """Brings a stopped factory's records and machine in line with git; returns the tasks whose laps it ended
     interrupted.
 
-    The merge lock of a dead holder is cleared and the records of lost worktrees are dropped. Each open lap at a
+    It clears the merge lock of a dead holder and drops the records of lost worktrees. Each open lap at a
     worker stage that the human's brake does not hold is checked against git: a lap git shows merged closes its
     task, and any other ends interrupted, after its orphan workers stop and a rebase it left half done is
     abandoned, so the task is ready for a new lap on its worktree and branch.
@@ -370,7 +337,7 @@ def resume_laps(epic: Epic, home: Path, main_tree: Path) -> set[str]:
     if cleared is not None:
         print(f"scheduler: {cleared}", file=sys.stderr)
     resume.prune_worktrees(main_tree)
-    if is_parked(epic):
+    if lap_holds.is_parked(epic):
         return set()
     epic_branch = epic.branch
     interrupted: set[str] = set()
@@ -403,58 +370,8 @@ class PassState:
     pass_actions: list[dict]
 
 
-@dataclass(frozen=True)
-class Holds:
-    """What holds the epic's laps in this call: the laps that start again, the laps still open, the pause that waits,
-    and the brake."""
-    rebuilds: list[Lap]
-    held: list[Lap]
-    waiting: pause.Pause | None
-    brake: caps.Brake
-    epic_parked: bool
-    will_park: bool
-
-    @property
-    def stops_new_laps(self) -> bool:
-        return self.epic_parked or self.waiting is not None or self.will_park
-
-
-@dataclass(frozen=True)
-class Parking:
-    """Why the epic starts no new stage and parks once none runs: what it reached, in words that follow the epic's id,
-    when its laps start again, and how it parks."""
-    reason: str
-    resumes_when: str
-    park: Callable[[], None]
-
-
-@dataclass(frozen=True)
-class Standstill:
-    """What keeps the epic from starting a stage in this call: a pause that waits, or a reached budget or a passed
-    seven-day reserve that parks it once no stage runs."""
-    waiting: pause.Pause | None
-    parking: Parking | None
-
-    @property
-    def is_on(self) -> bool:
-        return self.waiting is not None or self.parking is not None
-
-
-def parking_of(epic: Epic, reading: reserves.Reading | None, now: int, home: Path,
-               main_tree: Path) -> Parking | None:
-    """The parking that holds the epic: its budget when reached, else its seven-day reserve when passed."""
-    reached = budget.reached_by(epic.shown, home)
-    if reached is not None:
-        return Parking(reached.reason, budget.RESUMES_WHEN, lambda: park_at_the_budget(epic, reached, home, main_tree))
-    window = reserves.seven_day_past_reserve(epic.shown, reading, now)
-    if window is not None:
-        return Parking(window.reason, reserves.RESUMES_WHEN,
-                       lambda: park_at_the_reserve(epic, window, now, home, main_tree))
-    return None
-
-
 def settle_epic(epic: Epic, settings: settings_reader.Settings, home: Path, main_tree: Path) -> PassState:
-    """Settles the epic's own state: the pass it owes, the pass cap, and the holdouts it waits on. The epic is read
+    """Settles the epic's own state: the pass it owes, the pass cap, and the holdouts it waits on. It reads the epic
     again after each step that writes on it."""
     ran = pass_stages.PassRun([], None)
     if gate_guard.is_unlabeled_at_the_gate(epic.shown):
@@ -478,62 +395,6 @@ def running_laps(held: list[Lap]) -> list[Lap]:
     """The open laps at a worker stage, by slot. With no worker of this manager running, an earlier session left
     each of them."""
     return [lap for lap in sorted(held, key=lambda lap: lap.slot) if lap.stage in WORKER_STAGES]
-
-
-def apply_holds(epic: Epic, held: list[Lap], rebuilds: list[Lap], standstill: Standstill, now: int,
-                home: Path, main_tree: Path) -> Holds:
-    """Decides what holds the epic's laps. The human label, on the epic or on a task, keeps a lap from starting
-    again, a standstill ends the laps that would start again interrupted, and the laps that go on start their wall
-    clock again. The brake holds only the laps that have not opened."""
-    labeled = epic.labeled_task_ids
-    epic_parked = is_parked(epic)
-    stopped = [lap for lap in rebuilds if epic_parked or lap.task in labeled]
-    starting = [lap for lap in rebuilds if lap not in stopped]
-    if epic_parked:
-        print(f"scheduler: {epic.id} carries the {HUMAN_LABEL} label, so no stage starts and no lap opens until it "
-              "is taken off. The stages already running finish", file=sys.stderr)
-    for lap in stopped:
-        print(f"scheduler: {lap.task} waits at the {lap.stage} for the {HUMAN_LABEL} label to come off, so no stage "
-              "starts on it", file=sys.stderr)
-    waiting, parking = standstill.waiting, standstill.parking
-    interruption = None
-    if waiting is not None:
-        print(f"scheduler: {epic.id} is paused on {pause.WORDS[waiting.cause]} for {waiting.until - now} more "
-              "seconds, so no stage starts and no lap opens until then", file=sys.stderr)
-        interruption = (f"the factory paused on {pause.WORDS[waiting.cause]}", "the factory goes on after the pause")
-    elif parking is not None:
-        interruption = (f"{epic.id} {parking.reason}", parking.resumes_when)
-    if interruption is not None:
-        because, resumes_when = interruption
-        for lap in starting:
-            interrupt_lap(lap, f"{because} before the {lap.stage} could start again", resumes_when, main_tree)
-        held = [lap for lap in held if lap not in starting]
-        starting = []
-    if waiting is not None:
-        notify.announce(notify.FACTORY_PAUSED, epic.id, home, main_tree, SCRIPT)
-    starting = [restart_clock(lap, now, main_tree) for lap in starting]
-    brake = caps.brake_after_new_beads(epic.shown, [str(child["id"]) for child in epic.children], main_tree)
-    if brake.is_on:
-        print(f"scheduler: {brake.laps} laps in a row parked at the {brake.stage} with no merge between, so no new "
-              f"lap opens until a fix task is filed in {epic.id}. The laps already open run on", file=sys.stderr)
-    return Holds(starting, held, waiting, brake, epic_parked, parking is not None)
-
-
-def park_at_the_budget(epic: Epic, reached: budget.Reached, home: Path, main_tree: Path) -> None:
-    """Parks the epic whose budget is reached, now that no stage of it runs, and tells the human."""
-    print(f"scheduler: {epic.id} spent ${reached.spent:.2f} of its budget of ${reached.budget:.2f}, so no stage "
-          "starts and it is parked", file=sys.stderr)
-    budget.park_epic_at(epic.id, reached, main_tree)
-    notify.announce(notify.EPIC_PARKED, epic.id, home, main_tree, SCRIPT)
-
-
-def park_at_the_reserve(epic: Epic, window: reserves.Window, now: int, home: Path, main_tree: Path) -> None:
-    """Parks the epic whose seven-day window is past its reserve, now that no stage of it runs, asks the human, and
-    tells the human."""
-    print(f"scheduler: {epic.id} is on an account whose {window.name} window is {window.used_percent:g}% used, past "
-          "its reserve, so no stage starts and it is parked with a question", file=sys.stderr)
-    reserves.park_epic_at(epic.id, window, now, home, main_tree)
-    notify.announce(notify.EPIC_PARKED, epic.id, home, main_tree, SCRIPT)
 
 
 def unplaced_tasks(tasks: list[dict]) -> list[str]:
@@ -568,24 +429,22 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
     reading = reserves.read(home, now, epic.shown)
     if reserves.sync_pause(epic.id, epic.shown, reading, now, main_tree):
         epic = checked_epic(bead, settings, main_tree)
-    standstill = Standstill(pause.waiting_at(epic.shown, now), parking_of(epic, reading, now, home, main_tree))
+    standstill = lap_holds.Standstill(pause.waiting_at(epic.shown, now),
+                                      lap_holds.parking_of(epic, reading, now, home, main_tree))
     state = PassState(epic, None, None, []) if standstill.is_on else settle_epic(epic, settings, home, main_tree)
     epic = state.epic
     tasks = epic.open_task_beads
     open_now = [lap for lap in map(open_lap, tasks) if lap is not None]
-    holds = apply_holds(epic, open_now, running_laps(open_now) if restarting else rebuilds, standstill, now, home,
-                        main_tree)
-    if standstill.parking is not None and not holds.held:
-        standstill.parking.park()
-    limit = rules.lap_limits(epic.shown, settings, home)
+    holds = lap_holds.apply_holds(epic, open_now, running_laps(open_now) if restarting else rebuilds, standstill, now,
+                                  home, main_tree)
+    limit =rules.lap_limits(epic.shown, settings, home)
     unplaced = unplaced_tasks(tasks)
     try:
         made_to_pass = {str(task["id"]): specs.specs_of(task) for task in tasks}
     except specs.SpecsError as error:
         raise SchedulerError(str(error)) from error
     heartbeat.claim(home, epic.id, clock.now())
-    planned = lap_opening.open_laps(epic, holds.held, not holds.stops_new_laps, holds.brake.is_on, resumed, limit,
-                                    now, home, main_tree)
+    planned = lap_opening.open_laps(epic, holds, resumed, limit, now, home, main_tree)
     metadata = {str(task["id"]): metadata_of(task) for task in tasks}
     return {"epic": epic.id, "branch": epic.branch, "lap_limit": limit.epic,
             "validation": state.validated.fields() if state.validated is not None else None, "no_area": unplaced,
@@ -879,7 +738,7 @@ def main(argv: list[str]) -> int:
             said = WorkerReport(args.outcome, args.app, args.filter, args.cause, args.why)
             worker = ledger.Worker(args.agent, args.tier, args.route == NATIVE_ROUTE)
             printed = report(args.epic, args.task, said, worker, home, main_tree)
-    except (SchedulerError, NotAWholeNumber, PassError, EpicReadError, BenchError, CommandError,
+    except (SchedulerError, NotAWholeNumber, PassError, park.QuestionError, EpicReadError, BenchError, CommandError,
             settings_reader.SettingsError, holdouts.HoldoutsError, private_docs.ClashError, OSError) as error:
         print(f"scheduler: {error}", file=sys.stderr)
         return 1
