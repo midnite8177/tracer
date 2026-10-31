@@ -38,8 +38,8 @@ records that its validation owes a merge worker (`validation.merge`). Its
 grants are `git merge main`, `git merge --abort` and `git -c core.editor=true
 merge --continue` whole, with the same `git add` and looks.
 
-Repo settings that are missing add no app or worker commands. The lap list is
-three parts, read one by one: the repo settings' commands, the built-in list,
+Repo settings that are missing add no app or worker commands to the lap list, and the check list refuses.
+The lap list is three parts, read one by one: the repo settings' commands, the built-in list,
 and the epic's commands, which are the merge grants and the epic's
 `extra_commands`. The script leaves out a part it cannot read, names it
 on stderr, and still prints the rest.
@@ -93,18 +93,14 @@ class RefusingGrant(Grant):
     refusing: list[str]
 
 
-def texts(value: object) -> list[str]:
-    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
-
-
-def test_commands(settings: dict) -> list[str]:
+def test_commands(settings: settings_reader.Settings) -> list[str]:
     """The test command of every app that has one, in app order."""
-    return [app.test for app in settings_reader.apps_of(settings) if app.test is not None]
+    return [app.test for app in settings.apps if app.test is not None]
 
 
-def check_commands(settings: dict) -> list[str]:
+def check_commands(settings: settings_reader.Settings) -> list[str]:
     """The build, run and way in of every app, in that order for each app and in app order, for those it has."""
-    return [command for app in settings_reader.apps_of(settings) for command in (app.build, app.run, app.way_in)
+    return [command for app in settings.apps for command in (app.build, app.run, app.way_in)
             if command is not None]
 
 
@@ -194,7 +190,7 @@ def epic_part(worktree: Path, main_tree: Path) -> EpicPart:
 
 def repo_part(home: Path, main_tree: Path) -> list[str]:
     settings = settings_reader.read_settings(home, main_tree)
-    return [*test_commands(settings), *texts(settings.get("worker_commands"))]
+    return [*test_commands(settings), *settings.worker_commands]
 
 
 def lap_list(worktree: Path, home: Path, main_tree: Path) -> list[str | Grant]:
@@ -204,8 +200,8 @@ def lap_list(worktree: Path, home: Path, main_tree: Path) -> list[str | Grant]:
     return [*repo, *epic.granted, *built_in, *epic.extra]
 
 
-def check_list(settings: dict) -> list[str]:
-    return [*check_commands(settings), *texts(settings.get("worker_commands"))]
+def check_list(settings: settings_reader.Settings) -> list[str]:
+    return [*check_commands(settings), *settings.worker_commands]
 
 
 def main(argv: list[str]) -> int:

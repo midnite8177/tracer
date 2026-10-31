@@ -69,6 +69,7 @@ import settings_reader
 import routes
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_git_user, metadata_of, parent_of, run
 from epic_reader import NotAnEpic, shown_epic
+from settings_reader import is_positive_whole
 
 KEY_PREFIX = "rules."
 GUIDANCE_KEY = f"{KEY_PREFIX}guidance"
@@ -99,10 +100,6 @@ def is_text(value: object) -> bool:
 
 def is_map_of(value: object, valid: Callable[[object], bool]) -> bool:
     return isinstance(value, dict) and all(is_text(name) and valid(item) for name, item in value.items())
-
-
-def is_positive_whole(value: object) -> bool:
-    return is_whole(value) and value > 0
 
 
 def is_dollars(value: object) -> bool:
@@ -160,12 +157,6 @@ class Rules:
         return str(self.settings.get("commits_on_main", ONE_COMMIT))
 
 
-def repo_lap_limit(settings: dict) -> int:
-    """The repo settings' lap limit, or zero when they hold none."""
-    limit = settings.get(LAP_LIMIT)
-    return limit if is_positive_whole(limit) else 0
-
-
 def machine_lap_limit(home: Path) -> int:
     """The machine settings' lap limit, or DEFAULT_MACHINE_LAP_LIMIT when they hold none that is a whole number
     above zero. Settings that cannot be read give the default, and a line on stderr."""
@@ -199,12 +190,12 @@ class LapLimits:
     machine: int
 
 
-def lap_ceiling(settings: dict, home: Path) -> LapCeiling:
+def lap_ceiling(settings: settings_reader.Settings, home: Path) -> LapCeiling:
     """The ceiling that the machine settings and the repo settings put on an epic's lap limit."""
-    return LapCeiling(machine_lap_limit(home), repo_lap_limit(settings))
+    return LapCeiling(machine_lap_limit(home), settings.lap_limit)
 
 
-def lap_limits(shown: dict, settings: dict, home: Path) -> LapLimits:
+def lap_limits(shown: dict, settings: settings_reader.Settings, home: Path) -> LapLimits:
     """The lap limits that apply to the epic as bd shows it: its own factory rule counts only when it is lower than
     the ceiling."""
     ceiling = lap_ceiling(settings, home)

@@ -156,10 +156,6 @@ def checkout_of(epic: str, branch: str, main_tree: Path) -> Checkout:
     return Checkout(path, f'git -C "{main_tree}" worktree add "{path}" {branch}')
 
 
-def settings_of(home: Path, main_tree: Path) -> dict:
-    return settings_reader.read_settings(home, main_tree)
-
-
 def paths_main_changed(head: str, main_tree: Path) -> set[str]:
     base = run(["git", "merge-base", MAIN_BRANCH, head], main_tree, None).strip()
     listed = run(["git", "diff", "--name-only", "--no-renames", "-z", base, MAIN_BRANCH], main_tree, None)
@@ -203,14 +199,14 @@ def gather(epic: str, guide: Guide, home: Path, main_tree: Path) -> GatePage:
     shown = read_bead(epic, main_tree)
     branch, head = branch_and_head_at_the_gate(epic, shown, main_tree, GatePageError)
     files = changed_files(head, main_tree)
-    settings = settings_of(home, main_tree)
+    settings = settings_reader.read_settings(home, main_tree)
     findings = design_findings.ranked_findings([each.path for each in files], main_tree)
     return GatePage(epic, str(shown.get("title") or epic), branch, head, guide,
                     tuple(gate_items.merged_commits(head, main_tree)), files, evidence_lines(shown),
-                    checkout_of(epic, branch, main_tree), tuple(settings_reader.apps_of(settings)),
+                    checkout_of(epic, branch, main_tree), settings.apps,
                     gate_items.gate_items(epic, str(shown.get("title") or ""), main_tree), tuple(findings),
                     tuple(review.stored_findings(shown, review.LOW_KEY)), tuple(cleanup.removed_before(shown)),
-                    tuple(settings_reader.stored_hand_run_groups(settings)), cost_lines(shown),
+                    settings.hand_run(), cost_lines(shown),
                     danger_lines(shown, branch, head, main_tree))
 
 

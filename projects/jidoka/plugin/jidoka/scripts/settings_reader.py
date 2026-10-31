@@ -4,11 +4,12 @@ The settings live in <jidoka-home>/repos/<key>.json, where the key comes from th
 worktree, so every worktree of the repo finds the same file. The home is --jidoka-home, else $JIDOKA_HOME, else
 ~/.jidoka.
 
-A script that needs a repo's settings asks for them here by the main worktree. `read_settings` gives an empty
-object for a repo with none, for the caller that has its own words for that, and `require_settings` refuses with
-the one wording every other caller shares. The module also holds the whole schema of the stored settings: the keys and
-their defaults, the apps, their hand-run groups, and the checks (`problems_in`) that the writer, repo_settings.py,
-applies before it stores anything and the readers rely on.
+A script that needs a repo's settings asks for them here by the main worktree. `read_settings` gives one `Settings`
+value, whose fields are checked once, and refuses with the one wording every caller shares when the repo has none;
+`find_settings` gives None instead, for the bench, which works in a repo before it is onboarded. Only the writer,
+repo_settings.py, works on the stored object itself (`read_stored`). The module also holds the
+whole schema of the stored settings: the keys and their defaults, the apps, their hand-run groups, and the checks
+(`problems_in`) that the writer applies before it stores anything and the readers rely on.
 """
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ DOCS_DEFAULTS = {"glossary": "GLOSSARY.md", "adrs": "docs/adr", GLOSSARY_AND_ADR
 RULE_CONFLICTS = "rule_conflicts"
 DEFAULTS = {**DOCS_DEFAULTS, RULE_CONFLICTS: [], LIZARD_LIMITS: DEFAULT_LIZARD_LIMITS}
 RULE_CONFLICT_KEYS = ["repo_rule", "written_in", "overrules"]
+ONBOARD = "/jidoka:onboard"
 
 
 class SettingsError(Exception):
@@ -100,6 +102,59 @@ class App:
         return f"{self.test} {self.test_target}"
 
 
+@dataclass(frozen=True)
+class Settings:
+    """The settings stored for one repo on this machine, checked once as they were read. worker_commands is empty
+    and lap_limit is 0 when the repo has none. The listed_ fields hold the lists that the write derives, and are
+    None when the stored object lacks one or holds it wrongly; the method that follows each refuses, pointing at
+    onboarding, so a script refuses only on the list it needs."""
+    path: Path
+    apps: tuple[App, ...]
+    app_problems: dict[str, tuple[str, ...]]
+    worker_commands: tuple[str, ...]
+    slot_use: str | None
+    lap_limit: int
+    lizard_limits: dict[str, int]
+    private_docs: tuple[str, ...]
+    listed_full_suite: tuple[str, ...] | None
+    listed_untested_apps: tuple[str, ...] | None
+    listed_hand_run: tuple[HandRunGroup, ...] | None
+
+    def app_named(self, name: str) -> App:
+        """The first app that has the name; raises SettingsError when none has it or its entry has a problem the
+        write refuses."""
+        found = next((app for app in self.apps if app.name == name), None)
+        if found is None:
+            raise SettingsError(f"the repo settings have no app named {name!r}; "
+                                f"the apps are {', '.join(app.name for app in self.apps)}")
+        problems = self.app_problems.get(name, ())
+        if problems:
+            raise SettingsError(f"the repo settings for app {name!r} are incomplete: {'; '.join(problems)}. "
+                                f"Run {ONBOARD} to record them")
+        return found
+
+    def full_suite(self) -> tuple[str, ...]:
+        """The full-suite command of every app that has a test command; raises SettingsError when there is none."""
+        if not self.listed_full_suite:
+            raise SettingsError(f"{self.path} holds no full_suite list of test commands. Run {ONBOARD} to record it")
+        return self.listed_full_suite
+
+    def untested_apps(self) -> tuple[str, ...]:
+        """The names of the apps with no test command; raises SettingsError when the list is missing."""
+        if self.listed_untested_apps is None:
+            raise SettingsError(f"{self.path} holds no untested_apps list of the apps with no test command. "
+                                f"Run {ONBOARD} to record it")
+        return self.listed_untested_apps
+
+    def hand_run(self) -> tuple[HandRunGroup, ...]:
+        """The hand-run groups of every app, in app order; raises SettingsError when the list is missing or a group
+        of it lacks a text field."""
+        if self.listed_hand_run is None:
+            raise SettingsError(f"{self.path} holds no hand_run list of the tests the full suite leaves out. "
+                                f"Run {ONBOARD} again to record it")
+        return self.listed_hand_run
+
+
 def jidoka_home(flag: str | None) -> Path:
     named = flag or os.environ.get("JIDOKA_HOME") or "~/.jidoka"
     return Path(named).expanduser().resolve()
@@ -135,19 +190,33 @@ def load(path: Path) -> dict:
     return data
 
 
-def read_settings(home: Path, main_tree: Path) -> dict:
-    """The settings stored for the main worktree; an empty object when the repo has none."""
+def read_stored(home: Path, main_tree: Path) -> dict:
+    """The object stored for the main worktree, as the writer merges into it; empty when the repo has none."""
     return load(settings_path(home, main_tree))
 
 
-def require_settings(home: Path, main_tree: Path) -> dict:
-    """The settings stored for the main worktree; raises SettingsError, pointing at onboarding, when the repo has
+def require_stored(home: Path, main_tree: Path) -> dict:
+    """The object stored for the main worktree; raises SettingsError, pointing at onboarding, when the repo has
     none."""
     path = settings_path(home, main_tree)
-    settings = load(path)
-    if not settings:
-        raise SettingsError(f"no settings for {main_tree} in {path.parent}. Run /jidoka:onboard to record them")
-    return settings
+    stored = load(path)
+    if not stored:
+        raise SettingsError(f"no settings for {main_tree} in {path.parent}. Run {ONBOARD} to record them")
+    return stored
+
+
+def read_settings(home: Path, main_tree: Path) -> Settings:
+    """The settings stored for the main worktree; raises SettingsError, pointing at onboarding, when the repo has
+    none."""
+    return settings_of(require_stored(home, main_tree), settings_path(home, main_tree))
+
+
+def find_settings(home: Path, main_tree: Path) -> Settings | None:
+    """The settings stored for the main worktree, or None when the repo has none, for the one caller that works
+    in a repo before it is onboarded."""
+    path = settings_path(home, main_tree)
+    stored = load(path)
+    return settings_of(stored, path) if stored else None
 
 
 def built_in_commands(home: Path) -> list[str]:
@@ -222,29 +291,50 @@ def problems_of_app(settings: dict, name: str) -> list[str]:
     return []
 
 
-def app_named(settings: dict, name: str) -> App:
-    """The first app of the settings that has the name; raises SettingsError when none has it or its entry has a
-    problem the write refuses."""
-    found = next((app for app in apps_of(settings) if app.name == name), None)
-    if found is None:
-        raise SettingsError(f"the repo settings have no app named {name!r}; "
-                            f"the apps are {', '.join(app.name for app in apps_of(settings))}")
-    problems = problems_of_app(settings, name)
-    if problems:
-        raise SettingsError(f"the repo settings for app {name!r} are incomplete: {'; '.join(problems)}. "
-                            "Run /jidoka:onboard to record them")
-    return found
-
-
-def stored_hand_run_groups(settings: dict) -> list[HandRunGroup]:
-    """The hand-run groups that write derived and stored under "hand_run"; raises SettingsError when the list is
-    missing or a group of it lacks a text field."""
-    listed = settings.get("hand_run")
+def hand_run_groups_of(stored: dict) -> tuple[HandRunGroup, ...] | None:
+    """The hand-run groups that write derived and stored under "hand_run"; None when the list is missing or a group
+    of it lacks a text field."""
+    listed = stored.get("hand_run")
     if not (isinstance(listed, list) and all(isinstance(group, dict) and all(
             isinstance(group.get(key), str) for key in HAND_RUN_GROUP_KEYS) for group in listed)):
-        raise SettingsError("the repo settings hold no hand_run list of the tests validation leaves out. "
-                            "Run /jidoka:onboard again to record it")
-    return [HandRunGroup(*(group[key] for key in HAND_RUN_GROUP_KEYS)) for group in listed]
+        return None
+    return tuple(HandRunGroup(*(group[key] for key in HAND_RUN_GROUP_KEYS)) for group in listed)
+
+
+def texts_or_none(value: object) -> tuple[str, ...] | None:
+    return tuple(value) if isinstance(value, list) and all(map(is_text, value)) else None
+
+
+def is_positive_whole(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def lizard_limits_of(stored: dict) -> dict[str, int]:
+    """The limit of every lizard measure: the stored one when it is a whole number above zero, else the default."""
+    held = stored.get(LIZARD_LIMITS)
+    held = held if isinstance(held, dict) else {}
+    return {metric: held[metric] if is_positive_whole(held.get(metric)) else DEFAULT_LIZARD_LIMITS[metric]
+            for metric in LIZARD_METRICS}
+
+
+def private_doc_paths(stored: dict) -> tuple[str, ...]:
+    """The glossary and ADR paths the settings keep out of git; none when they are committed."""
+    if stored.get(GLOSSARY_AND_ADRS) != PRIVATE:
+        return ()
+    return tuple(stored[key] for key in DOC_PATH_KEYS if is_repo_path(stored.get(key)))
+
+
+def settings_of(stored: dict, path: Path) -> Settings:
+    """Checks the stored object once and gives its fields. What the settings lack or hold wrongly becomes the
+    field's empty value, and the derived lists become None, so a script refuses only on what it needs."""
+    commands, limit = stored.get("worker_commands"), stored.get("lap_limit")
+    apps = tuple(apps_of(stored))
+    return Settings(path, apps, {app.name: tuple(problems_of_app(stored, app.name)) for app in apps},
+                    tuple(command for command in commands if isinstance(command, str))
+                    if isinstance(commands, list) else (),
+                    text_of(stored.get("slot_use")), limit if is_positive_whole(limit) else 0,
+                    lizard_limits_of(stored), private_doc_paths(stored), texts_or_none(stored.get("full_suite")),
+                    texts_or_none(stored.get("untested_apps")), hand_run_groups_of(stored))
 
 
 def app_problems(index: int, app: object) -> list[str]:

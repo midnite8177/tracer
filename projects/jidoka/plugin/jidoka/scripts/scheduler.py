@@ -164,7 +164,7 @@ Each call prints one JSON object:
 The checks, each refusal saying what to do, all reported at once:
   the epic or one of its tasks waits on an open bead outside the epic;
   the epic holds an epic;
-  the repo has no repo settings on this machine, or they hold no lap limit;
+  the repo settings hold no lap limit;
   the epic's factory rules cannot be read;
   an app has no test command, or the repo has no full suite;
   a holdout names a task outside the epic;
@@ -243,8 +243,7 @@ NATIVE_ROUTE = "native"
 OUTCOMES = [DONE, FAILED, CUT_OFF, QUESTION, SEND_BACK, BLOCKED, PASS, CANNOT_JUDGE]
 SECONDS_PER_MINUTE = 60
 HANDOFF = "/jidoka:handoff"
-RERUN = Rerun(on_the_holding_epic="Run the scheduler on the epic that holds it",
-              after_onboarding="run the scheduler again")
+RERUN = Rerun(on_the_holding_epic="Run the scheduler on the epic that holds it")
 
 
 def lacks_only_an_area(task: dict) -> bool:
@@ -252,9 +251,9 @@ def lacks_only_an_area(task: dict) -> bool:
     return is_unclaimed(task) and not lap_record.area_of(metadata_of(task))
 
 
-def scheduler_problems(epic: Epic, settings: dict, main_tree: Path) -> list[str]:
-    problems = problems_while_held(epic, settings, RERUN)
-    if settings and not rules.repo_lap_limit(settings):
+def scheduler_problems(epic: Epic, settings: settings_reader.Settings, main_tree: Path) -> list[str]:
+    problems = problems_while_held(epic, settings)
+    if not settings.lap_limit:
         problems.append(f"the repo settings hold no lap limit. Run {ONBOARD} again to record one")
     try:
         rules.of_epic(epic.shown)
@@ -325,7 +324,7 @@ def restart_clock(lap: Lap, now: int, main_tree: Path) -> Lap:
     return restarted
 
 
-def checked_epic(bead: str, settings: dict, main_tree: Path) -> Epic:
+def checked_epic(bead: str, settings: settings_reader.Settings, main_tree: Path) -> Epic:
     epic = epic_of(bead, main_tree, RERUN)
     problems = scheduler_problems(epic, settings, main_tree)
     if problems:
@@ -485,7 +484,7 @@ def parking_of(epic: Epic, reading: reserves.Reading | None, now: int, home: Pat
     return None
 
 
-def settle_epic(epic: Epic, settings: dict, home: Path, main_tree: Path) -> PassState:
+def settle_epic(epic: Epic, settings: settings_reader.Settings, home: Path, main_tree: Path) -> PassState:
     """Settles the epic's own state: the pass it owes, the pass cap, and the holdouts it waits on. The epic is read
     again after each step that writes on it."""
     ran = pass_stages.PassRun([], None)

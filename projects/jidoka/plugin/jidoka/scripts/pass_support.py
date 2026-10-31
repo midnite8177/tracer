@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import git_exclude
-import park
 import private_docs
 from commands import (HUMAN_LABEL, SCRATCH_FOLDER, NotAWholeNumber, capture, count_in, env_as_factory, head_of,
                       metadata_of, run, set_metadata)
@@ -20,6 +19,7 @@ from epic_branch import (EditedCheckout, EpicBranchLeftTheHead, fast_forward, re
                          required_head)
 from land import merge_locked
 from merge_gate import is_protected, protected_folders
+from settings_reader import Settings
 from worktrees import added_since_head, cut_detached, remove_worktree, stage_without_scratch, stage_worktree
 
 MAIN_BRANCH = "main"
@@ -115,9 +115,9 @@ def accepts_any_change(changed: list[str]) -> None:
     """The check of a stage whose worker reports nothing that the change must agree with."""
 
 
-def owed(stage: Stage, epic: str, shown: dict, branch: str, settings: dict, main_tree: Path) -> StageToRun | None:
-    """The stage this pass still owes, or None when it is done or the epic holds no file for it. It cuts no worktree:
-    the path in the result is where one belongs."""
+def owed(stage: Stage, epic: str, shown: dict, branch: str, settings: Settings, main_tree: Path) -> StageToRun | None:
+    """The stage this pass still owes, or None when it is done or the epic holds no file for it. It cuts no worktree.
+    The path in the result is where one belongs."""
     if stage.is_done(shown):
         return None
     head = required_head(branch, main_tree, stage.error)
@@ -127,7 +127,7 @@ def owed(stage: Stage, epic: str, shown: dict, branch: str, settings: dict, main
     return StageToRun(stage, epic, branch, head, stage.worktree_of(epic, main_tree), files)
 
 
-def to_run(stage: Stage, epic: str, shown: dict, branch: str, settings: dict, home: Path,
+def to_run(stage: Stage, epic: str, shown: dict, branch: str, settings: Settings, home: Path,
            main_tree: Path) -> StageToRun | None:
     """The stage this pass still owes, with its worktree cut at the epic branch's head for the worker."""
     found = owed(stage, epic, shown, branch, settings, main_tree)
@@ -144,7 +144,7 @@ def refuse_a_lost_worktree(found: StageToRun) -> None:
                                 f"{found.head}, so the worker's edits are not in it and nothing was written")
 
 
-def owed_in_worktree(stage: Stage, epic: str, shown: dict, branch: str, settings: dict,
+def owed_in_worktree(stage: Stage, epic: str, shown: dict, branch: str, settings: Settings,
                      main_tree: Path) -> StageToRun:
     """The stage a worker's report settles, read without cutting a worktree. It refuses when the stage is owed no
     more, or when its worktree is gone or at another head."""
@@ -155,7 +155,7 @@ def owed_in_worktree(stage: Stage, epic: str, shown: dict, branch: str, settings
     return found
 
 
-def settle_worktree(found: StageToRun, check: Callable[[list[str]], None], settings: dict, home: Path,
+def settle_worktree(found: StageToRun, check: Callable[[list[str]], None], settings: Settings, home: Path,
                     main_tree: Path) -> Committed:
     """Takes what the stage's worker left in its worktree: stages it, refuses a path inside an acceptance folder and
     a path the stage may not touch, lets `check` refuse the changed paths, commits them as one commit, moves the epic
@@ -172,7 +172,7 @@ def settle_worktree(found: StageToRun, check: Callable[[list[str]], None], setti
     return Committed(head, changed)
 
 
-def epic_files(branch_head: str, settings: dict, main_tree: Path) -> list[str]:
+def epic_files(branch_head: str, settings: Settings, main_tree: Path) -> list[str]:
     """The files the epic added or changed, outside every acceptance folder, sorted."""
     folders = protected_folders(settings)
     listed = run(["git", "diff", "--name-only", "--diff-filter=AM", f"{MAIN_BRANCH}...{branch_head}"], main_tree,
@@ -186,20 +186,6 @@ def park_epic(epic: str, comment: str, metadata: dict[str, str], main_tree: Path
     env = env_as_factory()
     run(["bd", "comment", epic, comment], main_tree, env)
     run(["bd", "update", epic, *set_metadata(*metadata.items()), f"--add-label={HUMAN_LABEL}"], main_tree, env)
-
-
-def park_epic_on_question(epic: str, question: park.Question, metadata: dict[str, str], home: Path,
-                          main_tree: Path) -> None:
-    """Parks the epic on the human with the question in the one question format: its page is written, its comment
-    holds the whole question, and the epic's metadata gets the options and the recommendation beside `metadata`."""
-    try:
-        page = park.write_page(epic, question, home, main_tree)
-    except park.QuestionError as error:
-        raise PassError(str(error)) from error
-    closing = f"The epic stays parked while it carries the {HUMAN_LABEL} label."
-    park_epic(epic, park.question_comment(question, page, closing),
-              {**metadata, park.OPTIONS_KEY: park.options_json(question.options),
-               park.RECOMMENDED_KEY: question.recommended}, main_tree)
 
 
 def worktree_at(path: Path, head: str, home: Path, main_tree: Path) -> None:

@@ -9,8 +9,9 @@ sys.path.insert(0, str(HERE))
 import jidoka_fixture as fixture  # noqa: E402
 
 sys.path.insert(0, str(fixture.PROJECT / "plugin" / "jidoka" / "scripts"))
-from settings_reader import (App, HandRun, SettingsError, app_named, apps_of,  # noqa: E402
-                             problems_of_app, read_settings, require_settings, settings_path)
+from settings_reader import (App, HandRun, HandRunGroup, Settings, SettingsError, apps_of,  # noqa: E402
+                             find_settings, problems_of_app, read_settings, read_stored, require_stored, settings_of,
+                             settings_path)
 
 
 def stored_app(**changes) -> dict:
@@ -87,23 +88,81 @@ class ProblemsOfAppTests(unittest.TestCase):
         self.assertEqual([], problems_of_app({}, "tool"))
 
 
+SETTINGS_FILE = Path("repos/shop.json")
+
+
+def settings_with(**stored) -> Settings:
+    return settings_of(stored, SETTINGS_FILE)
+
+
 class AppNamedTests(unittest.TestCase):
     def test_gives_the_first_app_that_has_the_name(self):
-        settings = {"apps": [stored_app(name="a"), stored_app(name="tool")]}
+        settings = settings_with(apps=[stored_app(name="a"), stored_app(name="tool")])
 
-        self.assertEqual(apps_of(settings)[1], app_named(settings, "tool"))
+        self.assertEqual(settings.apps[1], settings.app_named("tool"))
 
     def test_refuses_a_name_no_app_has_and_lists_the_apps(self):
-        settings = {"apps": [stored_app(name="a"), stored_app(name="b")]}
+        settings = settings_with(apps=[stored_app(name="a"), stored_app(name="b")])
 
         with self.assertRaisesRegex(SettingsError, "no app named 'tool'; the apps are a, b"):
-            app_named(settings, "tool")
+            settings.app_named("tool")
 
     def test_refuses_an_app_whose_entry_has_a_problem_the_write_refuses(self):
-        settings = {"apps": [stored_app(test_target=None)]}
+        settings = settings_with(apps=[stored_app(test_target=None)])
 
         with self.assertRaisesRegex(SettingsError, "app 'tool' are incomplete: .*does not say how to target a test"):
-            app_named(settings, "tool")
+            settings.app_named("tool")
+
+
+class SettingsFieldsTests(unittest.TestCase):
+    GROUP = {"app": "tool", "name": "slow", "reason": "it takes minutes", "command": "pytest -m slow"}
+
+    def test_gives_the_fields_the_stored_object_holds(self):
+        settings = settings_with(apps=[stored_app()], worker_commands=["make build"], slot_use="PORT 5000 plus slot",
+                                 lap_limit=3, full_suite=["pytest -q"], untested_apps=["docs"],
+                                 hand_run=[self.GROUP], glossary_and_adrs="private", glossary="GLOSSARY.md",
+                                 adrs="docs/adr", lizard_limits={"ccn": 10, "length": 50, "arguments": 4})
+
+        self.assertEqual(["tool"], [app.name for app in settings.apps])
+        self.assertEqual(("make build",), settings.worker_commands)
+        self.assertEqual("PORT 5000 plus slot", settings.slot_use)
+        self.assertEqual(3, settings.lap_limit)
+        self.assertEqual({"ccn": 10, "length": 50, "arguments": 4}, settings.lizard_limits)
+        self.assertEqual(("GLOSSARY.md", "docs/adr"), settings.private_docs)
+        self.assertEqual(SETTINGS_FILE, settings.path)
+        self.assertEqual(("pytest -q",), settings.full_suite())
+        self.assertEqual(("docs",), settings.untested_apps())
+        self.assertEqual((HandRunGroup("tool", "slow", "it takes minutes", "pytest -m slow"),), settings.hand_run())
+
+    def test_gives_empty_values_for_what_the_stored_object_leaves_out(self):
+        settings = settings_with(apps=[stored_app()])
+
+        self.assertEqual((), settings.worker_commands)
+        self.assertIsNone(settings.slot_use)
+        self.assertEqual(0, settings.lap_limit)
+        self.assertEqual({"ccn": 15, "length": 80, "arguments": 6}, settings.lizard_limits)
+        self.assertEqual((), settings.private_docs)
+
+    def test_takes_a_lizard_limit_the_settings_hold_wrongly_as_its_default(self):
+        settings = settings_with(lizard_limits={"ccn": "ten", "length": 0, "arguments": 4})
+
+        self.assertEqual({"ccn": 15, "length": 80, "arguments": 4}, settings.lizard_limits)
+
+    def test_takes_a_lap_limit_that_is_not_a_whole_number_above_zero_as_none(self):
+        for limit in (0, -1, 2.5, True, "3"):
+            with self.subTest(limit=limit):
+                self.assertEqual(0, settings_with(lap_limit=limit).lap_limit)
+
+    def test_keeps_only_the_worker_commands_that_are_text(self):
+        self.assertEqual(("make", "make lint"), settings_with(worker_commands=["make", 3, "make lint"]).worker_commands)
+
+    def test_refuses_each_derived_list_the_stored_object_lacks_in_words_that_point_at_onboarding(self):
+        settings = settings_with(apps=[stored_app()], hand_run=[self.GROUP, "slow"], full_suite=[])
+        for name, call in (("full_suite", settings.full_suite), ("untested_apps", settings.untested_apps),
+                           ("hand_run", settings.hand_run)):
+            with self.subTest(name=name), self.assertRaisesRegex(SettingsError,
+                                                                  f"{SETTINGS_FILE} holds no {name} list.*onboard"):
+                call()
 
 
 class StoredSettingsTests(unittest.TestCase):
@@ -118,31 +177,41 @@ class StoredSettingsTests(unittest.TestCase):
         path.parent.mkdir(parents=True)
         path.write_text(text, encoding="utf-8")
 
-    def test_reading_a_repo_with_no_settings_gives_an_empty_object(self):
-        self.assertEqual({}, read_settings(self.home, self.main_tree))
+    def test_reading_the_stored_object_of_a_repo_with_no_settings_gives_an_empty_object(self):
+        self.assertEqual({}, read_stored(self.home, self.main_tree))
 
-    def test_reading_gives_the_object_stored_for_the_main_tree(self):
+    def test_reading_the_stored_object_gives_what_is_stored_for_the_main_tree(self):
         self.store('{"lap_limit": 3}')
 
-        self.assertEqual({"lap_limit": 3}, read_settings(self.home, self.main_tree))
+        self.assertEqual({"lap_limit": 3}, read_stored(self.home, self.main_tree))
 
-    def test_requiring_gives_the_object_stored_for_the_main_tree(self):
+    def test_reading_settings_gives_the_fields_of_what_is_stored_for_the_main_tree(self):
         self.store('{"lap_limit": 3}')
 
-        self.assertEqual({"lap_limit": 3}, require_settings(self.home, self.main_tree))
+        settings = read_settings(self.home, self.main_tree)
 
-    def test_requiring_refuses_a_repo_with_no_settings_and_points_at_onboarding(self):
-        with self.assertRaises(SettingsError) as refused:
-            require_settings(self.home, self.main_tree)
+        self.assertEqual(3, settings.lap_limit)
+        self.assertEqual(settings_path(self.home, self.main_tree), settings.path)
 
-        self.assertEqual(f"no settings for {self.main_tree} in {self.home / 'repos'}. "
-                         "Run /jidoka:onboard to record them", str(refused.exception))
+    def test_finding_the_settings_of_a_repo_with_none_gives_none_and_of_one_with_some_gives_their_fields(self):
+        self.assertIsNone(find_settings(self.home, self.main_tree))
 
-    def test_requiring_refuses_a_settings_file_that_holds_an_empty_object_in_the_same_words(self):
+        self.store('{"lap_limit": 3}')
+
+        self.assertEqual(3, find_settings(self.home, self.main_tree).lap_limit)
+
+    def test_a_repo_with_no_settings_is_refused_in_the_one_wording_that_points_at_onboarding(self):
+        wording = f"no settings for {self.main_tree} in {self.home / 'repos'}. Run /jidoka:onboard to record them"
+        for read in (read_settings, require_stored):
+            with self.subTest(read=read.__name__), self.assertRaises(SettingsError) as refused:
+                read(self.home, self.main_tree)
+            self.assertEqual(wording, str(refused.exception))
+
+    def test_a_settings_file_that_holds_an_empty_object_is_refused_in_the_same_words(self):
         self.store("{}")
 
         with self.assertRaisesRegex(SettingsError, "^no settings for .*Run /jidoka:onboard to record them$"):
-            require_settings(self.home, self.main_tree)
+            read_settings(self.home, self.main_tree)
 
 
 if __name__ == "__main__":

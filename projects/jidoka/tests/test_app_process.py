@@ -181,6 +181,18 @@ class AppProcessTests(unittest.TestCase):
         self.assertIn("bakery", started.stderr)
         self.assertFalse(self.pids.exists())
 
+    def test_a_repo_with_no_settings_is_refused_with_a_pointer_to_onboarding_and_nothing_starts(self):
+        self.home = self.home.parent / "home-without-settings"
+        self.home.mkdir()
+        (self.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
+
+        started = self.app_process("start", "shop")
+
+        self.assertEqual(1, started.returncode)
+        self.assertIn("no settings for ", started.stderr)
+        self.assertIn(". Run /jidoka:onboard to record them", started.stderr)
+        self.assertFalse(self.pids.exists())
+
     def test_an_app_with_no_run_command_is_refused(self):
         self.write_settings([{"name": "shop", "run": None}])
 

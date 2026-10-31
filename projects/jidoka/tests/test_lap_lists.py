@@ -125,6 +125,16 @@ class LapListsTests(test_scheduler.SchedulerCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(["make lint"], json.loads(done.stdout))
 
+    def test_a_check_list_without_repo_settings_is_refused_with_a_pointer_to_onboarding(self):
+        bare = self.new_home("home-without-settings-for-a-check")
+
+        done = self.lap_list("check", self.repo, bare)
+
+        self.assertEqual(1, done.returncode)
+        self.assertEqual("", done.stdout)
+        self.assertIn("no settings for ", done.stderr)
+        self.assertIn(". Run /jidoka:onboard to record them", done.stderr)
+
     def test_a_check_worker_may_run_each_apps_build_run_and_way_in_and_the_worker_commands(self):
         self.write_settings({"worker_commands": ["make build"], "apps": [
             {**APP, "run": "make run && make seed", "way_in": "curl localhost:8080"}, DOCS_APP]})

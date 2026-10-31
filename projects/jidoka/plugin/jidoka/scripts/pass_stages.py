@@ -20,6 +20,7 @@ import tidy
 import validation_merge
 from epic_reader import Epic
 from epics import state_of
+from settings_reader import Settings
 
 
 class Settled(Protocol):
@@ -84,7 +85,7 @@ class PassRun:
         return self.validated.to_run if self.validated is not None else None
 
 
-def run_pass(epic: Epic, settings: dict, home: Path, main_tree: Path) -> PassRun:
+def run_pass(epic: Epic, settings: Settings, home: Path, main_tree: Path) -> PassRun:
     """Takes a finished epic through its pass in order. It runs the first stage the epic still owes, and when it owes
     none, its validation."""
     actions = pass_stage_actions(epic, settings, home, main_tree)
@@ -102,7 +103,7 @@ def holdouts_owed(epic: Epic, home: Path, main_tree: Path) -> holdouts_run.Holdo
     return holdouts_run.holdouts_to_run(epic.id, epic.shown, home, main_tree)
 
 
-def pass_stage_actions(epic: Epic, settings: dict, home: Path, main_tree: Path) -> list[dict]:
+def pass_stage_actions(epic: Epic, settings: Settings, home: Path, main_tree: Path) -> list[dict]:
     """The actions of the first stage of the pass that a finished epic still owes, in the order test cleanup, tidy,
     fix, review, the merge worker of validation; empty when only validation is left. A fix owed comes before a review,
     so the fix of one review is never reviewed as the next one's diff."""

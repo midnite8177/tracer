@@ -140,15 +140,12 @@ def untested(app: settings_reader.App) -> TestRunError:
 
 
 def app_settings(home: Path, main_tree: Path, name: str) -> settings_reader.App:
-    path = settings_reader.settings_path(home, main_tree)
     try:
-        settings = settings_reader.require_settings(home, main_tree)
-        if not settings_reader.apps_of(settings):
-            raise TestRunError(f"{path} holds no list of apps")
-        if not isinstance(settings.get("untested_apps"), list):
-            raise TestRunError(f"{path} holds no untested_apps list of the apps with no test command. "
-                               "Run /jidoka:onboard to record it")
-        app = settings_reader.app_named(settings, name)
+        settings = settings_reader.read_settings(home, main_tree)
+        if not settings.apps:
+            raise TestRunError(f"{settings.path} holds no list of apps")
+        settings.untested_apps()
+        app = settings.app_named(name)
     except settings_reader.SettingsError as error:
         raise TestRunError(str(error)) from error
     if app.targeted_command is None:

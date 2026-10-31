@@ -57,7 +57,6 @@ LOCK_POLL_SECONDS = 0.1
 WAITING_ON_EDITS_EXIT_CODE = 3
 PARTLY_LANDED_EXIT_CODE = 4
 FULL_SUITE_FAILED_EXIT_CODE = 5
-HAND_RUN_FIELDS = ("app", "name", "reason", "command")
 
 
 class LandingError(Exception):
@@ -85,18 +84,9 @@ class FullSuiteFailed(Exception):
 
 
 @dataclass(frozen=True)
-class HandRunGroup:
-    """A group of an app's tests that the full suite leaves out, and the command the human runs it with."""
-    app: str
-    name: str
-    reason: str
-    command: str
-
-
-@dataclass(frozen=True)
 class LandingSettings:
     full_suite: list[str]
-    hand_run: list[HandRunGroup]
+    hand_run: list[settings_reader.HandRunGroup]
     untested_apps: list[str]
 
 
@@ -174,32 +164,15 @@ def main_checkout(repo: Path) -> Path:
 def landing_settings(checkout: Path, home: Path) -> LandingSettings:
     try:
         main_tree = settings_reader.main_worktree(checkout, COMMAND_TIMEOUT_SECONDS)
-        path = settings_reader.settings_path(home, main_tree)
-        settings = settings_reader.require_settings(home, main_tree)
+        settings = settings_reader.read_settings(home, main_tree)
+        full_suite = list(settings.full_suite())
+        untested_apps = list(settings.untested_apps())
+        return LandingSettings(full_suite, list(settings.hand_run()), untested_apps)
     except settings_reader.SettingsError as error:
         raise LandingError(str(error)) from error
-    commands = settings.get("full_suite")
-    if not isinstance(commands, list) or not commands or not all(settings_reader.is_text(c) for c in commands):
-        raise LandingError(f"{path} holds no full_suite list of test commands. Run /jidoka:onboard to record it")
-    untested = settings.get("untested_apps")
-    if not (isinstance(untested, list) and all(map(settings_reader.is_text, untested))):
-        raise LandingError(f"{path} holds no untested_apps list of the apps the full suite skips. "
-                           "Run /jidoka:onboard to record it")
-    return LandingSettings(commands, hand_run_groups(settings.get("hand_run"), path), untested)
 
 
-def is_hand_run_group(group: object) -> bool:
-    return isinstance(group, dict) and all(settings_reader.is_text(group.get(key)) for key in HAND_RUN_FIELDS)
-
-
-def hand_run_groups(listed: object, path: Path) -> list[HandRunGroup]:
-    if not (isinstance(listed, list) and all(map(is_hand_run_group, listed))):
-        raise LandingError(f"{path} holds no hand_run list of the tests landing leaves out. "
-                           "Run /jidoka:onboard to record it")
-    return [HandRunGroup(group["app"], group["name"], group["reason"], group["command"]) for group in listed]
-
-
-def print_hand_run(groups: list[HandRunGroup], stream: TextIO) -> None:
+def print_hand_run(groups: list[settings_reader.HandRunGroup], stream: TextIO) -> None:
     if not groups:
         return
     print("Hand-run tests, which landing never runs. Run each one yourself:", file=stream)

@@ -104,20 +104,13 @@ def runs_of(app: settings_reader.App, given: list[str], checkout: Path) -> list[
     return [run_command(name, one, checkout) for name, one in commands]
 
 
-def settings_of(home: Path, checkout: Path) -> tuple[dict, Path]:
+def settings_of(home: Path, checkout: Path) -> tuple[settings_reader.Settings, Path]:
     """The repo settings of the checkout's repo, and the repo's main worktree."""
     if not checkout.is_dir():
         raise RunSpecsError(f"{checkout} is not a folder")
     try:
         main_tree = settings_reader.main_worktree(checkout, COMMAND_TIMEOUT_SECONDS)
-        return settings_reader.require_settings(home, main_tree), main_tree
-    except settings_reader.SettingsError as error:
-        raise RunSpecsError(str(error)) from error
-
-
-def app_named(settings: dict, name: str) -> settings_reader.App:
-    try:
-        return settings_reader.app_named(settings, name)
+        return settings_reader.read_settings(home, main_tree), main_tree
     except settings_reader.SettingsError as error:
         raise RunSpecsError(str(error)) from error
 
@@ -175,15 +168,15 @@ def record(plan: Recording, runs: list[SpecRun], main_tree: Path) -> None:
     spec_runs.record(RECORD_KEYS[plan.mode], plan.task, RecordedRun(plan.head, results), main_tree)
 
 
-def runs_to_record(settings: dict, mode: str, task: str, expect: list[str], checkout: Path,
+def runs_to_record(settings: settings_reader.Settings, mode: str, task: str, expect: list[str], checkout: Path,
                    main_tree: Path) -> tuple[Recording, list[SpecRun]]:
     """Runs the specs the task makes pass in the checkout, on the app the task records for them, and returns the runs
     with the recording they await. The caller can show the runs before `record` refuses them."""
     plan = plan_recording(mode, task, expect, checkout, main_tree)
-    return plan, runs_of(app_named(settings, plan.app), plan.names, checkout)
+    return plan, runs_of(settings.app_named(plan.app), plan.names, checkout)
 
 
-def recorded_runs(settings: dict, mode: str, task: str, expect: list[str], checkout: Path,
+def recorded_runs(settings: settings_reader.Settings, mode: str, task: str, expect: list[str], checkout: Path,
                   main_tree: Path) -> list[SpecRun]:
     """Runs the specs the task makes pass in the checkout and records the run on the task; the runs, passed or not,
     once recorded."""
@@ -225,13 +218,13 @@ def main(argv: list[str]) -> int:
     try:
         settings, main_tree = settings_of(settings_reader.jidoka_home(args.jidoka_home), checkout)
         if args.record is None:
-            runs = runs_of(app_named(settings, args.app), args.specs, checkout)
+            runs = runs_of(settings.app_named(args.app), args.specs, checkout)
             print_runs(runs)
         else:
             plan, runs = runs_to_record(settings, args.record, args.task, args.expect, checkout, main_tree)
             print_runs(runs)
             record(plan, runs, main_tree)
-    except (spec_commands.SpecCommandError, CommandError, OSError) as error:
+    except (spec_commands.SpecCommandError, settings_reader.SettingsError, CommandError, OSError) as error:
         print(f"run_specs: {error}", file=sys.stderr)
         return 1
     return 0 if args.record == RED or all(finished.passed for finished in runs) else SPECS_FAILED_EXIT_CODE

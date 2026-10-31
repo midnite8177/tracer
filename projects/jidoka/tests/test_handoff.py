@@ -569,8 +569,8 @@ class HandoffRefusalTests(HandoffCase):
         done = self.handoff_in(bare_home, "take", epic, "--area", f"{task}=till")
 
         self.assertEqual(1, done.returncode)
-        self.assertIn("the repo has no repo settings on this machine. Run /jidoka:onboard, then hand the epic off",
-                      done.stderr)
+        self.assertIn("no settings for ", done.stderr)
+        self.assertIn(". Run /jidoka:onboard to record them", done.stderr)
         self.assert_nothing_written(epic, [task], name)
 
     def test_refuses_while_an_app_has_no_test_command_and_says_how_to_record_one(self):

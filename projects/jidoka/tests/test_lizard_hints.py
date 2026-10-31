@@ -69,6 +69,18 @@ class LizardScriptCase(unittest.TestCase):
 
 
 class LizardScriptTests(LizardScriptCase):
+    def test_a_repo_with_no_settings_is_refused_with_a_pointer_to_onboarding(self):
+        base = self.commit({"README.md": "shop\n"})
+        self.home = self.home.parent / "home-without-settings"
+        self.home.mkdir()
+        (self.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
+
+        done = self.launch(LIZARD_SCRIPT, base, base)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("no settings for ", done.stderr)
+        self.assertIn(". Run /jidoka:onboard to record them", done.stderr)
+
     def test_lists_a_function_the_range_added_past_a_limit(self):
         base = self.commit({"README.md": "shop\n"})
         head = self.commit({MODULE: branching("total", 9)})

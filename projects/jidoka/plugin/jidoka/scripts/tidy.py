@@ -27,6 +27,7 @@ import discovered
 import pass_support
 from commands import SCRATCH_FOLDER, env_as_factory, read_bead, run, set_metadata
 from pass_support import Committed, PassError, Stage, StageToRun, accepts_any_change, every_file, worktree_at
+from settings_reader import Settings
 
 STATE_KEY = "tidy.state"
 ACTION = "tidy"
@@ -75,7 +76,7 @@ def worktree_of(epic: str, main_tree: Path) -> Path:
 
 
 def batches_of(files: list[SizedFile], most_files: int, most_bytes: int) -> list[list[str]]:
-    """The files in batches, in path order: a batch takes the next file while it holds fewer than `most_files` files
+    """The files in batches, in path order. A batch takes the next file while it holds fewer than `most_files` files
     and the file keeps its total within `most_bytes`. A file larger than `most_bytes` gets a batch of its own."""
     batches: list[list[str]] = []
     total = 0
@@ -103,7 +104,7 @@ def tidy_of(found: StageToRun, main_tree: Path) -> TidyToRun:
     return TidyToRun(found, batches_of(sizes_at(found.head, found.files, main_tree), BATCH_FILES, BATCH_BYTES))
 
 
-def to_run(epic: str, shown: dict, branch: str, settings: dict, home: Path, main_tree: Path) -> TidyToRun | None:
+def to_run(epic: str, shown: dict, branch: str, settings: Settings, home: Path, main_tree: Path) -> TidyToRun | None:
     """The tidy this pass still owes, or None when it is done or the epic holds no file to tidy. The worktree is cut
     again from the epic branch's head when its folder is gone, and each batch's scratch folder is made in it."""
     found = pass_support.owed(STAGE, epic, shown, branch, settings, main_tree)
@@ -150,7 +151,7 @@ def discovered_work(folders: list[Path]) -> list[discovered.Finding]:
     return kept
 
 
-def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Committed:
+def settle(epic: str, branch: str, settings: Settings, home: Path, main_tree: Path) -> Committed:
     """Commits what the tidy's workers left as one commit on the epic branch, records that the tidy is done, and
     files the work the workers discovered. The findings are read before the commit, because settling removes the
     worktree that holds them, and a report that cannot be used refuses the settle."""

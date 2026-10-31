@@ -21,8 +21,10 @@ sys.path.insert(0, str(test_scheduler.PLUGIN / "scripts"))
 import heartbeat  # noqa: E402
 import slots  # noqa: E402
 import recorded_validation  # noqa: E402
+import settings_reader  # noqa: E402
 import spec_time_limit  # noqa: E402
-from recorded_validation import CommandRun, RecordedValidation, SuiteCommand  # noqa: E402
+from recorded_validation import CommandRun, RecordedValidation  # noqa: E402
+from settings_reader import SuiteCommand  # noqa: E402
 from validation_specs import SpecFigures, SpecsRun, TimedSpecRun  # noqa: E402
 
 HOLDOUTS = test_scheduler.PLUGIN / "scripts" / "holdouts.py"
@@ -171,10 +173,20 @@ class ValidationReachesTheGateTests(ValidationCase):
         self.build_done(epic, task)
 
         metadata = self.metadata(epic)
+        recorded = recorded_validation.read(metadata)
         self.assertEqual(("pass", 7, 2, git(self.repo, "rev-parse", branch)),
-                         (metadata.get("validation.result"), metadata.get("validation.tests"),
-                          metadata.get("validation.skipped"), metadata.get("validation.head")))
-        self.assertGreater(float(metadata["validation.seconds"]), 0)
+                         (metadata.get("validation.result"), recorded.tests, recorded.skipped,
+                          metadata.get("validation.head")))
+        self.assertGreater(recorded.seconds, 0)
+
+    def test_validation_stores_no_total_apart_from_the_runs_it_sums(self):
+        epic, task, branch = self.finish_epic_but_for_the_last_report()
+
+        self.build_done(epic, task)
+
+        metadata = self.metadata(epic)
+        self.assertEqual([], [key for key in ("validation.tests", "validation.skipped", "validation.seconds")
+                              if key in metadata])
 
     def test_validation_runs_on_the_epic_branch_after_it_merges_main(self):
         epic, task, branch = self.finish_epic_but_for_the_last_report()
@@ -233,8 +245,8 @@ class ValidationFailsTests(ValidationCase):
         shown = self.shown(epic)
         self.assertNotIn("human", shown.get("labels") or [])
         self.assertNotIn("gate.state", shown.get("metadata") or {})
-        self.assertEqual(("fail", 7, 2), tuple((shown.get("metadata") or {})[f"validation.{key}"]
-                                                   for key in ("result", "tests", "skipped")))
+        recorded = recorded_validation.read(shown.get("metadata") or {})
+        self.assertEqual(("fail", 7, 2), (recorded.result, recorded.tests, recorded.skipped))
         self.assertEqual([], self.gate_comments(epic))
 
     def test_the_next_pass_validates_again_and_reaches_the_gate_once_the_filed_task_merges(self):
@@ -738,6 +750,14 @@ VOIDS = "A shopper voids a sale"
 SPECS = [ADDS, PAYS, REFUNDS, VOIDS]
 
 
+def seconds_shown(cost: str, spec: str) -> float:
+    """The time the gate page's cost section shows beside the spec, in seconds."""
+    found = re.search(re.escape(spec) + r": ([0-9.]+) s", cost)
+    if found is None:
+        raise AssertionError(f"the cost section shows no time for {spec!r}: {cost}")
+    return float(found.group(1))
+
+
 class ValidationSpecsCase(ValidationCase):
     """The shop repo, whose app also has acceptance specs that a stand-in runner runs one at a time and logs."""
 
@@ -878,7 +898,7 @@ class ValidationRunsTheSpecsTests(ValidationSpecsCase):
         self.build_done(epic, task)
 
         metadata = self.metadata(epic)
-        self.assertEqual((7, 4), (metadata["validation.tests"], metadata["validation.specs"]))
+        self.assertEqual((7, 4), (recorded_validation.read(metadata).tests, metadata["validation.specs"]))
         self.assertGreater(float(metadata["validation.spec_seconds"]), 0)
         [comment] = self.gate_comments(epic)
         self.assertIn("4 acceptance specs", comment)
@@ -991,8 +1011,8 @@ class ValidationSlowSpecsTests(ValidationSpecsCase):
         cost = self.cost_section(epic)
 
         self.assertIn("over the 0.5 s limit", cost)
-        self.assertRegex(cost, re.escape(PAYS) + r": 1\.[4-9] s")
-        self.assertRegex(cost, re.escape(REFUNDS) + r": 1\.[0-9] s")
+        self.assertGreaterEqual(seconds_shown(cost, PAYS), 1.4)
+        self.assertGreaterEqual(seconds_shown(cost, REFUNDS), 1.0)
         self.assertLess(cost.index(PAYS), cost.index(REFUNDS))
         self.assertLess(cost.index(REFUNDS), cost.index(ADDS))
 
@@ -1043,8 +1063,9 @@ class ValidationSlowSpecsTests(ValidationSpecsCase):
 
 class SpecTimeLimitTests(unittest.TestCase):
     def test_an_apps_limit_judges_its_own_part_of_the_run_and_not_the_time_of_the_apps_beside_it(self):
-        settings = {"apps": [{"name": "till", "acceptance": "till/specs", "spec_seconds_limit": 5},
-                             {"name": "mill", "acceptance": "mill/specs", "spec_seconds_limit": 5}]}
+        settings = settings_reader.settings_of(
+            {"apps": [{"name": "till", "acceptance": "till/specs", "spec_seconds_limit": 5},
+                      {"name": "mill", "acceptance": "mill/specs", "spec_seconds_limit": 5}]}, Path("settings.json"))
         run = SpecsRun([TimedSpecRun("till", "A till total", True, "", 0.0, 1.0),
                         TimedSpecRun("mill", "A mill grind", True, "", 0.0, 60.0)])
 

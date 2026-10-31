@@ -125,20 +125,17 @@ def recorded_specs(epic: str, main_tree: Path) -> dict[str, list[str]]:
         raise SpecsRunError(str(error)) from error
 
 
-def specs_to_run(epic: str, settings: dict, main_tree: Path) -> list[SpecToRun]:
+def specs_to_run(epic: str, settings: settings_reader.Settings, main_tree: Path) -> list[SpecToRun]:
     """Every spec the epic records, with the command that runs it; raises SpecsRunError for a spec of an app that the
     repo settings do not list or that has no way to run one spec."""
-    apps = {app.name: app for app in settings_reader.apps_of(settings)}
     jobs = []
     for name, listed in recorded_specs(epic, main_tree).items():
-        if name not in apps:
-            raise SpecsRunError(f"the epic records acceptance specs for {name!r}, which the repo settings do not list "
-                                "as an app. Run /jidoka:onboard to record it")
         try:
-            command, target = spec_commands.spec_commands(apps[name])
-            jobs += [SpecToRun(name, spec, spec_commands.command_for_one(apps[name], command, target, spec))
+            app = settings.app_named(name)
+            command, target = spec_commands.spec_commands(app)
+            jobs += [SpecToRun(name, spec, spec_commands.command_for_one(app, command, target, spec))
                      for spec in listed]
-        except spec_commands.SpecCommandError as error:
+        except (settings_reader.SettingsError, spec_commands.SpecCommandError) as error:
             raise SpecsRunError(str(error)) from error
     return jobs
 

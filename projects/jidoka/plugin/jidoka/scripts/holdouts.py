@@ -115,7 +115,7 @@ def brief(epic: str, main_tree: Path, home: Path) -> dict:
     settings = settings_reader.read_settings(home, main_tree)
     return {"epic": epic, "title": shown.get("title", ""), "spec": shown.get("description") or "",
             "apps": [{"name": app.name, "way_in": app.way_in, "acceptance": app.acceptance}
-                     for app in settings_reader.apps_of(settings)]}
+                     for app in settings.apps]}
 
 
 def write(epic: str, raw: str, main_tree: Path) -> None:

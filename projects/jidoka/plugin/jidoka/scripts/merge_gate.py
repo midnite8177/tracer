@@ -100,7 +100,7 @@ class Merged:
     failed_steps: list[str]
 
 
-def protected_changes(settings: dict, epic_head: str, lap_head: str, main_tree: Path) -> list[str]:
+def protected_changes(settings: settings_reader.Settings, epic_head: str, lap_head: str, main_tree: Path) -> list[str]:
     """The paths the lap changed inside an acceptance folder."""
     folders = protected_folders(settings)
     return sorted(path for path in changed_paths(epic_head, lap_head, main_tree)
@@ -111,7 +111,7 @@ def contains(commit: str, head: str, main_tree: Path) -> bool:
     return capture(["git", "merge-base", "--is-ancestor", commit, head], main_tree, None).returncode == 0
 
 
-def check(lap: LapToMerge, settings: dict, epic_head: str, lap_head: str, main_tree: Path) -> None:
+def check(lap: LapToMerge, settings: settings_reader.Settings, epic_head: str, lap_head: str, main_tree: Path) -> None:
     try:
         tests = recorded_tests(lap.task, main_tree)
         check_recorded(tests)
@@ -159,7 +159,7 @@ def close_out(lap: LapToMerge, sha: str, main_tree: Path) -> Merged:
     return Merged(sha, failed)
 
 
-def merge(lap: LapToMerge, settings: dict, home: Path, main_tree: Path) -> Merged:
+def merge(lap: LapToMerge, settings: settings_reader.Settings, home: Path, main_tree: Path) -> Merged:
     lock = merge_lock(home)
     acquire_lock(lock)
     try:

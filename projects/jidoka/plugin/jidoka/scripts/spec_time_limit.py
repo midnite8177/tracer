@@ -46,8 +46,16 @@ class OverTheLimit:
         return [self.overrun_sentence(), *(f"{each.name}: {each.seconds:.1f} s" for each in self.slowest)]
 
     def fields(self) -> dict:
+        """The overrun as the record of a validation stores it; `from_fields` reads it back."""
         return {"app": self.app, "acceptance": self.acceptance, "limit": self.limit, "seconds": self.seconds,
                 "count": self.count, "slowest": [{"spec": each.name, "seconds": each.seconds} for each in self.slowest]}
+
+    @classmethod
+    def from_fields(cls, fields: dict) -> OverTheLimit:
+        """The overrun that `fields` wrote; raises ValueError, KeyError or TypeError for fields of another shape."""
+        return cls(str(fields["app"]), str(fields["acceptance"]), float(fields["limit"]), float(fields["seconds"]),
+                   int(fields["count"]),
+                   tuple(SlowSpec(str(spec["spec"]), float(spec["seconds"])) for spec in fields["slowest"]))
 
     def problem(self) -> design_findings.Problem:
         """The protocol driver as a problem for design_findings.py, named by the app's acceptance folder."""
@@ -57,11 +65,11 @@ class OverTheLimit:
                                                       for each in self.slowest) + ".")
 
 
-def over_the_limit(settings: dict, run: SpecsRun) -> list[OverTheLimit]:
+def over_the_limit(settings: settings_reader.Settings, run: SpecsRun) -> list[OverTheLimit]:
     """Each app whose specs the run held and whose limit its own part of the run passed, in the order of the repo
     settings."""
     over = []
-    for app in settings_reader.apps_of(settings):
+    for app in settings.apps:
         count = sum(1 for each in run.runs if each.app == app.name)
         if app.spec_seconds_limit is None or app.acceptance is None or not count:
             continue

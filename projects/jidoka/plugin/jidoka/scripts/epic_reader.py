@@ -30,10 +30,9 @@ class EpicReadError(Exception):
 
 @dataclass(frozen=True)
 class Rerun:
-    """How a script that makes the held-epic checks words its advice to run it again: on the epic that holds a
-    task, and after onboarding."""
+    """How a script that makes the held-epic checks words its advice to run it again on the epic that holds a
+    task."""
     on_the_holding_epic: str
-    after_onboarding: str
 
 
 @dataclass(frozen=True)
@@ -185,16 +184,17 @@ def nested_epic_problems(epic: Epic) -> list[str]:
             "out of it, or make it a task" for child in epic.children if child.get("issue_type") == EPIC_TYPE]
 
 
-def settings_problems(settings: dict, rerun: Rerun) -> list[str]:
-    if not settings:
-        return [f"the repo has no repo settings on this machine. Run {ONBOARD}, then {rerun.after_onboarding}"]
-    untested, full_suite = settings.get("untested_apps"), settings.get("full_suite")
-    if not (isinstance(untested, list) and isinstance(full_suite, list)):
-        return [f"the repo settings lack untested_apps or full_suite. Run {ONBOARD} again to record them"]
+def settings_problems(settings: settings_reader.Settings) -> list[str]:
+    try:
+        untested = settings.untested_apps()
+    except settings_reader.SettingsError as error:
+        return [str(error)]
     problems = [f"the app {app} has no test command, so the factory cannot test its work. Build a test project "
                 f"for it at the bench, then run {ONBOARD} to record its command" for app in untested]
-    if not full_suite:
-        problems.append(f"the repo settings hold no full suite. Run {ONBOARD} to record a test command")
+    try:
+        settings.full_suite()
+    except settings_reader.SettingsError as error:
+        problems.append(str(error))
     return problems
 
 
@@ -205,8 +205,8 @@ def holdout_problems(epic: Epic, epic_holdouts: list[holdouts.Holdout]) -> list[
             for holdout in epic_holdouts for task in holdout.tasks if task not in inside]
 
 
-def way_in_problems(settings: dict, epic_holdouts: list[holdouts.Holdout]) -> list[str]:
-    apps = {app.name: app for app in settings_reader.apps_of(settings)}
+def way_in_problems(settings: settings_reader.Settings, epic_holdouts: list[holdouts.Holdout]) -> list[str]:
+    apps = {app.name: app for app in settings.apps}
     held = list(dict.fromkeys(holdout.app for holdout in epic_holdouts))
     problems = [f"a holdout reaches the app {name}, which the repo settings do not list. Run {ONBOARD} to "
                 "record it with its way in" for name in held if name not in apps]
@@ -219,12 +219,12 @@ def way_in_problems(settings: dict, epic_holdouts: list[holdouts.Holdout]) -> li
     return problems
 
 
-def problems_while_held(epic: Epic, settings: dict, rerun: Rerun) -> list[str]:
+def problems_while_held(epic: Epic, settings: settings_reader.Settings) -> list[str]:
     """The checks that hold for as long as the factory holds the epic."""
     try:
         epic_holdouts = holdouts.of_epic(epic.shown)
         unreadable = []
     except holdouts.HoldoutsError as error:
         epic_holdouts, unreadable = [], [f"{error}. Write the epic's holdouts again"]
-    return [*waiting_problems(epic), *nested_epic_problems(epic), *settings_problems(settings, rerun),
+    return [*waiting_problems(epic), *nested_epic_problems(epic), *settings_problems(settings),
             *unreadable, *holdout_problems(epic, epic_holdouts), *way_in_problems(settings, epic_holdouts)]

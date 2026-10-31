@@ -34,6 +34,7 @@ from commands import (NONE_YET, SCRATCH_FOLDER, capture, env_as_factory, head_of
 from epic_branch import branch_head, required_head
 from epic_reader import recorded_branch
 from pass_support import MAIN_BRANCH, PassError, count_of, park_epic, worktree_at
+from settings_reader import Settings
 from worktrees import cut_detached, remove_worktree, stage_without_scratch, stage_worktree, unmerged_files
 
 WORKTREE_PREFIX = "validation-"
@@ -273,7 +274,7 @@ def count_ended_run(epic: str, ended: str, why: str | None, main_tree: Path) -> 
     return count_try(epic, shown, waiting, why or "the merge worker ended failed with no reason", main_tree)
 
 
-def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Merged:
+def settle(epic: str, branch: str, settings: Settings, home: Path, main_tree: Path) -> Merged:
     """Takes the merge worker's done: a finished merge waits for the next validation, and anything else is a try."""
     shown = read_bead(epic, main_tree)
     waiting = waiting_on(epic, shown, main_tree)

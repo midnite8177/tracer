@@ -37,7 +37,7 @@ from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_git_user, run
 from epic_reader import EpicReadError, Rerun, epic_of
 
 SECTION_HEADING = "## Acceptance specs"
-RERUN = Rerun(on_the_holding_epic="Name the spec task on the epic that holds it", after_onboarding="name the cases")
+RERUN = Rerun(on_the_holding_epic="Name the spec task on the epic that holds it")
 HEADING_LINE = re.compile(r"^## ")
 NO_INTERFACE = "The protocol driver already offers everything the test cases need."
 INTERFACE_LEAD = "The protocol driver does not offer these yet."

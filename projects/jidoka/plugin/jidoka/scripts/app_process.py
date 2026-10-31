@@ -63,33 +63,32 @@ class Recorded:
     started: str | None
 
 
-def settings_of(home: Path, folder: Path) -> dict:
+def settings_of(home: Path, folder: Path) -> settings_reader.Settings:
     main_tree = settings_reader.main_worktree(folder, COMMAND_TIMEOUT_SECONDS)
     return settings_reader.read_settings(home, main_tree)
 
 
-def run_command_of(app: str, settings: dict) -> str:
-    for held in settings_reader.apps_of(settings):
-        if held.name == app:
-            if held.run is None:
-                raise AppProcessError(f"the app {app} has no run command in the repo settings")
-            return held.run
-    raise AppProcessError(f"the repo settings name no app {app}")
+def run_command_of(app: str, settings: settings_reader.Settings) -> str:
+    held = settings.find_app(app)
+    if held is None:
+        raise AppProcessError(f"the repo settings name no app {app}")
+    if held.run is None:
+        raise AppProcessError(f"the app {app} has no run command in the repo settings")
+    return held.run
 
 
 def is_loading_name(name: str) -> bool:
     return name in LOADING_NAMES or name.startswith(LOADING_PREFIXES)
 
 
-def slot_variables(settings: dict) -> set[str]:
+def slot_variables(settings: settings_reader.Settings) -> set[str]:
     """The names a worker may give `--env`: the words of the settings' `slot_use`, in capitals, less the names that
     change how a program is found or loaded."""
-    slot_use = settings.get("slot_use")
-    words = WORD.findall(slot_use) if isinstance(slot_use, str) else []
+    words = WORD.findall(settings.slot_use) if settings.slot_use is not None else []
     return {word.upper() for word in words if not is_loading_name(word.upper())}
 
 
-def refuse_unnamed_variables(variables: dict[str, str], settings: dict) -> None:
+def refuse_unnamed_variables(variables: dict[str, str], settings: settings_reader.Settings) -> None:
     allowed = slot_variables(settings)
     for name in variables:
         if name not in allowed:

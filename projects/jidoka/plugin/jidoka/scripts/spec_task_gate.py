@@ -42,14 +42,14 @@ def other_open_tasks(task: dict, epic: dict, main_tree: Path) -> list[dict]:
     return [bead for bead in epic_reader.read_epic(epic, main_tree).open_task_beads if str(bead["id"]) != task_id]
 
 
-def app_the_specs_belong_to(settings: dict, beads: list[dict]) -> settings_reader.App:
+def app_the_specs_belong_to(settings: settings_reader.Settings, beads: list[dict]) -> settings_reader.App:
     """The one app that the beads record for their specs; raises OneAppExpected when they record none or several, and
     SettingsError for an app the repo settings do not list."""
     named = sorted({app for bead in beads if (app := specs.app_of(bead))})
     if len(named) != 1:
         raise OneAppExpected(f"the specs of the spec task and of the epic's other open tasks belong to "
                              f"{', '.join(named) or 'no app'}, and the gate judges the specs of exactly one app")
-    return settings_reader.app_named(settings, named[0])
+    return settings.app_named(named[0])
 
 
 def new_specs(task: dict, others: list[dict]) -> list[str]:
@@ -88,7 +88,7 @@ def old_specs_problem(everything: Finished, failing_by_name: int) -> str | None:
     return None
 
 
-def refusal(task: dict, epic: dict, settings: dict, worktree: Path, main_tree: Path) -> str | None:
+def refusal(task: dict, epic: dict, settings: settings_reader.Settings, worktree: Path, main_tree: Path) -> str | None:
     """Why the spec task's lap, checked out in the worktree, does not support the merge, or None when it does. The task
     and its epic beads say which specs are new and which are already true, and the app they record for their specs
     says which app's specs to run."""

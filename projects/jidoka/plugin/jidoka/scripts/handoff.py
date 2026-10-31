@@ -48,7 +48,6 @@ The checks, each refusal saying what to do, all reported at once:
   the epic or one of its tasks waits on an open bead outside the epic;
   the epic holds an epic;
   the epic has no tasks;
-  the repo has no repo settings on this machine;
   an app has no test command, or the repo has no full suite;
   a holdout names a task outside the epic;
   the epic already carries the factory label;
@@ -103,7 +102,7 @@ class HandoffError(Exception):
     """A reason the script writes nothing more, worded for the person who reads stderr."""
 
 
-RERUN = Rerun(on_the_holding_epic="Hand off the epic that holds it", after_onboarding="hand the epic off")
+RERUN = Rerun(on_the_holding_epic="Hand off the epic that holds it")
 
 
 def section_of(description: str, name: str) -> str:
@@ -172,7 +171,7 @@ def out_of_scope_problems(epic: Epic) -> list[str]:
 def problems_of(epic: Epic, branch_problems: list[str], home: Path, main_tree: Path) -> list[str]:
     """Every reason the epic cannot go to the factory, in the order of the checks."""
     settings = settings_reader.read_settings(home, main_tree)
-    problems = [*problems_while_held(epic, settings, RERUN), *no_task_problems(epic),
+    problems = [*problems_while_held(epic, settings), *no_task_problems(epic),
                 *out_of_scope_problems(epic)]
     if FACTORY_LABEL in labels_of(epic.shown):
         problems.append(f"{epic.id} already carries the {FACTORY_LABEL} label, so the factory holds it. Start "
@@ -349,7 +348,7 @@ def take(bead: str, given_areas: list[str], given_tracks: list[str], preset: str
     if not has_table(epic, main_tree):
         run(["bd", "comment", epic.id, table(content, page)], main_tree, env)
     if preset is not None:
-        repo_limit = rules.repo_lap_limit(settings_reader.read_settings(home, main_tree))
+        repo_limit = settings_reader.read_settings(home, main_tree).lap_limit
         rules.write_preset(epic.id, preset, repo_limit, main_tree)
     run(["bd", "label", "add", epic.id, FACTORY_LABEL], main_tree, env)
     return {"epic": epic.id, "branch": branch, "start": branch_head(branch, main_tree),

@@ -7,9 +7,8 @@ human approved it; the script does not check a name against the app's acceptance
 through `spec_task_of` and `specs_of`.
 
 The app that a task's specs belong to is the task's `acceptance.app` metadata, the name of one of the repo settings'
-apps, recorded beside the specs. The red run, the green run, the spec task gate and validation each read it through
-`app_of`, so that all four run a task's specs on the same app, whatever app the task's targeted tests or its area
-belong to.
+apps, recorded beside the specs. Every reader of a task's specs takes the app from `app_of` and from no other source,
+so that a task's specs run on the same app whatever app the task's targeted tests or its area belong to.
 
 The specs planning marked as already true are the spec task's `acceptance.already_true` metadata, a JSON list of
 spec names too. They pass before the epic's work, so the merge gate asks the spec task's lap to leave them passing,
@@ -53,7 +52,7 @@ SPEC_TASK_KEY = "acceptance.spec_task"
 SPECS_KEY = "acceptance.specs"
 APP_KEY = "acceptance.app"
 ALREADY_TRUE_KEY = "acceptance.already_true"
-RERUN = Rerun(on_the_holding_epic="Name the specs on the epic that holds it", after_onboarding="name the specs")
+RERUN = Rerun(on_the_holding_epic="Name the specs on the epic that holds it")
 
 
 class SpecsError(Exception):

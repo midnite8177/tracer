@@ -55,6 +55,7 @@ from epic_task import file_outside
 from pass_support import (MAIN_BRANCH, Committed, PassError, Stage, StageToRun, accepts_any_change, epic_files,
                           every_file, worktree_at)
 from report_text import ReportError, listed_report, located_texts
+from settings_reader import Settings
 from worktrees import remove_worktree, stage_worktree
 
 COMMENTS = "comments"
@@ -252,7 +253,7 @@ def own_work_base(base: str, head: str, main_tree: Path) -> str:
                main_tree, None).strip()
 
 
-def review_owed(epic: str, shown: dict, branch: str, settings: dict, main_tree: Path) -> ReviewToRun | None:
+def review_owed(epic: str, shown: dict, branch: str, settings: Settings, main_tree: Path) -> ReviewToRun | None:
     """The review this pass still owes, over which lanes, base and files, or None when the epic's files hold no change
     since the fixed point or a fix is still owed. The Design lane and its hints are left out once a review that held
     them has settled. It cuts no worktree: the path in the result is where one belongs."""
@@ -268,11 +269,11 @@ def review_owed(epic: str, shown: dict, branch: str, settings: dict, main_tree: 
     path = stage_worktree(REVIEW_PREFIX, epic, main_tree)
     if metadata_of(shown).get(DESIGNED_KEY):
         return ReviewToRun(epic, DIFF_LANES, branch, base, head, path, files, modules, [])
-    hints = lizard_hints.hints_between(base, head, files, lizard_hints.limits_of(settings), main_tree)
+    hints = lizard_hints.hints_between(base, head, files, settings.lizard_limits, main_tree)
     return ReviewToRun(epic, LANES, branch, base, head, path, files, modules, hints)
 
 
-def to_run(epic: str, shown: dict, branch: str, settings: dict, home: Path, main_tree: Path) -> ReviewToRun | None:
+def to_run(epic: str, shown: dict, branch: str, settings: Settings, home: Path, main_tree: Path) -> ReviewToRun | None:
     """The review this pass still owes, with its worktree cut at the epic branch's head for the lanes' workers."""
     owed = review_owed(epic, shown, branch, settings, main_tree)
     if owed is not None:
@@ -285,7 +286,7 @@ def hint_note(hint: lizard_hints.Hint) -> str:
     return f"{hint.name} {grew}, to a {hint.metric} of {hint.value} against the limit of {hint.limit}."
 
 
-def fix_owed(epic: str, shown: dict, branch: str, settings: dict, main_tree: Path) -> FixToRun | None:
+def fix_owed(epic: str, shown: dict, branch: str, settings: Settings, main_tree: Path) -> FixToRun | None:
     """The fix the last review left owed, or None when it left nothing to fix. It cuts no worktree: the path in the
     result is where one belongs."""
     findings = stored_findings(shown, FIXES_KEY)
@@ -296,7 +297,7 @@ def fix_owed(epic: str, shown: dict, branch: str, settings: dict, main_tree: Pat
                                epic_files(head, settings, main_tree)), findings)
 
 
-def fix_to_run(epic: str, shown: dict, branch: str, settings: dict, home: Path, main_tree: Path) -> FixToRun | None:
+def fix_to_run(epic: str, shown: dict, branch: str, settings: Settings, home: Path, main_tree: Path) -> FixToRun | None:
     """The fix the last review left owed, with its worktree cut at the epic branch's head for the fix worker."""
     owed = fix_owed(epic, shown, branch, settings, main_tree)
     if owed is not None:
@@ -339,7 +340,7 @@ def review_comment(owed: ReviewToRun, findings: list[Finding], fixes: list[Findi
     return "\n".join(lines)
 
 
-def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Reviewed:
+def settle(epic: str, branch: str, settings: Settings, home: Path, main_tree: Path) -> Reviewed:
     """Takes the reports of the lanes that ran: sends the findings to fix to the fix worker, keeps the unsure ones
     for the gate, and files the large ones outside the epic."""
     shown = read_bead(epic, main_tree)
@@ -362,7 +363,7 @@ def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) 
     return Reviewed(owed.head, fixes, file_large(epic, large, main_tree), unsure)
 
 
-def settle_fix(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Committed:
+def settle_fix(epic: str, branch: str, settings: Settings, home: Path, main_tree: Path) -> Committed:
     """Commits what the fix worker left as one commit on the epic branch, and moves the review's fixed point past
     it."""
     shown = read_bead(epic, main_tree)

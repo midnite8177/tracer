@@ -113,7 +113,7 @@ class GateContext:
     call: the epic, its branch, the repo settings, the jidoka home and the main checkout."""
     epic: str
     epic_branch: str
-    settings: dict
+    settings: settings_reader.Settings
     home: Path
     main_tree: Path
 
@@ -196,7 +196,7 @@ def file_discovered_work(lap: Lap, epic: str, main_tree: Path) -> str | None:
 
 
 def count_try(lap: Lap, epic: str, why: str, main_tree: Path) -> list[Lap]:
-    """Counts a failed try of the stage the lap is at: a try of the merge worker at the merge, else a try of the lap.
+    """Counts a failed try of the stage the lap is at. At the merge it is a try of the merge worker, else a try of the lap.
 
     Each stage's own cap is the one that reaches the park, as _count_lap_try and count_merge_try say.
     """

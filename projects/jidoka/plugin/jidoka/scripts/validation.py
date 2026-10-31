@@ -66,7 +66,7 @@ from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, PassError, move_epic_branch, worktree_at
 from report_text import shortened_title, tail_of
 from worktrees import remove_worktree
-from settings_reader import HandRunGroup, SettingsError, apps_of, stored_hand_run_groups
+from settings_reader import HandRunGroup, Settings, SettingsError
 from recorded_validation import CommandRun, RecordedValidation, SuiteCommand
 from spec_time_limit import OverTheLimit
 from validation_specs import NO_SPECS, SpecsRun, TimedSpecRun
@@ -121,16 +121,16 @@ class SuiteRun:
     kept: Path | None
 
 
-def suite_commands(settings: dict) -> list[SuiteCommand]:
+def suite_commands(settings: Settings) -> list[SuiteCommand]:
     """The full-suite command of every app that has a test command, in the order of the repo settings."""
-    return [SuiteCommand(app.name, command) for app in apps_of(settings)
+    return [SuiteCommand(app.name, command) for app in settings.apps
             if (command := app.full_suite_command) is not None]
 
 
-def hand_run_groups(settings: dict) -> list[HandRunGroup]:
+def hand_run_groups(settings: Settings) -> list[HandRunGroup]:
     """The hand-run groups of the stored settings; raises ValidationError when the settings hold no usable list."""
     try:
-        return stored_hand_run_groups(settings)
+        return list(settings.hand_run())
     except SettingsError as error:
         raise ValidationError(str(error)) from error
 
@@ -215,7 +215,7 @@ def file_spec_failure(epic: str, failed: TimedSpecRun, main_tree: Path) -> str:
     return file_task(epic, task, None, env_as_factory(), main_tree)
 
 
-def run_suite(epic: str, branch: str, settings: dict, home: Path, main_tree: Path, keep_when_green: bool) -> SuiteRun:
+def run_suite(epic: str, branch: str, settings: Settings, home: Path, main_tree: Path, keep_when_green: bool) -> SuiteRun:
     """Validates the epic branch merged with main, moves the branch there, and records nothing.
 
     The acceptance specs are planned before the suite, so that settings which cannot run them refuse at once, and run

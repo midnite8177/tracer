@@ -48,18 +48,12 @@ class Hint:
                 "limit": self.limit, "was": self.was}
 
 
-def limits_of(settings: dict) -> dict[str, int]:
-    """The repo's limits, with the default for each measure the settings leave out."""
-    stored = settings.get(settings_reader.LIZARD_LIMITS)
-    return {**settings_reader.DEFAULT_LIZARD_LIMITS, **(stored if isinstance(stored, dict) else {})}
-
-
 def measures_of(file: str, source: str) -> dict[str, dict]:
     """Each function of the source by name, with its first line and its measures; the largest of those that share
     a name. A source lizard cannot read has none."""
     try:
         found = lizard.analyze_file.analyze_source_code(file, source).function_list
-    except Exception:  # noqa: BLE001 - a hint never stops a pass, whatever lizard chokes on
+    except Exception:  # noqa: BLE001  A hint never stops a pass, whatever lizard chokes on.
         return {}
     measured: dict[str, dict] = {}
     for function in found:
@@ -113,7 +107,7 @@ def main(argv: list[str]) -> int:
         main_tree = settings_reader.main_worktree(cwd, settings_reader.GIT_TIMEOUT_SECONDS)
         settings = settings_reader.read_settings(settings_reader.jidoka_home(args.jidoka_home), main_tree)
         files = args.files or changed_files(args.base, args.head, cwd)
-        hints = hints_between(args.base, args.head, files, limits_of(settings), cwd)
+        hints = hints_between(args.base, args.head, files, settings.lizard_limits, cwd)
     except (settings_reader.SettingsError, CommandError, OSError) as error:
         print(f"lizard_hints: {error}", file=sys.stderr)
         return 1

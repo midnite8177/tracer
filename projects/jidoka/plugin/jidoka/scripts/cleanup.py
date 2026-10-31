@@ -29,6 +29,7 @@ import pass_support
 from commands import env_as_factory, metadata_of, read_bead, run, set_metadata
 from pass_support import PassError, Stage, StageToRun
 from report_text import listed_report
+from settings_reader import Settings
 
 STATE_KEY = "cleanup.state"
 REMOVED_KEY = "cleanup.removed"
@@ -100,7 +101,7 @@ def removed_lines(shown: dict) -> list[str]:
     return ["", "Tests removed:", "| Test | File | Covered by |", "| --- | --- | --- |", *rows]
 
 
-def to_run(epic: str, shown: dict, branch: str, settings: dict, home: Path, main_tree: Path) -> StageToRun | None:
+def to_run(epic: str, shown: dict, branch: str, settings: Settings, home: Path, main_tree: Path) -> StageToRun | None:
     """The cleanup this pass still owes, or None when it is done or the epic holds no test to clean. The worktree is
     cut again from the epic branch's head when its folder is gone."""
     return pass_support.to_run(STAGE, epic, shown, branch, settings, home, main_tree)
@@ -123,7 +124,7 @@ def removals_of(report: Path) -> list[Removal]:
     return removals
 
 
-def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> Cleaned:
+def settle(epic: str, branch: str, settings: Settings, home: Path, main_tree: Path) -> Cleaned:
     """Takes the cleanup worker's report: commits its deletions as one commit on the epic branch and records them."""
     shown = read_bead(epic, main_tree)
     found = pass_support.owed_in_worktree(STAGE, epic, shown, branch, settings, main_tree)

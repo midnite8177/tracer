@@ -83,7 +83,7 @@ from commands import CommandError
 from settings_reader import (BUILT_IN_COMMANDS_FILE, DEFAULTS, DOC_PATH_KEYS, DOCS_DEFAULTS,
                              GIT_TIMEOUT_SECONDS, GIVEN_KEYS, GLOSSARY_AND_ADRS, PRIVATE, App, HandRunGroup,
                              SettingsError, apps_of, built_in_commands, is_text, jidoka_home, main_worktree,
-                             problems_in, read_settings, require_settings, settings_path)
+                             problems_in, read_stored, require_stored, settings_path)
 
 LOCAL_RULES = "CLAUDE.local.md"
 DERIVED_KEYS = ["build", "full_suite", "hand_run", "untested_apps"]
@@ -150,9 +150,10 @@ def hide_private_docs(main_tree: Path, previous: dict, settings: dict) -> None:
     git_exclude.add(file, wanted)
 
 
-def rehide_private_docs(main_tree: Path, settings: dict) -> None:
-    """Brings the exclude lines of unchanged settings in line with the form private_lines builds."""
-    hide_private_docs(main_tree, settings, settings)
+def rehide_private_docs(home: Path, main_tree: Path) -> None:
+    """Brings the exclude lines of the stored settings in line with the form private_lines builds."""
+    stored = read_stored(home, main_tree)
+    hide_private_docs(main_tree, stored, stored)
 
 
 def hand_run_groups(apps: list[App]) -> list[HandRunGroup]:
@@ -216,7 +217,7 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
     path = settings_path(home, main_tree)
     local = main_tree / LOCAL_RULES
     moved = given.pop(MOVED_LINES, [])
-    previous = read_settings(home, main_tree)
+    previous = read_stored(home, main_tree)
     stored = {key: value for key, value in previous.items() if key in GIVEN_KEYS or key in DEFAULTS}
     merged = {**DEFAULTS, **stored, **given}
     problems = problems_in(merged) + moved_lines_problems(moved, local)
@@ -242,7 +243,7 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
 
 def show(home: Path, cwd: Path) -> str:
     main_tree = main_worktree(cwd, GIT_TIMEOUT_SECONDS)
-    return json.dumps(require_settings(home, main_tree), indent=2, ensure_ascii=False) + "\n"
+    return json.dumps(require_stored(home, main_tree), indent=2, ensure_ascii=False) + "\n"
 
 
 def add_built_in_command(home: Path, command: str) -> bool:
@@ -258,7 +259,7 @@ def add_built_in_command(home: Path, command: str) -> bool:
 
 def add_worker_command(home: Path, main_tree: Path, command: str) -> bool:
     """Adds the command to the repo's worker_commands; False when it is already there."""
-    held = require_settings(home, main_tree).get("worker_commands")
+    held = require_stored(home, main_tree).get("worker_commands")
     if not isinstance(held, list):
         raise SettingsError("the stored worker_commands is not a list")
     if command in held:

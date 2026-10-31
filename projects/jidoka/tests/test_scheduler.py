@@ -2376,9 +2376,8 @@ class SchedulerRefusalTests(SchedulerCase):
 
         self.assertEqual(1, done.returncode)
         self.assertEqual("", done.stdout)
-        self.assertIn("the repo has no repo settings on this machine. Run /jidoka:onboard, then run the scheduler "
-                      "again", done.stderr)
-        self.assertNotIn("hand the epic off", done.stderr)
+        self.assertIn("no settings for ", done.stderr)
+        self.assertIn(". Run /jidoka:onboard to record them", done.stderr)
         self.assert_nothing_written(task)
 
     def test_a_call_with_no_epic_is_a_usage_error(self):

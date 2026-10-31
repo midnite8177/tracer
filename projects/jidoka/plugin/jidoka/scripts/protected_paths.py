@@ -20,9 +20,9 @@ def folder_of(app: settings_reader.App) -> PurePosixPath | None:
     return PurePosixPath(app.acceptance)
 
 
-def protected_folders(settings: dict) -> list[PurePosixPath]:
+def protected_folders(settings: settings_reader.Settings) -> list[PurePosixPath]:
     """The acceptance folder of every app in the repo settings that has one."""
-    folders = (folder_of(app) for app in settings_reader.apps_of(settings))
+    folders = (folder_of(app) for app in settings.apps)
     return [folder for folder in folders if folder is not None]
 
 
