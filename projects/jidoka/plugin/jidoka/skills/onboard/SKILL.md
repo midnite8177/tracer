@@ -95,8 +95,7 @@ session rules.
    replaces the whole app list, and `rule_conflicts` the whole list of
    conflicts, so pass every recorded conflict that stays with the new
    ones. On a rerun with no changes, still run `write` with `{}`. The
-   script keeps every stored key and derives `build`, `full_suite`,
-   `hand_run` and `untested_apps` again. When the script refuses, show its
+   script keeps every stored key. When the script refuses, show its
    stderr, fix the values with the user, and run it again. When it refuses
    because git tracks `.beads`, go back to step 1 and offer the switch.
    When it refuses private because git tracks the glossary or the ADRs,
@@ -178,9 +177,9 @@ specs". An
 app with "No test command" shows no `test_target` or `test_full` of its
 own. The word `null` appears only in the JSON you pass to `write`.
 
-The script derives the repo's build from every app's `build`, and the full
-suite from every app's `test` followed by its `test_full`, leaving out the
-apps with no test command. It refuses settings in which no app has a build
+The script stores no repo-wide build or full suite: the full suite is every
+app's `test` followed by its `test_full`, leaving out the apps with no test
+command, worked out each time it is asked for. It refuses settings in which no app has a build
 or no app has a test command, and an app whose `test` or `test_target` is
 `null` while its other test settings are not empty. It also refuses
 a `hand_run` group without a name, exclusion, command or reason, or whose

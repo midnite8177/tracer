@@ -30,7 +30,6 @@ DEFAULT_LIZARD_LIMITS = {"ccn": 15, "length": 80, "arguments": 6}
 APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_full", "test_target", "hand_run", "acceptance",
             "spec_command", "spec_target", "spec_seconds_limit"]
 HAND_RUN_KEYS = ["name", "exclusion", "command", "reason"]
-HAND_RUN_GROUP_KEYS = ["app", "name", "reason", "command"]
 NO_TESTS = "an app with no test command has null for test, test_target and test_full, and [] for hand_run"
 TEST_SCOPES = ["targeted", "full"]
 APP_KINDS = ["program", "library"]
@@ -57,9 +56,16 @@ class HandRun:
 
 
 @dataclass(frozen=True)
+class SuiteCommand:
+    """One command of the full suite, and the app whose tests it runs."""
+    app: str
+    command: str
+
+
+@dataclass(frozen=True)
 class HandRunGroup:
     """A group of an app's tests that the full suite leaves out, with the app's name and the command the human runs
-    it with. The stored "hand_run" list holds one object for each, under the field names."""
+    it with."""
     app: str
     name: str
     reason: str
@@ -105,9 +111,9 @@ class App:
 @dataclass(frozen=True)
 class Settings:
     """The settings stored for one repo on this machine, checked once as they were read. worker_commands is empty
-    and lap_limit is 0 when the repo has none. The listed_ fields hold the lists that the write derives, and are
-    None when the stored object lacks one or holds it wrongly; the method that follows each refuses, pointing at
-    onboarding, so a script refuses only on the list it needs."""
+    and lap_limit is 0 when the repo has none. The full suite, the untested apps and the hand-run groups are worked
+    out from the apps each time they are asked for, so a change to an app's test command reaches every script at
+    once."""
     path: Path
     apps: tuple[App, ...]
     app_problems: dict[str, tuple[str, ...]]
@@ -116,14 +122,15 @@ class Settings:
     lap_limit: int
     lizard_limits: dict[str, int]
     private_docs: tuple[str, ...]
-    listed_full_suite: tuple[str, ...] | None
-    listed_untested_apps: tuple[str, ...] | None
-    listed_hand_run: tuple[HandRunGroup, ...] | None
+
+    def find_app(self, name: str) -> App | None:
+        """The first app that has the name, or None when none has it."""
+        return next((app for app in self.apps if app.name == name), None)
 
     def app_named(self, name: str) -> App:
         """The first app that has the name; raises SettingsError when none has it or its entry has a problem the
         write refuses."""
-        found = next((app for app in self.apps if app.name == name), None)
+        found = self.find_app(name)
         if found is None:
             raise SettingsError(f"the repo settings have no app named {name!r}; "
                                 f"the apps are {', '.join(app.name for app in self.apps)}")
@@ -133,26 +140,24 @@ class Settings:
                                 f"Run {ONBOARD} to record them")
         return found
 
-    def full_suite(self) -> tuple[str, ...]:
-        """The full-suite command of every app that has a test command; raises SettingsError when there is none."""
-        if not self.listed_full_suite:
-            raise SettingsError(f"{self.path} holds no full_suite list of test commands. Run {ONBOARD} to record it")
-        return self.listed_full_suite
+    def full_suite(self) -> tuple[SuiteCommand, ...]:
+        """The full-suite command of every app that has a test command, with the app, in app order; raises
+        SettingsError when no app has one."""
+        commands = tuple(SuiteCommand(app.name, command) for app in self.apps
+                         if (command := app.full_suite_command) is not None)
+        if not commands:
+            raise SettingsError(f"no app in {self.path} has a test command, so the repo has no full suite. "
+                                f"Run {ONBOARD} to record one")
+        return commands
 
     def untested_apps(self) -> tuple[str, ...]:
-        """The names of the apps with no test command; raises SettingsError when the list is missing."""
-        if self.listed_untested_apps is None:
-            raise SettingsError(f"{self.path} holds no untested_apps list of the apps with no test command. "
-                                f"Run {ONBOARD} to record it")
-        return self.listed_untested_apps
+        """The names of the apps with no test command, in app order."""
+        return tuple(app.name for app in self.apps if app.test is None)
 
     def hand_run(self) -> tuple[HandRunGroup, ...]:
-        """The hand-run groups of every app, in app order; raises SettingsError when the list is missing or a group
-        of it lacks a text field."""
-        if self.listed_hand_run is None:
-            raise SettingsError(f"{self.path} holds no hand_run list of the tests the full suite leaves out. "
-                                f"Run {ONBOARD} again to record it")
-        return self.listed_hand_run
+        """The hand-run groups of every app, in app order, each with the app's name."""
+        return tuple(HandRunGroup(app.name, group.name, group.reason, group.command)
+                     for app in self.apps for group in app.hand_run)
 
 
 def jidoka_home(flag: str | None) -> Path:
@@ -291,26 +296,12 @@ def problems_of_app(settings: dict, name: str) -> list[str]:
     return []
 
 
-def hand_run_groups_of(stored: dict) -> tuple[HandRunGroup, ...] | None:
-    """The hand-run groups that write derived and stored under "hand_run"; None when the list is missing or a group
-    of it lacks a text field."""
-    listed = stored.get("hand_run")
-    if not (isinstance(listed, list) and all(isinstance(group, dict) and all(
-            isinstance(group.get(key), str) for key in HAND_RUN_GROUP_KEYS) for group in listed)):
-        return None
-    return tuple(HandRunGroup(*(group[key] for key in HAND_RUN_GROUP_KEYS)) for group in listed)
-
-
-def texts_or_none(value: object) -> tuple[str, ...] | None:
-    return tuple(value) if isinstance(value, list) and all(map(is_text, value)) else None
-
-
 def is_positive_whole(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def lizard_limits_of(stored: dict) -> dict[str, int]:
-    """The limit of every lizard measure: the stored one when it is a whole number above zero, else the default."""
+    """The limit of every lizard measure. It is the stored one when that is a whole number above zero, else the default."""
     held = stored.get(LIZARD_LIMITS)
     held = held if isinstance(held, dict) else {}
     return {metric: held[metric] if is_positive_whole(held.get(metric)) else DEFAULT_LIZARD_LIMITS[metric]
@@ -326,15 +317,14 @@ def private_doc_paths(stored: dict) -> tuple[str, ...]:
 
 def settings_of(stored: dict, path: Path) -> Settings:
     """Checks the stored object once and gives its fields. What the settings lack or hold wrongly becomes the
-    field's empty value, and the derived lists become None, so a script refuses only on what it needs."""
+    field's empty value, so a script refuses only on what it needs."""
     commands, limit = stored.get("worker_commands"), stored.get("lap_limit")
     apps = tuple(apps_of(stored))
     return Settings(path, apps, {app.name: tuple(problems_of_app(stored, app.name)) for app in apps},
                     tuple(command for command in commands if isinstance(command, str))
                     if isinstance(commands, list) else (),
                     text_of(stored.get("slot_use")), limit if is_positive_whole(limit) else 0,
-                    lizard_limits_of(stored), private_doc_paths(stored), texts_or_none(stored.get("full_suite")),
-                    texts_or_none(stored.get("untested_apps")), hand_run_groups_of(stored))
+                    lizard_limits_of(stored), private_doc_paths(stored))
 
 
 def app_problems(index: int, app: object) -> list[str]:
@@ -453,7 +443,7 @@ def problems_in(settings: dict) -> list[str]:
     if "slot_use" in settings and not text_or_null(settings["slot_use"]):
         problems.append("slot_use must be text or null")
     limit = settings.get("lap_limit")
-    if "lap_limit" in settings and not (isinstance(limit, int) and not isinstance(limit, bool) and limit > 0):
+    if "lap_limit" in settings and not is_positive_whole(limit):
         problems.append("lap_limit must be a whole number above zero")
     if "apps" in settings:
         problems += apps_problems(settings["apps"])
@@ -475,7 +465,7 @@ def lizard_limits_problems(limits: object) -> list[str]:
     problems = [f"{LIZARD_LIMITS} has keys jidoka does not know: {', '.join(unknown)}"] if unknown else []
     for metric in LIZARD_METRICS:
         value = limits.get(metric)
-        if not (isinstance(value, int) and not isinstance(value, bool) and value > 0):
+        if not is_positive_whole(value):
             problems.append(f"{LIZARD_LIMITS} needs a whole number above zero for {metric}")
     return problems
 

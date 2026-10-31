@@ -11,6 +11,8 @@ sys.path.insert(0, str(HERE))
 import jidoka_fixture as fixture  # noqa: E402
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
+sys.path.insert(0, str(PLUGIN / "scripts"))
+import settings_reader  # noqa: E402
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 SETTINGS_SCRIPT = PLUGIN / "scripts" / "repo_settings.py"
 STEALTH_SCRIPT = PLUGIN / "scripts" / "beads_stealth.py"
@@ -88,6 +90,12 @@ def untested_settings() -> dict:
     return {**tracer_settings(), "apps": [editor_app(), tracer_ui, help_pages, site_builder, jidoka]}
 
 
+def tracer_suite() -> tuple:
+    return (settings_reader.SuiteCommand("tracer-ui", "dotnet test projects/tracer-ui/TracerUi.slnx"),
+            settings_reader.SuiteCommand("site-builder", "python3 -m unittest discover -s projects/site-builder/tests"),
+            settings_reader.SuiteCommand("jidoka", "python3 -m unittest discover -s projects/jidoka/tests"))
+
+
 DOC_COMMENT_CONFLICT = {"repo_rule": "Every public member has a /// doc comment.",
                         "written_in": "CONTRIBUTING.md",
                         "overrules": "Comments describe the code, never the work."}
@@ -150,6 +158,9 @@ class OnboardingFixture:
     def show(self, cwd: Path) -> subprocess.CompletedProcess:
         return self.settings_script(cwd, ["show"], "")
 
+    def stored_settings(self) -> settings_reader.Settings:
+        return settings_reader.read_settings(self.home, settings_reader.main_worktree(self.repo, 30))
+
     def stored_files(self) -> list:
         repos = self.home / "repos"
         return sorted(repos.iterdir()) if repos.is_dir() else []
@@ -186,49 +197,31 @@ class SettingsStorageTests(OnboardingFixture, unittest.TestCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(str(self.home.resolve()), done.stdout.strip())
 
-    def test_the_repo_build_runs_every_app_build_in_order_and_skips_an_app_without_one(self):
+    def test_the_settings_store_each_apps_build_and_no_repo_wide_list_of_them(self):
         self.write(self.repo, tracer_settings())
 
         shown = json.loads(self.show(self.repo).stdout)
 
         self.assertEqual(["dotnet build projects/tracer-ui/TracerUi.slnx",
-                          "python3 projects/site-builder/build.py"], shown["build"])
+                          "python3 projects/site-builder/build.py"],
+                         [app["build"] for app in shown["apps"] if app["build"] is not None])
+        self.assertNotIn("build", shown)
 
     def test_the_full_suite_runs_every_app_test_command_in_order(self):
         self.write(self.repo, tracer_settings())
 
         shown = json.loads(self.show(self.repo).stdout)
 
-        self.assertEqual(["dotnet test projects/tracer-ui/TracerUi.slnx",
-                          "python3 -m unittest discover -s projects/site-builder/tests",
-                          "python3 -m unittest discover -s projects/jidoka/tests"], shown["full_suite"])
+        self.assertEqual(tracer_suite(), self.stored_settings().full_suite())
         self.assertEqual('--filter "FullyQualifiedName~<Class>"', shown["apps"][0]["test_target"])
 
     def test_the_full_suite_leaves_out_each_app_with_no_test_command_and_untested_apps_names_them_in_order(self):
         self.write(self.repo, untested_settings())
 
-        shown = json.loads(self.show(self.repo).stdout)
+        settings = self.stored_settings()
 
-        self.assertEqual(["dotnet test projects/tracer-ui/TracerUi.slnx",
-                          "python3 -m unittest discover -s projects/site-builder/tests",
-                          "python3 -m unittest discover -s projects/jidoka/tests"], shown["full_suite"])
-        self.assertEqual(["editor", "help-pages"], shown["untested_apps"])
-
-    def test_settings_in_which_every_app_has_a_test_command_store_no_untested_apps(self):
-        self.write(self.repo, tracer_settings())
-
-        shown = json.loads(self.show(self.repo).stdout)
-
-        self.assertEqual([], shown["untested_apps"])
-
-    def test_the_full_suite_adds_an_apps_test_full_to_its_test_command(self):
-        self.write(self.repo, hand_run_settings())
-
-        shown = json.loads(self.show(self.repo).stdout)
-
-        self.assertEqual(['dotnet test RecoveredBox.Tests --filter '
-                          '"FullyQualifiedName!~CampfireWindowTests&FullyQualifiedName!~LiveMcpStdioTests"',
-                          ".venv/bin/python -m pytest tests/ -q"], shown["full_suite"])
+        self.assertEqual(tracer_suite(), settings.full_suite())
+        self.assertEqual(("editor", "help-pages"), settings.untested_apps())
 
     def test_each_apps_hand_run_groups_are_stored_and_listed_with_their_app_in_app_order(self):
         done = self.write(self.repo, hand_run_settings())
@@ -238,20 +231,26 @@ class SettingsStorageTests(OnboardingFixture, unittest.TestCase):
         self.assertEqual([WINDOW_TESTS, LIVE_MCP_TESTS], shown["apps"][0]["hand_run"])
         self.assertEqual([MODEM_SCRIPTS], shown["apps"][1]["hand_run"])
         self.assertEqual([
-            {"app": "recovered-box", "name": "window tests", "reason": "they open windows that take keyboard focus",
-             "command": 'dotnet test RecoveredBox.Tests --filter "FullyQualifiedName~CampfireWindowTests"'},
-            {"app": "recovered-box", "name": "live MCP tests", "reason": "they start the real MCP server over stdio",
-             "command": 'dotnet test RecoveredBox.Tests --filter "FullyQualifiedName~LiveMcpStdioTests"'},
-            {"app": "spam", "name": "modem scripts", "reason": "they need the modem plugged in",
-             "command": ".venv/bin/python tools/modem-duplex/run.py"},
-        ], shown["hand_run"])
+            ("recovered-box", "window tests", "they open windows that take keyboard focus",
+             'dotnet test RecoveredBox.Tests --filter "FullyQualifiedName~CampfireWindowTests"'),
+            ("recovered-box", "live MCP tests", "they start the real MCP server over stdio",
+             'dotnet test RecoveredBox.Tests --filter "FullyQualifiedName~LiveMcpStdioTests"'),
+            ("spam", "modem scripts", "they need the modem plugged in", ".venv/bin/python tools/modem-duplex/run.py"),
+        ], [(group.app, group.name, group.reason, group.command) for group in self.stored_settings().hand_run()])
 
-    def test_settings_with_no_hand_run_groups_store_an_empty_list(self):
+    def test_a_rerun_drops_the_derived_lists_an_earlier_write_stored(self):
         self.write(self.repo, tracer_settings())
+        [stored] = self.stored_files()
+        older = json.loads(stored.read_text(encoding="utf-8"))
+        stored.write_text(json.dumps({**older, "full_suite": ["stale"], "hand_run": [], "untested_apps": []}),
+                          encoding="utf-8")
 
+        done = self.write(self.repo, {})
+
+        self.assertEqual(0, done.returncode, done.stderr)
         shown = json.loads(self.show(self.repo).stdout)
-
-        self.assertEqual([], shown["hand_run"])
+        for key in ("full_suite", "hand_run", "untested_apps"):
+            self.assertNotIn(key, shown)
 
     def test_refuses_an_app_that_leaves_out_test_full_or_hand_run(self):
         for key in ("test_full", "hand_run"):
@@ -531,8 +530,9 @@ class LinkedWorktreeAndMovedLineTests(OnboardingFixture, unittest.TestCase):
         shown = json.loads(self.show(self.repo).stdout)
         self.assertEqual(5, shown["lap_limit"])
         self.assertEqual(["jidoka"], [app["name"] for app in shown["apps"]])
-        self.assertEqual(["python3 projects/jidoka/release.py --bump patch"], shown["build"])
-        self.assertEqual(["python3 -m unittest discover -s projects/jidoka/tests"], shown["full_suite"])
+        self.assertEqual(["python3 projects/jidoka/release.py --bump patch"], [app["build"] for app in shown["apps"]])
+        self.assertEqual((settings_reader.SuiteCommand("jidoka", "python3 -m unittest discover -s projects/jidoka/tests"),),
+                         self.stored_settings().full_suite())
         self.assertEqual("targeted", shown["lap_test_scope"])
         self.assertEqual(["dotnet build", "dotnet test", "python3 -m unittest"], shown["worker_commands"])
 

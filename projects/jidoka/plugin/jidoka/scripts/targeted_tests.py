@@ -22,7 +22,7 @@ unittest's "Ran N tests". Output in neither shape is judged by the exit code.
 Exit codes:
   0  the tests passed, and the pass is recorded.
   1  refused or stopped. When it stops before a run is recorded, nothing is
-     set on the bead: no repo settings, settings with no untested_apps list,
+     set on the bead: no repo settings,
      an unknown or incomplete app, an app with no test command, a
      test_target without one placeholder, a base branch that does not
      exist, a merge or rebase conflict with the base branch, or a failed git
@@ -144,8 +144,7 @@ def app_settings(home: Path, main_tree: Path, name: str) -> settings_reader.App:
         settings = settings_reader.read_settings(home, main_tree)
         if not settings.apps:
             raise TestRunError(f"{settings.path} holds no list of apps")
-        settings.untested_apps()
-        app = settings.app_named(name)
+        app =settings.app_named(name)
     except settings_reader.SettingsError as error:
         raise TestRunError(str(error)) from error
     if app.targeted_command is None:

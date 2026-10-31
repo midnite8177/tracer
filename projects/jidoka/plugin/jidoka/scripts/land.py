@@ -3,18 +3,18 @@
 
 Behind the merge lock, the script rebuilds the branch on main's head, runs
 the full suite on it, and squashes it to one commit with the message it was
-given. The full suite is the full_suite list in the repo settings, every
-app's full-suite command in app order, and every command runs even after one
-fails. An app with no test command has no full-suite command, so before the
-full suite runs the script prints one line on stdout for each app the repo
-settings list under untested_apps. The bead's recorded targeted tests must
+given. The full suite is every app's full-suite command in app order, worked
+out from the apps in the repo settings each time, and every command runs even
+after one fails. An app with no test command has no full-suite command, so
+before the full suite runs the script prints one line on stdout for each such
+app. The bead's recorded targeted tests must
 have passed, but they do not run again, because the full suite holds them.
 The script fast-forwards main in the checkout that has main checked out,
 closes the bead with the commit's sha in the reason, and removes the bead's
 worktree and branch. It never pushes and never opens a pull request.
 
-The full suite leaves out the hand-run tests, the groups the repo settings
-list under hand_run. After exit 0, 4 or 5, a rerun that finds the branch
+The full suite leaves out the hand-run tests, the groups the apps in the repo
+settings list under hand_run. After exit 0, 4 or 5, a rerun that finds the branch
 already on main included, the script lists each group with its app, its
 reason and the command that runs it, after the rest of its output on the
 same stream, so the human can run them. It lists nothing when no app has a
@@ -23,9 +23,8 @@ group.
 Exit codes:
   0  landed and closed.
   1  refused or failed before the fast-forward, with main unchanged. The script
-     refuses a repo with no repo settings, or settings with no full suite,
-     no hand_run list or no untested_apps list, before it takes the merge
-     lock.
+     refuses a repo with no repo settings, or settings in which no app has a
+     test command, before it takes the merge lock.
   3  waiting, because uncommitted edits in main's checkout touch files the
      bead changed. The caller runs the script again later; the script does
      not sleep on it.
@@ -165,9 +164,8 @@ def landing_settings(checkout: Path, home: Path) -> LandingSettings:
     try:
         main_tree = settings_reader.main_worktree(checkout, COMMAND_TIMEOUT_SECONDS)
         settings = settings_reader.read_settings(home, main_tree)
-        full_suite = list(settings.full_suite())
-        untested_apps = list(settings.untested_apps())
-        return LandingSettings(full_suite, list(settings.hand_run()), untested_apps)
+        return LandingSettings([each.command for each in settings.full_suite()], list(settings.hand_run()),
+                               list(settings.untested_apps()))
     except settings_reader.SettingsError as error:
         raise LandingError(str(error)) from error
 

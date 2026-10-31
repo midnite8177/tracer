@@ -1,3 +1,4 @@
+import re
 import sys
 import tempfile
 import unittest
@@ -9,7 +10,7 @@ sys.path.insert(0, str(HERE))
 import jidoka_fixture as fixture  # noqa: E402
 
 sys.path.insert(0, str(fixture.PROJECT / "plugin" / "jidoka" / "scripts"))
-from settings_reader import (App, HandRun, HandRunGroup, Settings, SettingsError, apps_of,  # noqa: E402
+from settings_reader import (App, HandRun, HandRunGroup, Settings, SettingsError, SuiteCommand, apps_of,  # noqa: E402
                              find_settings, problems_of_app, read_settings, read_stored, require_stored, settings_of,
                              settings_path)
 
@@ -101,6 +102,11 @@ class AppNamedTests(unittest.TestCase):
 
         self.assertEqual(settings.apps[1], settings.app_named("tool"))
 
+    def test_finds_no_app_for_a_name_no_app_has_without_refusing(self):
+        settings = settings_with(apps=[stored_app(name="a")])
+
+        self.assertEqual((settings.apps[0], None), (settings.find_app("a"), settings.find_app("tool")))
+
     def test_refuses_a_name_no_app_has_and_lists_the_apps(self):
         settings = settings_with(apps=[stored_app(name="a"), stored_app(name="b")])
 
@@ -116,23 +122,22 @@ class AppNamedTests(unittest.TestCase):
 
 class SettingsFieldsTests(unittest.TestCase):
     GROUP = {"app": "tool", "name": "slow", "reason": "it takes minutes", "command": "pytest -m slow"}
+    HAND_RUN = {"name": "slow", "exclusion": "-m slow", "command": "pytest -m slow", "reason": "it takes minutes"}
 
     def test_gives_the_fields_the_stored_object_holds(self):
-        settings = settings_with(apps=[stored_app()], worker_commands=["make build"], slot_use="PORT 5000 plus slot",
-                                 lap_limit=3, full_suite=["pytest -q"], untested_apps=["docs"],
-                                 hand_run=[self.GROUP], glossary_and_adrs="private", glossary="GLOSSARY.md",
+        settings = settings_with(apps=[stored_app(hand_run=[self.HAND_RUN]),
+                                       stored_app(name="docs", test=None, test_full=None, test_target=None)],
+                                 worker_commands=["make build"], slot_use="PORT 5000 plus slot",
+                                 lap_limit=3, glossary_and_adrs="private", glossary="GLOSSARY.md",
                                  adrs="docs/adr", lizard_limits={"ccn": 10, "length": 50, "arguments": 4})
 
-        self.assertEqual(["tool"], [app.name for app in settings.apps])
+        self.assertEqual(["tool", "docs"], [app.name for app in settings.apps])
         self.assertEqual(("make build",), settings.worker_commands)
         self.assertEqual("PORT 5000 plus slot", settings.slot_use)
         self.assertEqual(3, settings.lap_limit)
         self.assertEqual({"ccn": 10, "length": 50, "arguments": 4}, settings.lizard_limits)
         self.assertEqual(("GLOSSARY.md", "docs/adr"), settings.private_docs)
         self.assertEqual(SETTINGS_FILE, settings.path)
-        self.assertEqual(("pytest -q",), settings.full_suite())
-        self.assertEqual(("docs",), settings.untested_apps())
-        self.assertEqual((HandRunGroup("tool", "slow", "it takes minutes", "pytest -m slow"),), settings.hand_run())
 
     def test_gives_empty_values_for_what_the_stored_object_leaves_out(self):
         settings = settings_with(apps=[stored_app()])
@@ -156,13 +161,28 @@ class SettingsFieldsTests(unittest.TestCase):
     def test_keeps_only_the_worker_commands_that_are_text(self):
         self.assertEqual(("make", "make lint"), settings_with(worker_commands=["make", 3, "make lint"]).worker_commands)
 
-    def test_refuses_each_derived_list_the_stored_object_lacks_in_words_that_point_at_onboarding(self):
-        settings = settings_with(apps=[stored_app()], hand_run=[self.GROUP, "slow"], full_suite=[])
-        for name, call in (("full_suite", settings.full_suite), ("untested_apps", settings.untested_apps),
-                           ("hand_run", settings.hand_run)):
-            with self.subTest(name=name), self.assertRaisesRegex(SettingsError,
-                                                                  f"{SETTINGS_FILE} holds no {name} list.*onboard"):
-                call()
+    def test_refuses_a_full_suite_when_no_app_has_a_test_command_in_words_that_point_at_onboarding(self):
+        settings = settings_with(apps=[stored_app(test=None, test_full=None, test_target=None)])
+
+        with self.assertRaisesRegex(SettingsError, f"no app in {re.escape(str(SETTINGS_FILE))} has a test command.*onboard"):
+            settings.full_suite()
+
+    def test_works_the_derived_lists_out_from_the_apps_and_ignores_the_ones_an_older_write_stored(self):
+        settings = settings_with(
+            apps=[stored_app(name="first", test="pytest", test_full="-q", hand_run=[self.HAND_RUN]),
+                  stored_app(name="docs", test=None, test_full=None, test_target=None),
+                  stored_app(name="last", test="make test", test_full=None)],
+            full_suite=["stale"], untested_apps=["stale"], hand_run=[self.GROUP])
+
+        self.assertEqual((SuiteCommand("first", "pytest -q"), SuiteCommand("last", "make test")), settings.full_suite())
+        self.assertEqual(("docs",), settings.untested_apps())
+        self.assertEqual((HandRunGroup("first", "slow", "it takes minutes", "pytest -m slow"),), settings.hand_run())
+
+    def test_gives_no_hand_run_groups_and_no_untested_apps_when_every_app_is_tested_and_runs_whole(self):
+        settings = settings_with(apps=[stored_app()])
+
+        self.assertEqual((), settings.hand_run())
+        self.assertEqual((), settings.untested_apps())
 
 
 class StoredSettingsTests(unittest.TestCase):

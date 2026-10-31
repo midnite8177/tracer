@@ -15,13 +15,13 @@ import holdouts
 import settings_reader
 from commands import bd_list, is_labeled_for_human, metadata_of, read_bead, run
 from lap_record import area_of, open_lap
+from settings_reader import ONBOARD
 
 BRANCH_KEY = "factory.branch"
 VALIDATED_HEAD_KEY = "validation.head"
 BLOCKING = "blocks"
 CLOSED = "closed"
 EPIC_TYPE = "epic"
-ONBOARD = "/jidoka:onboard"
 
 
 class EpicReadError(Exception):
@@ -185,12 +185,8 @@ def nested_epic_problems(epic: Epic) -> list[str]:
 
 
 def settings_problems(settings: settings_reader.Settings) -> list[str]:
-    try:
-        untested = settings.untested_apps()
-    except settings_reader.SettingsError as error:
-        return [str(error)]
     problems = [f"the app {app} has no test command, so the factory cannot test its work. Build a test project "
-                f"for it at the bench, then run {ONBOARD} to record its command" for app in untested]
+                f"for it at the bench, then run {ONBOARD} to record its command" for app in settings.untested_apps()]
     try:
         settings.full_suite()
     except settings_reader.SettingsError as error:

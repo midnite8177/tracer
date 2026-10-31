@@ -409,37 +409,61 @@ class RecordedTestsAndSettingsTests(LandingCase):
         self.assert_nothing_landed(bead, head)
         self.assertEqual(tip, self.tip(bead))
 
-    def use_a_home_whose_stored_settings_lack(self, key: str) -> None:
-        older_home = self.root / f"jidoka-home-without-{key}-{self.count}"
-        shutil.copytree(self.home, older_home)
-        [stored] = (older_home / "repos").iterdir()
+    def use_a_home_whose_apps_have(self, changed: dict[int, dict]) -> None:
+        """Changes the stored settings of the apps at the given positions in a copy of the home, as a person edits
+        them without onboarding the repo again."""
+        changed_home = self.root / f"jidoka-home-with-changed-apps-{self.count}"
+        shutil.copytree(self.home, changed_home)
+        [stored] = (changed_home / "repos").iterdir()
         settings = json.loads(stored.read_text(encoding="utf-8"))
-        del settings[key]
+        for position, changes in changed.items():
+            settings["apps"][position].update(changes)
         stored.write_text(json.dumps(settings), encoding="utf-8")
-        self.jidoka_home = older_home
+        self.jidoka_home = changed_home
 
-    def test_settings_that_hold_no_hand_run_list_are_refused_with_a_pointer_to_onboarding(self):
+    NO_TESTS = {"test": None, "test_full": None, "test_target": None}
+
+    def test_landing_runs_a_test_command_that_was_changed_in_the_settings_without_onboarding_again(self):
+        bead = self.new_bead("pass")
+        self.use_a_home_whose_apps_have({0: {"test": self.suite_command("shop-changed")}})
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["shop-changed", "kiosk"], [run["suite"] for run in self.suite_runs_of(bead)])
+
+    def test_landing_names_an_app_whose_test_command_was_taken_out_of_the_settings_without_onboarding_again(self):
+        bead = self.new_bead("pass")
+        self.use_a_home_whose_apps_have({0: self.NO_TESTS})
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("No tests for shop: it has no test command, so the full suite skips it.",
+                      done.stdout.splitlines())
+        self.assertEqual(["kiosk"], [run["suite"] for run in self.suite_runs_of(bead)])
+
+    def test_landing_lists_a_hand_run_group_that_was_added_to_the_settings_without_onboarding_again(self):
+        bead = self.new_bead("pass")
+        group = {"name": "window tests", "exclusion": "--exclude windows", "command": "run the windows tests",
+                 "reason": "they take keyboard focus"}
+        self.use_a_home_whose_apps_have({0: {"hand_run": [group]}})
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["  shop, window tests: they take keyboard focus", "    run the windows tests"],
+                         done.stdout.splitlines()[-2:])
+
+    def test_settings_in_which_no_app_has_a_test_command_are_refused_with_a_pointer_to_onboarding(self):
         bead = self.new_bead("pass")
         head = git(self.repo, "rev-parse", "main")
-        self.use_a_home_whose_stored_settings_lack("hand_run")
+        self.use_a_home_whose_apps_have({0: self.NO_TESTS, 1: self.NO_TESTS})
 
         done = self.land(bead, MESSAGE)
 
         self.assertEqual(1, done.returncode, done.stderr)
-        self.assertIn("hand_run", done.stderr)
-        self.assertIn("/jidoka:onboard", done.stderr)
-        self.assertEqual([], self.suite_runs_of(bead))
-        self.assert_nothing_landed(bead, head)
-
-    def test_settings_that_hold_no_untested_apps_list_are_refused_with_a_pointer_to_onboarding(self):
-        bead = self.new_bead("pass")
-        head = git(self.repo, "rev-parse", "main")
-        self.use_a_home_whose_stored_settings_lack("untested_apps")
-
-        done = self.land(bead, MESSAGE)
-
-        self.assertEqual(1, done.returncode, done.stderr)
-        self.assertIn("untested_apps", done.stderr)
+        self.assertIn("no app", done.stderr)
         self.assertIn("/jidoka:onboard", done.stderr)
         self.assertEqual([], self.suite_runs_of(bead))
         self.assert_nothing_landed(bead, head)

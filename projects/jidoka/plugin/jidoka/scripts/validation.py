@@ -11,18 +11,17 @@ then fast-forwards the epic branch to the merged head, so the next pass
 builds on main's work, red or green. It refuses while the main checkout has
 the epic branch checked out with uncommitted edits, and when the epic branch
 moved while the suite ran. With BEADS_ACTOR set to jidoka it records on the
-epic `validation.result` (the result its caller gives), `validation.head` (the commit it validated),
-`validation.seconds`, `validation.tests` and `validation.skipped`,
-the figures summed over the commands, and posts a comment that gives them for
-each command. A command's figures come from its output, as the targeted
+epic `validation.result` (the result its caller gives), `validation.head` (the commit it validated) and
+`validation.runs` (each command's run), and posts a comment that gives the figures summed over the commands and for
+each command. The sums are worked out from the runs and stored nowhere. A command's figures come from its output, as the targeted
 tests read it: dotnet test's summary lines and unittest's "Ran N tests" and
 "skipped=N". Output in neither shape counts no tests and no skips.
 
 validation_specs.py plans the acceptance specs the epic's tasks record before the suite runs, so that a spec of an app
 the repo settings cannot run refuses at once. When every command passed, it runs them, side by side on the machine's
 free slots, in the same worktree. The epic records `validation.specs`, how many specs ran, and
-`validation.spec_seconds`, how long the run took, beside the suite's figures, and the comment gives them in a line of
-their own. The specs do not count in `validation.tests`. A suite that fails runs no spec.
+`validation.spec_seconds`, how long the run took, beside the suite's runs, and the comment gives them in a line of
+their own. The specs do not count in the suite's tests. A suite that fails runs no spec.
 
 A spec run that took longer than the `spec_seconds_limit` of an app with specs in it is over the limit, as
 spec_time_limit.py says. The epic records the slowest specs in `validation.slow_specs`, and the comment lists them.
@@ -66,8 +65,8 @@ from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, PassError, move_epic_branch, worktree_at
 from report_text import shortened_title, tail_of
 from worktrees import remove_worktree
-from settings_reader import HandRunGroup, Settings, SettingsError
-from recorded_validation import CommandRun, RecordedValidation, SuiteCommand
+from settings_reader import HandRunGroup, Settings, SuiteCommand
+from recorded_validation import CommandRun, RecordedValidation
 from spec_time_limit import OverTheLimit
 from validation_specs import NO_SPECS, SpecsRun, TimedSpecRun
 
@@ -119,20 +118,6 @@ class SuiteRun:
     validated: Validated
     hand_run: list[HandRunGroup]
     kept: Path | None
-
-
-def suite_commands(settings: Settings) -> list[SuiteCommand]:
-    """The full-suite command of every app that has a test command, in the order of the repo settings."""
-    return [SuiteCommand(app.name, command) for app in settings.apps
-            if (command := app.full_suite_command) is not None]
-
-
-def hand_run_groups(settings: Settings) -> list[HandRunGroup]:
-    """The hand-run groups of the stored settings; raises ValidationError when the settings hold no usable list."""
-    try:
-        return list(settings.hand_run())
-    except SettingsError as error:
-        raise ValidationError(str(error)) from error
 
 
 def skipped_in(output: str) -> int:
@@ -222,8 +207,8 @@ def run_suite(epic: str, branch: str, settings: Settings, home: Path, main_tree:
     after it, only when every command passed. The worktree stays, cut again at the merged head, when `keep_when_green`
     is set and the suite and the specs passed.
     """
-    commands = suite_commands(settings)
-    hand_run = hand_run_groups(settings)
+    commands = settings.full_suite()
+    hand_run = list(settings.hand_run())
     spec_jobs = validation_specs.specs_to_run(epic, settings, main_tree)
     epic_head = required_head(branch, main_tree, ValidationError)
     worktree, merged_head = validation_merge.merged_worktree(epic, epic_head, main_tree)

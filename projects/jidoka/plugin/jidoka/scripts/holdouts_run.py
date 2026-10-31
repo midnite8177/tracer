@@ -39,7 +39,7 @@ from epics import HOLDOUTS_PENDING_KEY, PENDING, awaits_holdouts
 from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, count_of, park_epic, worktree_at
 from report_text import shortened_title
-from recorded_validation import RESULT_KEY, RUNS_KEY, RecordedValidation
+from recorded_validation import RUNS_KEY, RecordedValidation
 from settings_reader import Settings
 from validation import FAIL, PASS, ValidationError
 from worktrees import remove_worktree
@@ -166,7 +166,8 @@ def holdout_title(app: str, saw: str) -> str:
 def file_holdout_failure(epic: str, verdict: Verdict, settings: Settings, main_tree: Path) -> str:
     """Files the task that says what a user saw, with neither the holdout's scenario nor its steps."""
     app = verdict.holdout.app
-    way_in = next((each.way_in for each in settings.apps if each.name == app and each.way_in), "its way in")
+    known = settings.find_app(app)
+    way_in = known.way_in if known is not None and known.way_in else "its way in"
     task = NewTask(holdout_title(app, verdict.saw), holdout_description(app, way_in, verdict.saw), app, SIMPLE_TRACK)
     return file_task(epic, task, None, env_as_factory(), main_tree)
 
@@ -197,7 +198,7 @@ def settle_holdouts(epic: str, branch: str, settings: Settings, home: Path, main
     shown = read_bead(epic, main_tree)
     if not awaits_holdouts(shown):
         raise ValidationError(f"{epic} waits on no run of its holdouts, so nothing was written")
-    hand_run = validation.hand_run_groups(settings)
+    hand_run = list(settings.hand_run())
     to_run = holdouts_to_run(epic, shown, home, main_tree)
     verdicts = verdicts_of(to_run.report, holdouts.of_epic(shown))
     red = [verdict for verdict in verdicts if not verdict.passed]
@@ -210,7 +211,7 @@ def settle_holdouts(epic: str, branch: str, settings: Settings, home: Path, main
     env = env_as_factory()
     run(["bd", "comment", epic, f"Holdouts: {len(verdicts) - len(red)} of {len(verdicts)} passed on {to_run.head}."
          + (f" The red ones are filed as {', '.join(filed)}." if filed else "")], main_tree, env)
-    run(["bd", "update", epic, *set_metadata((RESULT_KEY, settled.result)),
+    run(["bd", "update", epic, *recorded_validation.result_metadata(settled.result),
          *unset_metadata(HOLDOUTS_PENDING_KEY, TRIES_KEY)], main_tree, env)
     remove_worktree(to_run.worktree, main_tree)
     if red:

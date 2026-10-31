@@ -11,11 +11,9 @@ the settings imports settings_reader.py, not this one.
 
 `write` reads one JSON object on stdin. Its keys replace the stored ones and
 the stored keys it leaves out stay. The script checks the merged settings
-before it writes anything, and it derives "build", "full_suite", "hand_run"
-and "untested_apps", in app order: the build of every app that has one, the
-full-suite command of every app that has a test command, every app's
-hand-run tests with the app's name, and the name of every app with no test
-command. An app's full-suite command is its test, followed by its test_full
+before it writes anything. The build of the repo, the full suite, the hand-run
+groups and the apps with no test command are not stored; settings_reader.py
+works them out from the apps each time they are asked for. An app's full-suite command is its test, followed by its test_full
 when that is not null, and its targeted command is its test followed by its
 test_target. An app with no test command has null for test, test_target and
 test_full, and [] for hand_run; the script refuses any other mix, and
@@ -74,19 +72,17 @@ import json
 import subprocess
 import sys
 from collections import Counter
-from dataclasses import asdict
 from pathlib import Path
 
 import git_exclude
 import launcher
 from commands import CommandError
 from settings_reader import (BUILT_IN_COMMANDS_FILE, DEFAULTS, DOC_PATH_KEYS, DOCS_DEFAULTS,
-                             GIT_TIMEOUT_SECONDS, GIVEN_KEYS, GLOSSARY_AND_ADRS, PRIVATE, App, HandRunGroup,
-                             SettingsError, apps_of, built_in_commands, is_text, jidoka_home, main_worktree,
+                             GIT_TIMEOUT_SECONDS, GIVEN_KEYS, GLOSSARY_AND_ADRS, PRIVATE,
+                             SettingsError, built_in_commands, is_text, jidoka_home, main_worktree,
                              problems_in, read_stored, require_stored, settings_path)
 
 LOCAL_RULES = "CLAUDE.local.md"
-DERIVED_KEYS = ["build", "full_suite", "hand_run", "untested_apps"]
 MOVED_LINES = "moved_lines"
 BEADS_WORKSPACE = ".beads"
 SWITCH_COMMAND = launcher.command_for("beads_stealth.py")
@@ -156,12 +152,6 @@ def rehide_private_docs(home: Path, main_tree: Path) -> None:
     hide_private_docs(main_tree, stored, stored)
 
 
-def hand_run_groups(apps: list[App]) -> list[HandRunGroup]:
-    """The hand-run groups of every app, in app order, each with the app's name."""
-    return [HandRunGroup(app.name, group.name, group.reason, group.command)
-            for app in apps for group in app.hand_run]
-
-
 def read_text(path: Path) -> str:
     with open(path, encoding="utf-8", newline="") as fh:
         return fh.read()
@@ -224,14 +214,9 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
     if problems:
         raise SettingsError("nothing was written:\n" + "\n".join(f"  {problem}" for problem in problems))
     refuse_tracked_private_docs(main_tree, merged, GIT_TIMEOUT_SECONDS)
-    apps = apps_of(merged)
     settings = {
         "main_worktree": str(main_tree),
         **{key: merged[key] for key in [*GIVEN_KEYS, *DEFAULTS]},
-        "build": [app.build for app in apps if app.build is not None],
-        "full_suite": [command for app in apps if (command := app.full_suite_command) is not None],
-        "hand_run": [asdict(group) for group in hand_run_groups(apps)],
-        "untested_apps": [app.name for app in apps if app.test is None],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
