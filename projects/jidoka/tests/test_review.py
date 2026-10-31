@@ -403,6 +403,21 @@ class PassCapTests(ReviewCase):
         self.assertTrue(any(text.startswith("Question: ") and "3 passes" in text for text in self.texts(epic)))
         self.assertNotIn("gate.state", self.metadata(epic))
 
+    def test_the_pass_cap_question_opens_with_one_sentence_and_every_option_says_what_happens_next(self):
+        epic, _ = self.three_passes_each_with_a_red_validation()
+
+        [comment] = [text for text in self.texts(epic) if text.startswith("Question: ")]
+
+        self.assertEqual(f"Question: Should {epic} run a pass past the pass cap?", comment.split("\n\n")[0])
+        option_lines = [line for line in comment.splitlines() if line.startswith("- ")]
+        self.assertEqual(2, len(option_lines))
+        for line in option_lines:
+            self.assertRegex(line, r"^- .+ \(\d+%\): .+\.$")
+        metadata = self.metadata(epic)
+        self.assertEqual("Run another pass", metadata["question.recommended"])
+        self.assertEqual(["Run another pass", "Land what the epic holds"],
+                         [option["name"] for option in json.loads(metadata["question.options"])])
+
     def test_taking_the_human_label_off_runs_the_fourth_pass(self):
         epic, moved = self.three_passes_each_with_a_red_validation()
         task = moved["validation"]["filed"]

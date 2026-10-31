@@ -54,6 +54,9 @@ empty after any other question. The scheduler adds the pattern to the list
 the answer names when it opens the lap that follows the answer, and `answer`
 does the same from a command line.
 
+`Question` is the one format of every question, a task's and an epic's: one sentence, what was found, and options that
+each say what happens next.
+
 `question <task> --scratch <folder> --worktree <path> --branch <name> --tries <n>`
 posts the question report in the scratch folder and parks the task.
 `answer <task>` adds the pattern of the task's answered permission question to
@@ -70,7 +73,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -170,6 +172,11 @@ class Question:
         return next(option for option in self.options if option.name == self.recommended)
 
 
+def plain_question(sentence: str, found: str, options: tuple[Option, ...], recommended: str) -> Question:
+    """A question that has no `shown`, no steps and no denial, as an epic asks."""
+    return Question(sentence, found, SHOWN_LABEL, None, (), options, recommended, None)
+
+
 def text_of(value: object, what: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise QuestionError(f"{what} must be a non-empty string")
@@ -203,30 +210,18 @@ def steps_of(report: dict) -> tuple[str, ...]:
     return tuple(step.strip() for step in steps)
 
 
-def words_of(command: str, what: str) -> list[str]:
-    try:
-        return shlex.split(command)
-    except ValueError as error:
-        raise QuestionError(f"{what} {command!r} is not a command: {error}") from error
-
-
 def denied_of(report: dict, option_names: list[str]) -> permission_question.Denied | None:
-    """The denial a permission question report holds, or None when it holds neither call nor pattern."""
+    """The denial a permission question report holds, or None when it is no permission question's report, one with
+    neither call nor pattern."""
     if "call" not in report and "pattern" not in report:
         return None
     call = text_of(report.get("call"), "call")
     pattern = text_of(report.get("pattern"), "pattern")
     cause = text_of(report.get("cause"), "cause")
-    if cause not in permission_question.CAUSES:
-        raise QuestionError(f"cause must be one of {', '.join(permission_question.CAUSES)}, not {cause!r}")
-    if sorted(option_names) != sorted(permission_question.PERMISSION_ANSWERS):
-        raise QuestionError(f"the options of a permission question must be the four answers, one each: "
-                            f"{', '.join(permission_question.PERMISSION_ANSWERS)}")
-    if permission_question.SHELL_SYNTAX.search(pattern):
-        raise QuestionError("pattern must be one simple command, with no separator, redirect or substitution")
-    if permission_question.pattern_start(words_of(pattern, "pattern"), words_of(call, "call")) is None:
-        raise QuestionError("the words of pattern must appear in call, one after the other")
-    return permission_question.Denied(permission_question.Denial(call, pattern), cause)
+    try:
+        return permission_question.denied_in(call, pattern, cause, option_names)
+    except permission_question.DenialError as error:
+        raise QuestionError(str(error)) from error
 
 
 def read_report(scratch: Path) -> Report:
@@ -284,8 +279,8 @@ def read_question(scratch: Path, task: str) -> Question:
     return ordinary_question(report) if report.denied is None else asked_permission(report, report.denied, task)
 
 
-def question_comment(question: Question, page: Path, worktree: Path, branch: str) -> str:
-    """The whole question in plain text; the page adds pictures and no fact."""
+def question_comment(question: Question, page: Path, closing: str) -> str:
+    """The whole question in plain text, ending with the closing sentence; the page adds pictures and no fact."""
     denial = permission_question.denial_paragraph(question.denial) if question.denial is not None else ""
     shown = f"{question.shown_label}: {question.shown}\n\n" if question.shown is not None else ""
     why = f"Why: {' -> '.join(question.why)}\n\n" if question.why else ""
@@ -294,9 +289,7 @@ def question_comment(question: Question, page: Path, worktree: Path, branch: str
     return (f"{QUESTION_PREFIX}{question.question}\n\n{question.found}\n\n{shown}{why}{denial}"
             f"Options, each with the worker's confidence in percent that it is the right answer:\n{options}\n\n"
             f"Recommended: {recommendation.name} ({recommendation.confidence}%).\n\n"
-            f"Page: {page.as_uri()}\n\n"
-            f"The worktree {worktree} and the branch {branch} keep the work. Take the {HUMAN_LABEL} label off to "
-            "give the task a new lap.")
+            f"Page: {page.as_uri()}\n\n{closing}")
 
 
 @dataclass(frozen=True)
@@ -379,6 +372,18 @@ def park(task: str, tries: int, comment: str, metadata: list[tuple[str, str]], m
          *set_metadata(*metadata)], main_tree, env)
 
 
+def options_json_of(named: list[tuple[str, int | None]]) -> str:
+    """The JSON that the `question.options` metadata of a bead holds for options given as a name and a confidence,
+    which an answer with no confidence leaves out."""
+    return json.dumps([{"name": name} if confidence is None else {"name": name, "confidence": confidence}
+                       for name, confidence in named])
+
+
+def options_json(options: tuple[AnyOption, ...]) -> str:
+    """The options of a question as the JSON that the `question.options` metadata of a bead holds."""
+    return options_json_of([(option.name, option.confidence) for option in options])
+
+
 def write_page(task: str, question: Question, home: Path, main_tree: Path) -> Path:
     """Writes the question's page; raises QuestionError when the file cannot be written."""
     cards = tuple(option.card(option.name == question.recommended) for option in question.options)
@@ -401,16 +406,35 @@ class AskingLap:
     branch: str
 
 
+def post_question(bead: str, question: Question, closing: str, extra: list[tuple[str, str]], resting: list[str],
+                  home: Path, main_tree: Path) -> None:
+    """Writes the question's page, comments the whole question on the bead with the closing sentence, and sets the
+    options and the recommendation in its metadata beside `extra`. The bead gets the human label and `resting`, the
+    arguments that put it at rest. Raises QuestionError when the page cannot be written."""
+    page = write_page(bead, question, home, main_tree)
+    env = env_as_factory()
+    run(["bd", "comment", bead, question_comment(question, page, closing)], main_tree, env)
+    run(["bd", "update", bead, f"--add-label={HUMAN_LABEL}", *resting,
+         *set_metadata((OPTIONS_KEY, options_json(question.options)), (RECOMMENDED_KEY, question.recommended), *extra)],
+        main_tree, env)
+
+
+def park_epic_on_question(epic: str, question: Question, metadata: dict[str, str], home: Path,
+                          main_tree: Path) -> None:
+    """Parks the epic on the human with the question, and sets `metadata` beside the question's own."""
+    closing = f"The epic stays parked while it carries the {HUMAN_LABEL} label."
+    post_question(epic, question, closing, list(metadata.items()), [], home, main_tree)
+
+
 def park_on_question(lap: AskingLap, home: Path, main_tree: Path) -> None:
     """Writes the lap's question page, posts its question report on the task and parks the task; raises
     QuestionError for a bad report or a page that cannot be written."""
     question = read_question(lap.scratch, lap.task)
-    page = write_page(lap.task, question, home, main_tree)
-    options = json.dumps([{"name": option.name, "confidence": option.confidence} for option in question.options])
     denial = question.denial or permission_question.Denial("", "")
-    park(lap.task, lap.tries, question_comment(question, page, lap.worktree, lap.branch),
-         [(OPTIONS_KEY, options), (RECOMMENDED_KEY, question.recommended), (CALL_KEY, denial.call),
-          (PATTERN_KEY, denial.pattern)], main_tree)
+    closing = (f"The worktree {lap.worktree} and the branch {lap.branch} keep the work. Take the {HUMAN_LABEL} label "
+               "off to give the task a new lap.")
+    post_question(lap.task, question, closing, [(CALL_KEY, denial.call), (PATTERN_KEY, denial.pattern)],
+                  lap_record.resting_with_tries(lap_record.PARKED, lap.tries), home, main_tree)
     (lap.scratch / QUESTION_REPORT).unlink(missing_ok=True)
 
 

@@ -31,7 +31,6 @@ import park
 import pause
 from commands import env_as_factory, metadata_of, run
 from epics import state_of
-from pass_support import park_epic
 import routes
 from rules import is_map_of, is_number, is_share, is_whole, of_epic
 
@@ -49,7 +48,6 @@ RESUMES_WHEN = "the human label comes off"
 WAIT = "Wait for the reset"
 GO_ON = "Go on into the reserve"
 LAND = "Land what the epic holds"
-OPTIONS = [{"name": WAIT, "confidence": 50}, {"name": GO_ON, "confidence": 30}, {"name": LAND, "confidence": 20}]
 
 
 @dataclass(frozen=True)
@@ -180,21 +178,24 @@ def left(seconds: int) -> str:
     return " ".join(part for part in (f"{days}d" if days else "", f"{hours}h" if hours else "") if part)
 
 
-def question_text(epic: str, window: Window, now: int) -> str:
-    return "\n".join([
-        f"{park.QUESTION_PREFIX}{epic} runs on an account whose {window.name} usage window is "
-        f"{window.used_percent:g}% used, and the reserve keeps {window.reserve_percent:g}% of it free, so the factory "
-        "started no new stage and parked the epic.", "",
-        f"Projection: at this pace the window reaches {window.projected_percent(now):.0f}% when it resets in "
-        f"{left(window.resets_at - now)}.", "",
-        *(f"- {each['name']} ({each['confidence']}%)" for each in OPTIONS), "",
-        f"Recommended: {WAIT}. Take the human label off the epic once the window has reset to go on with a fresh "
-        f"window. Taking it off sooner goes on into the reserve, and the factory asks no more until this window "
-        f"resets. Or run /jidoka:accept {epic} to land what it holds, which moves its open tasks to a new epic."])
+def question_of(epic: str, window: Window, now: int) -> park.Question:
+    """The question the seven-day reserve asks: one sentence, what the window shows, and an option for each way on,
+    each with its next step."""
+    found = (f"The account's {window.name} usage window is {window.used_percent:g}% used, and the reserve keeps "
+             f"{window.reserve_percent:g}% of it free, so the factory started no new stage and parked {epic}. "
+             f"Projection: at this pace the window reaches {window.projected_percent(now):.0f}% when it resets in "
+             f"{left(window.resets_at - now)}.")
+    options = (park.Option(WAIT, 50, "Take the human label off the epic once the window has reset to go on with a "
+                                     "fresh window."),
+               park.Option(GO_ON, 30, "Take the human label off the epic now to go on into the reserve. The factory "
+                                      "asks no more until this window resets."),
+               park.Option(LAND, 20, f"Run /jidoka:accept {epic} to land what the epic holds, which moves its open "
+                                     "tasks to a new epic."))
+    return park.plain_question(f"Should {epic} wait for the {window.name} usage window to reset before it goes on?",
+                               found, options, WAIT)
 
 
-def park_epic_at(epic: str, window: Window, now: int, main_tree: Path) -> None:
+def park_epic_at(epic: str, window: Window, now: int, home: Path, main_tree: Path) -> None:
     """Parks the epic with the question, and records the window it asked about."""
-    park_epic(epic, question_text(epic, window, now),
-              {ASKED_KEY: str(window.resets_at), park.OPTIONS_KEY: json.dumps(OPTIONS),
-               park.RECOMMENDED_KEY: WAIT}, main_tree)
+    park.park_epic_on_question(epic, question_of(epic, window, now), {ASKED_KEY: str(window.resets_at)}, home,
+                               main_tree)

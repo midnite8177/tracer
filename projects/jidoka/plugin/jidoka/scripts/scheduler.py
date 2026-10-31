@@ -497,7 +497,7 @@ def settle_epic(epic: Epic, settings: dict, home: Path, main_tree: Path) -> Pass
         if ran.validated is not None:
             epic = checked_epic(epic.id, settings, main_tree)
     if pass_ledger.parks_at_the_cap(epic.shown, bool(epic.tasks)):
-        pass_ledger.park_at_the_cap(epic.id, epic.shown, main_tree)
+        pass_ledger.park_at_the_cap(epic.id, epic.shown, home, main_tree)
         epic = checked_epic(epic.id, settings, main_tree)
         notify.announce(notify.EPIC_PARKED, epic.id, home, main_tree, SCRIPT)
     to_run = ran.holdouts
@@ -564,7 +564,7 @@ def park_at_the_reserve(epic: Epic, window: reserves.Window, now: int, home: Pat
     tells the human."""
     print(f"scheduler: {epic.id} is on an account whose {window.name} window is {window.used_percent:g}% used, past "
           "its reserve, so no stage starts and it is parked with a question", file=sys.stderr)
-    reserves.park_epic_at(epic.id, window, now, main_tree)
+    reserves.park_epic_at(epic.id, window, now, home, main_tree)
     notify.announce(notify.EPIC_PARKED, epic.id, home, main_tree, SCRIPT)
 
 

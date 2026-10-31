@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import git_exclude
+import park
 import private_docs
 from commands import (HUMAN_LABEL, SCRATCH_FOLDER, NotAWholeNumber, capture, count_in, env_as_factory, head_of,
                       metadata_of, run, set_metadata)
@@ -185,6 +186,20 @@ def park_epic(epic: str, comment: str, metadata: dict[str, str], main_tree: Path
     env = env_as_factory()
     run(["bd", "comment", epic, comment], main_tree, env)
     run(["bd", "update", epic, *set_metadata(*metadata.items()), f"--add-label={HUMAN_LABEL}"], main_tree, env)
+
+
+def park_epic_on_question(epic: str, question: park.Question, metadata: dict[str, str], home: Path,
+                          main_tree: Path) -> None:
+    """Parks the epic on the human with the question in the one question format: its page is written, its comment
+    holds the whole question, and the epic's metadata gets the options and the recommendation beside `metadata`."""
+    try:
+        page = park.write_page(epic, question, home, main_tree)
+    except park.QuestionError as error:
+        raise PassError(str(error)) from error
+    closing = f"The epic stays parked while it carries the {HUMAN_LABEL} label."
+    park_epic(epic, park.question_comment(question, page, closing),
+              {**metadata, park.OPTIONS_KEY: park.options_json(question.options),
+               park.RECOMMENDED_KEY: question.recommended}, main_tree)
 
 
 def worktree_at(path: Path, head: str, home: Path, main_tree: Path) -> None:

@@ -305,7 +305,23 @@ class TheSevenDayReserveTests(ReservesCase):
                          [option["name"] for option in options])
         self.assertEqual("Wait for the reset", self.metadata(epic)["question.recommended"])
         for option in options:
-            self.assertIn(f"- {option['name']} ({option['confidence']}%)", comment)
+            self.assertIn(f"- {option['name']} ({option['confidence']}%): ", comment)
+
+    def test_the_question_opens_with_one_sentence_and_every_option_says_what_happens_next(self):
+        epic, _ = self.one_task_epic()
+        self.leave_usage(seven_day=76, resets_in=DAY)
+
+        self.next_printed(epic)
+
+        [comment] = self.question_comments(epic)
+        opening = comment.split("\n\n")[0]
+        self.assertEqual(f"Question: Should {epic} wait for the seven-day usage window to reset before it goes on?",
+                         opening)
+        option_lines = [line for line in comment.splitlines() if line.startswith("- ")]
+        self.assertEqual(3, len(option_lines))
+        for line in option_lines:
+            self.assertRegex(line, r"^- .+ \(\d+%\): .+\.$")
+        self.assertIn("Page: file:", comment)
 
     def test_the_projection_follows_the_pace_of_the_window_so_far(self):
         epic, _ = self.one_task_epic()
