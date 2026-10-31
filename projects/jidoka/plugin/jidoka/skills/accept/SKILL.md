@@ -23,8 +23,8 @@ to each run.
 ## Steps
 
 1. **Show the gate.** `bd show <epic-id>` and `bd comments <epic-id>`.
-   The epic must carry the `human` label and await acceptance, as the
-   `acceptance.py`'s `awaits_acceptance` reads it: `gate.state=waiting`, or
+   The epic must carry the `human` label and await acceptance, as
+   `awaits_acceptance` in `acceptance.py` reads it: `gate.state=waiting`, or
    the question the pass cap asks while the epic holds open tasks. If it
    does not, say so and stop. Restate the epic's title, the commits the
    latest "Acceptance gate:" comment lists, and the validation figures.
@@ -98,14 +98,21 @@ to each run.
      Show the files the script names, say that landing waits on them, and
      ask the human to commit or set them aside. Run the same command
      again when they say they have.
-   - 5: main or the epic branch moved since validation, and the full
-     suite failed on the epic rebuilt on main. The script posted the
-     failure on the epic and the epic is back at the gate. Show the
-     failing commands. The human decides whether to send the epic back
-     with new tasks.
+   - 5: the rebuild of the epic on main was refused and main is
+     unchanged: it conflicts with main, or main or the epic branch moved
+     since validation and the full suite failed on the epic rebuilt on
+     main. The script posted the refusal on the epic, and the comment
+     says which it was. Show the comment's conflicting files or failing
+     commands. When the comment says the epic leaves the acceptance gate,
+     the script took the epic off the gate: say that the epic's pass runs
+     validation again, which catches up with main, runs the holdouts again
+     and brings the epic back to the gate, and tell the human to run
+     `/jidoka:factory <epic-id>` to carry it on. When it says the epic
+     stays parked, say what the comment asks the human to do.
    - 4: main has the commit but a closing step failed. Show the failed
      steps and run the same command again once the cause is fixed.
-   - 1: the script refused. Show its message verbatim and stop.
+   - 1: the script refused and wrote nothing. Show its message verbatim
+     and stop.
 
 ## Send back
 

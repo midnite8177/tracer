@@ -11,6 +11,7 @@ sys.path.insert(0, str(HERE))
 import jidoka_fixture as fixture  # noqa: E402
 import test_review  # noqa: E402
 import test_scheduler  # noqa: E402
+import test_validation  # noqa: E402
 
 LAP_LISTS = test_scheduler.PLUGIN / "scripts" / "lap_lists.py"
 APP = {"name": "shop", "kind": "program", "way_in": None, "build": "make", "run": None,
@@ -22,6 +23,15 @@ MERGE_GRANT = [
     {"command": "git rebase {branch}", "then": "nothing"},
     {"command": "git rebase --abort", "then": "nothing"},
     {"command": "git -c core.editor=true rebase --continue", "then": "nothing"},
+    {"command": "git add", "then": "paths"},
+    {"command": "git status", "then": "words", "refusing": ["--output"]},
+    {"command": "git diff", "then": "words", "refusing": ["--output"]},
+    {"command": "git log", "then": "words", "refusing": ["--output"]},
+]
+MERGE_MAIN_GRANT = [
+    {"command": "git merge main", "then": "nothing"},
+    {"command": "git merge --abort", "then": "nothing"},
+    {"command": "git -c core.editor=true merge --continue", "then": "nothing"},
     {"command": "git add", "then": "paths"},
     {"command": "git status", "then": "words", "refusing": ["--output"]},
     {"command": "git diff", "then": "words", "refusing": ["--output"]},
@@ -228,6 +238,36 @@ class PassWorktreeListsTests(test_review.ReviewCase):
         self.assertEqual(["make test", "make build", "make fmt"], json.loads(done.stdout))
         self.assertIn("the epic's commands", done.stderr)
         self.assertIn(f"Error fetching {epic}", done.stderr)
+
+
+class ValidationWorktreeListsTests(test_validation.ValidationCase):
+    """The lap lists in the validation worktree, where a merge worker merges main into the epic branch."""
+
+    def test_a_merge_worker_in_the_validation_worktree_may_merge_main_and_nothing_more(self):
+        epic, _, printed = self.conflicting_epic()
+        [action] = [each for each in printed["actions"] if each["action"] == "merge"]
+
+        done = lap_lists("lap", Path(action["worktree"]), self.caller_env(self.home))
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        listed = json.loads(done.stdout)
+        self.assertEqual(MERGE_MAIN_GRANT, listed[-len(MERGE_MAIN_GRANT):])
+        self.assertEqual(1 + len(MERGE_MAIN_GRANT), len(listed))
+        self.assertEqual("", done.stderr)
+
+    def test_a_validation_worktree_of_an_epic_that_owes_no_merge_worker_gets_no_merge_grant(self):
+        epic, task, _ = self.finish_epic_but_for_the_last_report()
+        self.build_done(epic, task)
+        leftover = self.repo / ".worktrees" / f"validation-{epic}"
+        fixture.run(["git", "worktree", "add", "--detach", str(leftover), "main"], self.repo)
+        self.addCleanup(fixture.run, ["git", "worktree", "remove", "--force", str(leftover)], self.repo)
+
+        done = lap_lists("lap", leftover, self.caller_env(self.home))
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        listed = json.loads(done.stdout)
+        self.assertEqual(1, len(listed))
+        self.assertNotIn(MERGE_MAIN_GRANT[0], listed)
 
 
 if __name__ == "__main__":

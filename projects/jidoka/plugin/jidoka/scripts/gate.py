@@ -16,8 +16,12 @@ rebuilds the epic as one commit on main's head, in a detached worktree at
 .worktrees/landing-<epic>. When main is not an ancestor of the commit
 validation checked, or the epic branch moved past it, the script runs the
 full suite from the repo settings on the rebuilt commit. A red run posts a
-comment on the epic with the failing commands, leaves the epic at the gate
-and changes nothing else. A rebuild that conflicts with main does the same.
+comment on the epic with the failing commands, and a rebuild that conflicts with main posts a comment that names the
+conflicting files. Main and the epic branch stay as they were. An epic at the gate then leaves it: the script takes
+gate.state and the human label off, so the next call of the scheduler finds the epic finished and runs validation,
+which merges main into the epic branch, through the merge worker when that conflicts, runs the holdouts again and
+brings the epic back to the gate. The pass count, the test cleanup and the tidy are not reset, because the epic branch
+did not change. An epic parked at the pass cap stays parked with its comment.
 
 Uncommitted edits in main's checkout that touch files the epic changed make
 the script wait. It prints the files and exits 3 before it changes anything,
@@ -35,7 +39,7 @@ that records gate.landed repeats these steps.
 The other decisions leave the epic at the gate, and each refuses an epic that
 does not wait there or that landed. Each is written as the git user.
 
-`wrong <epic> <number> --why <text>` marks an assumption wrong: the gate
+`wrong <epic> <number> --why <text>` marks an assumption wrong. The gate
 comment numbers the assumptions, and the script posts the assumption and the
 human's reason on the bead that recorded it.
 
@@ -74,13 +78,14 @@ The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka. After exit 0,
 
 Exit codes:
   0  landed and closed, and the sha is printed; or the decision is written.
-  1  refused or failed before the fast-forward, with main unchanged; or the
-     decision is refused, and nothing is written.
+  1  refused or failed before the fast-forward, with main unchanged and nothing written; or the decision is refused,
+     and nothing is written.
   2  a usage error.
   3  waiting on uncommitted edits in main's checkout.
   4  main has the commit but a closing step failed; the sha is printed.
-  5  the full suite failed on the rebuilt commit, and the epic is back at the
-     gate.
+  5  the rebuild was refused, because it conflicts with main or because the full suite failed on the rebuilt commit.
+     Main is unchanged and the refusal is a comment on the epic. An epic at the gate goes back to validation, and an
+     epic parked at the pass cap stays parked.
 """
 from __future__ import annotations
 
@@ -99,13 +104,14 @@ import pass_ledger
 import repo_settings
 import rules
 import t3_wake
+import validation
 from acceptance import branch_and_head_at_the_gate, moved_since_validation
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, MAIN_REF, CommandError, capture,
                       env_as_git_user, labels_of, metadata_of, read_bead, run, set_metadata, unset_metadata,
                       worktree_list)
 from epic_branch import branch_head, required_head
 from epic_reader import EpicReadError, child_ids, recorded_branch, shown_beads
-from epics import GATE_STATE_KEY, is_closed
+from epics import GATE_STATE_KEY, WAITING, is_closed
 from gate_items import assumption, numbered_assumptions, outside_of
 from holdouts import HOLDOUTS_KEY
 from land import (FULL_SUITE_FAILED_EXIT_CODE, PARTLY_LANDED_EXIT_CODE, WAITING_ON_EDITS_EXIT_CODE, FullSuiteFailed,
@@ -130,19 +136,43 @@ SEND_BACK = "send-back"
 DROP = "drop"
 WRONG_PREFIX = "Assumption marked wrong at the acceptance gate: "
 WORKTREE_PREFIX = "landing-"
+TURNED_BACK_EXIT_CODE = FULL_SUITE_FAILED_EXIT_CODE
 
 
 class GateError(Exception):
     """A reason the script writes nothing more, worded for the person who reads stderr."""
 
 
-class BackAtTheGate(Exception):
-    """A landing that cannot go on, with the comment that tells the human why the epic waits again."""
+class RebuildRefused(Exception):
+    """A rebuild of the epic on main that cannot land: what went wrong in one sentence, the lines that show it, the
+    exit code the script ends with, and where the epic goes. An epic at the gate goes back to validation, which catches
+    up with main; one parked at the pass cap stays parked, and the advice says what the human does."""
 
-    def __init__(self, comment: str, exit_code: int) -> None:
-        super().__init__(comment)
-        self.comment = comment
+    def __init__(self, cause: str, details: list[str], exit_code: int, leaves_the_gate: bool,
+                 parked_advice: str) -> None:
+        super().__init__(cause)
+        self.cause = cause
+        self.details = details
         self.exit_code = exit_code
+        self.leaves_the_gate = leaves_the_gate
+        self.parked_advice = parked_advice
+
+    def described(self, epic: str, outcome: str) -> str:
+        return "\n".join([f"Landing {epic} was refused: {self.cause}. {outcome}", *self.details])
+
+    def comment(self, epic: str) -> str:
+        """The comment for the epic: what refused the landing and where the epic goes, then the details."""
+        if self.leaves_the_gate:
+            return self.described(epic, f"{epic} leaves the acceptance gate. Its pass runs validation again, which "
+                                        "merges main into the epic branch, runs the holdouts again and brings the "
+                                        "epic back to the gate.")
+        return self.described(epic, f"{epic} stays parked. {self.parked_advice}")
+
+    def unwritten(self, epic: str, error: CommandError) -> str:
+        """The refusal as the script prints it when writing it on the epic failed: the comment, the gate state and the
+        human label may each be written or not."""
+        return self.described(epic, f"Turning {epic} back failed ({error}), so check its comments, its gate state and "
+                                    "its human label.")
 
 
 @dataclass(frozen=True)
@@ -160,6 +190,11 @@ class EpicAtTheGate:
     @property
     def landed(self) -> str:
         return str(self.metadata.get(LANDED_KEY) or "")
+
+    @property
+    def waits_at_the_gate(self) -> bool:
+        """True for an epic at the gate, false for one parked at the pass cap."""
+        return self.metadata.get(GATE_STATE_KEY) == WAITING
 
 
 @dataclass(frozen=True)
@@ -193,10 +228,11 @@ def rebuild_on_main(epic: EpicAtTheGate, message: str, home: Path, main_tree: Pa
     try:
         squashed = capture(["git", "merge", "--squash", f"refs/heads/{epic.branch}"], path, None)
         if squashed.returncode != 0:
-            conflicts = sorted(run(["git", "diff", "--name-only", "--diff-filter=U"], path, None).split())
-            raise BackAtTheGate(f"Landing {epic.id} was refused: merging {epic.branch} onto main conflicts in "
-                                f"{', '.join(conflicts) or 'files git does not name'}. Merge main into the epic "
-                                "branch by hand and run the gate again.", 1)
+            conflicts = sorted(validation.unmerged_files(path))
+            raise RebuildRefused(f"merging {epic.branch} onto main conflicts in "
+                                 f"{', '.join(conflicts) or 'files git does not name'}", [], TURNED_BACK_EXIT_CODE,
+                                 epic.waits_at_the_gate,
+                                 "Merge main into the epic branch by hand and run the gate again.")
         if capture(["git", "diff", "--cached", "--quiet"], path, None).returncode == 0:
             raise GateError(f"{epic.branch} holds nothing that main lacks, so there is nothing to land")
         if epic.commits_on_main == rules.PER_TASK:
@@ -204,7 +240,7 @@ def rebuild_on_main(epic: EpicAtTheGate, message: str, home: Path, main_tree: Pa
         else:
             run(["git", "commit", "-q", "-m", message], path, None)
             sha = run(["git", "rev-parse", "HEAD"], path, None).strip()
-    except (BackAtTheGate, GateError, CommandError):
+    except (RebuildRefused, GateError, CommandError):
         remove_worktree(path, main_tree)
         raise
     return path, sha
@@ -214,12 +250,14 @@ def validate_again(epic: EpicAtTheGate, worktree: Path, settings: LandingSetting
     try:
         run_full_suite(settings.full_suite, worktree)
     except FullSuiteFailed as failed:
-        lines = [f"Landing {epic.id} was refused: main or the epic branch moved since validation, and the full "
-                 f"suite failed on the epic rebuilt on main. {epic.id} waits at the gate again."]
+        details: list[str] = []
         for failure in failed.failures:
-            lines += ["", f"`{failure.command}` exited {failure.exit_code}. The end of its output:", "",
-                      tail_of(failure.output)]
-        raise BackAtTheGate("\n".join(lines), FULL_SUITE_FAILED_EXIT_CODE) from failed
+            details += ["", f"`{failure.command}` exited {failure.exit_code}. The end of its output:", "",
+                        tail_of(failure.output)]
+        raise RebuildRefused("main or the epic branch moved since validation, and the full suite failed on the "
+                             "epic rebuilt on main", details, TURNED_BACK_EXIT_CODE, epic.waits_at_the_gate,
+                             "Make the failing commands pass on the epic branch, then run the gate again."
+                             ) from failed
 
 
 def fast_forward_main(epic: EpicAtTheGate, sha: str, checkout: Path) -> None:
@@ -314,9 +352,20 @@ def merge(epic_id: str, message: str, home: Path, main_tree: Path) -> tuple[Land
         release_lock(lock)
 
 
-def post_why_back_at_the_gate(epic_id: str, back: BackAtTheGate, main_tree: Path) -> None:
-    """Posts the refusal on the epic, which stays at the gate."""
-    run(["bd", "comment", epic_id, back.comment], main_tree, env_as_git_user(main_tree))
+def turn_back(epic_id: str, refused: RebuildRefused, main_tree: Path) -> str:
+    """Posts the refusal on the epic and returns the comment.
+
+    An epic at the gate leaves it: its gate state and human label come off, so the scheduler's next call finds it
+    finished and runs validation, which catches up with main. Its pass count, test cleanup and tidy stay as they are,
+    because the epic branch did not change. An epic parked at the pass cap stays parked.
+    """
+    comment = refused.comment(epic_id)
+    env = env_as_git_user(main_tree)
+    run(["bd", "comment", epic_id, comment], main_tree, env)
+    if refused.leaves_the_gate:
+        run(["bd", "update", epic_id, *unset_metadata(GATE_STATE_KEY)], main_tree, env)
+        run(["bd", "label", "remove", epic_id, HUMAN_LABEL], main_tree, env)
+    return comment
 
 
 def epic_waiting(epic_id: str, main_tree: Path) -> EpicAtTheGate:
@@ -493,13 +542,13 @@ def main(argv: list[str]) -> int:
         for name in waiting.files:
             print(f"  {name}")
         return WAITING_ON_EDITS_EXIT_CODE
-    except BackAtTheGate as back:
+    except RebuildRefused as refused:
         try:
-            post_why_back_at_the_gate(args.epic, back, main_tree)
+            comment = turn_back(args.epic, refused, main_tree)
         except CommandError as error:
-            print(f"gate: could not post the comment on {args.epic}: {error}", file=sys.stderr)
-        print(f"gate: {back.comment}", file=sys.stderr)
-        return back.exit_code
+            comment = refused.unwritten(args.epic, error)
+        print(f"gate: {comment}", file=sys.stderr)
+        return refused.exit_code
     except (GateError, EpicReadError, LandingError, CommandError, repo_settings.SettingsError, rules.RulesError,
             PassError, OSError) as error:
         print(f"gate: {error}", file=sys.stderr)

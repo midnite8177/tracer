@@ -171,7 +171,10 @@ _Avoid_: Review, spec review
 **Merge worker**:
 The worker a lap gets when newer work on the epic branch conflicts with
 its own or breaks its tests, and which reconciles the two in the lap's
-workspace.
+workspace. Validation gets one too, when the merge of main into the epic
+branch conflicts because another epic landed on the same lines: it merges
+main in the validation worktree, and validation runs again on the merged
+head.
 _Avoid_: Merge agent, conflict resolver
 
 **Merge gate**:
@@ -252,7 +255,11 @@ Putting an accepted epic's work, or bench work, on main as one commit or
 one per task. Bench work runs the full test suite once, at landing, on the
 branch rebased on main; an epic's work is tested again if main moved since
 validation. An epic parked at its pass cap with open tasks lands too, and
-its open tasks move to a new epic that planning takes up.
+its open tasks move to a new epic that planning takes up. A landing whose
+rebuild conflicts with main, or whose full suite fails on the rebuild,
+lands nothing: the epic leaves the acceptance gate and its pass runs
+validation again, which catches up with main and brings the epic back to
+the gate.
 _Avoid_: Merge (a lap merges into the epic branch), ship, release, integrate
 
 **Discovered work**:
@@ -463,7 +470,9 @@ failed build, red targeted tests, a filter the targeted tests refuse and
 a lap with no commit the epic branch lacks are each a try of the build,
 and the third parks the task. A merge worker that fails, leaves its
 rebase unfinished, leaves the lap without the epic branch's head or leaves
-tests red is a try of the merge, and the second parks the task. A cutoff is
+tests red is a try of the merge, and the second parks the task. A validation
+merge worker that fails, or reports done with no finished merge, is a try
+of the merge too, and the second parks the epic with a question. A cutoff is
 not a try, nor is the epic branch moving under the merge gate, nor is
 newer work that calls the merge worker.
 _Avoid_: Attempt, retry, strike
@@ -602,7 +611,9 @@ read-only, a write inside the worktree, a delete there with `rm` or
 `git rm`, the commands a human added to it for every repo on the machine,
 and entries scoped to one stage: a merge worker alone may
 rebase the lap onto the epic branch, abort or continue that rebase, add
-paths and look at the conflicts with git. A stage-scoped entry says what
+paths and look at the conflicts with git, and the merge worker of a
+validation alone may merge main, abort or continue that merge, add paths and
+look at the conflicts. A stage-scoped entry says what
 may follow its words, so `git rebase` never takes `--exec`. The repo's list
 is the repo settings' worker commands and each app's test command.
 _Avoid_: Permission hook, guard, sandbox, allowlist

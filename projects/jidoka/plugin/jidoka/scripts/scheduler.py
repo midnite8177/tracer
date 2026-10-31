@@ -98,6 +98,12 @@ left on the epic branch, prints the stage's fields under its key, and does what 
   validation    holdouts_run.py `validate`, which runs validation.py once the stages above owe nothing. An epic that
                 holds holdouts ends with a holdouts action until holdouts_run.py takes
                 `report-holdouts <epic> [--ended failed|cut-off] [--why <why>]`.
+  validation's merge  validation_merge.py, before validation: it merges main into the epic branch in the validation
+                worktree, and when that conflicts the stage prints a `merge` action with no task, for the validation
+                worktree, naming the conflicting `files`, and records `validation.merge` on the epic. It repeats the
+                action until `report-merge <epic> [--ended failed|cut-off] [--why <why>]` takes the merge worker's
+                report. A merge worker that finished the merge lets the next validation run on it, and validation
+                takes the record off.
 Each of these report modes, `report-holdouts` included, takes `--worker <agent id> <tier> [done|failed|cut-off]` once
 for each worker it reports, and the review reports one for each lane. The call writes a ledger row for each, with no
 task and the stage's name (`test-cleanup`, `tidy`, `review`, `fix` or `holdouts`), before it settles the stage, so a

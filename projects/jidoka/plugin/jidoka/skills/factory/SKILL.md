@@ -456,6 +456,28 @@ own failure.
    `{"outcome": "failed", "why": "<one line>"}`. Write the event line
    `<epic-id> fix started: <findings> findings on <head>`.
 
+   An action whose `action` is `merge` and that has no `task` is the
+   validation's merge worker: validation merged main into the epic branch and
+   the merge conflicts, as it does once another epic landed on the same
+   lines. Start one worker on the deep tier's route, with the first line
+   `jidoka lap worktree: <worktree>`, the action's `worktree`, the validation
+   worktree. Its prompt holds the action's `reason`, `files`, `branch` and
+   `base`, the paths of the glossary and the house rules, and these limits:
+   it works only in the worktree, runs no `bd` command that changes anything,
+   starts no workers, and asks no question. Its job: run `git merge main`,
+   resolve every conflict so that the epic's intent and main's both hold,
+   run `git add` on each resolved path, and run
+   `git -c core.editor=true merge --continue` to commit the merge. It looks
+   at the conflicts with `git status`, `git diff` and `git log`. These are
+   the git commands the lap mod allows it, exactly as written here: no other
+   option, and no `--output`. It runs no tests, because validation runs the
+   full suite on the merge. It leaves no merge in progress. When a merge is
+   already in progress, it continues that merge, or runs `git merge --abort`
+   first. Its ending is `{"outcome": "done"}` or
+   `{"outcome": "failed", "why": "<one line>"}`. Write the event line
+   `<epic-id> merge started: <files> conflicting files on <head>`, with the
+   count of the action's `files`.
+
    An action whose `action` is `holdouts` has no task: the epic's full suite
    is green and its holdouts have not run. Start one worker with the Agent
    tool, in the background, with `subagent_type` `jidoka:validation`, on the
@@ -588,7 +610,21 @@ own failure.
    the epic with the why and notifies. Write `<epic-id> holdouts ended:
    failed` and go on with the JSON it prints.
 
-   A merge worker's reply is reported the same way. Write the worker's
+   A validation merge worker's reply that ends with `{"outcome": "done"}` is
+   reported with `scheduler report-merge <epic-id> --jidoka-home ...`, which
+   prints the same JSON as `next`: a merge that is finished lets validation
+   run on it in the same call, and its `validation` says how it ended. Write
+   `<epic-id> merge ended: done`. A worker that fails is reported with
+   `scheduler report-merge <epic-id> --ended failed --why "<why>"` (the why
+   cleaned as above; none when it gave none), and one that was cut off with
+   `--ended cut-off`; both also end with `--worker <agent id> <tier>`. A
+   failed worker, and a done whose worktree holds no finished merge, is a
+   try, and the second try parks the epic with a question and the human
+   label and sends the epic-parked notification. A cutoff is no try. Write
+   `<epic-id> merge ended: failed` and go on with the JSON it prints. Exit 1
+   means the report was refused; show stderr and stop.
+
+   A lap's merge worker's reply is reported the same way. Write the worker's
    event line first. A report on done commits the build's work and runs the
    targeted tests and the merge gate, so it can take minutes. Exit 1 means it refused; show stderr and stop. Exit 0
    prints the same JSON as `next`. When the reported task is in neither

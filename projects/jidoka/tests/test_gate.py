@@ -205,35 +205,18 @@ class MergeValidationTests(GateCase):
         self.assertIn(f"moved-{task}.txt", files)
         self.assertIn(self.work_file(task), files)
 
-    def test_a_red_rerun_returns_the_epic_to_the_gate_with_a_comment_and_leaves_main_alone(self):
+    def test_a_red_rerun_leaves_main_and_the_epic_branch_alone(self):
         epic, task, branch = self.epic_at_the_gate()
         moved = self.commit_in(self.repo, f"moved-{task}.txt", "main moved\n")
+        branch_before = git(self.repo, "rev-parse", branch)
         self.queue_landing_exit_codes(epic, 1)
 
         done = self.merge(epic)
 
-        shown = self.shown(epic)
         self.assertEqual(FULL_SUITE_FAILED_EXIT_CODE, done.returncode)
         self.assertEqual(moved, git(self.repo, "rev-parse", "main"))
-        self.assertEqual(("open", "waiting"), (shown["status"], shown["metadata"].get("gate.state")))
-        self.assertIn("human", shown["labels"])
-        self.assertIn("factory", shown["labels"])
-        [comment] = [text for text in self.texts(epic) if text.startswith("Landing")]
-        self.assertIn("FAIL: test_till_total", comment)
-        self.assertIn("waits at the gate again", comment)
-        self.assertIn(branch, self.branches())
-        self.assertFalse((self.repo / ".worktrees" / f"landing-{epic}").exists())
-
-    def test_the_epic_lands_once_a_green_rerun_follows_the_red_one(self):
-        epic, task, _ = self.epic_at_the_gate()
-        self.commit_in(self.repo, f"moved-{task}.txt", "main moved\n")
-        self.queue_landing_exit_codes(epic, 1)
-        self.merge(epic)
-
-        done = self.merge(epic)
-
-        self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual("closed", self.shown(epic)["status"])
+        self.assertEqual(branch_before, git(self.repo, "rev-parse", branch))
+        self.assertEqual("open", self.shown(epic)["status"])
 
 
 class MergeWaitsOnEditsTests(GateCase):

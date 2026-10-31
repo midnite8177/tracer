@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -57,14 +58,42 @@ class ValidationCase(test_scheduler.SchedulerCase):
                           "reason": HAND_RUN_REASON}],
             "acceptance": test_scheduler.ACCEPTANCE}]})
 
-    def finish_epic_but_for_the_last_report(self) -> tuple[str, str, str]:
-        """An epic with one task whose build left its work in the lap's worktree; returns the epic, task, branch."""
+    def epic_building_in_its_lap(self) -> tuple[str, str, str, Path]:
+        """An epic with one task whose lap is open; returns the epic, task, branch and the lap's worktree."""
         epic = self.new_epic()
         task = self.new_task_under(epic)
         branch = self.hand_off(epic, {task: "till"})
         [action] = self.next_printed(epic)["actions"]
-        self.leave_in(Path(action["worktree"]), "till.txt", "built\n")
+        return epic, task, branch, Path(action["worktree"])
+
+    def finish_epic_but_for_the_last_report(self) -> tuple[str, str, str]:
+        """An epic with one task whose build left its work in the lap's worktree; returns the epic, task, branch."""
+        epic, task, branch, worktree = self.epic_building_in_its_lap()
+        self.leave_in(worktree, "till.txt", "built\n")
         return epic, task, branch
+
+    def conflicting_epic(self) -> tuple[str, str, dict]:
+        """An epic whose only task wrote clash.txt after main wrote it too, driven to the moves of its validation;
+        returns the epic, its branch and those moves."""
+        epic, task, branch, worktree = self.epic_building_in_its_lap()
+        self.leave_in(worktree, "clash.txt", f"the epic's {epic}\n")
+        self.commit_in(self.repo, "clash.txt", f"main's {epic}\n")
+        return epic, branch, self.build_done(epic, task)
+
+    def start_the_merge(self, worktree: Path) -> None:
+        """What the merge worker of a validation does first: merges main, and stops at the conflict."""
+        subprocess.run(["git", "merge", "main"], cwd=worktree, capture_output=True, text=True)
+
+    def reconcile(self, worktree: Path, clash: str) -> str:
+        """What the merge worker of a validation does in full: merges main, resolves the clashing file and commits the
+        merge; returns the merge commit."""
+        self.start_the_merge(worktree)
+        (worktree / clash).write_text("the epic's and main's\n", encoding="utf-8")
+        git(worktree, "add", clash)
+        subprocess.run(["git", "-c", "core.editor=true", "merge", "--continue"], cwd=worktree, capture_output=True,
+                       text=True, check=True,
+                       env={key: value for key, value in os.environ.items() if key not in ("GIT_EDITOR", "EDITOR")})
+        return git(worktree, "rev-parse", "HEAD")
 
     def settle_tidy_and_review(self, printed: dict) -> dict:
         """Reports the tidy worker done with nothing changed, and every review lane with no finding, for as long as
@@ -433,29 +462,221 @@ class ValidationHoldoutsTests(ValidationHoldoutsCase):
 
 
 class ValidationMergeConflictTests(ValidationCase):
-    def test_a_conflict_with_main_stops_validation_naming_the_files_and_writes_nothing(self):
-        epic = self.new_epic()
-        task = self.new_task_under(epic)
-        branch = self.hand_off(epic, {task: "till"})
-        [action] = self.next_printed(epic)["actions"]
-        self.leave_in(Path(action["worktree"]), "clash.txt", "the epic's\n")
-        self.commit_in(self.repo, "clash.txt", "main's\n")
-        epic_head_before = git(self.repo, "rev-parse", branch)
+    """The manager's side of a validation whose merge of main conflicts: it starts the merge worker the scheduler
+    prints, the worker merges main in the validation worktree, and the manager reports it."""
 
-        self.report_printed(epic, task, "done", "--app", "shop", "--filter", "test_card")
-        tidied = self.launch(test_scheduler.SCHEDULER, "report-tidy", epic)
-        for action in json.loads(tidied.stdout)["actions"]:
-            Path(action["report"]).write_text("[]", encoding="utf-8")
-        done = self.launch(test_scheduler.SCHEDULER, "report-review", epic)
+    def is_merging(self, worktree: Path) -> bool:
+        return subprocess.run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=worktree,
+                              capture_output=True).returncode == 0
+
+    def report_merge(self, epic: str, *flags: str) -> subprocess.CompletedProcess:
+        return self.launch(test_scheduler.SCHEDULER, "report-merge", epic, *flags)
+
+    def report_merge_printed(self, epic: str, *flags: str) -> dict:
+        done = self.report_merge(epic, *flags)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def merge_actions(self, printed: dict) -> list[dict]:
+        return [action for action in printed["actions"] if action["action"] == "merge"]
+
+    def merge_tries(self, epic: str) -> int:
+        return int(self.metadata(epic).get("validation.mergetries") or 0)
+
+    def question_comments(self, epic: str) -> list[str]:
+        return [text for text in self.texts(epic) if text.startswith("Question: ")]
+
+    def test_a_conflict_with_main_prints_a_merge_action_for_the_validation_worktree_naming_the_files(self):
+        epic, branch, printed = self.conflicting_epic()
+
+        [action] = self.merge_actions(printed)
+
+        worktree = self.repo / ".worktrees" / f"validation-{epic}"
+        self.assertEqual((epic, str(worktree), branch), (action["epic"], action["worktree"], printed["branch"]))
+        self.assertEqual(["clash.txt"], action["files"])
+        self.assertIn("clash.txt", action["reason"])
+        self.assertEqual(str(worktree / ".scratch"), action["scratch"])
+        self.assertNotIn("task", action)
+
+    def test_a_conflict_with_main_refuses_nothing_and_leaves_the_epic_and_its_branch_as_they_were(self):
+        epic, branch, printed = self.conflicting_epic()
 
         shown = self.shown(epic)
-        self.assertEqual(1, done.returncode)
-        self.assertIn("clash.txt", done.stderr)
+        self.assertIsNone(printed["validation"])
         self.assertNotIn("human", shown.get("labels") or [])
         self.assertNotIn("gate.state", shown.get("metadata") or {})
         self.assertEqual([], self.validation_runs_of(epic))
-        self.assertEqual(epic_head_before, git(self.repo, "rev-parse", f"{branch}~1"))
-        self.assertFalse((self.repo / ".worktrees" / f"validation-{epic}").exists())
+        self.assertFalse(self.is_on(git(self.repo, "rev-parse", "main"), branch))
+
+    def test_the_validation_worktree_waits_for_the_merge_worker_at_the_epic_head_with_no_merge_begun(self):
+        epic, branch, _ = self.conflicting_epic()
+        worktree = self.repo / ".worktrees" / f"validation-{epic}"
+
+        self.assertEqual(git(self.repo, "rev-parse", branch), git(worktree, "rev-parse", "HEAD"))
+        self.assertEqual("", git(worktree, "status", "--porcelain"))
+        self.assertFalse(self.is_merging(worktree))
+
+    def test_the_epic_records_the_merge_it_owes_until_the_merge_is_validated(self):
+        epic, _, printed = self.conflicting_epic()
+        [action] = self.merge_actions(printed)
+        self.assertEqual(f"{action['head']}:{action['base']}", self.metadata(epic)["validation.merge"])
+        self.reconcile(Path(action["worktree"]), "clash.txt")
+
+        self.report_merge_printed(epic)
+
+        self.assertNotIn("validation.merge", self.metadata(epic))
+
+    def test_the_merge_worker_s_merge_is_validated_and_the_epic_branch_moves_to_it(self):
+        epic, branch, printed = self.conflicting_epic()
+        [action] = self.merge_actions(printed)
+        merged = self.reconcile(Path(action["worktree"]), "clash.txt")
+
+        reported = self.report_merge_printed(epic)
+
+        self.assertEqual("pass", reported["validation"]["result"])
+        self.assertEqual(merged, git(self.repo, "rev-parse", branch))
+        self.assertEqual([f"{SKIP_HAND_RUN} {merged}"], self.validation_runs_of(epic))
+        self.assertEqual(merged, self.metadata(epic)["validation.head"])
+        self.assertEqual("the epic's and main's", git(self.repo, "show", f"{branch}:clash.txt"))
+        self.assertTrue(self.is_on(git(self.repo, "rev-parse", "main"), branch))
+        self.assertEqual("waiting", self.metadata(epic).get("gate.state"))
+        self.assertFalse(Path(action["worktree"]).exists())
+
+    def test_what_the_merge_worker_left_uncommitted_after_its_merge_joins_the_merge_commit(self):
+        epic, branch, printed = self.conflicting_epic()
+        [action] = self.merge_actions(printed)
+        worktree = Path(action["worktree"])
+        self.reconcile(worktree, "clash.txt")
+        (worktree / "loose.txt").write_text("left over\n", encoding="utf-8")
+
+        self.report_merge_printed(epic)
+
+        self.assertEqual("left over", git(self.repo, "show", f"{branch}:loose.txt"))
+        self.assertEqual(2, len(git(self.repo, "show", "--no-patch", "--format=%P", branch).split()))
+
+    def test_a_call_while_the_merge_worker_works_prints_the_action_again_and_leaves_its_merge_alone(self):
+        epic, _, printed = self.conflicting_epic()
+        [action] = self.merge_actions(printed)
+        worktree = Path(action["worktree"])
+        self.start_the_merge(worktree)
+
+        again = self.next_printed(epic)
+
+        [repeated] = self.merge_actions(again)
+        self.assertEqual((action["worktree"], ["clash.txt"]), (repeated["worktree"], repeated["files"]))
+        self.assertTrue(self.is_merging(worktree))
+
+    def test_a_merge_worker_that_reports_done_with_no_merge_made_counts_a_try_and_is_called_again(self):
+        epic, _, _ = self.conflicting_epic()
+
+        reported = self.report_merge_printed(epic)
+
+        self.assertEqual(1, len(self.merge_actions(reported)))
+        self.assertFalse(reported["merge"]["reconciled"])
+        self.assertEqual(1, self.merge_tries(epic))
+        self.assertIn("Merge try 1 of 2", "\n".join(self.texts(epic)))
+        self.assertNotIn("human", self.shown(epic).get("labels") or [])
+
+    def test_a_merge_worker_that_leaves_the_merge_unfinished_counts_a_try_and_the_worktree_starts_clean_again(self):
+        epic, branch, printed = self.conflicting_epic()
+        [action] = self.merge_actions(printed)
+        self.start_the_merge(Path(action["worktree"]))
+
+        reported = self.report_merge_printed(epic)
+
+        [again] = self.merge_actions(reported)
+        worktree = Path(again["worktree"])
+        self.assertEqual(1, self.merge_tries(epic))
+        self.assertEqual(git(self.repo, "rev-parse", branch), git(worktree, "rev-parse", "HEAD"))
+        self.assertFalse(self.is_merging(worktree))
+
+    def test_a_failed_merge_worker_counts_a_try_and_its_why_reaches_the_comment(self):
+        epic, _, _ = self.conflicting_epic()
+
+        reported = self.report_merge_printed(epic, "--ended", "failed", "--why", "git refused the merge")
+
+        self.assertEqual(1, len(self.merge_actions(reported)))
+        self.assertEqual(1, self.merge_tries(epic))
+        self.assertIn("git refused the merge", "\n".join(self.texts(epic)))
+
+    def test_a_cut_off_merge_worker_counts_no_try_and_is_called_again(self):
+        epic, _, _ = self.conflicting_epic()
+
+        reported = self.report_merge_printed(epic, "--ended", "cut-off")
+
+        self.assertEqual(1, len(self.merge_actions(reported)))
+        self.assertEqual(0, self.merge_tries(epic))
+
+    def test_two_failed_merge_worker_tries_park_the_epic_with_the_human_label_and_a_question(self):
+        epic, _, printed = self.conflicting_epic()
+        [action] = self.merge_actions(printed)
+        self.report_merge_printed(epic, "--ended", "failed", "--why", "first")
+
+        parked = self.report_merge_printed(epic, "--ended", "failed", "--why", "second")
+
+        shown = self.shown(epic)
+        self.assertIn("human", shown["labels"])
+        self.assertEqual([], parked["actions"])
+        [question] = self.question_comments(epic)
+        self.assertIn("second", question)
+        self.assertIn("clash.txt", question)
+        options = json.loads(shown["metadata"]["question.options"])
+        self.assertGreaterEqual(len(options), 2)
+        self.assertIn(shown["metadata"]["question.recommended"], [option["name"] for option in options])
+        self.assertFalse(Path(action["worktree"]).exists())
+        self.assertEqual([], self.validation_runs_of(epic))
+
+    def test_the_second_try_may_be_a_done_report_with_no_merge_made(self):
+        epic, _, _ = self.conflicting_epic()
+        self.report_merge_printed(epic, "--ended", "failed", "--why", "first")
+
+        parked = self.report_merge_printed(epic)
+
+        self.assertIn("human", self.shown(epic)["labels"])
+        self.assertEqual([], self.merge_actions(parked))
+
+    def test_taking_the_human_label_off_gives_the_merge_worker_two_new_tries(self):
+        epic, _, _ = self.conflicting_epic()
+        self.report_merge_printed(epic, "--ended", "failed", "--why", "first")
+        self.report_merge_printed(epic, "--ended", "failed", "--why", "second")
+        fixture.run([self.bd, "label", "remove", epic, "human"], self.repo)
+
+        again = self.next_printed(epic)
+
+        self.assertEqual(1, len(self.merge_actions(again)))
+        self.assertEqual(0, self.merge_tries(epic))
+
+    def test_a_try_counted_earlier_is_forgotten_once_the_merge_is_validated(self):
+        epic, _, printed = self.conflicting_epic()
+        [action] = self.merge_actions(printed)
+        self.report_merge_printed(epic, "--ended", "failed", "--why", "first")
+        self.reconcile(Path(action["worktree"]), "clash.txt")
+
+        self.report_merge_printed(epic)
+
+        self.assertEqual(0, self.merge_tries(epic))
+
+    def test_a_report_for_an_epic_that_waits_on_no_merge_worker_is_refused(self):
+        epic, task, _ = self.finish_epic_but_for_the_last_report()
+        self.build_done(epic, task)
+
+        done = self.report_merge(epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("waits on no merge worker", done.stderr)
+
+    def test_a_report_for_an_epic_that_owes_no_merge_is_refused_although_a_validation_worktree_is_left(self):
+        epic, task, _ = self.finish_epic_but_for_the_last_report()
+        self.build_done(epic, task)
+        leftover = self.repo / ".worktrees" / f"validation-{epic}"
+        git(self.repo, "worktree", "add", "--detach", str(leftover), "main")
+        self.addCleanup(git, self.repo, "worktree", "remove", "--force", str(leftover))
+
+        done = self.report_merge(epic, "--ended", "failed", "--why", "nothing")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("waits on no merge worker", done.stderr)
+        self.assertEqual(0, self.merge_tries(epic))
 
 
 def git(repo: Path, *args: str) -> str:

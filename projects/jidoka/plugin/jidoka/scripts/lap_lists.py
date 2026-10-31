@@ -12,6 +12,7 @@ JSON list. The kind is the lap mod's kind of worker:
          cleanup, tidy, review or fix worker runs in a folder under the
          main checkout's .worktrees named for its stage and its epic. There
          the epic is the one the folder names, and there is no merge grant.
+         The validation worktree is the exception, as below.
          Any other folder names no epic.
   check  a validation or app check worker. Its list holds each app's `build`,
          `run` and `way_in` and the repo settings' `worker_commands`. The
@@ -29,7 +30,11 @@ any words but the long options in its `refusing` list, or an abbreviation of
 one, when it is `words`. The merge worker's grants are `git rebase <epic
 branch>`, `git rebase --abort` and `git -c core.editor=true rebase
 --continue` whole, `git add` of paths, and `git status`, `git diff` and
-`git log` without `--output`.
+`git log` without `--output`. The merge worker of a validation works in the
+validation worktree, a folder named for its epic, and only while the epic
+records that its validation owes a merge worker (`validation.merge`). Its
+grants are `git merge main`, `git merge --abort` and `git -c core.editor=true
+merge --continue` whole, with the same `git add` and looks.
 
 Repo settings that are missing add no app or worker commands. The lap list is
 three parts, read one by one: the repo settings' commands, the built-in list,
@@ -59,8 +64,11 @@ import repo_settings
 import review
 import rules
 import tidy
+import validation
+import validation_merge
 from commands import COMMAND_TIMEOUT_SECONDS, WORKTREE_FOLDER, CommandError, metadata_of
 from epic_reader import recorded_branch
+from pass_support import MAIN_BRANCH
 
 LAP = "lap"
 CHECK = "check"
@@ -96,12 +104,21 @@ def check_commands(settings: dict) -> list[str]:
             if command is not None]
 
 
-def merge_grant(epic_branch: str) -> list[Grant]:
-    whole = [f"git rebase {epic_branch}", "git rebase --abort", "git -c core.editor=true rebase --continue"]
+def grants(whole: list[str]) -> list[Grant]:
+    """The commands a merge worker may run whole, then `git add` of paths, then the looks at the conflicts."""
     looks = ["git status", "git diff", "git log"]
     return [*(Grant(command=command, then="nothing") for command in whole),
             Grant(command="git add", then="paths"),
             *(RefusingGrant(command=command, then="words", refusing=LOOKS_REFUSING) for command in looks)]
+
+
+def merge_grant(epic_branch: str) -> list[Grant]:
+    return grants([f"git rebase {epic_branch}", "git rebase --abort", "git -c core.editor=true rebase --continue"])
+
+
+def merge_main_grant() -> list[Grant]:
+    """What the merge worker of a validation may run in the validation worktree: merge main, and nothing more."""
+    return grants([f"git merge {MAIN_BRANCH}", "git merge --abort", "git -c core.editor=true merge --continue"])
 
 
 @dataclass(frozen=True)
@@ -123,15 +140,20 @@ def part_or(missing: str, fallback: Part, read: Callable[[], Part]) -> Part:
         return fallback
 
 
-def pass_epic(worktree: Path, main_tree: Path) -> str:
-    """The epic a pass worktree's folder names, or an empty string for a folder that is no pass worktree."""
+def epic_named_by(worktree: Path, main_tree: Path, prefixes: list[str]) -> str:
+    """The epic the worktree's folder names after one of the prefixes, or an empty string for any other folder."""
     folder = worktree.resolve()
     if folder.parent != (main_tree / WORKTREE_FOLDER).resolve():
         return ""
-    for prefix in PASS_PREFIXES:
+    for prefix in prefixes:
         if folder.name.startswith(prefix) and len(folder.name) > len(prefix):
             return folder.name[len(prefix):]
     return ""
+
+
+def pass_epic(worktree: Path, main_tree: Path) -> str:
+    """The epic a pass worktree's folder names, or an empty string for a folder that is no pass worktree."""
+    return epic_named_by(worktree, main_tree, PASS_PREFIXES)
 
 
 def lap_epic_part(worktree: Path, main_tree: Path) -> EpicPart:
@@ -146,10 +168,13 @@ def lap_epic_part(worktree: Path, main_tree: Path) -> EpicPart:
 
 
 def epic_part(worktree: Path, main_tree: Path) -> EpicPart:
-    epic = pass_epic(worktree, main_tree)
+    merging = epic_named_by(worktree, main_tree, [validation.WORKTREE_PREFIX])
+    epic = merging or pass_epic(worktree, main_tree)
     if not epic:
         return lap_epic_part(worktree, main_tree)
-    return EpicPart(granted=[], extra=rules.extra_commands_of(rules.epic_to_write(epic, main_tree)))
+    shown = rules.epic_to_write(epic, main_tree)
+    granted = merge_main_grant() if merging and validation_merge.owes_merge(shown) else []
+    return EpicPart(granted=granted, extra=rules.extra_commands_of(shown))
 
 
 def repo_part(home: Path, main_tree: Path) -> list[str]:

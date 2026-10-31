@@ -1,9 +1,10 @@
 """The stages of a finished epic's pass, in their order, and the report modes that settle them.
 
-The order is test cleanup, tidy, the review's fix, review, validation, and the run of the holdouts that validation
-leaves waiting. The scheduler asks this module to take the epic through its pass and which stage a `report-*` mode
-settles, and it prints what the module returns and what a mode's `settle` returns. A stage's own work around its
-settling sits behind its mode's `settle`, so the scheduler reads no stage by name.
+The order is test cleanup, tidy, the review's fix, review, the merge worker of a validation whose merge of main
+conflicts, which `report-merge` settles, validation, and the run of the holdouts that validation leaves waiting.
+The scheduler asks this module to take the epic through its pass and which stage a `report-*` mode settles, and it
+prints what the module returns and what a mode's `settle` returns. A stage's own work around its settling sits behind
+its mode's `settle`, so the scheduler reads no stage by name.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ import cleanup
 import holdouts_run
 import review
 import tidy
+import validation_merge
 from epic_reader import Epic
 from epics import state_of
 
@@ -63,13 +65,17 @@ REPORT_MODES = {
     "report-holdouts": ReportMode("validation", HOLDOUTS_STAGE,
                                   "take the validation worker's report on the epic's holdouts, and print the next "
                                   "moves", holdouts_run.settle_holdouts, count_ended_holdouts_run),
+    "report-merge": ReportMode("merge", validation_merge.STAGE,
+                               "take the report of the merge worker that merges main into the epic branch for "
+                               "validation, and print the next moves", validation_merge.settle,
+                               validation_merge.count_ended_run),
 }
 
 
 @dataclass(frozen=True)
 class PassRun:
-    """What a finished epic's pass did in one call: the actions of the stage it still owes, or else the validation it
-    ran and the run of the holdouts that validation left waiting."""
+    """What a finished epic's pass did in one call. It holds the actions of the stage the epic still owes, or else the
+    validation it ran and the run of the holdouts that validation left waiting."""
     actions: list[dict]
     validated: holdouts_run.ValidationResult | None
 
@@ -79,8 +85,8 @@ class PassRun:
 
 
 def run_pass(epic: Epic, settings: dict, home: Path, main_tree: Path) -> PassRun:
-    """Takes a finished epic through its pass in order: the first stage it still owes, and when it owes none, its
-    validation."""
+    """Takes a finished epic through its pass in order. It runs the first stage the epic still owes, and when it owes
+    none, its validation."""
     actions = pass_stage_actions(epic, settings, home, main_tree)
     if actions:
         return PassRun(actions, None)
@@ -98,8 +104,8 @@ def holdouts_owed(epic: Epic, home: Path, main_tree: Path) -> holdouts_run.Holdo
 
 def pass_stage_actions(epic: Epic, settings: dict, home: Path, main_tree: Path) -> list[dict]:
     """The actions of the first stage of the pass that a finished epic still owes, in the order test cleanup, tidy,
-    fix, review; empty when only validation is left. A fix owed comes before a review, so the fix of one review is
-    never reviewed as the next one's diff."""
+    fix, review, the merge worker of validation; empty when only validation is left. A fix owed comes before a review,
+    so the fix of one review is never reviewed as the next one's diff."""
     branch = epic.branch
     cleaned = cleanup.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
     if cleaned is not None:
@@ -111,4 +117,7 @@ def pass_stage_actions(epic: Epic, settings: dict, home: Path, main_tree: Path) 
     if fixing is not None:
         return [fixing.fields()]
     reviewing = review.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
-    return reviewing.actions() if reviewing is not None else []
+    if reviewing is not None:
+        return reviewing.actions()
+    merging = validation_merge.to_run(epic.id, epic.shown, branch, home, main_tree)
+    return [merging.fields()] if merging is not None else []
