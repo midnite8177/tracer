@@ -444,6 +444,29 @@ class SettingsRefusalTests(OnboardingFixture, unittest.TestCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
 
+    def test_stores_an_apps_spec_time_limit_and_takes_an_app_that_leaves_it_out_as_having_none(self):
+        settings = tracer_settings()
+        settings["apps"][0].update({"spec_seconds_limit": 90})
+
+        done = self.write(self.repo, settings)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        apps = json.loads(self.show(self.repo).stdout)["apps"]
+        self.assertEqual([90, None, None], [app.get("spec_seconds_limit") for app in apps])
+
+    def test_refuses_a_spec_time_limit_that_is_not_a_number_of_seconds_above_zero(self):
+        for limit in (0, -5, "fast", True):
+            with self.subTest(limit=limit):
+                settings = tracer_settings()
+                settings["apps"][0].update({"spec_seconds_limit": limit})
+
+                done = self.write(self.repo, settings)
+
+                self.assertEqual(1, done.returncode)
+                self.assertIn("'tracer-ui' has a spec_seconds_limit that is neither a number of seconds above zero "
+                              "nor null", done.stderr)
+                self.assertEqual([], self.stored_files())
+
     def test_refuses_spec_settings_that_do_not_fit_together(self):
         folder = "projects/tracer-ui/acceptance"
         cases = {

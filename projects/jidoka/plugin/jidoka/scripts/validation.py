@@ -1,13 +1,10 @@
 """Validation, the stage that takes a finished epic to the acceptance gate, or back to the build.
 
-The scheduler calls it through holdouts_run.validate once every task of an epic is closed. It cuts a
-detached worktree at .worktrees/validation-<epic> from the epic branch's
-head, merges main into it, and runs every command of the repo settings' full
-suite there, one after another, whatever an earlier command did. The full
-suite leaves out the hand-run tests, which validation never runs. The output
-of the commands goes to stderr. A merge that conflicts with main is aborted: the worktree stays at the epic branch's
-head for a merge worker, validation_merge.py decides whether the epic owes one and takes its report, and validation runs
-on the merge the worker finished. It refuses a worktree that holds no finished merge of main.
+The scheduler calls it through holdouts_run.validate once every task of an epic is closed. It runs every command of
+the repo settings' full suite, one after another, whatever an earlier command did, in the validation worktree, where
+validation_merge.py has merged main into the epic branch. The full suite leaves out the hand-run tests, which
+validation never runs. The output of the commands goes to stderr. It refuses a worktree that holds no finished merge
+of main.
 
 Under the merge lock, the one land.py and the merge gate take, validation
 then fast-forwards the epic branch to the merged head, so the next pass
@@ -21,14 +18,26 @@ each command. A command's figures come from its output, as the targeted
 tests read it: dotnet test's summary lines and unittest's "Ran N tests" and
 "skipped=N". Output in neither shape counts no tests and no skips.
 
+validation_specs.py plans the acceptance specs the epic's tasks record before the suite runs, so that a spec of an app
+the repo settings cannot run refuses at once. When every command passed, it runs them, side by side on the machine's
+free slots, in the same worktree. The epic records `validation.specs`, how many specs ran, and
+`validation.spec_seconds`, how long the run took, beside the suite's figures, and the comment gives them in a line of
+their own. The specs do not count in `validation.tests`. A suite that fails runs no spec.
+
+A spec run that took longer than the `spec_seconds_limit` of an app with specs in it is over the limit, as
+spec_time_limit.py says. The epic records the slowest specs in `validation.slow_specs`, and the comment lists them.
+`record` files nothing: its caller, `settle` or holdouts_run.validate, files the design finding that names the app's
+protocol driver, or adds the epic's sighting to the open one. An overrun does not fail the validation.
+
 Green ends the pass clean through pass_ledger.py and puts the epic at the acceptance gate through
 gate_items.reach_the_gate, which writes the gate comment. Validation owns the hand-run groups line of that comment,
 each group with the command that runs it.
 
 A red result ends the pass through pass_ledger.py, so the next pass starts
-with a test cleanup and a tidy again. Red files one task in the epic, with the failing commands and the end of
+with a test cleanup and a tidy again. A red suite files one task in the epic, with the failing commands and the end of
 their output, the track simple and the area of the first failing command's
-app. The scheduler then opens its lap, and the next pass begins.
+app. A red spec files one task in the epic for each failing spec, which names the spec, with the end of its output,
+the track simple and the spec's app. The scheduler then opens its lap, and the next pass begins.
 
 A caller that runs more checks after a green suite asks `run_suite` to keep the
 validation worktree, and records its own verdict through `record` instead of
@@ -46,21 +55,23 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import gate_items
-import merge_gate
 import pass_ledger
-import private_docs
+import spec_time_limit
 import targeted_tests
-from commands import capture, env_as_factory, head_of, run, run_test_command, set_metadata, unset_metadata
+import validation_merge
+import validation_specs
+from commands import env_as_factory, run, run_test_command, set_metadata, unset_metadata
 from epic_branch import required_head
 from epic_reader import VALIDATED_HEAD_KEY
 from epic_task import NewTask, file_task
 from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, PassError, move_epic_branch, worktree_at
-from report_text import tail_of
-from worktrees import cut_detached, remove_worktree, stage_without_scratch, stage_worktree
+from report_text import shortened_title, tail_of
+from worktrees import remove_worktree
 from settings_reader import HandRunGroup, SettingsError, apps_of, stored_hand_run_groups
+from spec_time_limit import SLOW_SPECS_KEY, OverTheLimit
+from validation_specs import NO_SPECS, SpecFigures, SpecsRun, TimedSpecRun
 
-WORKTREE_PREFIX = "validation-"
 DOTNET_SKIPPED = re.compile(r"[A-Za-z]+!\s+-\s+Failed:\s*\d+,\s*Passed:\s*\d+,\s*Skipped:\s*(\d+),\s*Total:\s*\d+")
 UNITTEST_SKIPPED = re.compile(r"^(?:OK|FAILED) \([^)]*\bskipped=(\d+)", re.MULTILINE)
 UNKNOWN_FIGURES = "no test count in its output"
@@ -69,7 +80,8 @@ RUNS_KEY = "validation.runs"
 TESTS_KEY = "validation.tests"
 SKIPPED_KEY = "validation.skipped"
 SECONDS_KEY = "validation.seconds"
-MERGE_KEY = "validation.merge"
+SPECS_KEY = "validation.specs"
+SPEC_SECONDS_KEY = "validation.spec_seconds"
 PASS = "pass"
 FAIL = "fail"
 
@@ -107,15 +119,18 @@ class CommandRun:
 
 @dataclass(frozen=True)
 class Validated:
-    """What a validation did: the commit it validated, each command's run, and the tasks it filed when red. Its
-    result is the suite's own, pass or fail."""
+    """What a validation did: the commit it validated, each command's run, the run of the acceptance specs, the apps
+    whose specs ran over their time limit, and the tasks it filed when red. Its result is the suite's and the specs'
+    own, pass or fail; a spec run over the limit does not fail it."""
     head: str
     runs: list[CommandRun]
+    specs: SpecsRun
+    slow: list[OverTheLimit]
     filed: list[str]
 
     @property
     def green(self) -> bool:
-        return all(each.passed for each in self.runs)
+        return all(each.passed for each in self.runs) and self.specs.passed
 
     @property
     def result(self) -> str:
@@ -126,7 +141,7 @@ class Validated:
         return "Validation passed." if self.green else "Validation failed."
 
     def fields(self) -> dict:
-        return fields_of(self.result, self.head, self.runs, self.filed)
+        return fields_of(self.result, self.head, self.runs, self.specs.figures, self.filed)
 
 
 @dataclass(frozen=True)
@@ -150,10 +165,20 @@ def total_seconds(runs: list[CommandRun]) -> float:
     return round(sum(each.seconds for each in runs), 3)
 
 
-def fields_of(result: str, head: str, runs: list[CommandRun], filed: list[str]) -> dict:
+def fields_of(result: str, head: str, runs: list[CommandRun], specs: SpecFigures, filed: list[str]) -> dict:
     """The fields the scheduler prints for a validation, whoever settled its result."""
     return {"result": result, "head": head, "tests": total_tests(runs), "skipped": total_skipped(runs),
-            "seconds": total_seconds(runs), "filed": filed[0] if filed else None, "filed_all": filed}
+            "seconds": total_seconds(runs), "specs": specs.count, "spec_seconds": specs.seconds,
+            "filed": filed[0] if filed else None, "filed_all": filed}
+
+
+def spec_figures_of(metadata: dict) -> SpecFigures:
+    """The figures of the spec run a validation recorded on the epic; none when it recorded no spec run."""
+    try:
+        return SpecFigures(int(metadata.get(SPECS_KEY) or 0), float(metadata.get(SPEC_SECONDS_KEY) or 0))
+    except (ValueError, TypeError) as error:
+        raise ValidationError(f"the {SPECS_KEY} and {SPEC_SECONDS_KEY} metadata of the epic cannot be read: "
+                              f"{error!r}") from error
 
 
 def suite_commands(settings: dict) -> list[SuiteCommand]:
@@ -186,103 +211,11 @@ def run_command(suite: SuiteCommand, worktree: Path) -> CommandRun:
                       output)
 
 
-def worktree_of(epic: str, main_tree: Path) -> Path:
-    return stage_worktree(WORKTREE_PREFIX, epic, main_tree)
-
-
-def is_merging(path: Path) -> bool:
-    """True when the worktree is in the middle of a merge, with conflicts to resolve or a merge to commit."""
-    return capture(["git", "rev-parse", "--quiet", "--verify", "MERGE_HEAD"], path, None).returncode == 0
-
-
-def unmerged_files(path: Path) -> list[str]:
-    return run(["git", "diff", "--name-only", "--diff-filter=U"], path, None).split()
-
-
-def back_to(path: Path, head: str) -> None:
-    """Puts the validation worktree back at the head with no merge begun and nothing left of a worker's edits, apart
-    from the scratch folder."""
-    env = env_as_factory()
-    capture(["git", "merge", "--abort"], path, env)
-    run(["git", "reset", "--quiet", "--hard", head], path, env)
-    run(["git", "clean", "--quiet", "--force", "-d"], path, env)
-
-
-def finished_merge(path: Path, epic_head: str, main_tree: Path) -> bool:
-    """True when the validation worktree holds the epic head and main's head with no merge in progress, whether a merge
-    worker committed the merge or main was already in the epic branch."""
-    if not path.is_dir():
-        return False
-    head = head_of("HEAD", path)
-    base = head_of(f"refs/heads/{MAIN_BRANCH}", main_tree)
-    if head is None or base is None or is_merging(path):
-        return False
-    return merge_gate.contains(epic_head, head, main_tree) and merge_gate.contains(base, head, main_tree)
-
-
-def fold_into_merge(path: Path, epic_head: str) -> None:
-    """Amends the merge commit with whatever a merge worker left outside it, except the scratch folder. The epic head
-    itself is never amended."""
-    if head_of("HEAD", path) != epic_head and stage_without_scratch(path):
-        run(["git", "commit", "--quiet", "--amend", "--no-edit"], path, env_as_factory())
-
-
-def conflicting_files(path: Path, epic_head: str) -> list[str]:
-    """The files that merging main into the epic head conflicts in, found in the validation worktree, which is left at
-    the epic head. Empty when the merge goes through."""
-    back_to(path, epic_head)
-    try:
-        targeted_tests.bring_in_base_branch(MAIN_BRANCH, path, targeted_tests.Integration.MERGE)
-    except targeted_tests.MergeConflict as conflict:
-        return conflict.files
-    except targeted_tests.TestRunError:
-        return []
-    back_to(path, epic_head)
-    return []
-
-
-def merge_main(epic: str, epic_head: str, home: Path, main_tree: Path) -> list[str]:
-    """Cuts the validation worktree afresh from the epic head and merges main into it; returns the files that conflict.
-
-    A merge that goes through leaves the worktree at the merge. One that conflicts is aborted, and the worktree stays at
-    the epic head with no merge begun, for a merge worker.
-    """
-    path = worktree_of(epic, main_tree)
-    if path.exists():
-        run(["git", "worktree", "remove", "--force", str(path)], main_tree, None)
-    try:
-        cut_detached(path, epic_head, home, main_tree)
-    except private_docs.ClashError as error:
-        raise ValidationError(str(error)) from error
-    try:
-        targeted_tests.bring_in_base_branch(MAIN_BRANCH, path, targeted_tests.Integration.MERGE)
-    except targeted_tests.MergeConflict as conflict:
-        worktree_at(path, epic_head, home, main_tree)
-        return conflict.files
-    except targeted_tests.TestRunError as error:
-        remove_worktree(path, main_tree)
-        raise ValidationError(str(error)) from error
-    if head_of("HEAD", path) is None:
-        remove_worktree(path, main_tree)
-        raise ValidationError(f"{path} has no commit after the merge of {MAIN_BRANCH}")
-    return []
-
-
-def merged_worktree(epic: str, epic_head: str, main_tree: Path) -> tuple[Path, str]:
-    """The validation worktree where main is merged into the epic branch, and its head. Refuses when the worktree holds
-    no such merge, which validation_merge.to_run settles before validation runs."""
-    path = worktree_of(epic, main_tree)
-    head = head_of("HEAD", path) if finished_merge(path, epic_head, main_tree) else None
-    if head is None:
-        raise ValidationError(f"{path} holds no finished merge of {MAIN_BRANCH} into the epic branch, so {epic} was not "
-                              "validated. Run the scheduler again")
-    return path, head
-
-
-def figures_lines(head: str, runs: list[CommandRun]) -> list[str]:
+def figures_lines(head: str, runs: list[CommandRun], specs: SpecFigures) -> list[str]:
+    spec_line = [f"Run side by side, {specs.count} acceptance specs took {specs.seconds} s."] if specs.count else []
     return [f"Validation of {head}: {total_tests(runs)} tests, {total_skipped(runs)} skipped, "
             f"{total_seconds(runs)} s.",
-            *(f"- {each.suite.app}: {each.suite.command}, {each.figures()}" for each in runs)]
+            *(f"- {each.suite.app}: {each.suite.command}, {each.figures()}" for each in runs), *spec_line]
 
 
 def hand_run_lines(hand_run: list[HandRunGroup]) -> list[str]:
@@ -314,16 +247,21 @@ def runs_of(value: object) -> list[CommandRun]:
 def record(epic: str, validated: Validated, headline: str, result: str, more_metadata: list[str],
            main_tree: Path) -> None:
     """Comments the headline and the figures on the epic and records the validation, with `result` as its result and
-    `more_metadata` written in the same update. A validated merge owes no merge worker, so the update takes the merge
-    marker off."""
+    `more_metadata` written in the same update, which also takes the merge marker off. It files nothing."""
     env = env_as_factory()
-    run(["bd", "comment", epic, "\n".join([headline, *figures_lines(validated.head, validated.runs)])], main_tree, env)
+    figures = validated.specs.figures
+    slow_lines = spec_time_limit.lines_of(validated.slow)
+    run(["bd", "comment", epic,
+         "\n".join([headline, *figures_lines(validated.head, validated.runs, figures), *slow_lines])], main_tree, env)
+    slow_metadata = (set_metadata((SLOW_SPECS_KEY, spec_time_limit.as_text(validated.slow))) if validated.slow
+                     else unset_metadata(SLOW_SPECS_KEY))
     run(["bd", "update", epic, *set_metadata((RESULT_KEY, result), (VALIDATED_HEAD_KEY, validated.head),
                                              (SECONDS_KEY, total_seconds(validated.runs)),
                                              (TESTS_KEY, total_tests(validated.runs)),
                                              (SKIPPED_KEY, total_skipped(validated.runs)),
-                                             (RUNS_KEY, runs_as_text(validated.runs))), *more_metadata,
-        *unset_metadata(MERGE_KEY)], main_tree, env)
+                                             (SPECS_KEY, figures.count), (SPEC_SECONDS_KEY, figures.seconds),
+                                             (RUNS_KEY, runs_as_text(validated.runs))), *slow_metadata,
+        *more_metadata, *validation_merge.marker_cleared()], main_tree, env)
 
 
 def reach_the_gate(epic: str, branch: str, head: str, figures: list[str], hand_run: list[HandRunGroup],
@@ -353,22 +291,45 @@ def file_failure(epic: str, failed: list[CommandRun], main_tree: Path) -> str:
     return file_task(epic, task, None, env_as_factory(), main_tree)
 
 
+def spec_failure_description(failed: TimedSpecRun) -> str:
+    return "\n".join(["## What", "",
+                      f"Validation ran the acceptance spec \"{failed.name}\" of the {failed.app} app on the epic branch "
+                      f"after it merged {MAIN_BRANCH}, and it failed. The end of its output:", "",
+                      "```", tail_of(failed.output), "```", "",
+                      "## Demo", "", f"The spec \"{failed.name}\" passes on the epic branch.", "",
+                      "## Seams", "", f"The spec \"{failed.name}\", run alone with the {failed.app} app's spec command "
+                      "from the repo root."])
+
+
+def file_spec_failure(epic: str, failed: TimedSpecRun, main_tree: Path) -> str:
+    """Files the task that names the failing spec, with the track and area the scheduler needs to open its lap."""
+    task = NewTask(shortened_title(f"Make the spec pass: {failed.name}"), spec_failure_description(failed), failed.app,
+                   SIMPLE_TRACK)
+    return file_task(epic, task, None, env_as_factory(), main_tree)
+
+
 def run_suite(epic: str, branch: str, settings: dict, home: Path, main_tree: Path, keep_when_green: bool) -> SuiteRun:
     """Validates the epic branch merged with main, moves the branch there, and records nothing.
 
-    The worktree stays, cut again at the merged head, when `keep_when_green` is set and every command passed.
+    The acceptance specs are planned before the suite, so that settings which cannot run them refuse at once, and run
+    after it, only when every command passed. The worktree stays, cut again at the merged head, when `keep_when_green`
+    is set and the suite and the specs passed.
     """
     commands = suite_commands(settings)
     hand_run = hand_run_groups(settings)
+    spec_jobs = validation_specs.specs_to_run(epic, settings, main_tree)
     epic_head = required_head(branch, main_tree, ValidationError)
-    worktree, merged_head = merged_worktree(epic, epic_head, main_tree)
+    worktree, merged_head = validation_merge.merged_worktree(epic, epic_head, main_tree)
     try:
         runs = [run_command(suite, worktree) for suite in commands]
+        spec_run = NO_SPECS
+        if all(each.passed for each in runs):
+            spec_run = validation_specs.run_all(spec_jobs, epic, worktree, home, main_tree)
         move_epic_branch(branch, epic_head, merged_head, home, main_tree)
     except BaseException:
         remove_worktree(worktree, main_tree)
         raise
-    validated = Validated(merged_head, runs, [])
+    validated = Validated(merged_head, runs, spec_run, spec_time_limit.over_the_limit(settings, spec_run), [])
     if keep_when_green and validated.green:
         worktree_at(worktree, merged_head, home, main_tree)
         return SuiteRun(validated, hand_run, worktree)
@@ -380,10 +341,14 @@ def settle(epic: str, branch: str, suite: SuiteRun, main_tree: Path) -> Validate
     """Records the suite's own verdict on the epic, then puts a green epic at the gate and files a task for a red one."""
     validated = suite.validated
     record(epic, validated, validated.headline, validated.result, [], main_tree)
+    spec_time_limit.file_design_findings(epic, validated.slow, main_tree)
     if validated.green:
-        reach_the_gate(epic, branch, validated.head, figures_lines(validated.head, validated.runs), suite.hand_run,
+        reach_the_gate(epic, branch, validated.head,
+                       figures_lines(validated.head, validated.runs, validated.specs.figures), suite.hand_run,
                        main_tree)
         return validated
-    filed = file_failure(epic, [each for each in validated.runs if not each.passed], main_tree)
+    failed_commands = [each for each in validated.runs if not each.passed]
+    filed = [file_failure(epic, failed_commands, main_tree)] if failed_commands else []
+    filed += [file_spec_failure(epic, each, main_tree) for each in validated.specs.failed]
     pass_ledger.end_pass(epic, main_tree)
-    return Validated(validated.head, validated.runs, [filed])
+    return Validated(validated.head, validated.runs, validated.specs, validated.slow, filed)

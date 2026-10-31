@@ -68,7 +68,6 @@ import review
 import rules
 import specs
 import tidy
-import validation
 import validation_merge
 from commands import COMMAND_TIMEOUT_SECONDS, WORKTREE_FOLDER, CommandError, metadata_of
 from epic_reader import recorded_branch
@@ -184,7 +183,7 @@ def lap_epic_part(worktree: Path, main_tree: Path) -> EpicPart:
 
 
 def epic_part(worktree: Path, main_tree: Path) -> EpicPart:
-    merging = epic_named_by(worktree, main_tree, [validation.WORKTREE_PREFIX])
+    merging = epic_named_by(worktree, main_tree, [validation_merge.WORKTREE_PREFIX])
     epic = merging or pass_epic(worktree, main_tree)
     if not epic:
         return lap_epic_part(worktree, main_tree)

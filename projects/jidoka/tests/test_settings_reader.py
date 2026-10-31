@@ -16,7 +16,7 @@ from settings_reader import (App, HandRun, SettingsError, app_named, apps_of,  #
 def stored_app(**changes) -> dict:
     app = {"name": "tool", "kind": "program", "way_in": "run tool", "build": "make", "run": "./tool",
            "test": "pytest", "test_full": "-q", "test_target": "-k", "hand_run": [], "acceptance": "specs",
-           "spec_command": "pytest specs", "spec_target": "-k <spec>"}
+           "spec_command": "pytest specs", "spec_target": "-k <spec>", "spec_seconds_limit": 12.5}
     return {**app, **changes}
 
 
@@ -28,7 +28,7 @@ class AppsOfTests(unittest.TestCase):
         self.assertEqual(
             [App(name="tool", kind="program", build="make", run="./tool", test="pytest", test_full="-q",
                  test_target="-k", way_in="run tool", acceptance="specs",
-                 spec_command="pytest specs", spec_target="-k <spec>",
+                 spec_command="pytest specs", spec_target="-k <spec>", spec_seconds_limit=12.5,
                  hand_run=(HandRun(name="slow", exclusion="-m slow", command="pytest -m slow",
                                    reason="it takes minutes"),))],
             apps_of(settings))
@@ -36,11 +36,12 @@ class AppsOfTests(unittest.TestCase):
     def test_gives_none_for_what_an_app_has_not_and_no_hand_run_groups(self):
         settings = {"apps": [stored_app(build=None, run=None, test=None, test_full=None, test_target=None,
                                         way_in=None, acceptance=None, spec_command=None,
-                                        spec_target=None)]}
+                                        spec_target=None, spec_seconds_limit=None)]}
 
         self.assertEqual(
             [App(name="tool", kind="program", build=None, run=None, test=None, test_full=None, test_target=None,
-                 way_in=None, acceptance=None, spec_command=None, spec_target=None, hand_run=())],
+                 way_in=None, acceptance=None, spec_command=None, spec_target=None, spec_seconds_limit=None,
+                 hand_run=())],
             apps_of(settings))
 
     def test_keeps_the_order_of_the_apps_and_leaves_out_an_entry_that_is_not_an_object(self):

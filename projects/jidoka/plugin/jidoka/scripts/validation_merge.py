@@ -24,23 +24,30 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import caps
+import merge_gate
 import notify
 import park
-import validation
-from commands import (NONE_YET, SCRATCH_FOLDER, env_as_factory, head_of, metadata_of, read_bead, run, set_metadata,
-                      unset_metadata)
+import private_docs
+import targeted_tests
+from commands import (NONE_YET, SCRATCH_FOLDER, capture, env_as_factory, head_of, metadata_of, read_bead, run,
+                      set_metadata, unset_metadata)
 from epic_branch import branch_head, required_head
 from epic_reader import recorded_branch
-from pass_support import MAIN_BRANCH, count_of, park_epic
-from validation import MERGE_KEY, ValidationError
-from worktrees import remove_worktree
+from pass_support import MAIN_BRANCH, PassError, count_of, park_epic, worktree_at
+from worktrees import cut_detached, remove_worktree, stage_without_scratch, stage_worktree, unmerged_files
 
+WORKTREE_PREFIX = "validation-"
+MERGE_KEY = "validation.merge"
 TRIES_KEY = "validation.mergetries"
 STAGE = "validation-merge"
 SCRIPT = "scheduler"
 MERGE_BY_HAND = "Merge main by hand"
 RUN_AGAIN = "Run the merge worker again"
 OPTIONS = [{"name": MERGE_BY_HAND, "confidence": 60}, {"name": RUN_AGAIN, "confidence": 40}]
+
+
+class MergeError(PassError):
+    """A reason the merge of a validation writes nothing more, worded for the person who reads stderr."""
 
 
 @dataclass(frozen=True)
@@ -89,6 +96,102 @@ class Waiting:
     worktree: Path
 
 
+def worktree_of(epic: str, main_tree: Path) -> Path:
+    """The validation worktree of the epic, where main is merged into the epic branch and the suite then runs."""
+    return stage_worktree(WORKTREE_PREFIX, epic, main_tree)
+
+
+def is_merging(path: Path) -> bool:
+    """True when the worktree is in the middle of a merge, with conflicts to resolve or a merge to commit."""
+    return capture(["git", "rev-parse", "--quiet", "--verify", "MERGE_HEAD"], path, None).returncode == 0
+
+
+def back_to(path: Path, head: str) -> None:
+    """Puts the validation worktree back at the head with no merge begun and nothing left of a worker's edits, apart
+    from the scratch folder."""
+    env = env_as_factory()
+    capture(["git", "merge", "--abort"], path, env)
+    run(["git", "reset", "--quiet", "--hard", head], path, env)
+    run(["git", "clean", "--quiet", "--force", "-d"], path, env)
+
+
+def finished_merge(path: Path, epic_head: str, main_tree: Path) -> bool:
+    """True when the validation worktree holds the epic head and main's head with no merge in progress, whether a merge
+    worker committed the merge or main was already in the epic branch."""
+    if not path.is_dir():
+        return False
+    head = head_of("HEAD", path)
+    base = head_of(f"refs/heads/{MAIN_BRANCH}", main_tree)
+    if head is None or base is None or is_merging(path):
+        return False
+    return merge_gate.contains(epic_head, head, main_tree) and merge_gate.contains(base, head, main_tree)
+
+
+def merged_worktree(epic: str, epic_head: str, main_tree: Path) -> tuple[Path, str]:
+    """The validation worktree where main is merged into the epic branch, and its head. Refuses when the worktree holds
+    no such merge, which `to_run` settles before validation runs."""
+    path = worktree_of(epic, main_tree)
+    head = head_of("HEAD", path) if finished_merge(path, epic_head, main_tree) else None
+    if head is None:
+        raise MergeError(f"{path} holds no finished merge of {MAIN_BRANCH} into the epic branch, so {epic} was not "
+                         "validated. Run the scheduler again")
+    return path, head
+
+
+def marker_cleared() -> list[str]:
+    """The arguments of a `bd update` that take the merge marker off the epic, because a validated merge owes no merge
+    worker."""
+    return unset_metadata(MERGE_KEY)
+
+
+def fold_into_merge(path: Path, epic_head: str) -> None:
+    """Amends the merge commit with whatever a merge worker left outside it, except the scratch folder. The epic head
+    itself is never amended."""
+    if head_of("HEAD", path) != epic_head and stage_without_scratch(path):
+        run(["git", "commit", "--quiet", "--amend", "--no-edit"], path, env_as_factory())
+
+
+def conflicting_files(path: Path, epic_head: str) -> list[str]:
+    """The files that merging main into the epic head conflicts in, found in the validation worktree, which is left at
+    the epic head. Empty when the merge goes through."""
+    back_to(path, epic_head)
+    try:
+        targeted_tests.bring_in_base_branch(MAIN_BRANCH, path, targeted_tests.Integration.MERGE)
+    except targeted_tests.MergeConflict as conflict:
+        return conflict.files
+    except targeted_tests.TestRunError:
+        return []
+    back_to(path, epic_head)
+    return []
+
+
+def merge_main(epic: str, epic_head: str, home: Path, main_tree: Path) -> list[str]:
+    """Cuts the validation worktree afresh from the epic head and merges main into it; returns the files that conflict.
+
+    A merge that goes through leaves the worktree at the merge. One that conflicts is aborted, and the worktree stays at
+    the epic head with no merge begun, for a merge worker.
+    """
+    path = worktree_of(epic, main_tree)
+    if path.exists():
+        run(["git", "worktree", "remove", "--force", str(path)], main_tree, None)
+    try:
+        cut_detached(path, epic_head, home, main_tree)
+    except private_docs.ClashError as error:
+        raise MergeError(str(error)) from error
+    try:
+        targeted_tests.bring_in_base_branch(MAIN_BRANCH, path, targeted_tests.Integration.MERGE)
+    except targeted_tests.MergeConflict as conflict:
+        worktree_at(path, epic_head, home, main_tree)
+        return conflict.files
+    except targeted_tests.TestRunError as error:
+        remove_worktree(path, main_tree)
+        raise MergeError(str(error)) from error
+    if head_of("HEAD", path) is None:
+        remove_worktree(path, main_tree)
+        raise MergeError(f"{path} has no commit after the merge of {MAIN_BRANCH}")
+    return []
+
+
 def owes_merge(shown: dict) -> bool:
     """True when the epic records that its validation waits on a merge worker."""
     return MERGE_KEY in metadata_of(shown)
@@ -104,16 +207,15 @@ def owed(merge: MergeToRun, shown: dict, main_tree: Path) -> MergeToRun:
 def to_run(epic: str, shown: dict, branch: str, home: Path, main_tree: Path) -> MergeToRun | None:
     """The merge a merge worker owes validation, or None when main is merged into the epic branch in the validation
     worktree. It makes that merge when the worktree holds none, and a merge that conflicts is the one it returns."""
-    epic_head = required_head(branch, main_tree, ValidationError)
+    epic_head = required_head(branch, main_tree, MergeError)
     base = head_of(f"refs/heads/{MAIN_BRANCH}", main_tree) or ""
-    path = validation.worktree_of(epic, main_tree)
+    path = worktree_of(epic, main_tree)
     if path.exists():
-        if validation.finished_merge(path, epic_head, main_tree):
+        if finished_merge(path, epic_head, main_tree):
             return None
-        if validation.is_merging(path):
-            return owed(MergeToRun(epic, branch, epic_head, base, path, validation.unmerged_files(path)), shown,
-                        main_tree)
-    conflicts = validation.merge_main(epic, epic_head, home, main_tree)
+        if is_merging(path):
+            return owed(MergeToRun(epic, branch, epic_head, base, path, unmerged_files(path)), shown, main_tree)
+    conflicts = merge_main(epic, epic_head, home, main_tree)
     if not conflicts:
         return None
     return owed(MergeToRun(epic, branch, epic_head, base, path, conflicts), shown, main_tree)
@@ -121,11 +223,11 @@ def to_run(epic: str, shown: dict, branch: str, home: Path, main_tree: Path) -> 
 
 def waiting_on(epic: str, shown: dict, main_tree: Path) -> Waiting:
     """The merge the epic waits on; refuses when the epic records none or its worktree is gone."""
-    worktree = validation.worktree_of(epic, main_tree)
+    worktree = worktree_of(epic, main_tree)
     branch = recorded_branch(shown)
     head = branch_head(branch, main_tree) if branch else None
     if head is None or not worktree.is_dir() or not owes_merge(shown):
-        raise ValidationError(f"{epic} waits on no merge worker, so nothing was written")
+        raise MergeError(f"{epic} waits on no merge worker, so nothing was written")
     return Waiting(branch, head, worktree)
 
 
@@ -142,7 +244,7 @@ def question_text(epic: str, waiting: Waiting, tries: int, files: list[str], why
 
 
 def park_at_the_cap(epic: str, waiting: Waiting, tries: int, why: str, main_tree: Path) -> None:
-    files = validation.conflicting_files(waiting.worktree, waiting.head)
+    files = conflicting_files(waiting.worktree, waiting.head)
     park_epic(epic, question_text(epic, waiting, tries, files, why),
               {TRIES_KEY: str(NONE_YET), park.OPTIONS_KEY: json.dumps(OPTIONS), park.RECOMMENDED_KEY: MERGE_BY_HAND},
               main_tree)
@@ -157,7 +259,7 @@ def count_try(epic: str, shown: dict, waiting: Waiting, why: str, main_tree: Pat
         f"Merge try {tries} of {caps.MERGE_TRY_CAP} failed: {why}. The merge worker starts again.",
         set_metadata((TRIES_KEY, tries)), main_tree)
     if not parked:
-        validation.back_to(waiting.worktree, waiting.head)
+        back_to(waiting.worktree, waiting.head)
     return parked
 
 
@@ -175,12 +277,12 @@ def settle(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) 
     """Takes the merge worker's done: a finished merge waits for the next validation, and anything else is a try."""
     shown = read_bead(epic, main_tree)
     waiting = waiting_on(epic, shown, main_tree)
-    if not validation.finished_merge(waiting.worktree, waiting.head, main_tree):
+    if not finished_merge(waiting.worktree, waiting.head, main_tree):
         why = f"the validation worktree holds no finished merge of {MAIN_BRANCH} into {waiting.branch}"
         if count_try(epic, shown, waiting, why, main_tree):
             notify.announce(notify.EPIC_PARKED, epic, home, main_tree, SCRIPT)
         return Merged(False, None)
-    validation.fold_into_merge(waiting.worktree, waiting.head)
+    fold_into_merge(waiting.worktree, waiting.head)
     if count_of(shown, TRIES_KEY):
         run(["bd", "update", epic, *unset_metadata(TRIES_KEY)], main_tree, env_as_factory())
     return Merged(True, head_of("HEAD", waiting.worktree))

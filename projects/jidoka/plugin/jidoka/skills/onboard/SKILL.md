@@ -129,7 +129,9 @@ The settings:
   "DisplayName~<spec>"`). Read them from how the folder's specs run; if the
   folder has no runner yet, record both as `null`. An app that leaves them
   out has none, and the script refuses a `spec_command` without an
-  acceptance folder or without a `spec_target`.
+  acceptance folder or without a `spec_target`. `spec_seconds_limit` is how
+  many seconds a validation's run of the app's specs may take, a number above
+  zero, or `null` for no limit; a repo does not hold it, so ask the user.
 - An app with no tests, such as an editor with no test project, has `null`
   for `test`, `test_target` and `test_full`, and `[]` for `hand_run`.
   Landing says it has no tests and runs the other apps' full suites.

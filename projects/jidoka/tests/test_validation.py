@@ -1,7 +1,11 @@
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -10,6 +14,13 @@ sys.path.insert(0, str(HERE))
 
 import jidoka_fixture as fixture  # noqa: E402
 import test_scheduler  # noqa: E402
+
+sys.path.insert(0, str(test_scheduler.PLUGIN / "scripts"))
+
+import heartbeat  # noqa: E402
+import slots  # noqa: E402
+import spec_time_limit  # noqa: E402
+from validation_specs import SpecsRun, TimedSpecRun  # noqa: E402
 
 HOLDOUTS = test_scheduler.PLUGIN / "scripts" / "holdouts.py"
 SCENARIO = "Run `till total` with items 3.50 and 4.25, then read the line the till prints."
@@ -677,6 +688,395 @@ class ValidationMergeConflictTests(ValidationCase):
         self.assertEqual(1, done.returncode)
         self.assertIn("waits on no merge worker", done.stderr)
         self.assertEqual(0, self.merge_tries(epic))
+
+
+SPEC_RUNNER = """\
+import os
+import sys
+import time
+from pathlib import Path
+folder = Path(sys.argv[1])
+name = sys.argv[3]
+mine = folder / "running" / f"{os.getpid()}"
+mine.parent.mkdir(exist_ok=True)
+mine.write_text(name, encoding="utf-8")
+slot = os.environ["JIDOKA_SLOT"]
+on_slot = folder / "on-slot" / slot
+on_slot.parent.mkdir(exist_ok=True)
+on_slot.touch(exist_ok=False)
+with open(folder / "peaks.log", "a", encoding="utf-8") as log:
+    log.write(f"{len(list(mine.parent.iterdir()))}\\n")
+with open(folder / "specs.log", "a", encoding="utf-8") as log:
+    log.write(name + "\\n")
+with open(folder / "slots.log", "a", encoding="utf-8") as log:
+    log.write(slot + "\\n")
+pause = 0.4
+delays = folder / "delays.txt"
+if delays.exists():
+    for line in delays.read_text(encoding="utf-8").splitlines():
+        delayed, _, seconds = line.rpartition("=")
+        if delayed == name:
+            pause = float(seconds)
+time.sleep(pause)
+mine.unlink()
+on_slot.unlink()
+failing = folder / "failing.txt"
+broken = failing.exists() and name in failing.read_text(encoding="utf-8").splitlines()
+if broken:
+    print("FAIL: " + name)
+print("Ran 1 tests in 0.4s\\n")
+print("FAILED (failures=1)" if broken else "OK")
+sys.exit(1 if broken else 0)
+"""
+ADDS = "A shopper adds an item to the basket"
+PAYS = "A shopper pays by card and the till prints a receipt"
+REFUNDS = "A shopper refunds a card payment"
+VOIDS = "A shopper voids a sale"
+SPECS = [ADDS, PAYS, REFUNDS, VOIDS]
+
+
+class ValidationSpecsCase(ValidationCase):
+    """The shop repo, whose app also has acceptance specs that a stand-in runner runs one at a time and logs."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.spec_runs = cls.root / "spec-runs"
+        cls.spec_runs.mkdir()
+        runner = cls.root / "specrun.py"
+        runner.write_text(SPEC_RUNNER, encoding="utf-8")
+        suite = cls.root / "suite.py"
+        cls.shop = {
+            "name": "shop", "kind": "program", "way_in": "its command line", "build": "make", "run": None,
+            "test": f'"{sys.executable}" "{suite}" "{cls.runs}"', "test_target": f"{SKIP_HAND_RUN} -k <name>",
+            "test_full": SKIP_HAND_RUN, "hand_run": [], "acceptance": test_scheduler.ACCEPTANCE,
+            "spec_command": f'"{sys.executable}" "{runner}" "{cls.spec_runs}"', "spec_target": "--spec <spec>"}
+        cls.write_settings({"apps": [cls.shop]})
+
+    def setUp(self):
+        for leftover in self.spec_runs.iterdir():
+            if leftover.is_dir():
+                shutil.rmtree(leftover)
+            else:
+                leftover.unlink()
+
+    def epic_with_specs_made_pass_by_a_closed_task(self, specs: list[str]) -> tuple[str, str]:
+        """An epic with a closed task that makes the specs pass and one task whose build is done but for the last
+        report; returns the epic and that task."""
+        epic = self.new_epic()
+        made = self.new_task_under(epic)
+        fixture.run([self.bd, "update", made, "--set-metadata", "lap.area=shop", "--set-metadata",
+                     "acceptance.specs=" + json.dumps(specs)], self.repo)
+        fixture.run([self.bd, "close", made, "--reason", "done"], self.repo)
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: "till"})
+        [action] = self.next_printed(epic)["actions"]
+        self.leave_in(Path(action["worktree"]), "till.txt", "built\n")
+        return epic, task
+
+    def specs_run(self) -> list[str]:
+        log = self.spec_runs / "specs.log"
+        return sorted(log.read_text(encoding="utf-8").splitlines()) if log.exists() else []
+
+    def most_specs_at_once(self) -> int:
+        log = self.spec_runs / "peaks.log"
+        return max(int(line) for line in log.read_text(encoding="utf-8").split()) if log.exists() else 0
+
+    def another_epic_holds_slots(self, *slots: int) -> None:
+        """Another running epic, in another repo, holds the slots, under a machine lap limit of four."""
+        settings = self.home / "settings.json"
+        settings.write_text(json.dumps({"lap_limit": 4}), encoding="utf-8")
+        self.addCleanup(settings.unlink, missing_ok=True)
+        beat = self.home / "heartbeat" / "mill-1.json"
+        beat.parent.mkdir(exist_ok=True)
+        beat.write_text(json.dumps({"epic": "mill-1", "time": int(time.time()), "session": "manager"}),
+                        encoding="utf-8")
+        (self.home / "slots.json").write_text(json.dumps({"slots": [
+            {"epic": "mill-1", "task": f"mill-{slot}", "slot": slot, "repo": str(self.root / "mill"),
+             "area": f"area-{slot}"} for slot in slots]}), encoding="utf-8")
+
+    def fail_specs(self, *names: str) -> None:
+        (self.spec_runs / "failing.txt").write_text("\n".join(names), encoding="utf-8")
+
+
+class ValidationRunsTheSpecsTests(ValidationSpecsCase):
+    def test_validation_runs_every_spec_the_epics_tasks_make_pass_after_the_suite_passes(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+
+        printed = self.build_done(epic, task)
+
+        self.assertEqual(("pass", sorted(SPECS)), (printed["validation"]["result"], self.specs_run()))
+        self.assertIn("human", self.shown(epic)["labels"])
+
+    def test_validation_runs_no_spec_when_the_suite_fails(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+        self.queue_validation_exit_codes(epic, 1)
+
+        printed = self.build_done(epic, task)
+
+        self.assertEqual(("fail", []), (printed["validation"]["result"], self.specs_run()))
+
+    def test_validation_runs_the_specs_side_by_side_on_the_slots_the_machine_has_free(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+        self.another_epic_holds_slots(1)
+
+        self.build_done(epic, task)
+
+        self.assertEqual((sorted(SPECS), 3), (self.specs_run(), self.most_specs_at_once()))
+
+    def test_validation_runs_one_spec_at_a_time_when_the_machine_has_no_free_slot(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+        self.another_epic_holds_slots(1, 2, 3, 4)
+
+        self.build_done(epic, task)
+
+        self.assertEqual((sorted(SPECS), 1), (self.specs_run(), self.most_specs_at_once()))
+
+    def test_validation_gives_each_spec_that_runs_side_by_side_a_free_slot_of_its_own(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+        self.another_epic_holds_slots(1)
+
+        printed = self.build_done(epic, task)
+
+        slots_used = set((self.spec_runs / "slots.log").read_text(encoding="utf-8").split())
+        self.assertEqual(("pass", {"2", "3", "4"}), (printed["validation"]["result"], slots_used))
+
+    def test_validation_leaves_a_slot_for_another_running_epic_that_holds_none(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+        self.another_epic_holds_slots()
+
+        self.build_done(epic, task)
+
+        self.assertEqual((sorted(SPECS), 3), (self.specs_run(), self.most_specs_at_once()))
+
+    def test_validation_gives_the_slots_back_when_the_specs_are_done(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+
+        self.build_done(epic, task)
+
+        held = json.loads((self.home / "slots.json").read_text(encoding="utf-8"))["slots"]
+        self.assertEqual([], [claim for claim in held if claim["epic"] == epic])
+
+    def test_validation_records_the_spec_runs_time_and_count_beside_the_suites(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+
+        self.build_done(epic, task)
+
+        metadata = self.metadata(epic)
+        self.assertEqual((7, 4), (metadata["validation.tests"], metadata["validation.specs"]))
+        self.assertGreater(float(metadata["validation.spec_seconds"]), 0)
+        [comment] = self.gate_comments(epic)
+        self.assertIn("4 acceptance specs", comment)
+
+    def test_validation_runs_a_spec_that_two_tasks_make_pass_once(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task([ADDS, ADDS, PAYS])
+
+        self.build_done(epic, task)
+
+        self.assertEqual(sorted([ADDS, PAYS]), self.specs_run())
+
+
+class ValidationPlansTheSpecsBeforeTheSuiteTests(ValidationSpecsCase):
+    def refusal_after(self, printed: dict) -> subprocess.CompletedProcess:
+        """Reports the tidy worker and every review lane done until a report is refused; returns that report."""
+        while True:
+            stages = {each["action"] for each in printed["actions"]}
+            if "tidy" in stages:
+                done = self.launch(test_scheduler.SCHEDULER, "report-tidy", printed["epic"])
+            elif "review" in stages:
+                for action in printed["actions"]:
+                    if action["action"] == "review":
+                        Path(action["report"]).write_text("[]", encoding="utf-8")
+                done = self.launch(test_scheduler.SCHEDULER, "report-review", printed["epic"])
+            else:
+                self.fail("validation was never refused")
+            if done.returncode != 0:
+                return done
+            printed = json.loads(done.stdout)
+
+    def test_a_spec_that_the_settings_cannot_run_refuses_validation_before_its_suite_runs(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+        self.write_settings({"apps": [{**self.shop, "spec_command": None, "spec_target": None}]})
+        self.addCleanup(self.write_settings, {"apps": [self.shop]})
+
+        done = self.refusal_after(test_scheduler.SchedulerCase.build_done(self, epic, task))
+
+        self.assertIn("no spec command", done.stderr)
+        self.assertEqual(([], []), (self.validation_runs_of(epic), self.specs_run()))
+
+
+class ValidationFailingSpecTests(ValidationSpecsCase):
+    def test_a_failing_spec_files_a_task_in_the_epic_that_names_the_spec_and_opens_its_lap(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+        self.fail_specs(PAYS)
+
+        printed = self.build_done(epic, task)
+
+        [action] = printed["actions"]
+        filed = self.shown(action["task"])
+        self.assertEqual(("fail", action["task"]), (printed["validation"]["result"], printed["validation"]["filed"]))
+        self.assertEqual(epic, filed["parent"])
+        self.assertIn(PAYS, filed["title"])
+        self.assertIn(PAYS, filed["description"])
+        self.assertIn(f"FAIL: {PAYS}", filed["description"])
+        self.assertEqual("shop", action["area"])
+
+    def test_each_failing_spec_files_a_task_of_its_own_and_the_epic_stays_off_the_gate(self):
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+        self.fail_specs(PAYS, VOIDS)
+
+        printed = self.build_done(epic, task)
+
+        shown = self.shown(epic)
+        self.assertEqual(2, len(printed["validation"]["filed_all"]))
+        self.assertNotIn("human", shown.get("labels") or [])
+        self.assertEqual("fail", shown["metadata"]["validation.result"])
+        self.assertEqual(4, shown["metadata"]["validation.specs"])
+
+
+class ValidationSlowSpecsTests(ValidationSpecsCase):
+    def setUp(self):
+        super().setUp()
+        for each in self.open_design_beads():
+            fixture.run([self.bd, "close", each["id"], "--reason", "closed by the test"], self.repo)
+
+    def open_design_beads(self) -> list[dict]:
+        return json.loads(fixture.run([self.bd, "list", "--label", "design", "--type", "task", "--limit", "0",
+                                       "--json"], self.repo))
+
+    def limit_the_spec_run_to(self, seconds: float) -> None:
+        self.write_settings({"apps": [{**self.shop, "spec_seconds_limit": seconds}]})
+        self.addCleanup(self.write_settings, {"apps": [self.shop]})
+
+    def make_slow(self, spec: str, seconds: float) -> None:
+        with open(self.spec_runs / "delays.txt", "a", encoding="utf-8") as delays:
+            delays.write(f"{spec}={seconds}\n")
+
+    def validate_an_epic_over_the_limit(self) -> str:
+        self.limit_the_spec_run_to(0.5)
+        self.make_slow(PAYS, 1.4)
+        self.make_slow(REFUNDS, 1.0)
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+        self.build_done(epic, task)
+        return epic
+
+    def cost_section(self, epic: str) -> str:
+        guide = self.root / "slow-guide.json"
+        guide.write_text(json.dumps({"in_short": "The till prints receipts."}), encoding="utf-8")
+        done = self.launch(test_scheduler.PLUGIN / "scripts" / "gate_page.py", epic, "--guide", str(guide))
+        self.assertEqual(0, done.returncode, done.stderr)
+        html = Path(done.stdout.strip()).read_text(encoding="utf-8")
+        found = re.search(r"(?s)<h2>Cost</h2>(.*?)</section>", html)
+        self.assertIsNotNone(found)
+        return found.group(1)
+
+    def test_a_spec_run_over_the_apps_limit_shows_its_slowest_specs_with_their_times_at_the_gate(self):
+        epic = self.validate_an_epic_over_the_limit()
+
+        cost = self.cost_section(epic)
+
+        self.assertIn("over the 0.5 s limit", cost)
+        self.assertRegex(cost, re.escape(PAYS) + r": 1\.[4-9] s")
+        self.assertRegex(cost, re.escape(REFUNDS) + r": 1\.[0-9] s")
+        self.assertLess(cost.index(PAYS), cost.index(REFUNDS))
+        self.assertLess(cost.index(REFUNDS), cost.index(ADDS))
+
+    def test_a_spec_run_over_the_apps_limit_files_a_design_finding_against_the_protocol_driver(self):
+        epic = self.validate_an_epic_over_the_limit()
+
+        [finding] = self.open_design_beads()
+
+        shown = self.shown(finding["id"])
+        self.assertIn("protocol driver", shown["title"])
+        self.assertIn(test_scheduler.ACCEPTANCE, shown["title"])
+        self.assertIn("0.5 s", shown["description"])
+        self.assertIn(PAYS, shown["description"])
+        self.assertNotIn("parent", shown)
+        [sighting] = self.texts(finding["id"])
+        self.assertIn(epic, sighting)
+
+    def test_a_second_epic_over_the_limit_adds_a_sighting_to_the_open_design_finding(self):
+        first = self.validate_an_epic_over_the_limit()
+        second = self.validate_an_epic_over_the_limit()
+
+        [finding] = self.open_design_beads()
+
+        sightings = self.texts(finding["id"])
+        self.assertEqual(2, len(sightings))
+        self.assertIn(first, sightings[0])
+        self.assertIn(second, sightings[1])
+
+    def test_a_spec_run_under_the_limit_files_nothing_and_shows_no_slow_specs(self):
+        self.limit_the_spec_run_to(600)
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+
+        printed = self.build_done(epic, task)
+
+        self.assertEqual("pass", printed["validation"]["result"])
+        self.assertEqual([], self.open_design_beads())
+        self.assertNotIn("limit", self.cost_section(epic))
+
+    def test_an_app_with_no_limit_files_nothing(self):
+        self.make_slow(PAYS, 1.0)
+        epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)
+
+        self.build_done(epic, task)
+
+        self.assertEqual([], self.open_design_beads())
+        self.assertNotIn("limit", self.cost_section(epic))
+
+
+class SpecTimeLimitTests(unittest.TestCase):
+    def test_an_apps_limit_judges_its_own_part_of_the_run_and_not_the_time_of_the_apps_beside_it(self):
+        settings = {"apps": [{"name": "till", "acceptance": "till/specs", "spec_seconds_limit": 5},
+                             {"name": "mill", "acceptance": "mill/specs", "spec_seconds_limit": 5}]}
+        run = SpecsRun([TimedSpecRun("till", "A till total", True, "", 0.0, 1.0),
+                        TimedSpecRun("mill", "A mill grind", True, "", 0.0, 60.0)])
+
+        over = spec_time_limit.over_the_limit(settings, run)
+
+        self.assertEqual([("mill", 60.0)], [(each.app, each.seconds) for each in over])
+
+
+class ValidationSlotHoldTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name)
+        self.main_tree = Path("/work/shop")
+        self.now = int(time.time())
+        for epic in ("shop-1", "shop-2"):
+            heartbeat.write_beat(self.home, epic, self.now, "manager")
+
+    def standing(self, epic: str) -> slots.Standing:
+        return slots.Standing(self.home, epic, self.main_tree, 4, self.now)
+
+    def test_a_validations_hold_names_no_area_so_it_blocks_no_task_of_another_epic(self):
+        slots.hold_free(self.standing("shop-1"))
+
+        machine, _ = slots.machine_beside(self.standing("shop-2"))
+
+        self.assertEqual(frozenset(), machine.areas)
+
+    def test_a_validation_leaves_a_slot_free_for_each_running_epic_that_holds_none(self):
+        held = slots.hold_free(self.standing("shop-1"))
+
+        self.assertEqual([1, 2, 3], held)
+
+    def test_a_validation_that_the_machine_leaves_no_slot_still_gets_one(self):
+        slots.write(self.home, [slots.Claim("shop-2", f"shop-{number}", number, str(self.main_tree), f"area-{number}")
+                                for number in (1, 2, 3, 4)])
+
+        self.assertEqual([5], slots.hold_free(self.standing("shop-1")))
+
+    def test_releasing_takes_off_the_validation_holds_and_leaves_the_laps_of_other_epics(self):
+        lap = slots.Claim("shop-2", "shop-9", 4, str(self.main_tree), "till")
+        slots.write(self.home, [lap])
+        slots.hold_free(self.standing("shop-1"))
+
+        slots.release(self.home, "shop-1")
+
+        self.assertEqual([lap], slots.read(self.home))
 
 
 def git(repo: Path, *args: str) -> str:

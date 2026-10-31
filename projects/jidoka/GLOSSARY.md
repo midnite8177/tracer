@@ -236,6 +236,10 @@ _Avoid_: Fixer, repair agent, cleanup worker
 **Validation**:
 The last stage of a pass: the full test suite with every acceptance spec,
 the epic's holdouts and every standing holdout, run on the epic branch.
+The specs run after the suite passes, side by side on the slots that no
+other running epic needs for its first lap, never more at once than those
+slots and each on a slot of its own, and validation records how many ran and
+how long the run took beside the suite's figures. A failing spec files a task in the epic that names it.
 _Avoid_: Test gate, app check, QA
 
 **Acceptance gate**:
@@ -350,6 +354,14 @@ The code beneath an app's acceptance specs that reaches the running app
 through its command line, API or UI and makes the checks the specs ask
 for. Writing it fixes the app's interface.
 _Avoid_: Harness, adapter, fixture
+
+**Spec time limit**:
+The seconds an app's settings allow for validation's run of its acceptance
+specs, from the app's first spec starting to its last one ending, whatever
+the other apps' specs took beside it. A run over it shows the slowest specs at acceptance and files a
+design finding against the protocol driver, or adds a sighting to the
+open one.
+_Avoid_: Spec timeout, spec budget
 
 **Spec task**:
 The task that builds what an epic's new acceptance specs need from the
@@ -609,7 +621,9 @@ machine, not to an epic or a repo: slot numbers are unique on the machine. A
 new lap takes the lowest one that no open lap on the machine holds, from one
 record in the jidoka home that every running epic's scheduler shares under a
 lock. A slot held by an epic whose heartbeat went stale, or by a lap that is no
-longer open, is free again, and each running epic keeps at least one. The repo
+longer open, is free again, and each running epic keeps at least one, an
+epic in validation included: its specs take the slots no other running epic
+needs, and it takes no area. The repo
 settings' slot use says what a lap does with it, such as pick a port, so two
 laps side by side never clash, even laps of two repos, and so two app checks
 never share one.

@@ -104,7 +104,6 @@ import pass_ledger
 import settings_reader
 import rules
 import t3_wake
-import validation
 from acceptance import branch_and_head_at_the_gate, moved_since_validation
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, MAIN_REF, CommandError, capture,
                       env_as_git_user, labels_of, metadata_of, read_bead, run, set_metadata, unset_metadata,
@@ -122,7 +121,7 @@ from open_tasks import move_open_tasks
 from pass_support import PassError
 from report_text import tail_of
 from task_commits import commit_per_task
-from worktrees import cut_detached, remove_worktree, stage_worktree
+from worktrees import cut_detached, remove_worktree, stage_worktree, unmerged_files
 
 DECISION_KEY = "gate.decision"
 LANDED_KEY = "gate.landed"
@@ -228,7 +227,7 @@ def rebuild_on_main(epic: EpicAtTheGate, message: str, home: Path, main_tree: Pa
     try:
         squashed = capture(["git", "merge", "--squash", f"refs/heads/{epic.branch}"], path, None)
         if squashed.returncode != 0:
-            conflicts = sorted(validation.unmerged_files(path))
+            conflicts = sorted(unmerged_files(path))
             raise RebuildRefused(f"merging {epic.branch} onto main conflicts in "
                                  f"{', '.join(conflicts) or 'files git does not name'}", [], TURNED_BACK_EXIT_CODE,
                                  epic.waits_at_the_gate,

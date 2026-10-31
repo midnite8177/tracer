@@ -27,7 +27,7 @@ LIZARD_LIMITS = "lizard_limits"
 LIZARD_METRICS = ("ccn", "length", "arguments")
 DEFAULT_LIZARD_LIMITS = {"ccn": 15, "length": 80, "arguments": 6}
 APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_full", "test_target", "hand_run", "acceptance",
-            "spec_command", "spec_target"]
+            "spec_command", "spec_target", "spec_seconds_limit"]
 HAND_RUN_KEYS = ["name", "exclusion", "command", "reason"]
 HAND_RUN_GROUP_KEYS = ["app", "name", "reason", "command"]
 NO_TESTS = "an app with no test command has null for test, test_target and test_full, and [] for hand_run"
@@ -68,7 +68,9 @@ class HandRunGroup:
 class App:
     """One app of the repo as the stored settings hold it. A field is None when the app has none of it, and
     hand_run is empty when every test of the app runs in the full suite. spec_command runs every acceptance spec of
-    the app, and spec_target follows it to run one, with one <...> placeholder for the spec's name."""
+    the app, and spec_target follows it to run one, with one <...> placeholder for the spec's name. spec_seconds_limit
+    is how many seconds a validation's run of the app's specs may take before acceptance shows the slowest specs and
+    a design finding names the protocol driver."""
     name: str
     kind: str | None
     build: str | None
@@ -80,6 +82,7 @@ class App:
     acceptance: str | None
     spec_command: str | None
     spec_target: str | None
+    spec_seconds_limit: float | None
     hand_run: tuple[HandRun, ...]
 
     @property
@@ -180,6 +183,14 @@ def text_of(value: object) -> str | None:
     return value if is_text(value) else None
 
 
+def is_positive_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
+def limit_of(value: object) -> float | None:
+    return float(value) if is_positive_number(value) else None
+
+
 def hand_run_of(app: dict) -> tuple[HandRun, ...]:
     listed = app.get("hand_run")
     return tuple(HandRun(*(str(group.get(key) or "") for key in HAND_RUN_KEYS))
@@ -190,7 +201,8 @@ def app_of(entry: dict) -> App:
     return App(str(entry.get("name") or ""), text_of(entry.get("kind")), text_of(entry.get("build")),
                text_of(entry.get("run")), text_of(entry.get("test")), text_of(entry.get("test_full")),
                text_of(entry.get("test_target")), text_of(entry.get("way_in")), text_of(entry.get("acceptance")),
-               text_of(entry.get("spec_command")), text_of(entry.get("spec_target")), hand_run_of(entry))
+               text_of(entry.get("spec_command")), text_of(entry.get("spec_target")),
+               limit_of(entry.get("spec_seconds_limit")), hand_run_of(entry))
 
 
 def apps_of(settings: dict) -> list[App]:
@@ -256,6 +268,8 @@ def app_problems(index: int, app: object) -> list[str]:
     if not (app.get("acceptance") is None or is_repo_path(app["acceptance"])):
         problems.append(f"{label} has an acceptance that is neither a folder inside the repo nor null")
     problems += spec_command_problems(label, app)
+    if app.get("spec_seconds_limit") is not None and not is_positive_number(app["spec_seconds_limit"]):
+        problems.append(f"{label} has a spec_seconds_limit that is neither a number of seconds above zero nor null")
     command_problems = test_command_problems(label, app)
     problems += command_problems
     if "hand_run" not in app:

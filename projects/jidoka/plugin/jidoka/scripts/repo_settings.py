@@ -27,6 +27,9 @@ arguments that follow it to run one, with one <...> placeholder for the spec's n
 test. Each is text or null, and a key left out is null. The script refuses a spec_command in an app with no
 acceptance folder, a spec_command with no spec_target, and a spec_target with no spec_command. An app may have an
 acceptance folder and no spec_command; run_specs.py refuses to run its specs.
+An app's "spec_seconds_limit" is how many seconds a validation's run of its acceptance specs may take before acceptance
+shows the slowest specs and a design finding names the protocol driver. It is a number above zero or null, and a key
+left out is null.
 The script appends nothing to a command, so the person onboarding writes
 each hand-run group's exclusion into both commands, and the script refuses
 a group whose exclusion either command lacks.

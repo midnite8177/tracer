@@ -44,6 +44,7 @@ import gate_items
 import page as shared
 import settings_reader
 import review
+import spec_time_limit
 import validation
 from acceptance import branch_and_head_at_the_gate, branch_moved_since_validation, main_moved_since_validation
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, metadata_of, read_bead, run, worktree_list
@@ -198,10 +199,12 @@ def danger_lines(shown: dict, branch: str, head: str, main_tree: Path) -> tuple[
 
 
 def cost_lines(shown: dict) -> tuple[str, ...]:
-    seconds = metadata_of(shown).get(validation.SECONDS_KEY)
+    metadata = metadata_of(shown)
+    seconds = metadata.get(validation.SECONDS_KEY)
     if seconds is None:
         return ("No validation time is recorded on this epic.",)
-    return (f"Validation took {seconds} s.",)
+    slow = spec_time_limit.lines_of(spec_time_limit.of_metadata(metadata.get(spec_time_limit.SLOW_SPECS_KEY)))
+    return (f"Validation took {seconds} s.", *slow)
 
 
 def gather(epic: str, guide: Guide, home: Path, main_tree: Path) -> GatePage:

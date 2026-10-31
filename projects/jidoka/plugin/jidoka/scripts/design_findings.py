@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Files the problems a review finds in old code as design findings, and adds a sighting when one is met again.
+"""Files the problems an epic meets in old code as design findings, and adds a sighting when one is met again.
 
 `design_findings.py --open [FILE ...]` prints the open design findings as a JSON list of {"bead", "file", "title",
 "sightings"}, the most sighted first and the older bead first among equals. With FILEs it keeps only the findings
 about those files. Planning reads this list.
 
 `design_findings.py EPIC REPORT` reads REPORT, a JSON list of {"file", "line", "title", "note"}, one for each problem
-the epic's review met in code the epic did not write, and prints a JSON list of {"bead", "file", "title", "new",
-"sightings"}. Run it from inside any checkout of the repo.
+the epic met in code it did not write, and prints a JSON list of {"bead", "file", "title", "new", "sightings"}. The
+line may be absent when the problem belongs to a whole folder, which then stands in `file`. Run it from inside any
+checkout of the repo.
 
 A design finding is a bead outside every epic, a task labeled `design`, one for each problem. A problem is named by its
 file and its title, ignoring case and spacing, which the finding keeps in its `design.problem` metadata. A problem with
-no open design finding becomes a new one, linked discovered-from to the epic whose review filed it. A problem that has
-one gets a sighting: a comment on the finding that names the epic and the line, so the finding's comments are its
-sightings, the first one written when the finding is filed. A report that names one problem twice counts one sighting.
-Everything is written to bd with BEADS_ACTOR set to jidoka.
+no open design finding becomes a new one, linked discovered-from to the epic that filed it. A problem that has one gets
+a sighting: a comment on the finding that names the epic and the place, a file and line or a folder, so the finding's
+comments are its sightings, the first one written when the finding is filed. A report that names one problem twice
+counts one sighting. Everything is written to bd with BEADS_ACTOR set to jidoka.
 
 Exit codes:
   0  the report was settled.
@@ -47,11 +48,16 @@ class DesignFindingError(Exception):
 
 @dataclass(frozen=True)
 class Problem:
-    """A problem a review met in old code, at a line of a file."""
+    """A problem met in old code, in a file or at a line of it. A problem that belongs to a whole folder, such as the
+    protocol driver, names the folder as its file and has no line."""
     file: str
-    line: int
+    line: int | None
     title: str
     note: str
+
+    @property
+    def place(self) -> str:
+        return self.file if self.line is None else f"{self.file}:{self.line}"
 
     @property
     def key(self) -> str:
@@ -67,13 +73,13 @@ class Problem:
         return shortened_title(f"{self.title} in {self.file}")
 
     def sighting(self, epic: str) -> str:
-        return f"{SIGHTING_PREFIX}{epic} met this at {self.file}:{self.line}. {self.note}"
+        return f"{SIGHTING_PREFIX}{epic} met this at {self.place}. {self.note}"
 
     def description(self) -> str:
         return "\n".join(["## What", "",
-                          f"A review met this problem in old code at {self.file}:{self.line}:", "",
+                          f"An epic met this problem in old code at {self.place}:", "",
                           f"{self.title}: {self.note}", "",
-                          "Each comment on this bead is a sighting of the problem in an epic's review."])
+                          "Each comment on this bead is a sighting of the problem in an epic."])
 
 
 @dataclass(frozen=True)
@@ -177,7 +183,7 @@ def main(argv: list[str]) -> int:
     if argv[:1] == ["--open"]:
         return print_open(argv[1:])
     parser = argparse.ArgumentParser(prog="design_findings.py", description=__doc__.split("\n")[0])
-    parser.add_argument("epic", help="the epic whose review met the problems")
+    parser.add_argument("epic", help="the epic that met the problems")
     parser.add_argument("report", type=Path, help="the JSON list of problems")
     args = parser.parse_args(argv)
     try:
