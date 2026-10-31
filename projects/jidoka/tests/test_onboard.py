@@ -421,6 +421,54 @@ class SettingsRefusalTests(OnboardingFixture, unittest.TestCase):
                               done.stderr)
                 self.assertEqual([], self.stored_files())
 
+    def test_stores_an_apps_spec_command_and_spec_target_and_takes_an_app_that_leaves_them_out_as_having_none(self):
+        settings = tracer_settings()
+        settings["apps"][0].update({"acceptance": "projects/tracer-ui/acceptance",
+                                    "spec_command": "dotnet test projects/tracer-ui/acceptance",
+                                    "spec_target": '--filter "DisplayName~<spec>"'})
+
+        done = self.write(self.repo, settings)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        apps = json.loads(self.show(self.repo).stdout)["apps"]
+        self.assertEqual(["dotnet test projects/tracer-ui/acceptance", None, None],
+                         [app.get("spec_command") for app in apps])
+        self.assertEqual(['--filter "DisplayName~<spec>"', None, None], [app.get("spec_target") for app in apps])
+
+    def test_stores_an_app_with_an_acceptance_folder_and_no_spec_command(self):
+        settings = tracer_settings()
+        settings["apps"][0].update({"acceptance": "projects/tracer-ui/acceptance", "spec_command": None,
+                                    "spec_target": None})
+
+        done = self.write(self.repo, settings)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+
+    def test_refuses_spec_settings_that_do_not_fit_together(self):
+        folder = "projects/tracer-ui/acceptance"
+        cases = {
+            "has a spec_command but no acceptance folder":
+                {"acceptance": None, "spec_command": "make specs", "spec_target": "NAME=<spec>"},
+            "has a spec_command but does not say how to target a spec":
+                {"acceptance": folder, "spec_command": "make specs", "spec_target": None},
+            "has a spec_target but no spec_command":
+                {"acceptance": folder, "spec_command": None, "spec_target": "NAME=<spec>"},
+            "has a spec_command that is neither a command nor null":
+                {"acceptance": folder, "spec_command": 3, "spec_target": "NAME=<spec>"},
+            "has a spec_target that is neither text nor null":
+                {"acceptance": folder, "spec_command": "make specs", "spec_target": " "},
+        }
+        for problem, changes in cases.items():
+            with self.subTest(problem=problem):
+                settings = tracer_settings()
+                settings["apps"][0].update(changes)
+
+                done = self.write(self.repo, settings)
+
+                self.assertEqual(1, done.returncode)
+                self.assertIn(f"'tracer-ui' {problem}", done.stderr)
+                self.assertEqual([], self.stored_files())
+
 
 class LinkedWorktreeAndMovedLineTests(OnboardingFixture, unittest.TestCase):
     """Settings shared across worktrees, reruns, and the lines moved out of CLAUDE.local.md."""
@@ -446,7 +494,8 @@ class LinkedWorktreeAndMovedLineTests(OnboardingFixture, unittest.TestCase):
 
         self.assertNotEqual(0, done.returncode)
         self.assertEqual("", done.stdout)
-        self.assertIn("no settings", done.stderr)
+        self.assertIn("no settings for ", done.stderr)
+        self.assertIn(". Run /jidoka:onboard to record them", done.stderr)
 
     def test_a_rerun_replaces_the_settings_it_is_given_and_keeps_the_rest(self):
         self.write(self.repo, tracer_settings())

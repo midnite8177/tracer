@@ -51,11 +51,11 @@ class HandoffPageTests(HandoffPageCase):
 
         rows = re.findall(r"(?s)<tr>(.*?)</tr>", html.split("The factory rules")[0])
         cells = [re.findall(r"<t[dh]>(.*?)</t[dh]>", row) for row in rows]
-        self.assertEqual(["Task", "Track", "Why", "Area", "Holdouts", "State"], cells[0])
+        self.assertEqual(["Task", "Track", "Why", "Area", "Holdouts", "Specs", "State"], cells[0])
         self.assertEqual(
-            [[f"{first} Read the card {self.count - 1}", "full", "named by 1 holdout", "till", "1", "open"],
+            [[f"{first} Read the card {self.count - 1}", "full", "named by 1 holdout", "till", "1", "", "open"],
              [f"{second} Read the card {self.count}", "simple", "no holdouts, one seam, no public API or type",
-              "receipts", "0", "open"]],
+              "receipts", "0", "", "open"]],
             cells[1:])
 
     def test_a_flipped_track_shows_on_the_page_with_the_reason(self):
@@ -142,8 +142,9 @@ class HandoffCommentTests(HandoffPageCase):
 
         text = self.table_comment(epic)
 
-        self.assertIn("| Task | Track | Why | Area | Holdouts | State |", text)
-        self.assertIn(f"| {first} Read the card {self.count - 1} | full | named by 1 holdout | till | 1 | open |", text)
+        self.assertIn("| Task | Track | Why | Area | Holdouts | Specs | State |", text)
+        self.assertIn(f"| {first} Read the card {self.count - 1} | full | named by 1 holdout | till | 1 |  | open |",
+                      text)
         self.assertNotIn("<", text)
 
     def test_the_printed_result_names_the_page(self):

@@ -8,8 +8,10 @@ children that are neither closed nor epics.
 name of its epic branch and its tasks as one JSON object, each task with
 its title, status, the text of its Seams section and of its Demo section,
 `missing`, the sections among "demo" and "seams" that its description lacks,
-the track the rule below proposes, `why`, the reasons for that track, and
-`holdouts`, how many holdouts name it. The human and the skill agree an area
+the track the rule below proposes, `why`, the reasons for that track,
+`holdouts`, how many holdouts name it, and `specs`, the acceptance specs it
+makes pass, as specs.py records them. It prints `spec_task` too, the id of
+the epic's spec task, or an empty string. The human and the skill agree an area
 for each task from its Seams, and propose a Demo and a Seams section for each
 task that lacks one. It also prints `presets`, the factory rules of the
 bug-epic and improvement-epic presets, for the human to choose from.
@@ -17,7 +19,9 @@ bug-epic and improvement-epic presets, for the human to choose from.
 The track rule: a task is proposed on the simple track when no holdout names
 it, its Seams section holds one line or one bullet, and the rest of its
 description names no public API or type. Any other task is proposed on the
-full track, with every reason that applies. A holdout that names a task
+full track, with every reason that applies. The epic's spec task is always
+proposed on the full track, because its lap alone changes the code beneath the
+acceptance specs. A holdout that names a task
 stands for the behavior a holdout or user would see.
 
 `take <epic> --area <task>=<area> ... [--track <task>=<track> ...] [--preset
@@ -73,8 +77,9 @@ from pathlib import Path
 import handoff_page
 import holdouts
 import lap_record
-import repo_settings
+import settings_reader
 import rules
+import specs
 from bench import slug
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, MAIN_REF, CommandError, bd_comments, env_as_git_user,
                       head_of, labels_of, run)
@@ -88,6 +93,7 @@ TABLE_HEADING = "Handoff:"
 OUT_OF_SCOPE_SECTION = re.compile(r"^#{1,6}[ \t]*Out[ \t]+of[ \t]+Scope[ \t]*:?[ \t]*(?:\n|\Z)(.*?)(?=^#{1,2}[ \t]|\Z)",
                                   re.MULTILINE | re.DOTALL | re.IGNORECASE)
 OUT_OF_SCOPE_LINE = re.compile(r"\bOut[ \t]+of[ \t]+scope(?:\*\*)?[ \t]*:(?:\*\*)?[ \t]*\S", re.IGNORECASE)
+SPEC_TASK_REASON = "it is the spec task, whose lap alone changes the code beneath the acceptance specs"
 SEAM_BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 PUBLIC_API = re.compile(r"\bpublic[ \t]+(?:APIs?|types?|interfaces?|members?|class(?:es)?|methods?)\b",
                         re.IGNORECASE)
@@ -165,7 +171,7 @@ def out_of_scope_problems(epic: Epic) -> list[str]:
 
 def problems_of(epic: Epic, branch_problems: list[str], home: Path, main_tree: Path) -> list[str]:
     """Every reason the epic cannot go to the factory, in the order of the checks."""
-    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    settings = settings_reader.read_settings(home, main_tree)
     problems = [*problems_while_held(epic, settings, RERUN), *no_task_problems(epic),
                 *out_of_scope_problems(epic)]
     if FACTORY_LABEL in labels_of(epic.shown):
@@ -214,9 +220,11 @@ def seam_count(seams: str) -> int:
     return sum(1 for line in seams.splitlines() if SEAM_BULLET.sub("", line).strip())
 
 
-def propose(task: Task, held: int) -> Proposal:
+def propose(task: Task, held: int, is_spec_task: bool) -> Proposal:
     """The track the rule gives a task. The rule is the same for every task, so that a script can check it."""
     reasons = []
+    if is_spec_task:
+        reasons.append(SPEC_TASK_REASON)
     if held:
         reasons.append(f"named by {held} holdout{'' if held == 1 else 's'}")
     task_seams = seams_of(task)
@@ -233,8 +241,15 @@ def propose(task: Task, held: int) -> Proposal:
 
 
 def proposals_of(epic: Epic) -> dict[str, Proposal]:
-    held = holdout_counts(epic)
-    return {task.id: propose(task, held.get(task.id, 0)) for task in epic.tasks}
+    held, spec_task = holdout_counts(epic), specs.spec_task_of(epic.shown)
+    return {task.id: propose(task, held.get(task.id, 0), task.id == spec_task) for task in epic.tasks}
+
+
+def specs_by_task(epic: Epic) -> dict[str, list[str]]:
+    """The acceptance specs each open task of the epic makes pass; a task that makes none has no entry."""
+    open_ids = {task.id for task in epic.tasks}
+    return {str(bead["id"]): names for bead in epic.task_beads
+            if str(bead["id"]) in open_ids and (names := specs.specs_of(bead))}
 
 
 def tracks_of(given: list[str], epic: Epic, proposed: dict[str, Proposal]) -> tuple[dict[str, Proposal], list[str]]:
@@ -263,9 +278,9 @@ def cell(text: str) -> str:
 def table(page: handoff_page.HandoffPage, page_file: Path) -> str:
     """The comment that holds the page's task rows as a plain-text table, and links the page."""
     rows = [f"| {cell(f'{row.task} {row.title}')} | {row.track} | {cell(row.why)} | {cell(row.area)} | "
-            f"{row.holdouts} | {row.state} |" for row in page.rows]
+            f"{row.holdouts} | {cell(', '.join(row.specs))} | {row.state} |" for row in page.rows]
     return "\n".join([f"{TABLE_HEADING} the factory takes {page.epic} on the epic branch {page.branch}.", "",
-                      "| Task | Track | Why | Area | Holdouts | State |", "|---|---|---|---|---|---|", *rows, "",
+                      "| Task | Track | Why | Area | Holdouts | Specs | State |", "|---|---|---|---|---|---|---|", *rows, "",
                       f"Page: {page_file.as_uri()}"])
 
 
@@ -280,8 +295,10 @@ def planned_rules(epic: Epic, preset: str | None) -> rules.Rules:
 
 def page_of(epic: Epic, branch: str, areas: dict[str, str], tracks: dict[str, Proposal], held: dict[str, int],
             planned: rules.Rules) -> handoff_page.HandoffPage:
+    made_to_pass = specs_by_task(epic)
     rows = tuple(handoff_page.Row(task.id, task.title, tracks[task.id].track, tracks[task.id].why, areas[task.id],
-                                  held.get(task.id, 0), task.status) for task in epic.tasks)
+                                  held.get(task.id, 0), tuple(made_to_pass.get(task.id, [])), task.status)
+                 for task in epic.tasks)
     settings = tuple((name, rules.encode(value)) for name, value in sorted(planned.settings.items()))
     return handoff_page.HandoffPage(epic.id, str(epic.shown.get("title") or ""), branch, rows, settings,
                                     planned.guidance)
@@ -303,12 +320,13 @@ def check(bead: str, home: Path, main_tree: Path) -> dict:
     epic = epic_of(bead, main_tree, RERUN)
     branch, branch_problems = planned_branch(epic, main_tree)
     refuse(epic, problems_of(epic, branch_problems, home, main_tree))
-    proposed, held = proposals_of(epic), holdout_counts(epic)
+    proposed, held, made_to_pass = proposals_of(epic), holdout_counts(epic), specs_by_task(epic)
     return {"epic": epic.id, "title": str(epic.shown.get("title") or ""), "branch": branch,
+            "spec_task": specs.spec_task_of(epic.shown),
             "tasks": [{"id": task.id, "title": task.title, "status": task.status,
                        "seams": seams_of(task), "demo": demo_of(task), "missing": missing_of(task),
                        "track": proposed[task.id].track, "why": proposed[task.id].why,
-                       "holdouts": held.get(task.id, 0)}
+                       "holdouts": held.get(task.id, 0), "specs": made_to_pass.get(task.id, [])}
                       for task in epic.tasks],
             "presets": {name: preset.fields() for name, preset in rules.PRESETS.items()}}
 
@@ -331,13 +349,14 @@ def take(bead: str, given_areas: list[str], given_tracks: list[str], preset: str
     if not has_table(epic, main_tree):
         run(["bd", "comment", epic.id, table(content, page)], main_tree, env)
     if preset is not None:
-        repo_limit = rules.repo_lap_limit(repo_settings.load(repo_settings.settings_path(home, main_tree)))
+        repo_limit = rules.repo_lap_limit(settings_reader.read_settings(home, main_tree))
         rules.write_preset(epic.id, preset, repo_limit, main_tree)
     run(["bd", "label", "add", epic.id, FACTORY_LABEL], main_tree, env)
     return {"epic": epic.id, "branch": branch, "start": branch_head(branch, main_tree),
             "page": str(page),
             "tasks": [{"id": row.task, "title": row.title, "track": row.track, "why": row.why, "area": row.area,
-                       "holdouts": row.holdouts, "status": row.state} for row in content.rows]}
+                       "holdouts": row.holdouts, "specs": list(row.specs), "status": row.state}
+                      for row in content.rows]}
 
 
 def main(argv: list[str]) -> int:
@@ -358,14 +377,14 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         if args.mode == "check":
             printed = check(args.epic, home, main_tree)
         else:
             printed = take(args.epic, args.area, args.track, args.preset, home, main_tree)
-    except (HandoffError, EpicReadError, CommandError, repo_settings.SettingsError, holdouts.HoldoutsError,
-            rules.RulesError, OSError) as error:
+    except (HandoffError, EpicReadError, CommandError, settings_reader.SettingsError, holdouts.HoldoutsError,
+            rules.RulesError, specs.SpecsError, OSError) as error:
         print(f"handoff: {error}", file=sys.stderr)
         return 1
     print(json.dumps(printed))

@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import processes
-import repo_settings
+import settings_reader
 from commands import COMMAND_TIMEOUT_SECONDS, SCRATCH_FOLDER
 
 APPS_FOLDER = "apps"
@@ -64,12 +64,12 @@ class Recorded:
 
 
 def settings_of(home: Path, folder: Path) -> dict:
-    main_tree = repo_settings.main_worktree(folder, COMMAND_TIMEOUT_SECONDS)
-    return repo_settings.load(repo_settings.settings_path(home, main_tree))
+    main_tree = settings_reader.main_worktree(folder, COMMAND_TIMEOUT_SECONDS)
+    return settings_reader.read_settings(home, main_tree)
 
 
 def run_command_of(app: str, settings: dict) -> str:
-    for held in repo_settings.apps_of(settings):
+    for held in settings_reader.apps_of(settings):
         if held.name == app:
             if held.run is None:
                 raise AppProcessError(f"the app {app} has no run command in the repo settings")
@@ -180,7 +180,7 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     folder = Path.cwd()
     try:
-        home = repo_settings.jidoka_home(None)
+        home = settings_reader.jidoka_home(None)
         if args.mode == "start":
             settings = settings_of(home, folder)
             command = run_command_of(args.app, settings)
@@ -193,7 +193,7 @@ def main(argv: list[str]) -> int:
             print(f"app_process: stopped {args.app}")
         else:
             print(f"app_process: {args.app} was not running")
-    except (AppProcessError, repo_settings.SettingsError, OSError) as error:
+    except (AppProcessError, settings_reader.SettingsError, OSError) as error:
         print(f"app_process: {error}", file=sys.stderr)
         return 1
     return 0

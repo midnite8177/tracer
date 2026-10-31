@@ -89,6 +89,7 @@ from pathlib import Path
 import lap_record
 import question_page
 import repo_settings
+import settings_reader
 import rules
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, HUMAN_LABEL, CommandError, bd_comments, env_as_factory,
                       metadata_of, parent_of, read_bead, run, set_metadata)
@@ -609,16 +610,16 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         if args.mode == "question":
             asked = AskingLap(args.task, args.tries, args.scratch, args.worktree, args.branch)
-            park_on_question(asked, repo_settings.jidoka_home(args.jidoka_home), main_tree)
+            park_on_question(asked, settings_reader.jidoka_home(args.jidoka_home), main_tree)
             printed = {"task": args.task, "parked": True}
         else:
-            allowed = answered_permission(args.task, repo_settings.jidoka_home(args.jidoka_home), main_tree)
+            allowed = answered_permission(args.task, settings_reader.jidoka_home(args.jidoka_home), main_tree)
             printed = {"task": args.task, "list": allowed.chosen, "pattern": allowed.pattern,
                        "changed": allowed.changed}
-    except (QuestionError, rules.RulesError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (QuestionError, rules.RulesError, CommandError, settings_reader.SettingsError, OSError) as error:
         print(f"park: {error}", file=sys.stderr)
         return 1
     print(json.dumps(printed))

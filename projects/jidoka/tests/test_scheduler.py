@@ -183,7 +183,6 @@ class SchedulerCase(unittest.TestCase):
         return self.shown(bead).get("metadata") or {}
 
     def children_of(self, epic: str) -> dict[str, str]:
-        """The titles of the epic's children, each with its id."""
         listed = json.loads(fixture.run([self.bd, "list", "--parent", epic, "--all", "--limit", "0", "--json"],
                                         self.repo))
         return {child["title"]: child["id"] for child in listed}
@@ -691,7 +690,8 @@ class SchedulerLapStateTests(SchedulerCase):
 
         printed = self.next_printed(epic)
 
-        self.assertEqual([{**{key: value for key, value in action.items() if key not in ("action", "answer", "findings", "app_check")},
+        not_in_laps = ("action", "answer", "findings", "app_check", "specs", "specs_command")
+        self.assertEqual([{**{key: value for key, value in action.items() if key not in not_in_laps},
                            "lap": 2, "stage": "build", "tries": 0} for action in opened],
                          printed["laps"])
         self.assertNotIn("lap.stage", self.metadata(third))
@@ -1871,7 +1871,6 @@ class TaskAddedToAHeldEpicTests(SchedulerCase):
 
 class CapTests(SchedulerCase):
     def age_stage(self, task: str, seconds: int) -> None:
-        """Makes the task's stage look like it started the given seconds ago."""
         fixture.run([self.bd, "update", task, "--set-metadata", f"lap.started={int(time.time()) - seconds}"],
                     self.repo)
 
@@ -2175,6 +2174,23 @@ class MergeGateRecordTests(SchedulerCase):
         self.assertIn("the record does not support the merge", done.stderr)
         self.assert_nothing_merged(lap, epic_head)
 
+    def name_spec_task(self, epic: str, task: str) -> None:
+        fixture.run([self.bd, "update", epic, "--set-metadata", f"acceptance.spec_task={task}"], self.repo)
+
+    def test_the_gate_refuses_a_lap_that_changed_the_acceptance_folder_when_another_task_is_the_spec_task(self):
+        lap = self.open_one_lap()
+        other = self.new_task_under(lap.epic)
+        epic_head = git(self.repo, "rev-parse", lap.epic_branch)
+        self.commit_in(lap.worktree, f"{ACCEPTANCE}/card.txt", "an easier spec\n")
+        self.record_tests(lap.task, epic_head, "pass")
+        self.name_spec_task(lap.epic, other)
+
+        done = self.launch(MERGE_GATE, lap.task)
+
+        self.assertEqual(1, done.returncode, done.stderr)
+        self.assertIn(f"protected paths, inside an app's acceptance folder: {ACCEPTANCE}/card.txt", done.stderr)
+        self.assert_nothing_merged(lap, epic_head)
+
     def test_the_gate_refuses_a_lap_with_no_commits_the_epic_branch_lacks_names_the_check_and_writes_nothing(self):
         lap = self.open_one_lap()
         epic_head = git(self.repo, "rev-parse", lap.epic_branch)
@@ -2476,7 +2492,6 @@ class FullTrackCase(SchedulerCase):
     BRIEF = "Files to change: card.txt\nSeam: the card reader\n"
 
     def open_full_lap(self) -> OpenLap:
-        """An epic handed off with one task on the full track, and the research action its lap opened with."""
         epic = self.new_epic()
         task = self.new_task_under(epic)
         branch = self.hand_off(epic, {task: "till"})

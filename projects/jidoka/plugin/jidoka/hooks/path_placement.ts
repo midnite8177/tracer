@@ -120,10 +120,24 @@ async function realLocation($: EngineInterface, path: string, base: string): Pro
   return undefined
 }
 
-/** True when `path` really lands inside the worktree, whatever links lie on the way. */
-export async function isReallyInside($: EngineInterface, path: string, worktree: string): Promise<boolean> {
-  const root = await realLocation($, worktree, '/')
+/**
+ * True when `path` really lands inside `folder`, whatever links lie on the
+ * way. Both are read against `worktree`, so a relative `folder` names a place
+ * beneath it.
+ */
+export async function isReallyBeneath(
+  $: EngineInterface,
+  path: string,
+  folder: string,
+  worktree: string,
+): Promise<boolean> {
+  const root = await realLocation($, folder, worktree)
   const file = await realLocation($, path, worktree)
   if (root === undefined || file === undefined) return false
   return contains(root, file)
+}
+
+/** True when `path` really lands inside the worktree, an absolute path, whatever links lie on the way. */
+export async function isReallyInside($: EngineInterface, path: string, worktree: string): Promise<boolean> {
+  return isReallyBeneath($, path, worktree, worktree)
 }

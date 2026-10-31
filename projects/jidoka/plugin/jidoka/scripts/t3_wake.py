@@ -48,7 +48,7 @@ import epics
 import file_lock
 import heartbeat
 import processes
-import repo_settings
+import settings_reader
 import rules
 import watch
 from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError, labels_of
@@ -210,7 +210,7 @@ def start_wakers(home: Path, session: str, folder: Path) -> None:
     threads = threads_of_session(home, session)
     if not threads:
         return
-    main_tree = repo_settings.main_worktree(folder, GIT_TIMEOUT_SECONDS)
+    main_tree = settings_reader.main_worktree(folder, GIT_TIMEOUT_SECONDS)
     for epic, thread in threads:
         if not is_held(epic, main_tree):
             continue
@@ -239,7 +239,7 @@ def main(argv: list[str]) -> int:
         sub.add_argument("--thread", required=True, help="the T3 thread id")
         sub.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
-    home = repo_settings.jidoka_home(args.jidoka_home)
+    home = settings_reader.jidoka_home(args.jidoka_home)
     thread = args.thread.strip()
     if not thread:
         parser.error("--thread needs a thread id")
@@ -253,12 +253,12 @@ def main(argv: list[str]) -> int:
     if args.interval < 1:
         parser.error("--interval needs a whole number of seconds from 1 up")
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         wait_and_send(args.epic, thread, home, args.interval,
                       beating(home, args.epic, lambda: watch.snapshot_of(args.epic, main_tree, home, clock.now()),
                               clock.now),
                       lambda: is_held(args.epic, main_tree), watch.REAL_PACING, send)
-    except (EpicReadError, CommandError, repo_settings.SettingsError, rules.RulesError, OSError) as error:
+    except (EpicReadError, CommandError, settings_reader.SettingsError, rules.RulesError, OSError) as error:
         print(f"t3_wake: {error}", file=sys.stderr)
         return 1
     return 0

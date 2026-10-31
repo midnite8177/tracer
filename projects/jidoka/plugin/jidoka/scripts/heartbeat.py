@@ -33,7 +33,7 @@ from pathlib import Path
 
 import clock
 import epics
-import repo_settings
+import settings_reader
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError
 from epic_reader import EpicReadError
 
@@ -87,7 +87,7 @@ def is_fresh(home: Path, epic: str, now: int) -> bool:
 
 
 def fresh_epics(home: Path, now: int) -> list[str]:
-    """The ids of the epics, in any repo of the machine, whose heartbeat is fresh: the epics a manager runs now."""
+    """The ids of the epics, in any repo of the machine, whose heartbeat is fresh; the epics a manager runs now."""
     folder = home / HEARTBEAT_FOLDER
     if not folder.is_dir():
         return []
@@ -107,7 +107,7 @@ def session_of_environment() -> str | None:
 
 
 def claim(home: Path, epic: str, now: int) -> None:
-    """Writes the epic's heartbeat fresh and records the manager's session, as each call of a manager does: it is
+    """Writes the epic's heartbeat fresh and records the manager's session, as each call of a manager does. It is
     the one write that starts a heartbeat, and it brings a stale one back, so that the session the manager runs in
     beats the epic from then on and no other session does.
 
@@ -123,7 +123,7 @@ def claim(home: Path, epic: str, now: int) -> None:
 
 
 def managed_by(home: Path, main_tree: Path, session: str) -> list[str]:
-    """The ids of the epics the factory runs whose heartbeat records this session, fresh or stale: the epics a
+    """The ids of the epics the factory runs whose heartbeat records this session, fresh or stale; the epics a
     manager of this session claimed, and so the only epics that a failed turn of this session concerns."""
     return [epic for epic in epics.running_epics(main_tree) if beat_session(home, epic) == session]
 
@@ -150,9 +150,9 @@ def main(argv: list[str]) -> int:
     beating.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        beat(repo_settings.jidoka_home(args.jidoka_home), main_tree, args.session)
-    except (epics.EpicsError, EpicReadError, CommandError, repo_settings.SettingsError, OSError) as error:
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        beat(settings_reader.jidoka_home(args.jidoka_home), main_tree, args.session)
+    except (epics.EpicsError, EpicReadError, CommandError, settings_reader.SettingsError, OSError) as error:
         print(f"heartbeat: {error}", file=sys.stderr)
         return 1
     return 0

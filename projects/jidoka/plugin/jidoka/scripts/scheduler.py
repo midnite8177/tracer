@@ -11,7 +11,7 @@ the epic's heartbeat is fresh, because a manager already runs it. Each call of a
 epic with a fresh heartbeat that records the session in $JIDOKA_SESSION_ID, as heartbeat.py describes. It takes
 every open lap at a worker stage for one an earlier session left with no worker, unless the human's brake holds it.
 Git wins where it disagrees with the record. A lap whose branch git shows merged into the epic branch closes its
-task as a merge does, and the records of worktrees whose folders are gone are dropped. For each other lap it stops
+task as a merge does, and it drops the records of worktrees whose folders are gone. For each other lap it stops
 the orphan workers left in its worktree, abandons a rebase left half done, and ends the lap interrupted as `stop`
 does, which counts no cutoff and no try, so that the task is ready again with a new lap on the work it left. A merge
 lock whose holder is gone is cleared. It reports each on stderr. Then it makes the checks below and opens the laps.
@@ -20,7 +20,7 @@ lock whose holder is gone is cleared. It reports each on stderr. Then it makes t
 after any outcome, with no restart and no heartbeat check.
 
 `stop <epic>` is the call a manager makes when the human tells the host to stop at once. It ends every open lap of
-the epic interrupted: the task is open with no assignee, `lap.stage` is interrupted, an `Interrupted:` comment says
+the epic interrupted. The task is open with no assignee, `lap.stage` is interrupted, an `Interrupted:` comment says
 so, and its worktree and branch are kept. A stop is no cutoff, no try and no park, so it changes no count and leaves
 the brake as it was, and the interrupted task is ready again with a new lap. Then it sends the factory-stopped
 notification through notify.py, which sends nothing when the epic has no open task left, and prints the host's line
@@ -81,7 +81,7 @@ seven-day window past its reserve stops the epic as a reached budget does, but t
 gives the projection of the window and three choices, once for each window.
 
 The `human` label is also the human's brake. A stage already running finishes, and its report is taken as always, but
-no stage starts on a task that carries the label, and none starts on any task of an epic that carries it: no lap
+no stage starts on a task that carries the label, and none starts on any task of an epic that carries it, no lap
 opens, and a lap that goes back to a worker, or that `next` finds left with no worker, is not in the actions. It
 stays open, with its tries, in `laps`. Taking the label off lets the next `next` or `report` start them, a restart
 counting no cutoff. The epic's other brake, three parked laps in a row at one stage with no merge between, is
@@ -142,9 +142,12 @@ Each call prints one JSON object:
              "build", "app-check", "spec-check" or "merge"), task, title,
              area, lap (its number), slot, branch, worktree, scratch, track
              ("simple" or "full"), answer, findings (null unless a Spec
-             check sent the diff back) and app_check (null unless the app
-             check did), for a merge its reason, and for an app check the
-             path of its report.
+             check sent the diff back), app_check (null unless the app
+             check did), specs (the acceptance specs the task makes pass,
+             an empty list for a task that makes none) and specs_command
+             (null for a task that makes none, else the words a build's
+             call to run_specs.py starts with), for a merge its reason,
+             and for an app check the path of its report.
              An empty list when nothing goes back, and no task is ready or
              none fits. The answer is null unless the task's last park was
              a question. Then it is {"source": "comment", "text"} holding
@@ -199,6 +202,7 @@ import heartbeat
 import holdouts
 import holdouts_run
 import lap_record
+import launcher
 import ledger
 import lap_stages
 import merge_gate
@@ -208,12 +212,13 @@ import pass_ledger
 import pass_stages
 import pause
 import private_docs
-import repo_settings
+import settings_reader
 import reserves
 import resume
 import rules
 import slots
 import spec_check
+import specs
 from bench import BenchError, Workspace, make_worktree
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, SCRATCH_FOLDER, CommandError,
                       NotAWholeNumber, bd_comments, env_as_factory, labels_of, metadata_of,
@@ -341,20 +346,22 @@ def answer_fields(lap: Lap, metadata: dict, epic: str, home: Path, main_tree: Pa
     if denial is not None:
         try:
             park.allow_answered(denial, answer, epic, home, main_tree)
-        except (park.QuestionError, rules.RulesError, repo_settings.SettingsError) as error:
+        except (park.QuestionError, rules.RulesError, settings_reader.SettingsError) as error:
             print(f"scheduler: the answer on {lap.task} allowed no call: {error}", file=sys.stderr)
     return answer.fields()
 
 
-def action_of(lap: Lap, answer: dict | None) -> dict:
+def action_of(lap: Lap, answer: dict | None, made_to_pass: list[str]) -> dict:
     """The action that starts the lap's worker: a build, a merge worker with the reason it was called, or an app check
-    with the path of the report it writes."""
+    with the path of the report it writes. It names the specs the task makes pass and, when there are some, the words
+    that start the worker's call to run_specs.py."""
     extra = {}
     if lap.stage == MERGE:
         extra = {"reason": lap.merge_why}
     elif lap.stage == APP_CHECK:
         extra = {"report": str(lap.scratch / app_check.APP_CHECK_REPORT)}
-    return {"action": lap.stage, **lap.fields(), **extra, "answer": answer,
+    return {"action": lap.stage, **lap.fields(), **extra, "answer": answer, "specs": made_to_pass,
+            "specs_command": launcher.run_specs_command() if made_to_pass else None,
             "findings": spec_check.from_stored(lap.findings) or None,
             "app_check": spec_check.from_stored(lap.app_findings) or None}
 
@@ -499,7 +506,7 @@ def settle_epic(epic: Epic, settings: dict, home: Path, main_tree: Path) -> Pass
 
 
 def running_laps(held: list[Lap]) -> list[Lap]:
-    """The open laps at a worker stage, by slot: with no worker of this manager running, an earlier session left
+    """The open laps at a worker stage, by slot. With no worker of this manager running, an earlier session left
     each of them."""
     return [lap for lap in sorted(held, key=lambda lap: lap.slot) if lap.stage in WORKER_STAGES]
 
@@ -610,13 +617,14 @@ def open_laps(epic: Epic, holds: Holds, resumed: set[str], limit: rules.LapLimit
 def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], restarting: bool) -> dict:
     """Prints the laps that go back to a worker or start, after the rebuilds of laps a report sent back.
 
-    The call claims the epic's heartbeat for the session it runs in, as heartbeat.claim says.
+    The call claims the epic's heartbeat for the session it runs in, as heartbeat.claim says. It reads the specs each
+    task makes pass first, so metadata that cannot be read stops the call before a lap opens that would get no worker.
 
     When restarting, no worker of this manager is running, so every open lap at a worker stage was left by an
     earlier session. The call refuses when the epic's heartbeat is fresh, resumes the factory as resume_laps
     describes, and opens a new lap for each task whose lap it ended.
     """
-    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    settings = settings_reader.read_settings(home, main_tree)
     epic = checked_epic(bead, settings, main_tree)
     resumed: set[str] = set()
     if restarting:
@@ -638,6 +646,10 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
         standstill.parking.park()
     limit = rules.lap_limits(epic.shown, settings, home)
     unplaced = unplaced_tasks(tasks)
+    try:
+        made_to_pass = {str(task["id"]): specs.specs_of(task) for task in tasks}
+    except specs.SpecsError as error:
+        raise SchedulerError(str(error)) from error
     heartbeat.claim(home, epic.id, clock.now())
     planned = open_laps(epic, holds, resumed, limit, now, home, main_tree)
     metadata = {str(task["id"]): metadata_of(task) for task in tasks}
@@ -646,7 +658,8 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
             "brake": holds.brake.fields() if holds.brake.is_on else None,
             "paused": holds.waiting.fields(now) if holds.waiting is not None else None,
             "watch": has_work_to_wait_for(epic),
-            "actions": [action_of(lap, answer_fields(lap, metadata[lap.task], epic.id, home, main_tree))
+            "actions": [action_of(lap, answer_fields(lap, metadata[lap.task], epic.id, home, main_tree),
+                                  made_to_pass[lap.task])
                         for lap in holds.rebuilds + planned] + state.pass_actions
                        + ([state.holdouts_run.fields()] if state.holdouts_run is not None else []),
             "laps": [{**lap.fields(), "stage": lap.stage, "tries": lap.tries}
@@ -794,7 +807,7 @@ class WorkerReport:
 
 
 def report(bead: str, task_id: str, said: WorkerReport, worker: ledger.Worker, home: Path, main_tree: Path) -> dict:
-    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    settings = settings_reader.read_settings(home, main_tree)
     epic = checked_epic(bead, settings, main_tree)
     lap = working_lap(epic, task_id)
     outcome, cause = said.outcome, said.cause
@@ -834,7 +847,7 @@ def report_stage(mode: str, bead: str, ended: str | None, why: str | None, worke
     A red holdout files a task in the epic, and this call opens its lap with the others.
     """
     stage = pass_stages.REPORT_MODES[mode]
-    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    settings = settings_reader.read_settings(home, main_tree)
     epic = checked_epic(bead, settings, main_tree)
     record_pass_in_ledger(epic.id, stage.stage, DONE if ended is None else PASS_OUTCOMES[ended], workers, home,
                           main_tree)
@@ -917,8 +930,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         if args.mode == "next":
             printed = next_moves(args.epic, home, main_tree, [], True)
         elif args.mode == "carry-on":
@@ -933,7 +946,7 @@ def main(argv: list[str]) -> int:
             worker = ledger.Worker(args.agent, args.tier, args.route == NATIVE_ROUTE)
             printed = report(args.epic, args.task, said, worker, home, main_tree)
     except (SchedulerError, NotAWholeNumber, PassError, EpicReadError, BenchError, CommandError,
-            repo_settings.SettingsError, holdouts.HoldoutsError, private_docs.ClashError, OSError) as error:
+            settings_reader.SettingsError, holdouts.HoldoutsError, private_docs.ClashError, OSError) as error:
         print(f"scheduler: {error}", file=sys.stderr)
         return 1
     print(json.dumps(printed))

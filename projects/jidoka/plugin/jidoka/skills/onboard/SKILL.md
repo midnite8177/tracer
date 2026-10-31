@@ -122,7 +122,14 @@ The settings:
   `test_target` (how to run one test), `hand_run` (the app's hand-run
   tests, a list that is empty when it has none) and `acceptance` (the
   folder of its acceptance specs, relative to the repo root, or `null`; an
-  app that leaves it out has none).
+  app that leaves it out has none). An app with an acceptance folder also
+  has `spec_command` (the command that runs all of its specs) and
+  `spec_target` (the arguments that follow it to run one spec, with one
+  `<...>` placeholder for the spec's name, such as `--filter
+  "DisplayName~<spec>"`). Read them from how the folder's specs run; if the
+  folder has no runner yet, record both as `null`. An app that leaves them
+  out has none, and the script refuses a `spec_command` without an
+  acceptance folder or without a `spec_target`.
 - An app with no tests, such as an editor with no test project, has `null`
   for `test`, `test_target` and `test_full`, and `[]` for `hand_run`.
   Landing says it has no tests and runs the other apps' full suites.
@@ -164,7 +171,8 @@ A person never reads `null`. When you offer a null value as a choice or show
 one, label it by what it means: `slot_use` "No slot use: app checks take
 turns", `way_in` "No way in recorded", `build` "No build step", `run` "No run
 command", `test` "No test command", `test_full` "No extra arguments: the
-full suite is the test command", `acceptance` "No acceptance specs". An
+full suite is the test command", `acceptance` "No acceptance specs", `spec_command` "No way to run the
+specs". An
 app with "No test command" shows no `test_target` or `test_full` of its
 own. The word `null` appears only in the JSON you pass to `write`.
 

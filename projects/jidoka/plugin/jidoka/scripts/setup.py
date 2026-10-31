@@ -40,7 +40,7 @@ import shutil
 import sys
 from pathlib import Path
 
-import repo_settings
+import settings_reader
 import routes
 import rules
 
@@ -130,7 +130,7 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     try:
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         if args.mode == "propose":
             print(json.dumps(propose(home), indent=2))
         else:

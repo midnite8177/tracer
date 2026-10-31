@@ -101,7 +101,7 @@ import gate_restore
 import gate_send_back
 import lap_record
 import pass_ledger
-import repo_settings
+import settings_reader
 import rules
 import t3_wake
 import validation
@@ -169,7 +169,7 @@ class RebuildRefused(Exception):
         return self.described(epic, f"{epic} stays parked. {self.parked_advice}")
 
     def unwritten(self, epic: str, error: CommandError) -> str:
-        """The refusal as the script prints it when writing it on the epic failed: the comment, the gate state and the
+        """The refusal as the script prints it when writing it on the epic failed. The comment, the gate state and the
         human label may each be written or not."""
         return self.described(epic, f"Turning {epic} back failed ({error}), so check its comments, its gate state and "
                                     "its human label.")
@@ -484,11 +484,11 @@ def decide(args: argparse.Namespace, home: Path, main_tree: Path) -> str:
 
 def run_decision(args: argparse.Namespace) -> int:
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         print(decide(args, home, main_tree))
     except (GateError, gate_restore.RestoreError, gate_send_back.SendBackError, PassError, EpicReadError, CommandError,
-            repo_settings.SettingsError, rules.RulesError, OSError) as error:
+            settings_reader.SettingsError, rules.RulesError, OSError) as error:
         print(f"gate: {error}", file=sys.stderr)
         return 1
     return 0
@@ -534,8 +534,8 @@ def main(argv: list[str]) -> int:
     if args.mode != MERGE:
         return run_decision(args)
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         landed, settings = merge(args.epic, args.message, home, main_tree)
     except WaitingOnEdits as waiting:
         print(f"gate: {waiting}. Main is unchanged and {args.epic} waits at the gate. Commit or set aside:")
@@ -549,7 +549,7 @@ def main(argv: list[str]) -> int:
             comment = refused.unwritten(args.epic, error)
         print(f"gate: {comment}", file=sys.stderr)
         return refused.exit_code
-    except (GateError, EpicReadError, LandingError, CommandError, repo_settings.SettingsError, rules.RulesError,
+    except (GateError, EpicReadError, LandingError, CommandError, settings_reader.SettingsError, rules.RulesError,
             PassError, OSError) as error:
         print(f"gate: {error}", file=sys.stderr)
         return 1

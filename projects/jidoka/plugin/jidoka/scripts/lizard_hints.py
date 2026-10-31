@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import repo_settings
+import settings_reader
 from commands import CommandError, capture, run
 
 VENDORED_LIZARD = Path(__file__).resolve().parent.parent / "vendor" / "lizard"
@@ -28,8 +28,8 @@ sys.path.insert(0, str(VENDORED_LIZARD))
 
 import lizard  # noqa: E402
 
-CCN, LENGTH, ARGUMENTS = repo_settings.LIZARD_METRICS
-METRICS = repo_settings.LIZARD_METRICS
+CCN, LENGTH, ARGUMENTS = settings_reader.LIZARD_METRICS
+METRICS = settings_reader.LIZARD_METRICS
 
 
 @dataclass(frozen=True)
@@ -50,8 +50,8 @@ class Hint:
 
 def limits_of(settings: dict) -> dict[str, int]:
     """The repo's limits, with the default for each measure the settings leave out."""
-    stored = settings.get(repo_settings.LIZARD_LIMITS)
-    return {**repo_settings.DEFAULT_LIZARD_LIMITS, **(stored if isinstance(stored, dict) else {})}
+    stored = settings.get(settings_reader.LIZARD_LIMITS)
+    return {**settings_reader.DEFAULT_LIZARD_LIMITS, **(stored if isinstance(stored, dict) else {})}
 
 
 def measures_of(file: str, source: str) -> dict[str, dict]:
@@ -110,12 +110,11 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     cwd = Path.cwd()
     try:
-        main_tree = repo_settings.main_worktree(cwd, repo_settings.GIT_TIMEOUT_SECONDS)
-        settings = repo_settings.load(repo_settings.settings_path(repo_settings.jidoka_home(args.jidoka_home),
-                                                                 main_tree))
+        main_tree = settings_reader.main_worktree(cwd, settings_reader.GIT_TIMEOUT_SECONDS)
+        settings = settings_reader.read_settings(settings_reader.jidoka_home(args.jidoka_home), main_tree)
         files = args.files or changed_files(args.base, args.head, cwd)
         hints = hints_between(args.base, args.head, files, limits_of(settings), cwd)
-    except (repo_settings.SettingsError, CommandError, OSError) as error:
+    except (settings_reader.SettingsError, CommandError, OSError) as error:
         print(f"lizard_hints: {error}", file=sys.stderr)
         return 1
     print(json.dumps([each.fields() for each in hints], indent=2))

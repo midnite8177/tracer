@@ -84,9 +84,9 @@ def scripts_on_path() -> None:
         sys.path.insert(0, scripts)
 
 
-def repo_settings():
+def settings_reader():
     scripts_on_path()
-    import repo_settings as script
+    import settings_reader as script
     return script
 
 
@@ -95,7 +95,7 @@ def main_tree_of(folder: Path) -> Path | None:
 
     Without a main worktree there is no settings key, so the hook leaves out the onboarding line.
     """
-    script = repo_settings()
+    script = settings_reader()
     try:
         return script.main_worktree(folder, GIT_TIMEOUT_SECONDS)
     except script.SettingsError:
@@ -108,7 +108,7 @@ def is_beads_repo(folder: Path, main_tree: Path | None) -> bool:
 
 
 def settings_file(main_tree: Path) -> Path:
-    script = repo_settings()
+    script = settings_reader()
     return script.settings_path(script.jidoka_home(None), main_tree)
 
 
@@ -117,7 +117,7 @@ def commit_rule(main_tree: Path | None) -> str:
     if main_tree is None:
         return COMMITTED_RULE
     try:
-        script = repo_settings()
+        script = settings_reader()
         settings = script.load(settings_file(main_tree))
         glossary, adrs = settings.get("glossary"), settings.get("adrs")
         private = settings.get(script.GLOSSARY_AND_ADRS) == script.PRIVATE
@@ -133,7 +133,7 @@ def rule_conflicts(main_tree: Path | None) -> str:
     if main_tree is None:
         return ""
     try:
-        script = repo_settings()
+        script = settings_reader()
         conflicts = script.load(settings_file(main_tree)).get(script.RULE_CONFLICTS, [])
         if not conflicts or script.rule_conflicts_problems(conflicts):
             return ""
@@ -156,7 +156,7 @@ def stopped_factories(main_tree: Path | None) -> str:
     if main_tree is None:
         return ""
     try:
-        script = repo_settings()
+        script = settings_reader()
         import clock
         import resume
         stopped = resume.stopped_epics(script.jidoka_home(None), main_tree, clock.now())

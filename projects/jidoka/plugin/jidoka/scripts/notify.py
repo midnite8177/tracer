@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tells the human that the factory waits on them: one notification for one event on one bead.
+"""Tells the human that the factory waits on them, with one notification for one event on one bead.
 
 `notify.py <event> <bead>` sends one notification, once. Run it from inside any checkout of the repo. The
 events that name a bead are:
@@ -61,7 +61,7 @@ import heartbeat
 import lap_record
 import park
 import pause
-import repo_settings
+import settings_reader
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, env_as_factory, is_labeled_for_human, metadata_of,
                       parent_of, read_bead, run)
 from epic_reader import EpicReadError, NotAnEpic, read_epic, shown_epic, validated_head
@@ -356,8 +356,8 @@ def main(argv: list[str]) -> int:
     about_a_session.add_argument("--session", required=True, help="the id of the host session")
     args = parser.parse_args(argv)
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         if args.event == PERMISSION_PROMPT:
             line = deliver(host_prompt(args.session, home, main_tree), home, main_tree)
         else:
@@ -365,7 +365,7 @@ def main(argv: list[str]) -> int:
     except NothingToSend as reason:
         print(f"notify: nothing to send: {reason}", file=sys.stderr)
         return 0
-    except (EpicsError, EpicReadError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (EpicsError, EpicReadError, CommandError, settings_reader.SettingsError, OSError) as error:
         print(f"notify: {error}", file=sys.stderr)
         return 1
     print(line)

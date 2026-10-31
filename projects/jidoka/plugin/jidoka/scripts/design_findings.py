@@ -30,7 +30,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import repo_settings
+import settings_reader
 from commands import CommandError, bd_comments, bd_list, env_as_factory, metadata_of, run
 from epic_task import file_outside
 from report_text import ReportError, listed_report, located_texts, shortened_title
@@ -164,9 +164,9 @@ def settle(epic: str, problems: list[Problem], main_tree: Path) -> list[Settled]
 
 def print_open(files: list[str]) -> int:
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), repo_settings.GIT_TIMEOUT_SECONDS)
+        main_tree = settings_reader.main_worktree(Path.cwd(), settings_reader.GIT_TIMEOUT_SECONDS)
         ranked = ranked_findings(files, main_tree)
-    except (repo_settings.SettingsError, CommandError, OSError) as error:
+    except (settings_reader.SettingsError, CommandError, OSError) as error:
         print(f"design_findings: {error}", file=sys.stderr)
         return 1
     print(json.dumps([each.fields() for each in ranked], indent=2))
@@ -181,9 +181,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("report", type=Path, help="the JSON list of problems")
     args = parser.parse_args(argv)
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), repo_settings.GIT_TIMEOUT_SECONDS)
+        main_tree = settings_reader.main_worktree(Path.cwd(), settings_reader.GIT_TIMEOUT_SECONDS)
         settled = settle(args.epic, read_report(args.report), main_tree)
-    except (DesignFindingError, ReportError, repo_settings.SettingsError, CommandError, OSError) as error:
+    except (DesignFindingError, ReportError, settings_reader.SettingsError, CommandError, OSError) as error:
         print(f"design_findings: {error}", file=sys.stderr)
         return 1
     print(json.dumps([each.fields() for each in settled], indent=2))

@@ -24,7 +24,7 @@ import json
 import sys
 from pathlib import Path
 
-import repo_settings
+import settings_reader
 import routes
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, env_as_factory, metadata_of, run,
                       set_metadata)
@@ -64,10 +64,10 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         print(json.dumps(fallback(args.bead, args.stage, args.tier, args.run, home, main_tree)))
-    except (routes.RouteError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (routes.RouteError, CommandError, settings_reader.SettingsError, OSError) as error:
         print(f"route: {error}", file=sys.stderr)
         return 1
     return 0

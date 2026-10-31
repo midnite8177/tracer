@@ -62,6 +62,11 @@ type World = {
    * it does not, a path and a place of `places` match whatever their case, and a real location comes back in lower case.
    */
   caseSensitive: boolean
+  /**
+   * What `lap_protected.py` prints in the worktree, the acceptance folders its lap worker may not write in; undefined
+   * when the script cannot print, and null when the folder holds no task's lap, which the script says with exit code 3.
+   */
+  barred: string[] | undefined | null
   spawn: () => Promise<{ model: string; agentId: string } | { deny: string }>
 }
 
@@ -127,6 +132,17 @@ function engineWith(on: On,commands: unknown[] | undefined, world: World): Launc
       launcher.endsWith('/bin/jidoka-run') &&
       script === `${root}/scripts/lap_lists.py` &&
       e.init?.cwd === WORKTREE
+    if (script === `${root}/scripts/lap_protected.py` && e.init?.cwd === WORKTREE) {
+      const folders = world.barred
+      return {
+        value: {
+          ...RAN,
+          exitCode: folders === undefined ? 1 : folders === null ? 3 : 0,
+          stdout: folders == null ? '' : JSON.stringify(folders),
+          stderr: folders == null ? 'lap_protected: no list' : '',
+        },
+      }
+    }
     if (isLapLists) launched.asked.push(kind)
     const printed = isLapLists && commands !== undefined
     return {
@@ -234,7 +250,7 @@ test('a backslash path is judged by the folders it names', async ($, on) => {
 test('a lap recorded on Windows judges drive-letter paths whatever their case', async ($, on) => {
   engineBeneath(on, LAP_LIST)
   on('state.get', () => ({
-    value: { value: { worktree: 'C:\\repo\\.worktrees\\lap-t1', kind: 'lap', commands: [] }, version: 1 },
+    value: { value: { worktree: 'C:\\repo\\.worktrees\\lap-t1', kind: 'lap', commands: [], barred: [] }, version: 1 },
   }))
 
   const inside = await $.tool.check({
@@ -270,6 +286,105 @@ test('a notebook edit inside the worktree is allowed', async ($, on) => {
     input: { notebook_path: `${WORKTREE}/nb.ipynb`, new_source: '' },
     agentId: 'a1',
   })
+
+  expect(verdict.decision).toBe('allow')
+})
+
+const ACCEPTANCE = 'specs/acceptance'
+const BARRED_FROM_ACCEPTANCE: World['barred'] = [ACCEPTANCE]
+
+function engineBarring(on: On, barred: World['barred'], places: World['places']): Launched {
+  return engineWith(on, LAP_LIST, {
+    ...NOTHING,
+    barred,
+    places,
+    spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }),
+  })
+}
+
+test('a worker of an ordinary task is denied a write or an edit in the acceptance folder, with the way to ask for a change', async ($, on) => {
+  engineBarring(on, BARRED_FROM_ACCEPTANCE, {})
+  await startLap($, WORKTREE)
+
+  const write = await $.tool.check({
+    tool: 'Write',
+    input: { file_path: `${WORKTREE}/${ACCEPTANCE}/Card.feature`, content: '' },
+    agentId: 'a1',
+  })
+  const edit = await $.tool.check({
+    tool: 'Edit',
+    input: { file_path: `${WORKTREE}/${ACCEPTANCE}/steps/Card.cs`, old_string: 'a', new_string: 'b' },
+    agentId: 'a1',
+  })
+
+  const reason = (path: string): string =>
+    `jidoka: ${path} is inside the acceptance folder ${ACCEPTANCE}, which only the spec task's lap may change. ` +
+    'If a spec looks wrong, park the task with a question that says which spec and why.'
+  expect(write).toEqual({ decision: 'deny', reason: reason(`Write of ${WORKTREE}/${ACCEPTANCE}/Card.feature`) })
+  expect(edit).toEqual({ decision: 'deny', reason: reason(`Edit of ${WORKTREE}/${ACCEPTANCE}/steps/Card.cs`) })
+})
+
+test('a worker of the spec task, whose lap is barred from no folder, may write in the acceptance folder', async ($, on) => {
+  engineBarring(on, [], {})
+  await startLap($, WORKTREE)
+
+  const write = await writeTo($, `${WORKTREE}/${ACCEPTANCE}/Card.feature`)
+  const edit = await $.tool.check({
+    tool: 'Edit',
+    input: { file_path: `${WORKTREE}/${ACCEPTANCE}/steps/Card.cs`, old_string: 'a', new_string: 'b' },
+    agentId: 'a1',
+  })
+
+  expect(write.decision).toBe('allow')
+  expect(edit.decision).toBe('allow')
+})
+
+test('the acceptance folder is judged by the place a path really lands, and only that folder is barred', async ($, on) => {
+  engineBarring(on, BARRED_FROM_ACCEPTANCE, { [`${WORKTREE}/shortcut`]: `${WORKTREE}/${ACCEPTANCE}` })
+  await startLap($, WORKTREE)
+
+  const relative = await writeTo($, `${ACCEPTANCE}/Card.feature`)
+  const climbing = await writeTo($, `${WORKTREE}/src/../${ACCEPTANCE}/Card.feature`)
+  const throughLink = await writeTo($, `${WORKTREE}/shortcut/Card.feature`)
+  const notebook = await $.tool.check({
+    tool: 'NotebookEdit',
+    input: { notebook_path: `${WORKTREE}/${ACCEPTANCE}/notes.ipynb`, new_source: '' },
+    agentId: 'a1',
+  })
+  const sibling = await writeTo($, `${WORKTREE}/${ACCEPTANCE}-notes/a.md`)
+  const code = await writeTo($, `${WORKTREE}/src/a.py`)
+
+  expect([relative, climbing, throughLink, notebook].map(verdict => verdict.decision)).toEqual(['deny', 'deny', 'deny', 'deny'])
+  expect([sibling, code].map(verdict => verdict.decision)).toEqual(['allow', 'allow'])
+})
+
+test('a write outside the worktree is still denied for the worktree, whatever the acceptance folders are', async ($, on) => {
+  engineBarring(on, BARRED_FROM_ACCEPTANCE, {})
+  await startLap($, WORKTREE)
+
+  const outside = await writeTo($, `/repo/${ACCEPTANCE}/Card.feature`)
+
+  expect(outside.reason).toContain("is outside the lap's worktree")
+})
+
+test('a lap worker whose protected folders cannot be printed is denied every write and edit', async ($, on) => {
+  engineBarring(on, undefined, {})
+  await startLap($, WORKTREE)
+
+  const inFolder = await writeTo($, `${WORKTREE}/${ACCEPTANCE}/Card.feature`)
+  const elsewhere = await writeTo($, `${WORKTREE}/src/a.py`)
+
+  const reason =
+    'could not read which acceptance folders this lap may not write in. Park the task with a question that says so.'
+  expect([inFolder, elsewhere].map(verdict => verdict.decision)).toEqual(['deny', 'deny'])
+  expect(inFolder.reason).toContain(reason)
+})
+
+test('a lap worker whose folder holds no task lap has no folders barred, because its stage settles the change', async ($, on) => {
+  engineBarring(on, null, {})
+  await startLap($, WORKTREE)
+
+  const verdict = await writeTo($, `${WORKTREE}/src/a.py`)
 
   expect(verdict.decision).toBe('allow')
 })
@@ -683,11 +798,12 @@ test('a lap record of another shape denies the worker\'s calls instead of leavin
   expect(hostVerdict).toEqual(HOST_VERDICT)
 })
 
-const NOTHING: Pick<World, 'spelling' | 'places' | 'failures' | 'caseSensitive'> = {
+const NOTHING: Pick<World, 'spelling' | 'places' | 'failures' | 'caseSensitive' | 'barred'> = {
   spelling: AS_POSIX,
   places: {},
   failures: {},
   caseSensitive: false,
+  barred: [],
 }
 
 function engineWithPlaces(on: On, places: World['places'], spelling: Spelling): Launched {
@@ -762,7 +878,7 @@ const FORMS: Form[] = [
  * folder; so a test of a Windows worktree path reaches the mod's reading of paths but not its file system calls.
  */
 function recordLap(on: On, worktree: string): void {
-  on('state.get', () => ({ value: { value: { worktree, kind: 'lap', commands: [] }, version: 1 } }))
+  on('state.get', () => ({ value: { value: { worktree, kind: 'lap', commands: [], barred: [] }, version: 1 } }))
 }
 
 async function writeTo($: Engine, file_path: string): Promise<{ decision: string; reason?: string }> {
@@ -1276,7 +1392,7 @@ test('a lap worker may not run the launcher on holdouts.py', async ($, on) => {
 const SONNET = 'claude-sonnet-5-5'
 const STEP = { model: SONNET, input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 1000, cache_creation_input_tokens: 5 }
 
-/** Stands for the engine beneath the plugin: every step of a turn used `usage`, which is null when the host reports
+/** Stands for the engine beneath the plugin. Every step of a turn used `usage`, which is null when the host reports
  * none, and a write lands in `files` by path. */
 function engineThatSteps(on: On, env: Record<string, string>, usage: typeof STEP | null): Map<string, string> {
   const files = new Map<string, string>()

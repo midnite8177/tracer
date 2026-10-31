@@ -36,7 +36,7 @@ from epics import HOLDOUTS_PENDING_KEY, PENDING, awaits_holdouts
 from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, count_of, park_epic, worktree_at
 from report_text import shortened_title
-from repo_settings import apps_of
+from settings_reader import apps_of
 from validation import FAIL, PASS, RESULT_KEY, RUNS_KEY, ValidationError
 from worktrees import remove_worktree
 

@@ -65,7 +65,7 @@ from pathlib import Path
 from typing import Callable
 
 import lap_record
-import repo_settings
+import settings_reader
 import routes
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_git_user, metadata_of, parent_of, run
 from epic_reader import NotAnEpic, shown_epic
@@ -114,8 +114,8 @@ def is_share(value: object) -> bool:
 
 
 SETTINGS: dict[str, tuple[Callable[[object], bool], str]] = {
-    "lap_test_scope": (lambda value: value in repo_settings.TEST_SCOPES,
-                       f"one of {', '.join(repo_settings.TEST_SCOPES)}"),
+    "lap_test_scope": (lambda value: value in settings_reader.TEST_SCOPES,
+                       f"one of {', '.join(settings_reader.TEST_SCOPES)}"),
     LAP_LIMIT: (is_positive_whole, "a whole number above zero"),
     "wall_clocks": (lambda value: is_map_of(value, is_positive_whole),
                     "an object of stage names to whole minutes above zero"),
@@ -378,7 +378,7 @@ def shown_rules(epic: str, main_tree: Path) -> dict:
 
 def pickable_choices(ceiling: LapCeiling) -> dict[str, list]:
     """The settings that take one of a short list, each with the values a person can pick."""
-    return {"lap_test_scope": list(repo_settings.TEST_SCOPES),
+    return {"lap_test_scope": list(settings_reader.TEST_SCOPES),
             LAP_LIMIT: list(range(1, ceiling.limit)),
             "discovered_bugs_into_epic": [True, False],
             "commits_on_main": list(COMMITS_ON_MAIN)}
@@ -401,7 +401,7 @@ def parsed_setting(argument: str) -> tuple[str, object]:
 
 
 def ceiling_of(home: Path, main_tree: Path) -> LapCeiling:
-    return lap_ceiling(repo_settings.load(repo_settings.settings_path(home, main_tree)), home)
+    return lap_ceiling(settings_reader.read_settings(home, main_tree), home)
 
 
 def main(argv: list[str]) -> int:
@@ -422,8 +422,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         if args.mode == "lap-commands":
             printed = lap_commands(Path.cwd(), main_tree)
         elif args.mode == "show":
@@ -440,7 +440,7 @@ def main(argv: list[str]) -> int:
                 wanted = dict(parsed_setting(argument) for argument in args.settings)
                 changed = write_settings(args.epic, wanted, ceiling, main_tree)
             printed = {**shown_rules(args.epic, main_tree), "changed": changed}
-    except (RulesError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (RulesError, CommandError, settings_reader.SettingsError, OSError) as error:
         print(f"rules: {error}", file=sys.stderr)
         return 1
     print(json.dumps(printed))

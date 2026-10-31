@@ -40,7 +40,7 @@ from pathlib import Path
 import caps
 import clock
 import pause
-import repo_settings
+import settings_reader
 import rules
 import slots
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, is_labeled_for_human, metadata_of
@@ -87,9 +87,9 @@ REAL_PACING = Pacing(time.sleep, clock.now)
 
 
 def openable_tasks(epic: Epic, home: Path, main_tree: Path, now: int) -> tuple[str, ...]:
-    """The ids of the ready tasks that the scheduler would open a lap for at `now`, in the order it opens them: the
+    """The ids of the ready tasks that the scheduler would open a lap for at `now`, in the order it opens them. The
     machine beside the epic is the one slots.py reads, and the epic's limit is the one the scheduler applies."""
-    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    settings = settings_reader.read_settings(home, main_tree)
     limits = rules.lap_limits(epic.shown, settings, home)
     machine, _ = slots.machine_beside(slots.Standing(home, epic.id, main_tree, limits.machine, now))
     held = [lap for lap in map(open_lap, epic.open_task_beads) if lap is not None]
@@ -162,12 +162,12 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     if args.interval < 1:
         parser.error("--interval needs a whole number of seconds from 1 up")
-    home = repo_settings.jidoka_home(args.jidoka_home)
+    home = settings_reader.jidoka_home(args.jidoka_home)
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         change = watch(args.epic, lambda: snapshot_of(args.epic, main_tree, home, clock.now()), args.interval,
                        CHANGE_EVENTS, lambda: False, REAL_PACING)
-    except (EpicReadError, CommandError, repo_settings.SettingsError, rules.RulesError, OSError) as error:
+    except (EpicReadError, CommandError, settings_reader.SettingsError, rules.RulesError, OSError) as error:
         print(f"watch: {error}", file=sys.stderr)
         return 1
     print(json.dumps({"epic": args.epic, "event": change.event, "bead": change.bead}))

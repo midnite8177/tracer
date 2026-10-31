@@ -57,7 +57,7 @@ from pathlib import Path, PureWindowsPath
 import bd_files
 import git_exclude
 import links
-import repo_settings
+import settings_reader
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, run
 
 WORKSPACE = ".beads"
@@ -194,7 +194,7 @@ def switch(main_tree: Path) -> list[str]:
 
 
 def switch_commit(main_tree: Path) -> str | None:
-    """The commit that took the workspace out of git: the latest that deleted files under it and left none tracked."""
+    """The commit that took the workspace out of git, which is the latest that deleted files under it and left none tracked."""
     found = capture(["git", "log", "-1", "--format=%H", "--diff-filter=D", "--", WORKSPACE], main_tree, None)
     commit = found.stdout.strip() if found.returncode == 0 else ""
     if not commit or run(["git", "ls-tree", "-r", "--name-only", commit, "--", WORKSPACE], main_tree, None).strip():
@@ -300,10 +300,10 @@ def main(argv: list[str]) -> int:
                                      description="Put the beads workspace of the repo of the cwd in stealth mode.")
     parser.parse_args(argv)
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         for line in make_stealth(main_tree):
             print(line)
-    except (StealthError, CommandError, links.LinkError, repo_settings.SettingsError, OSError) as error:
+    except (StealthError, CommandError, links.LinkError, settings_reader.SettingsError, OSError) as error:
         print(f"beads_stealth: {error}", file=sys.stderr)
         return 1
     return 0

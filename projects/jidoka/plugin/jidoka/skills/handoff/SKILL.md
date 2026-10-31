@@ -28,7 +28,13 @@ The skill folder is the directory that holds this SKILL.md. Pass
    and `demo`, the text of its Seams and Demo sections, `missing`, the
    sections among `demo` and `seams` it lacks, `track` and `why`, the
    track the script's rule proposes and the reasons, `holdouts`, how many
-   holdouts name it, and `presets`. A spec whose Out of Scope section is
+   holdouts name it, `specs`, the acceptance specs it makes pass, and
+   `presets`; the top level has `spec_task`, the id of the epic's spec task,
+   which the rule proposes on the full track. The human names the spec task
+   and the specs with the specs script before the check:
+   `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/specs.py" spec-task <epic-id> <task-id>`
+   and `makes-pass <epic-id> <task-id> <spec> ...`; `show <epic-id>` prints
+   what it holds. A spec whose Out of Scope section is
    missing or empty fails the check like any other form problem; the human
    writes it, and handoff runs again.
 3. **Settle the gaps.** For each task whose `missing` is not empty,
@@ -47,9 +53,9 @@ The skill folder is the directory that holds this SKILL.md. Pass
    area. A task with no Seams section gets the area of the code its title
    names; say that you guessed it.
 5. **Confirm the table.** Show the human one table with the columns Task
-   (id and title), Track, Why, Area, Holdouts and State, with the `track`
+   (id and title), Track, Why, Area, Holdouts, Specs and State, with the `track`
    and `why` the check printed and the epic branch's name above it. Do not
-   propose a track of your own: the script's rule decides. Ask the human to
+   propose a track of your own. The script's rule decides. Ask the human to
    confirm or flip any row's track and to confirm or edit the areas.
    Change the table as they say, and show it again until they confirm it.
    Each flip becomes a `--track <task>=<simple|full>` argument.

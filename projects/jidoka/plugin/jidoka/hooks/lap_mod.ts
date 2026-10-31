@@ -2,7 +2,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { LapWorker, ListEntry } from '../types/index'
 import { changesFolder, deletedPaths, isDelete } from './delete_paths.js'
 import { areListed, entriesOf, splitIntoSimpleCommands } from './list_matcher.js'
-import { isAbsolute, isReallyInside, resolved, withDrive } from './path_placement.js'
+import { isAbsolute, isReallyBeneath, isReallyInside, resolved, withDrive } from './path_placement.js'
 import { simpleCommands } from './shell_words.js'
 import { jidokaScriptsIn, runScript, scriptPlace } from './run_script.js'
 import { endFailedTurns, startHeartbeat, wakeAfterFailure } from './timers.js'
@@ -56,6 +56,27 @@ async function commandsFor($: EngineInterface, kind: LapWorker['kind'], worktree
   if (shown === undefined || shown.exitCode !== 0) return []
   const listed = entriesOf(jsonIn(shown.stdout))
   return splitIntoSimpleCommands(listed)
+}
+
+/** The exit code of the lap-protected script for a folder that holds no task's lap, such as a pass worktree. */
+const NO_TASK_LAP = 3
+
+/**
+ * The folders a worker of this kind may not write in, from jidoka's
+ * lap-protected script run in the worktree. A check worker writes no files and
+ * a folder that holds no task's lap has no folders to bar, since the stage that
+ * owns the worktree refuses a change inside an acceptance folder when it
+ * settles; both give none. Null when the script cannot print the folders, so
+ * that the worker's writes are denied rather than judged by an empty list.
+ */
+async function barredFor($: EngineInterface, kind: LapWorker['kind'], worktree: string): Promise<string[] | null> {
+  if (kind === 'check') return []
+  const shown = await runScript($, 'lap_protected', [], worktree)
+  if (shown?.exitCode === NO_TASK_LAP) return []
+  if (shown === undefined || shown.exitCode !== 0) return null
+  const listed = jsonIn(shown.stdout)
+  if (!Array.isArray(listed) || !listed.every((folder): folder is string => typeof folder === 'string')) return null
+  return listed
 }
 
 export { jidokaScriptsIn }
@@ -200,6 +221,7 @@ async function workerVerdict(
   call: ToolCall,
   pluginRoot: string,
   landsInside: (path: string) => Promise<boolean>,
+  landsBeneath: (path: string, folder: string) => Promise<boolean>,
 ): Promise<Verdict | undefined> {
   const { tool } = call
   if (HOST_ONLY.has(tool)) return undefined
@@ -228,9 +250,27 @@ async function workerVerdict(
   if (pathField !== undefined) {
     const path = filePathOf(pathField, call.input)
     if (path === undefined) return { decision: 'deny', reason: `jidoka: ${tool} names no ${pathField}.` }
-    return (await landsInside(path))
-      ? { decision: 'allow' }
-      : { decision: 'deny', reason: `jidoka: ${tool} of ${path} is outside the lap's worktree ${lap.worktree}.` }
+    if (!(await landsInside(path))) {
+      return { decision: 'deny', reason: `jidoka: ${tool} of ${path} is outside the lap's worktree ${lap.worktree}.` }
+    }
+    if (lap.barred === null) {
+      return {
+        decision: 'deny',
+        reason:
+          `jidoka: ${tool} of ${path} is denied, because jidoka could not read which acceptance folders this lap ` +
+          'may not write in. Park the task with a question that says so.',
+      }
+    }
+    for (const folder of lap.barred) {
+      if (!(await landsBeneath(path, folder))) continue
+      return {
+        decision: 'deny',
+        reason:
+          `jidoka: ${tool} of ${path} is inside the acceptance folder ${folder}, which only the spec task's lap ` +
+          'may change. If a spec looks wrong, park the task with a question that says which spec and why.',
+      }
+    }
+    return { decision: 'allow' }
   }
   if (call.isReadOnly === true) return { decision: 'allow' }
   if (tool === 'Bash') {
@@ -284,7 +324,12 @@ export const register: Register = on => {
       return { deny: `jidoka: the lap worktree ${worktree} is not an absolute path, so no lap worker started.` }
     }
     const kind = isCheckWorker(e.subagentType) ? 'check' : 'lap'
-    const lap: LapWorker = { kind, worktree, commands: await commandsFor($, kind, worktree) }
+    const lap: LapWorker = {
+      kind,
+      worktree,
+      commands: await commandsFor($, kind, worktree),
+      barred: await barredFor($, kind, worktree),
+    }
     await $.state.set(STARTING, { lap })
     try {
       const started = await next({ ...e, cwd: worktree })
@@ -308,7 +353,13 @@ export const register: Register = on => {
     const lap = await lapOf($, e.agentId)
     if (lap === undefined) return next(e)
     const call = { tool: e.tool, input: e.input, isReadOnly: e.isReadOnly }
-    const verdict = await workerVerdict(lap, call, $.plugin.root, path => isReallyInside($, path, lap.worktree))
+    const verdict = await workerVerdict(
+      lap,
+      call,
+      $.plugin.root,
+      path => isReallyInside($, path, lap.worktree),
+      (path, folder) => isReallyBeneath($, path, folder, lap.worktree),
+    )
     return verdict ?? next(e)
   }).catch(($, e, next) =>
     e.agentId === undefined

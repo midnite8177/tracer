@@ -58,7 +58,7 @@ from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, PassError, move_epic_branch, worktree_at
 from report_text import tail_of
 from worktrees import cut_detached, remove_worktree, stage_without_scratch, stage_worktree
-from repo_settings import HandRunGroup, SettingsError, apps_of, stored_hand_run_groups
+from settings_reader import HandRunGroup, SettingsError, apps_of, stored_hand_run_groups
 
 WORKTREE_PREFIX = "validation-"
 DOTNET_SKIPPED = re.compile(r"[A-Za-z]+!\s+-\s+Failed:\s*\d+,\s*Passed:\s*\d+,\s*Skipped:\s*(\d+),\s*Total:\s*\d+")

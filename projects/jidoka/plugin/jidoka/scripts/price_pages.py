@@ -3,7 +3,7 @@
 
 Anthropic and OpenAI each publish their pricing page as markdown. On Anthropic's page the table under `## Model
 pricing` names each model by its display name, such as `Claude Sonnet 5.5`, which is keyed by its model id,
-`claude-sonnet-5-5`: the name before any note in parentheses, lowercased, with spaces and dots as hyphens. Its
+`claude-sonnet-5-5`. It is the name before any note in parentheses, lowercased, with spaces and dots as hyphens. Its
 columns are read by header: base input, output, cache hits and the 5m cache write; the 1h write is not priced. A
 model with two rows, such as Haiku 5.5 split by prompt length, takes the first. On OpenAI's page the standard tier
 is each `### Standard pricing data` section, whose tables name models by id; the batch, flex, fast and ultrafast
@@ -46,7 +46,7 @@ from pathlib import Path
 
 import clock
 import prices
-import repo_settings
+import settings_reader
 import routes
 from prices import Price, Tokens
 
@@ -294,7 +294,7 @@ def main(argv: list[str]) -> int:
     listed.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
 
-    cache, table = list_prices(repo_settings.jidoka_home(args.jidoka_home))
+    cache, table = list_prices(settings_reader.jidoka_home(args.jidoka_home))
     print(json.dumps({"fetched_at": cache.fetched_at if cache is not None else None,
                       "prices": {model: asdict(price) for model, price in sorted(table.items())}}))
     return 0

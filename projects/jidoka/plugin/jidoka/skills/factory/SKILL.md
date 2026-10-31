@@ -191,6 +191,19 @@ own failure.
      read before writing a question report, and the repo's house rules by
      path;
    - each app's `name`, `test` and `test_target`;
+   - when the action's `specs` is not empty, the task makes those acceptance
+     specs pass. Give the worker the names and the action's `specs_command`,
+     and tell it to run the specs red before it writes any code, with
+     `<specs_command> <app> --checkout <worktree> --record red --task <task>`
+     and, for each spec that fails, `--expect "<spec>=<the failure it
+     expects>"`. A failing spec with no `--expect` records nothing, so the
+     worker reads the failures and runs the call again with them. A spec that
+     already passes is recorded as passing, and the gate comment and the gate
+     page list it under "Acceptance specs that passed before the build". A task
+     takes one red run, so the worker never runs it again after it has
+     written code. The scheduler runs the specs green on the lap's head, and
+     the merge gate refuses a lap with no red run or no green one. A task
+     whose `specs` is empty needs no spec run;
    - these limits: build exactly what the task says. Work only in the
      worktree, and keep every file that is not part of the work in the
      scratch folder, the action's `scratch`. Do not commit; the scheduler

@@ -9,7 +9,14 @@ makes these checks in order:
   the lap's head contains the epic branch's head;
   the lap's head has a commit the epic branch lacks;
   the lap changed no protected path, a path inside the acceptance folder of
-    an app in the repo settings;
+    an app in the repo settings, unless the task is the spec task its epic
+    records;
+  a task that makes acceptance specs pass has a red run of them, recorded
+    before the build, and a green run of them on the lap's head
+    (spec_runs.py);
+  the spec task's lap, run in its worktree, leaves every new spec failing as
+    a check, never as a build or driver error, and every other spec passing
+    (spec_task_gate.py);
   the main checkout does not have the epic branch checked out with
     uncommitted edits.
 A run on an older epic head, or a lap head without the epic branch's head,
@@ -47,10 +54,16 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import lap_record
-import repo_settings
+import epic_reader
+import protected_paths
+from protected_paths import is_protected, protected_folders
+import settings_reader
+import spec_runs
+import spec_task_gate
+import specs
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_show, capture, env_as_factory, metadata_of,
                       parent_of, read_bead, run)
 from epic_branch import (EditedCheckout, EpicBranchLeftTheHead, EpicBranchMoved, branch_head, fast_forward,
@@ -87,20 +100,11 @@ class Merged:
     failed_steps: list[str]
 
 
-def protected_folders(settings: dict) -> list[PurePosixPath]:
-    """The acceptance folder of every app in the repo settings that has one."""
-    return [PurePosixPath(app.acceptance) for app in repo_settings.apps_of(settings)
-            if app.acceptance is not None and repo_settings.is_repo_path(app.acceptance)]
-
-
-def is_protected(path: str, folders: list[PurePosixPath]) -> bool:
-    """True when the path is an acceptance folder or lies inside one."""
-    return any(folder == PurePosixPath(path) or folder in PurePosixPath(path).parents for folder in folders)
-
-
 def protected_changes(settings: dict, epic_head: str, lap_head: str, main_tree: Path) -> list[str]:
+    """The paths the lap changed inside an acceptance folder."""
     folders = protected_folders(settings)
-    return sorted(path for path in changed_paths(epic_head, lap_head, main_tree) if is_protected(path, folders))
+    return sorted(path for path in changed_paths(epic_head, lap_head, main_tree)
+                  if is_protected(path, folders))
 
 
 def contains(commit: str, head: str, main_tree: Path) -> bool:
@@ -120,10 +124,20 @@ def check(lap: LapToMerge, settings: dict, epic_head: str, lap_head: str, main_t
         raise EpicBranchMoved(f"the lap's head {lap_head} does not contain {lap.epic_branch} at {epic_head}")
     if not run(["git", "rev-list", f"{epic_head}..{lap_head}"], main_tree, None).strip():
         raise EmptyLap(f"no commits on the lap that {lap.epic_branch} lacks")
-    protected = protected_changes(settings, epic_head, lap_head, main_tree)
+    task = read_bead(lap.task, main_tree)
+    epic = protected_paths.epic_of_task(task, main_tree)
+    is_spec_task = protected_paths.is_spec_task(task, epic)
+    protected = [] if is_spec_task else protected_changes(settings, epic_head, lap_head, main_tree)
     if protected:
         raise GateRefused("the lap changed protected paths, inside an app's acceptance folder: "
                           + ", ".join(protected))
+    unrun = spec_runs.refusal(task, lap_head)
+    if unrun:
+        raise GateRefused(f"the task's spec runs do not support the merge: {unrun}")
+    unjudged = (spec_task_gate.refusal(task, epic, settings, epic_head, lap_head, lap.worktree, main_tree)
+                if is_spec_task and epic is not None else None)
+    if unjudged:
+        raise GateRefused(f"the spec task's specs do not support the merge: {unjudged}")
     try:
         refuse_edited_checkout(lap.epic_branch, main_tree)
     except EditedCheckout as edited:
@@ -185,18 +199,19 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        settings = repo_settings.load(repo_settings.settings_path(repo_settings.jidoka_home(args.jidoka_home),
-                                                                  main_tree))
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
+        settings = settings_reader.read_settings(home, main_tree)
         lap = lap_of(args.task, main_tree)
-        merged = merge(lap, settings, repo_settings.jidoka_home(args.jidoka_home), main_tree)
+        merged = merge(lap, settings, home, main_tree)
     except EpicBranchMoved as moved:
         print(f"merge_gate: {moved}. Run the targeted tests again", file=sys.stderr)
         return EPIC_BRANCH_MOVED_EXIT_CODE
     except (GateRefused, EmptyLap) as refused:
         print(f"merge_gate: refused: {refused}", file=sys.stderr)
         return 1
-    except (CommandError, repo_settings.SettingsError, OSError) as error:
+    except (CommandError, settings_reader.SettingsError, specs.SpecsError, epic_reader.EpicReadError,
+            OSError) as error:
         print(f"merge_gate: {error}", file=sys.stderr)
         return 1
     print(merged.sha)

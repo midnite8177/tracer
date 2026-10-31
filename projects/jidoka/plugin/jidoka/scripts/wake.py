@@ -28,14 +28,13 @@ from pathlib import Path
 
 import clock
 import heartbeat
+import launcher
 import notify
 import pause
-import repo_settings
+import settings_reader
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError
 from epic_reader import EpicReadError
 from epics import EpicsError
-
-SCRIPTS = Path(__file__).resolve().parent
 
 HUMAN_CAUSES = {"billing_error": pause.BILLING, "authentication_failed": pause.AUTH}
 
@@ -52,9 +51,8 @@ def pause_and_notify(epic: str, cause: str, home: Path, main_tree: Path) -> None
 
 
 def wake_text(epic: str, home: Path) -> str:
-    launcher = SCRIPTS.parent / "bin" / "jidoka-run"
     return (f"jidoka: the last turn ended on an API error while {epic} runs, and the factory paused. Run "
-            f'`sh "{launcher}" "{SCRIPTS / "scheduler.py"}" carry-on {epic} --jidoka-home "{home}"`, start what '
+            f'`{launcher.command_for("scheduler.py")} carry-on {epic} --jidoka-home "{home}"`, start what '
             "its actions name as the factory skill says, and wait again when nothing is left to start.")
 
 
@@ -68,10 +66,10 @@ def main(argv: list[str]) -> int:
     if args.failures < 1:
         parser.error("--failures needs a whole number from 1 up")
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         running = heartbeat.managed_by(home, main_tree, args.session)
-    except (EpicsError, EpicReadError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (EpicsError, EpicReadError, CommandError, settings_reader.SettingsError, OSError) as error:
         print(f"wake: {error}", file=sys.stderr)
         return 1
     if running:

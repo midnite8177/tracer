@@ -145,11 +145,11 @@ class HandoffTakesAnEpicTests(HandoffCase):
         self.assertEqual(JEFF, comments[0]["author"])
         table = comments[0]["text"]
         self.assertIn(f"epic/{name}", table)
-        self.assertIn("| Task | Track | Why | Area | Holdouts | State |", table)
+        self.assertIn("| Task | Track | Why | Area | Holdouts | Specs | State |", table)
         self.assertIn(f"| {first} Read the card {self.count - 1} | simple | no holdouts, one seam, no public API "
-                      "or type | till | 0 | open |", table)
+                      "or type | till | 0 |  | open |", table)
         self.assertIn(f"| {second} Read the card {self.count} | simple | no holdouts, one seam, no public API "
-                      "or type | receipts | 0 | open |", table)
+                      "or type | receipts | 0 |  | open |", table)
 
     def test_every_task_carries_the_simple_track_and_its_area_in_its_metadata(self):
         epic, _ = self.new_epic()
@@ -252,7 +252,9 @@ class HandoffCheckTests(HandoffCase):
                           "tasks": [{"id": task, "title": f"Read the card {self.count}", "status": "open",
                                      "seams": "The till's command line.", "demo": "The till takes a card.",
                                      "missing": [], "track": "simple",
-                                     "why": "no holdouts, one seam, no public API or type", "holdouts": 0}],
+                                     "why": "no holdouts, one seam, no public API or type", "holdouts": 0,
+                                     "specs": []}],
+                          "spec_task": "",
                           "presets": PRESETS},
                          json.loads(done.stdout))
         self.assert_nothing_written(epic, [task], name)
@@ -302,10 +304,10 @@ class HandoffTrackTests(HandoffCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
         table = self.comments(epic)[0]["text"]
-        self.assertIn(f"| {held} Read the card {self.count - 1} | full | named by 1 holdout | till | 1 | open |",
+        self.assertIn(f"| {held} Read the card {self.count - 1} | full | named by 1 holdout | till | 1 |  | open |",
                       table)
         self.assertIn(f"| {other} Read the card {self.count} | simple | no holdouts, one seam, no public API or "
-                      "type | receipts | 0 | open |", table)
+                      "type | receipts | 0 |  | open |", table)
         self.assertEqual("full", self.shown(held)["metadata"]["lap.track"])
         self.assertEqual("simple", self.shown(other)["metadata"]["lap.track"])
         self.assertNotIn(SCENARIO, table)

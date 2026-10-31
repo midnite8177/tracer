@@ -1,11 +1,12 @@
 """The gate comment, and the items it lists for the human beside the commits and figures: the assumptions, the public
-API changes and the open beads found outside the epic. `reach_the_gate` writes the comment and puts the epic at the
+API changes, the acceptance specs that passed before the build and the open beads found outside the epic. `reach_the_gate` writes the comment and puts the epic at the
 gate; the validation calls it, and the gate page lists the same commits through `merged_commits`.
 
 An assumption and a public API change are comments on the epic or one of its children. A comment that starts with
 `assumption:` is an assumption, as bench work posts one, and a comment that starts with `public API change:` names a
 change to a library's public API in plain words. The gate numbers the assumptions, the epic's own first and then each
-child's in the order bd lists the children, so the human can name one by its number. A bead found outside the epic
+child's in the order bd lists the children, so the human can name one by its number. A spec that passed before the
+build is one that a child's red run recorded as passing, so the task did not make it pass. A bead found outside the epic
 is a bead that is not closed, has no parent, and is linked discovered-from to the epic or to one of its children; the
 review's large findings and a lap's or a pass's discovered work outside the epic are such beads.
 
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import cleanup
 import review
+import spec_runs
 from commands import bd_comments, bd_list, bd_show, run
 from epic_reader import child_ids, shown_beads
 from epic_task import DISCOVERED_FROM
@@ -55,6 +57,7 @@ class GateItems:
     """What the gate lists about the epic's beads, read from bd in one go."""
     assumptions: list[Noted]
     api_changes: list[Noted]
+    already_passing: list[Noted]
     outside: list[FoundOutside]
 
     def lines(self) -> list[str]:
@@ -64,6 +67,9 @@ class GateItems:
                                              numbered(self.assumptions))]
         if self.api_changes:
             lines += ["", "Public API changes:", *(f"- {each.row()}" for each in self.api_changes)]
+        if self.already_passing:
+            lines += ["", "Acceptance specs that passed before the build:",
+                      *(f"- {each.row()}" for each in self.already_passing)]
         if self.outside:
             lines += ["", "Found outside the epic, still open:",
                       *(f"- {each.bead} {each.title}, found in {each.found_in}" for each in self.outside)]
@@ -107,6 +113,12 @@ def notes_of(epic: str, title: str, children: list[str], main_tree: Path) -> tup
     return assumptions, api_changes
 
 
+def already_passing_of(children: list[str], main_tree: Path) -> list[Noted]:
+    """The specs that passed before the build, one for each spec of each child whose red run found it passing."""
+    return [Noted(str(each["id"]), str(each.get("title") or ""), spec)
+            for each in shown_beads(children, main_tree) for spec in spec_runs.passed_before_the_build(each)]
+
+
 def numbered_assumptions(epic: str, title: str, main_tree: Path) -> list[tuple[int, Noted]]:
     """The assumptions on the epic and its children, each with the number the gate comment gives it."""
     return numbered(notes_of(epic, title, child_ids(epic, main_tree), main_tree)[0])
@@ -130,7 +142,8 @@ def gate_items(epic: str, title: str, main_tree: Path) -> GateItems:
     """Reads the assumptions, the public API changes and the beads found outside the epic from bd."""
     children = child_ids(epic, main_tree)
     assumptions, api_changes = notes_of(epic, title, children, main_tree)
-    return GateItems(assumptions, api_changes, found_outside(epic, children, main_tree))
+    return GateItems(assumptions, api_changes, already_passing_of(children, main_tree),
+                     found_outside(epic, children, main_tree))
 
 
 def merged_commits(branch_head: str, main_tree: Path) -> list[str]:

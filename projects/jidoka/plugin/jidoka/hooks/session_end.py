@@ -28,11 +28,11 @@ def start_wakers(raw: str) -> None:
         return
     folder = Path(named) if isinstance(named, str) and Path(named).is_dir() else Path.cwd()
     sys.path.insert(0, str(PLUGIN / "scripts"))
-    import repo_settings
+    import settings_reader
     import t3_wake
     if not t3_wake.releases_host(reason):
         return
-    t3_wake.start_wakers(repo_settings.jidoka_home(None), session, folder)
+    t3_wake.start_wakers(settings_reader.jidoka_home(None), session, folder)
 
 
 def main() -> int:

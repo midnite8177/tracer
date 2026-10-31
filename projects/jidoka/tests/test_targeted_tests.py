@@ -413,7 +413,8 @@ class RefusedRunTests(TargetedTestsCase):
         done = self.targeted_tests(bead, "shop", "test_greeting", self.bare_home)
 
         self.assertEqual(1, done.returncode)
-        self.assertIn("/jidoka:onboard", done.stderr)
+        self.assertIn(". Run /jidoka:onboard to record them", done.stderr)
+        self.assertIn("no settings for ", done.stderr)
         self.assertEqual([], self.runs_of(bead))
         self.assertEqual({}, self.metadata(bead))
 

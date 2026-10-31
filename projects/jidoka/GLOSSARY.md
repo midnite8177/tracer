@@ -146,7 +146,8 @@ the task, then a Spec check. The pass's stages are
 the same for every task. Handoff proposes a track for each task by a rule
 a script checks, and the human confirms or flips it. A task is simple when
 no holdout names it, its Seams line names one seam, and it adds no public
-type or public API change; any other task is full. A simple task moves to
+type or public API change, and is not the epic's spec task; any other task is
+full. A simple task moves to
 the full track only on evidence from its own lap, the targeted tests failing
 twice, and the move is recorded in a comment with that evidence. A full task
 never moves back.
@@ -183,9 +184,10 @@ task into the epic branch only when the lap's record supports it.
 _Avoid_: Land, merge agent, approval
 
 **Protected path**:
-A path that no lap may change, so the merge gate refuses a lap whose diff
-touches one: any path inside an app's acceptance folder, as the repo
-settings name it.
+A path that no lap but the spec task's may change: any path inside an
+app's acceptance folder, as the repo settings name it. The lap mod refuses
+Write and Edit in one to every other lap worker, and the merge gate
+refuses any other lap whose diff touches one.
 _Avoid_: Locked path, guarded file, read-only path
 
 **Test cleanup**:
@@ -257,7 +259,7 @@ branch rebased on main; an epic's work is tested again if main moved since
 validation. An epic parked at its pass cap with open tasks lands too, and
 its open tasks move to a new epic that planning takes up. A landing whose
 rebuild conflicts with main, or whose full suite fails on the rebuild,
-lands nothing: the epic leaves the acceptance gate and its pass runs
+lands nothing. The epic leaves the acceptance gate and its pass runs
 validation again, which catches up with main and brings the epic back to
 the gate.
 _Avoid_: Merge (a lap merges into the epic branch), ship, release, integrate
@@ -353,8 +355,28 @@ _Avoid_: Harness, adapter, fixture
 The task that builds what an epic's new acceptance specs need from the
 protocol driver, so that they run and fail. Its lap is the only one that
 may change the code beneath the acceptance specs, and the tasks that make
-them pass wait on it.
+them pass wait on it. The specs script records it in the epic's metadata,
+with the specs each task makes pass and the specs planning marked as
+already true, and handoff shows those specs and proposes the full track for
+it. The merge gate runs all of the app's specs on its lap and merges it only
+when each new spec fails as a failed check, never as a build or driver error,
+and every other spec passes.
 _Avoid_: Driver task, harness task
+
+**Red run**:
+The run of the acceptance specs a task makes pass, made by its build worker
+before it writes code. Each spec that fails carries the failure the worker
+expected, and a spec that already passes is recorded as passing, which the
+gate comment and the gate page list under "Acceptance specs that passed before
+the build". A task holds one red run, and a lap without one is refused
+at the merge gate.
+_Avoid_: Baseline run, failing run
+
+**Green run**:
+The run of those same specs on the lap's head, made by the scheduler once
+the targeted tests pass. Every spec must pass, and the merge gate refuses a
+lap whose green run was made on another head.
+_Avoid_: Passing run, final run
 
 ### Keeping the code well built
 

@@ -19,14 +19,15 @@ NO_RULES = "The epic sets no factory rules, so the repo settings apply."
 
 @dataclass(frozen=True)
 class Row:
-    """One task of the table: its title, its track and the reasons for it, its area, how many holdouts name it and
-    its state."""
+    """One task of the table: its title, its track and the reasons for it, its area, how many holdouts name it, the
+    acceptance specs it makes pass and its state."""
     task: str
     title: str
     track: str
     why: str
     area: str
     holdouts: int
+    specs: tuple[str, ...]
     state: str
 
 
@@ -43,12 +44,13 @@ class HandoffPage:
 
 
 def row_html(row: Row) -> str:
-    cells = (f"{row.task} {row.title}", row.track, row.why, row.area, str(row.holdouts), row.state)
+    cells = (f"{row.task} {row.title}", row.track, row.why, row.area, str(row.holdouts), ", ".join(row.specs),
+             row.state)
     return "<tr>" + "".join(f"<td>{escape(cell)}</td>" for cell in cells) + "</tr>"
 
 
 def tasks_table(page: HandoffPage) -> str:
-    heads = ("Task", "Track", "Why", "Area", "Holdouts", "State")
+    heads = ("Task", "Track", "Why", "Area", "Holdouts", "Specs", "State")
     return ("<table>\n<thead><tr>" + "".join(f"<th>{head}</th>" for head in heads) + "</tr></thead>\n<tbody>\n"
             + "\n".join(row_html(row) for row in page.rows) + "\n</tbody>\n</table>")
 

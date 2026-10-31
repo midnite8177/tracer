@@ -37,7 +37,7 @@ import clock
 import lap_record
 import ledger
 import processes
-import repo_settings
+import settings_reader
 import review
 import routes
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, read_bead
@@ -247,12 +247,12 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         lane = Lane(args.epic, Path(args.worktree), Path(args.report), args.base, args.head, args.file,
                     args.doc or [], args.wall_seconds)
         found = run_lane(lane, home, main_tree)
-    except (LaneError, CommandError, routes.RouteError, repo_settings.SettingsError, OSError) as error:
+    except (LaneError, CommandError, routes.RouteError, settings_reader.SettingsError, OSError) as error:
         print(f"codex_lane: {error}", file=sys.stderr)
         return 1
     print(json.dumps({"lane": review.SPEC, "report": str(lane.report), "findings": found}))

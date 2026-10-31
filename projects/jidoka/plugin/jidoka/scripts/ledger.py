@@ -49,7 +49,7 @@ from pathlib import Path
 import clock
 import heartbeat
 import price_pages
-import repo_settings
+import settings_reader
 import routes
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_factory, run, set_metadata
 from lap_record import Lap
@@ -198,7 +198,7 @@ def tokens_of(home: Path, agent: str | None) -> Used:
 
 def route_of(home: Path, tier: str | None, on_native: bool) -> dict:
     """The route the worker ran on: the tier's native route when it fell back to it, else the tier's route from the
-    machine settings, or an empty one when the settings cannot give it: a run is priced whatever the settings hold."""
+    machine settings, or an empty one when the settings cannot give it. A run is priced whatever the settings hold."""
     if not tier:
         return {}
     if on_native:
@@ -348,17 +348,17 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     try:
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         if args.mode == "list":
-            main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+            main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
             print(json.dumps(listing(home, main_tree, args.epic)))
             return 0
         epic = epic_claimed_by(home, args.session)
         if epic is not None:
-            main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+            main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
             used = Tokens(args.input, args.output, args.cache_read, args.cache_write)
             record_request(home, main_tree, epic, args.model, used, args.seconds)
-    except (CommandError, repo_settings.SettingsError, LedgerError, sqlite3.Error, OSError) as error:
+    except (CommandError, settings_reader.SettingsError, LedgerError, sqlite3.Error, OSError) as error:
         print(f"ledger: {error}", file=sys.stderr)
         return 1
     return 0

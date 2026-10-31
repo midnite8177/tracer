@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import holdouts
-import repo_settings
+import settings_reader
 from commands import bd_list, is_labeled_for_human, metadata_of, read_bead, run
 from lap_record import area_of, open_lap
 
@@ -206,7 +206,7 @@ def holdout_problems(epic: Epic, epic_holdouts: list[holdouts.Holdout]) -> list[
 
 
 def way_in_problems(settings: dict, epic_holdouts: list[holdouts.Holdout]) -> list[str]:
-    apps = {app.name: app for app in repo_settings.apps_of(settings)}
+    apps = {app.name: app for app in settings_reader.apps_of(settings)}
     held = list(dict.fromkeys(holdout.app for holdout in epic_holdouts))
     problems = [f"a holdout reaches the app {name}, which the repo settings do not list. Run {ONBOARD} to "
                 "record it with its way in" for name in held if name not in apps]

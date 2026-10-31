@@ -12,7 +12,9 @@ The outcomes of a worker's stage, for a task on the simple track, whose lap star
              commits it as one commit whose message is the task's title, under the repo's git user; a build that left
              no changes makes no commit. It runs that app's targeted tests with that filter, through
              targeted_tests.py, on the lap's head rebased onto the epic branch, and again after a fresh rebase when
-             the epic branch moved during the run. A pass goes to the merge gate, merge_gate.py. When the gate finds
+             the epic branch moved during the run. A pass runs the acceptance specs the task makes pass, green on that
+             head, and records the run for the gate (spec_runs.py); a spec that is not green is a try. A pass of both
+             goes to the merge gate, merge_gate.py. When the gate finds
              the epic branch moved since the run, the tests run again, and that is not a try. A `done` also files the
              discovered work placed `epic` and `outside` before it commits, and a `blocks` finding on a `done` is a
              try. It posts the assumptions and public API changes in the `build-notes.json` the build left in the
@@ -85,9 +87,14 @@ import holdouts
 import lap_record
 import merge_gate
 import park
+import run_specs
+import settings_reader
 import spec_check
+import spec_commands
+import spec_runs
+import specs
 import targeted_tests
-from commands import HUMAN_LABEL, capture, env_as_factory, run
+from commands import HUMAN_LABEL, CommandError, capture, env_as_factory, read_bead, run
 from epic_branch import EpicBranchMoved, branch_head, checked_out_branch
 from lap_outcomes import BLOCKED, DONE, SchedulerError
 from lap_record import APP_CHECK, BRIEF_PREFIX, BUILD, FULL_TRACK, INTERRUPTED, MERGE, SPEC_CHECK, Lap, words
@@ -112,7 +119,7 @@ class GateContext:
 
 
 def park_lap(lap: Lap, epic: str, tries: int, why: str, main_tree: Path) -> None:
-    """Ends the lap parked: the task waits on the human, open and unassigned, with its worktree and branch kept.
+    """Ends the lap parked. The task waits on the human, open and unassigned, with its worktree and branch kept.
 
     The parked lap counts toward the epic's brake.
     """
@@ -123,7 +130,7 @@ def park_lap(lap: Lap, epic: str, tries: int, why: str, main_tree: Path) -> None
 
 
 def interrupt_lap(lap: Lap, because: str, afterwards: str, main_tree: Path) -> None:
-    """Ends the lap interrupted: the task is open and unassigned, with its worktree and branch kept.
+    """Ends the lap interrupted. The task is open and unassigned, with its worktree and branch kept.
 
     The lap's tries, cutoffs and send-backs stay as they were, and the epic's brake is not touched. The comment
     says why the lap ended and when its task gets a new lap.
@@ -260,7 +267,7 @@ def findings_in_words(findings: list[spec_check.Finding], failed_holdouts: list[
 
 
 def spec_check_sent_back(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
-    """Takes the Spec check's send back: its findings go to a new build. A block that is missing or unusable counts a
+    """Takes the Spec check's send back. Its findings go to a new build. A block that is missing or unusable counts a
     try of the Spec check."""
     try:
         findings = spec_check.read_findings(lap.scratch)
@@ -271,7 +278,7 @@ def spec_check_sent_back(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
 
 
 def spec_check_cannot_judge(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
-    """Takes the Spec check's cannot judge: the task parks with its reason, and no try is counted."""
+    """Takes the Spec check's cannot judge. The task parks with its reason, and no try is counted."""
     try:
         reason = spec_check.read_reason(lap.scratch)
     except spec_check.SpecCheckError as error:
@@ -337,7 +344,7 @@ def app_check_done(lap: Lap, epic: str, main_tree: Path) -> list[Lap]:
 
 
 def spec_check_passed(lap: Lap, context: GateContext) -> list[Lap]:
-    """Takes the Spec check's pass: the lap goes to the merge gate with the targeted run it already has.
+    """Takes the Spec check's pass. The lap goes to the merge gate with the targeted run it already has.
 
     The tests run again only when the epic branch moved since that run. The lap returns to the build when they then
     fail, so the build's try count and its stage are what a red run counts against.
@@ -460,7 +467,7 @@ def brings_newer_work(lap: Lap, epic_branch: str, main_tree: Path) -> bool:
 
 
 def reconciled(lap: Lap, context: GateContext) -> list[Lap]:
-    """Takes the merge worker's done: its work joins the lap's commit and the lap goes through the targeted tests and
+    """Takes the merge worker's done. Its work joins the lap's commit and the lap goes through the targeted tests and
     the gate again."""
     if rebase_unfinished(lap):
         return count_merge_try(lap, context.epic, "the merge worker left the rebase unfinished", context.main_tree)
@@ -500,6 +507,25 @@ def name_tests(lap: Lap, app: str, test_filter: str, main_tree: Path) -> Lap:
     return named
 
 
+def green_run_sends_away(lap: Lap, context: GateContext) -> list[Lap] | None:
+    """Runs the specs the lap's task makes pass on the lap's head, which the targeted tests just rebased onto the epic
+    branch, and records the run for the merge gate. Returns the laps that go back to a worker when a spec is not green,
+    a try of the build, and None when the lap goes on, a task that makes no spec pass included."""
+    try:
+        if not specs.specs_of(read_bead(lap.task, context.main_tree)):
+            return None
+        app = settings_reader.app_named(context.settings, lap.app)
+        runs = run_specs.recorded_runs(app, run_specs.GREEN, lap.task, [], lap.worktree, context.main_tree)
+    except (specs.SpecsError, spec_commands.SpecCommandError, settings_reader.SettingsError,
+            CommandError) as error:
+        raise SchedulerError(f"the specs of {lap.task} did not run: {error}") from error
+    failing = [each.name for each in runs if not each.passed]
+    if failing:
+        return count_try(lap, context.epic, f"the specs the task makes pass are not green on the lap's head: "
+                                            f"{spec_runs.listed(failing)}", context.main_tree)
+    return None
+
+
 def targeted_run_sends_away(lap: Lap, context: GateContext) -> list[Lap] | None:
     """Runs the lap's targeted tests, rebased onto the epic branch; returns the laps that go back to a worker when the
     run sends the lap away from the gate, and None when the lap goes on.
@@ -527,6 +553,9 @@ def targeted_run_sends_away(lap: Lap, context: GateContext) -> list[Lap] | None:
                                      f"{why} once newer work on {context.epic_branch} was merged in",
                                      context.main_tree)
         return count_red_tests(lap, context.epic, why, context.main_tree)
+    unsettled = green_run_sends_away(lap, context)
+    if unsettled is not None:
+        return unsettled
     if lap.track == FULL_TRACK and not lap.spec_passed:
         return start_checks(lap, context.epic, context.main_tree)
     return None

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import links
 import repo_settings
+import settings_reader
 
 
 class ClashError(Exception):
@@ -20,14 +21,15 @@ class ClashError(Exception):
 
 
 def private_paths(settings: dict) -> list[str]:
-    if settings.get(repo_settings.GLOSSARY_AND_ADRS) != repo_settings.PRIVATE:
+    if settings.get(settings_reader.GLOSSARY_AND_ADRS) != settings_reader.PRIVATE:
         return []
-    return [settings[key] for key in repo_settings.DOC_PATH_KEYS if repo_settings.is_repo_path(settings.get(key))]
+    return [settings[key] for key in settings_reader.DOC_PATH_KEYS
+            if settings_reader.is_repo_path(settings.get(key))]
 
 
 def share(main_tree: Path, worktree: Path, home: Path) -> None:
     """Links the worktree to the main checkout's private docs, and refuses before linking any when one clashes."""
-    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    settings = settings_reader.read_settings(home, main_tree)
     paths = private_paths(settings)
     if not paths:
         return

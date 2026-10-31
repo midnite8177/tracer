@@ -6,7 +6,8 @@ the path of the repo's main worktree, so every worktree of the repo finds the
 same file. Moving or renaming the main worktree leaves its settings behind
 under the old key. The home is --jidoka-home, else $JIDOKA_HOME, else
 ~/.jidoka. `home` prints that folder, so that the lap mod, which writes into
-it, asks this script and holds no copy of the rule.
+it, asks this script and holds no copy of the rule. A script that only reads
+the settings imports settings_reader.py, not this one.
 
 `write` reads one JSON object on stdin. Its keys replace the stored ones and
 the stored keys it leaves out stay. The script checks the merged settings
@@ -21,6 +22,11 @@ test_full, and [] for hand_run; the script refuses any other mix, and
 refuses settings in which no app has a test command or no app has a build.
 An app's "acceptance" is the folder of its acceptance specs, relative to the
 repo root, or null when it has none; an app that leaves the key out has none.
+An app's "spec_command" is the command that runs all of its acceptance specs and its "spec_target" is the
+arguments that follow it to run one, with one <...> placeholder for the spec's name, as "test_target" is for a
+test. Each is text or null, and a key left out is null. The script refuses a spec_command in an app with no
+acceptance folder, a spec_command with no spec_target, and a spec_target with no spec_command. An app may have an
+acceptance folder and no spec_command; run_specs.py refuses to run its specs.
 The script appends nothing to a command, so the person onboarding writes
 each hand-run group's exclusion into both commands, and the script refuses
 a group whose exclusion either command lacks.
@@ -61,162 +67,26 @@ list of commands, and the lap mod allows each as it allows a worker command.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import os
 import subprocess
 import sys
 from collections import Counter
-from dataclasses import asdict, dataclass
-from pathlib import Path, PurePosixPath
+from dataclasses import asdict
+from pathlib import Path
 
 import git_exclude
+import launcher
 from commands import CommandError
+from settings_reader import (BUILT_IN_COMMANDS_FILE, DEFAULTS, DOC_PATH_KEYS, DOCS_DEFAULTS,
+                             GIT_TIMEOUT_SECONDS, GIVEN_KEYS, GLOSSARY_AND_ADRS, PRIVATE, App, HandRunGroup,
+                             SettingsError, apps_of, built_in_commands, is_text, jidoka_home, main_worktree,
+                             problems_in, read_settings, require_settings, settings_path)
 
-GIT_TIMEOUT_SECONDS = 30
 LOCAL_RULES = "CLAUDE.local.md"
-GIVEN_KEYS = ["lap_test_scope", "worker_commands", "slot_use", "lap_limit", "apps"]
-GLOSSARY_AND_ADRS = "glossary_and_adrs"
-COMMITTED, PRIVATE = "committed", "private"
-DOC_PATH_KEYS = ["glossary", "adrs"]
-DOCS_DEFAULTS = {"glossary": "GLOSSARY.md", "adrs": "docs/adr", GLOSSARY_AND_ADRS: COMMITTED}
-RULE_CONFLICTS = "rule_conflicts"
-LIZARD_LIMITS = "lizard_limits"
-LIZARD_METRICS = ("ccn", "length", "arguments")
-DEFAULT_LIZARD_LIMITS = {"ccn": 15, "length": 80, "arguments": 6}
-DEFAULTS = {**DOCS_DEFAULTS, RULE_CONFLICTS: [], LIZARD_LIMITS: DEFAULT_LIZARD_LIMITS}
 DERIVED_KEYS = ["build", "full_suite", "hand_run", "untested_apps"]
 MOVED_LINES = "moved_lines"
-APP_KEYS = ["name", "kind", "way_in", "build", "run", "test", "test_full", "test_target", "hand_run", "acceptance"]
-HAND_RUN_KEYS = ["name", "exclusion", "command", "reason"]
-HAND_RUN_GROUP_KEYS = ["app", "name", "reason", "command"]
-RULE_CONFLICT_KEYS = ["repo_rule", "written_in", "overrules"]
-NO_TESTS = "an app with no test command has null for test, test_target and test_full, and [] for hand_run"
-TEST_SCOPES = ["targeted", "full"]
-APP_KINDS = ["program", "library"]
 BEADS_WORKSPACE = ".beads"
-BUILT_IN_COMMANDS_FILE = "built_in_commands.json"
-SCRIPTS = Path(__file__).resolve().parent
-SWITCH_COMMAND = f'sh "{SCRIPTS.parent / "bin" / "jidoka-run"}" "{SCRIPTS / "beads_stealth.py"}"'
-
-
-class SettingsError(Exception):
-    """A reason the script writes nothing, worded for the person who reads stderr."""
-
-
-@dataclass(frozen=True)
-class HandRun:
-    """One group of an app's tests that the full suite leaves out, as the stored settings hold it."""
-    name: str
-    exclusion: str
-    command: str
-    reason: str
-
-
-@dataclass(frozen=True)
-class HandRunGroup:
-    """A group of an app's tests that the full suite leaves out, with the app's name and the command the human runs
-    it with. The stored "hand_run" list holds one object for each, under the field names."""
-    app: str
-    name: str
-    reason: str
-    command: str
-
-
-@dataclass(frozen=True)
-class App:
-    """One app of the repo as the stored settings hold it. A field is None when the app has none of it, and
-    hand_run is empty when every test of the app runs in the full suite."""
-    name: str
-    kind: str | None
-    build: str | None
-    run: str | None
-    test: str | None
-    test_full: str | None
-    test_target: str | None
-    way_in: str | None
-    acceptance: str | None
-    hand_run: tuple[HandRun, ...]
-
-    @property
-    def full_suite_command(self) -> str | None:
-        """The test command followed by test_full when there is one; None for an app with no test command."""
-        if self.test is None:
-            return None
-        return self.test if self.test_full is None else f"{self.test} {self.test_full}"
-
-    @property
-    def targeted_command(self) -> str | None:
-        """The test command followed by the test_target, its placeholder left in; None when either is missing."""
-        if self.test is None or self.test_target is None:
-            return None
-        return f"{self.test} {self.test_target}"
-
-
-def text_of(value: object) -> str | None:
-    return value if is_text(value) else None
-
-
-def hand_run_of(app: dict) -> tuple[HandRun, ...]:
-    listed = app.get("hand_run")
-    return tuple(HandRun(*(str(group.get(key) or "") for key in HAND_RUN_KEYS))
-                 for group in (listed if isinstance(listed, list) else []) if isinstance(group, dict))
-
-
-def app_of(entry: dict) -> App:
-    return App(str(entry.get("name") or ""), text_of(entry.get("kind")), text_of(entry.get("build")),
-               text_of(entry.get("run")), text_of(entry.get("test")), text_of(entry.get("test_full")),
-               text_of(entry.get("test_target")), text_of(entry.get("way_in")), text_of(entry.get("acceptance")),
-               hand_run_of(entry))
-
-
-def apps_of(settings: dict) -> list[App]:
-    """The apps of stored settings, in the order the settings list them. Settings with no apps give none, and an
-    entry that is not a JSON object is left out."""
-    listed = settings.get("apps")
-    return [app_of(entry) for entry in (listed if isinstance(listed, list) else []) if isinstance(entry, dict)]
-
-
-def problems_of_app(settings: dict, name: str) -> list[str]:
-    """The problems of the first app of the settings that has the name, as the write refuses them; none when no
-    app has the name."""
-    listed = settings.get("apps")
-    for index, entry in enumerate(listed if isinstance(listed, list) else []):
-        if isinstance(entry, dict) and entry.get("name") == name:
-            return app_problems(index, entry)
-    return []
-
-
-def app_named(settings: dict, name: str) -> App:
-    """The first app of the settings that has the name; raises SettingsError when none has it or its entry has a
-    problem the write refuses."""
-    found = next((app for app in apps_of(settings) if app.name == name), None)
-    if found is None:
-        raise SettingsError(f"the repo settings have no app named {name!r}; "
-                            f"the apps are {', '.join(app.name for app in apps_of(settings))}")
-    problems = problems_of_app(settings, name)
-    if problems:
-        raise SettingsError(f"the repo settings for app {name!r} are incomplete: {'; '.join(problems)}. "
-                            "Run /jidoka:onboard to record them")
-    return found
-
-
-def jidoka_home(flag: str | None) -> Path:
-    named = flag or os.environ.get("JIDOKA_HOME") or "~/.jidoka"
-    return Path(named).expanduser().resolve()
-
-
-def main_worktree(folder: Path, timeout_seconds: float) -> Path:
-    """The common dir is the main worktree's .git, and git may print it relative to the folder."""
-    try:
-        done = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=folder, capture_output=True,
-                              text=True, encoding="utf-8", timeout=timeout_seconds)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise SettingsError(f"git could not run in {folder}: {error}") from error
-    common = done.stdout.strip()
-    if done.returncode != 0 or not common:
-        raise SettingsError(f"{folder} is not inside a git repo")
-    return (folder / common).resolve().parent
+SWITCH_COMMAND = launcher.command_for("beads_stealth.py")
 
 
 def tracks(main_tree: Path, path: str, timeout_seconds: float) -> bool:
@@ -282,210 +152,10 @@ def rehide_private_docs(main_tree: Path, settings: dict) -> None:
     hide_private_docs(main_tree, settings, settings)
 
 
-def settings_path(home: Path, main_tree: Path) -> Path:
-    digest = hashlib.sha256(str(main_tree).encode("utf-8")).hexdigest()[:8]
-    return home / "repos" / f"{main_tree.name}-{digest}.json"
-
-
-def load(path: Path) -> dict:
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError as error:
-        raise SettingsError(f"{path} is not valid JSON: {error}") from error
-    if not isinstance(data, dict):
-        raise SettingsError(f"{path} does not hold a JSON object")
-    return data
-
-
-def is_text(value: object) -> bool:
-    return isinstance(value, str) and value.strip() != ""
-
-
-def text_or_null(value: object) -> bool:
-    return value is None or is_text(value)
-
-
-def app_problems(index: int, app: object) -> list[str]:
-    if not isinstance(app, dict):
-        return [f"apps[{index}] is not a JSON object"]
-    name = app.get("name")
-    label = f"app {name!r}" if is_text(name) else f"apps[{index}]"
-    problems = []
-    if not is_text(name):
-        problems.append(f"{label} has no name")
-    unknown = sorted(set(app) - set(APP_KEYS))
-    if unknown:
-        problems.append(f"{label} has keys jidoka does not know: {', '.join(unknown)}")
-    if app.get("kind") not in APP_KINDS:
-        problems.append(f"{label} has kind {app.get('kind')!r}; it must be one of {', '.join(APP_KINDS)}")
-    for key in ("way_in", "build", "run"):
-        if key not in app:
-            problems.append(f"{label} has no {key}; use null when it has none")
-        elif not text_or_null(app[key]):
-            problems.append(f"{label} has a {key} that is neither a command nor null")
-    if not (app.get("acceptance") is None or is_repo_path(app["acceptance"])):
-        problems.append(f"{label} has an acceptance that is neither a folder inside the repo nor null")
-    command_problems = test_command_problems(label, app)
-    problems += command_problems
-    if "hand_run" not in app:
-        problems.append(f"{label} has no hand_run; use [] when every test runs in the full suite")
-    else:
-        problems += hand_run_problems(label, app, not command_problems)
-    return problems
-
-
-def test_command_problems(label: str, app: dict) -> list[str]:
-    problems = []
-    for key in ("test", "test_target"):
-        if key not in app:
-            problems.append(f"{label} has no {key}; use null when the app has no test command")
-        elif not text_or_null(app[key]):
-            problems.append(f"{label} has a {key} that is neither text nor null")
-    if "test_full" not in app:
-        problems.append(f"{label} has no test_full; use null when the full suite is the test command alone")
-    elif not text_or_null(app["test_full"]):
-        problems.append(f"{label} has a test_full that is neither arguments nor null")
-    if problems:
-        return problems
-    if app["test"] is not None:
-        if app["test_target"] is None:
-            problems.append(f"{label} has a test command but does not say how to target a test")
-        return problems
-    return [f"{label} has a {key} but no test command; {NO_TESTS}"
-            for key in ("test_target", "test_full") if app[key] is not None]
-
-
-def hand_run_problems(label: str, app: dict, commands_valid: bool) -> list[str]:
-    groups = app["hand_run"]
-    if not isinstance(groups, list):
-        return [f"{label} has a hand_run that is not a list of groups"]
-    if commands_valid and groups and app["test"] is None:
-        return [f"{label} has hand_run groups but no test command; {NO_TESTS}"]
-    problems = []
-    for index, group in enumerate(groups):
-        if not isinstance(group, dict):
-            problems.append(f"{label} has a hand_run[{index}] that is not a JSON object")
-            continue
-        name = group.get("name")
-        group_label = f"{label} has a hand_run group " + (repr(name) if is_text(name) else f"hand_run[{index}]")
-        unknown = sorted(set(group) - set(HAND_RUN_KEYS))
-        if unknown:
-            problems.append(f"{group_label} with keys jidoka does not know: {', '.join(unknown)}")
-        problems += [f"{group_label} with no {key}" for key in HAND_RUN_KEYS if not is_text(group.get(key))]
-        exclusion = group.get("exclusion")
-        if commands_valid and is_text(exclusion):
-            problems += [f"{group_label} whose exclusion {exclusion!r} is not in the {kind}, {command!r}, "
-                         "so that command runs the group"
-                         for kind, command in app_commands(app_of(app)) if exclusion not in command]
-    return problems
-
-
-def app_commands(app: App) -> list[tuple[str, str]]:
-    """The app's full-suite command and its targeted command, the placeholder left in, each named, for the
-    commands it has."""
-    named = [("full-suite command", app.full_suite_command), ("targeted command", app.targeted_command)]
-    return [(kind, command) for kind, command in named if command is not None]
-
-
 def hand_run_groups(apps: list[App]) -> list[HandRunGroup]:
     """The hand-run groups of every app, in app order, each with the app's name."""
     return [HandRunGroup(app.name, group.name, group.reason, group.command)
             for app in apps for group in app.hand_run]
-
-
-def stored_hand_run_groups(settings: dict) -> list[HandRunGroup]:
-    """The hand-run groups that write derived and stored under "hand_run"; raises SettingsError when the list is
-    missing or a group of it lacks a text field."""
-    listed = settings.get("hand_run")
-    if not (isinstance(listed, list) and all(isinstance(group, dict) and all(
-            isinstance(group.get(key), str) for key in HAND_RUN_GROUP_KEYS) for group in listed)):
-        raise SettingsError("the repo settings hold no hand_run list of the tests validation leaves out. "
-                            "Run /jidoka:onboard again to record it")
-    return [HandRunGroup(*(group[key] for key in HAND_RUN_GROUP_KEYS)) for group in listed]
-
-
-def is_repo_path(value: object) -> bool:
-    if not is_text(value):
-        return False
-    path = PurePosixPath(value)
-    return not path.is_absolute() and ".." not in path.parts and str(path) != "."
-
-
-def problems_in(settings: dict) -> list[str]:
-    problems = [f"{key} is missing" for key in GIVEN_KEYS if key not in settings]
-    unknown = sorted(set(settings) - set(GIVEN_KEYS) - set(DEFAULTS))
-    if unknown:
-        problems.append(f"the settings have keys jidoka does not know: {', '.join(unknown)}")
-    if "lap_test_scope" in settings and settings["lap_test_scope"] not in TEST_SCOPES:
-        problems.append(f"lap_test_scope must be one of {', '.join(TEST_SCOPES)}")
-    commands = settings.get("worker_commands")
-    if "worker_commands" in settings and not (isinstance(commands, list) and all(map(is_text, commands))):
-        problems.append("worker_commands must be a list of commands")
-    if "slot_use" in settings and not text_or_null(settings["slot_use"]):
-        problems.append("slot_use must be text or null")
-    limit = settings.get("lap_limit")
-    if "lap_limit" in settings and not (isinstance(limit, int) and not isinstance(limit, bool) and limit > 0):
-        problems.append("lap_limit must be a whole number above zero")
-    if "apps" in settings:
-        problems += apps_problems(settings["apps"])
-    problems += [f"{key} must be a path inside the repo, relative to its root"
-                 for key in DOC_PATH_KEYS if key in settings and not is_repo_path(settings[key])]
-    if settings.get(GLOSSARY_AND_ADRS, COMMITTED) not in (COMMITTED, PRIVATE):
-        problems.append(f"{GLOSSARY_AND_ADRS} must be one of {COMMITTED}, {PRIVATE}")
-    if RULE_CONFLICTS in settings:
-        problems += rule_conflicts_problems(settings[RULE_CONFLICTS])
-    if LIZARD_LIMITS in settings:
-        problems += lizard_limits_problems(settings[LIZARD_LIMITS])
-    return problems
-
-
-def lizard_limits_problems(limits: object) -> list[str]:
-    if not isinstance(limits, dict):
-        return [f"{LIZARD_LIMITS} must be an object with {', '.join(LIZARD_METRICS)}"]
-    unknown = sorted(set(limits) - set(LIZARD_METRICS))
-    problems = [f"{LIZARD_LIMITS} has keys jidoka does not know: {', '.join(unknown)}"] if unknown else []
-    for metric in LIZARD_METRICS:
-        value = limits.get(metric)
-        if not (isinstance(value, int) and not isinstance(value, bool) and value > 0):
-            problems.append(f"{LIZARD_LIMITS} needs a whole number above zero for {metric}")
-    return problems
-
-
-def rule_conflicts_problems(conflicts: object) -> list[str]:
-    if not isinstance(conflicts, list):
-        return [f"{RULE_CONFLICTS} must be a list of conflicts"]
-    problems = []
-    for index, conflict in enumerate(conflicts):
-        label = f"{RULE_CONFLICTS}[{index}]"
-        if not isinstance(conflict, dict):
-            problems.append(f"{label} is not a JSON object")
-            continue
-        unknown = sorted(set(conflict) - set(RULE_CONFLICT_KEYS))
-        if unknown:
-            problems.append(f"{label} has keys jidoka does not know: {', '.join(unknown)}")
-        problems += [f"{label} has no {key}" for key in RULE_CONFLICT_KEYS if not is_text(conflict.get(key))]
-        if is_text(conflict.get("written_in")) and not is_repo_path(conflict["written_in"]):
-            problems.append(f"{label} has a written_in that is not a path inside the repo, relative to its root")
-    return problems
-
-
-def apps_problems(apps: object) -> list[str]:
-    if not isinstance(apps, list) or not apps:
-        return ["apps must be a list that holds at least one app"]
-    problems = []
-    for index, app in enumerate(apps):
-        problems += app_problems(index, app)
-    names = [app.get("name") for app in apps if isinstance(app, dict)]
-    repeated = sorted({name for name in names if isinstance(name, str) and names.count(name) > 1})
-    if repeated:
-        problems.append(f"more than one app is named {', '.join(repeated)}")
-    if not any(isinstance(app, dict) and is_text(app.get("build")) for app in apps):
-        problems.append("no app has a build command, so the repo has no build")
-    if not any(isinstance(app, dict) and is_text(app.get("test")) for app in apps):
-        problems.append("no app has a test command, so the repo has no full suite")
-    return problems
 
 
 def read_text(path: Path) -> str:
@@ -543,7 +213,7 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
     path = settings_path(home, main_tree)
     local = main_tree / LOCAL_RULES
     moved = given.pop(MOVED_LINES, [])
-    previous = load(path)
+    previous = read_settings(home, main_tree)
     stored = {key: value for key, value in previous.items() if key in GIVEN_KEYS or key in DEFAULTS}
     merged = {**DEFAULTS, **stored, **given}
     problems = problems_in(merged) + moved_lines_problems(moved, local)
@@ -569,25 +239,7 @@ def write(home: Path, cwd: Path, raw: str) -> Path:
 
 def show(home: Path, cwd: Path) -> str:
     main_tree = main_worktree(cwd, GIT_TIMEOUT_SECONDS)
-    path = settings_path(home, main_tree)
-    settings = load(path)
-    if not settings:
-        raise SettingsError(f"no settings for {main_tree} in {path.parent}. Run /jidoka:onboard to record them")
-    return json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
-
-
-def built_in_commands(home: Path) -> list[str]:
-    """The commands the human added to the built-in list on this machine; none when the file is missing."""
-    path = home / BUILT_IN_COMMANDS_FILE
-    if not path.is_file():
-        return []
-    try:
-        commands = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError as error:
-        raise SettingsError(f"{path} is not valid JSON: {error}") from error
-    if not (isinstance(commands, list) and all(map(is_text, commands))):
-        raise SettingsError(f"{path} does not hold a list of commands")
-    return commands
+    return json.dumps(require_settings(home, main_tree), indent=2, ensure_ascii=False) + "\n"
 
 
 def add_built_in_command(home: Path, command: str) -> bool:
@@ -603,10 +255,7 @@ def add_built_in_command(home: Path, command: str) -> bool:
 
 def add_worker_command(home: Path, main_tree: Path, command: str) -> bool:
     """Adds the command to the repo's worker_commands; False when it is already there."""
-    settings = load(settings_path(home, main_tree))
-    if not settings:
-        raise SettingsError(f"no settings for {main_tree} in {home / 'repos'}. Run /jidoka:onboard to record them")
-    held = settings.get("worker_commands")
+    held = require_settings(home, main_tree).get("worker_commands")
     if not isinstance(held, list):
         raise SettingsError("the stored worker_commands is not a list")
     if command in held:

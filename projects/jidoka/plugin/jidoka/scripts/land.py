@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-import repo_settings
+import settings_reader
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_list, capture, head_of, metadata_of, read_bead, run,
                       run_test_command, worktree_list)
 
@@ -135,8 +135,6 @@ def take_lock(lock: Path, waiting_on: TextIO) -> None:
             time.sleep(LOCK_POLL_SECONDS)
             continue
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            # The pid is only for people: lock_holder prints it so a waiter can see which process
-            # holds the lock and whether that process is still alive. Nothing reads it to decide ownership.
             handle.write(f"{os.getpid()}\n")
         return
 
@@ -175,25 +173,23 @@ def main_checkout(repo: Path) -> Path:
 
 def landing_settings(checkout: Path, home: Path) -> LandingSettings:
     try:
-        main_tree = repo_settings.main_worktree(checkout, COMMAND_TIMEOUT_SECONDS)
-        path = repo_settings.settings_path(home, main_tree)
-        settings = repo_settings.load(path)
-    except repo_settings.SettingsError as error:
+        main_tree = settings_reader.main_worktree(checkout, COMMAND_TIMEOUT_SECONDS)
+        path = settings_reader.settings_path(home, main_tree)
+        settings = settings_reader.require_settings(home, main_tree)
+    except settings_reader.SettingsError as error:
         raise LandingError(str(error)) from error
-    if not settings:
-        raise LandingError(f"no settings for {main_tree} in {path.parent}. Run /jidoka:onboard to record them")
     commands = settings.get("full_suite")
-    if not isinstance(commands, list) or not commands or not all(repo_settings.is_text(c) for c in commands):
+    if not isinstance(commands, list) or not commands or not all(settings_reader.is_text(c) for c in commands):
         raise LandingError(f"{path} holds no full_suite list of test commands. Run /jidoka:onboard to record it")
     untested = settings.get("untested_apps")
-    if not (isinstance(untested, list) and all(map(repo_settings.is_text, untested))):
+    if not (isinstance(untested, list) and all(map(settings_reader.is_text, untested))):
         raise LandingError(f"{path} holds no untested_apps list of the apps the full suite skips. "
                            "Run /jidoka:onboard to record it")
     return LandingSettings(commands, hand_run_groups(settings.get("hand_run"), path), untested)
 
 
 def is_hand_run_group(group: object) -> bool:
-    return isinstance(group, dict) and all(repo_settings.is_text(group.get(key)) for key in HAND_RUN_FIELDS)
+    return isinstance(group, dict) and all(settings_reader.is_text(group.get(key)) for key in HAND_RUN_FIELDS)
 
 
 def hand_run_groups(listed: object, path: Path) -> list[HandRunGroup]:

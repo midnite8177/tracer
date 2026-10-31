@@ -6,7 +6,9 @@ JSON list. The kind is the lap mod's kind of worker:
 
   lap    a worker of a task's lap. Its list holds each app's `test` command and
          the repo settings' `worker_commands`, then the merge worker's grants
-         when the task is at the merge stage, then the built-in list's
+         when the task is at the merge stage, then the call to run_specs.py
+         when the task makes acceptance specs pass (any words but
+         --jidoka-home), then the built-in list's
          additions from <jidoka-home>/built_in_commands.json, then the
          `extra_commands` of the epic that holds the task. A pass's test
          cleanup, tidy, review or fix worker runs in a folder under the
@@ -60,9 +62,11 @@ from typing import Callable, TypedDict, TypeVar
 
 import cleanup
 import lap_record
-import repo_settings
+import launcher
+import settings_reader
 import review
 import rules
+import specs
 import tidy
 import validation
 import validation_merge
@@ -73,8 +77,9 @@ from pass_support import MAIN_BRANCH
 LAP = "lap"
 CHECK = "check"
 LOOKS_REFUSING = ["--output"]
+SPECS_REFUSING = ["--jidoka-home"]
 PASS_PREFIXES = [cleanup.STAGE.prefix, tidy.STAGE.prefix, review.REVIEW_PREFIX, review.FIX_PREFIX]
-PART_ERRORS = (lap_record.NotALapWorktree, rules.RulesError, CommandError, repo_settings.SettingsError, OSError)
+PART_ERRORS = (lap_record.NotALapWorktree, rules.RulesError, CommandError, settings_reader.SettingsError, OSError)
 Part = TypeVar("Part")
 
 
@@ -95,12 +100,12 @@ def texts(value: object) -> list[str]:
 
 def test_commands(settings: dict) -> list[str]:
     """The test command of every app that has one, in app order."""
-    return [app.test for app in repo_settings.apps_of(settings) if app.test is not None]
+    return [app.test for app in settings_reader.apps_of(settings) if app.test is not None]
 
 
 def check_commands(settings: dict) -> list[str]:
     """The build, run and way in of every app, in that order for each app and in app order, for those it has."""
-    return [command for app in repo_settings.apps_of(settings) for command in (app.build, app.run, app.way_in)
+    return [command for app in settings_reader.apps_of(settings) for command in (app.build, app.run, app.way_in)
             if command is not None]
 
 
@@ -119,6 +124,17 @@ def merge_grant(epic_branch: str) -> list[Grant]:
 def merge_main_grant() -> list[Grant]:
     """What the merge worker of a validation may run in the validation worktree: merge main, and nothing more."""
     return grants([f"git merge {MAIN_BRANCH}", "git merge --abort", "git -c core.editor=true merge --continue"])
+
+
+def specs_grant(task: dict) -> list[Grant]:
+    """What a build worker may run for a task that makes acceptance specs pass: run_specs.py through the launcher, with
+    any words but a jidoka home of its own, so that its red run is recorded against the repo's own settings."""
+    try:
+        if not specs.specs_of(task):
+            return []
+    except specs.SpecsError:
+        return []
+    return [RefusingGrant(command=launcher.run_specs_command(), then="words", refusing=SPECS_REFUSING)]
 
 
 @dataclass(frozen=True)
@@ -164,7 +180,7 @@ def lap_epic_part(worktree: Path, main_tree: Path) -> EpicPart:
     epic_branch = recorded_branch(epic)
     is_merging = lap_record.stage_of(metadata_of(task)) == lap_record.MERGE
     granted = merge_grant(epic_branch) if is_merging and epic_branch else []
-    return EpicPart(granted=granted, extra=rules.extra_commands_of(epic))
+    return EpicPart(granted=[*granted, *specs_grant(task)], extra=rules.extra_commands_of(epic))
 
 
 def epic_part(worktree: Path, main_tree: Path) -> EpicPart:
@@ -178,13 +194,13 @@ def epic_part(worktree: Path, main_tree: Path) -> EpicPart:
 
 
 def repo_part(home: Path, main_tree: Path) -> list[str]:
-    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    settings = settings_reader.read_settings(home, main_tree)
     return [*test_commands(settings), *texts(settings.get("worker_commands"))]
 
 
 def lap_list(worktree: Path, home: Path, main_tree: Path) -> list[str | Grant]:
     repo = part_or("the repo settings' commands", [], lambda: repo_part(home, main_tree))
-    built_in = part_or("the built-in list", [], lambda: repo_settings.built_in_commands(home))
+    built_in = part_or("the built-in list", [], lambda: settings_reader.built_in_commands(home))
     epic = part_or("the epic's commands", NO_EPIC_PART, lambda: epic_part(worktree, main_tree))
     return [*repo, *epic.granted, *built_in, *epic.extra]
 
@@ -200,12 +216,12 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         if args.kind == LAP:
             printed = lap_list(Path.cwd(), home, main_tree)
         else:
-            printed = check_list(repo_settings.load(repo_settings.settings_path(home, main_tree)))
+            printed = check_list(settings_reader.read_settings(home, main_tree))
     except PART_ERRORS as error:
         print(f"lap_lists: {error}", file=sys.stderr)
         return 1

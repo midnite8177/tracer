@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import private_docs
-import repo_settings
+import settings_reader
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, MAIN_REF, WORKTREE_FOLDER, CommandError,
                       env_as_git_user, head_of, labels_of, metadata_of, parent_of, read_bead, run, worktree_list)
 from epic_branch import branch_head
@@ -168,7 +168,7 @@ def start(bead_id: str, main_tree: Path) -> Workspace:
     workspace = planned_workspace(bead, main_tree)
     hide_worktrees(main_tree)
     make_worktree(workspace, main_tree)
-    private_docs.share(main_tree, workspace.worktree.resolve(), repo_settings.jidoka_home(None))
+    private_docs.share(main_tree, workspace.worktree.resolve(), settings_reader.jidoka_home(None))
     run(["bd", "update", bead.id, "--claim"], main_tree, env)
     run(["bd", "update", bead.id,
          "--set-metadata", f"bench.branch={workspace.branch}",
@@ -224,9 +224,9 @@ def main(argv: list[str]) -> int:
 
     try:
         if args.mode == "route":
-            print(json.dumps(route(args.tier, repo_settings.jidoka_home(args.jidoka_home))))
+            print(json.dumps(route(args.tier, settings_reader.jidoka_home(args.jidoka_home))))
             return 0
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         if args.mode == "start":
             workspace = start(args.bead, main_tree)
             print(json.dumps({"bead": args.bead, "branch": workspace.branch,
@@ -235,7 +235,7 @@ def main(argv: list[str]) -> int:
             end(args.bead, args.outcome, main_tree)
         else:
             release(args.bead, main_tree)
-    except (BenchError, CommandError, repo_settings.SettingsError, private_docs.ClashError, OSError) as error:
+    except (BenchError, CommandError, settings_reader.SettingsError, private_docs.ClashError, OSError) as error:
         print(f"bench: {error}", file=sys.stderr)
         return 1
     return 0

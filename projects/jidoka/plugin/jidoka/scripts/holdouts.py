@@ -42,7 +42,7 @@ import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
-import repo_settings
+import settings_reader
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_git_user, metadata_of, read_bead, run
 
 HOLDOUTS_KEY = "holdouts"
@@ -112,10 +112,10 @@ def read(epic: str, main_tree: Path) -> list[Holdout]:
 
 def brief(epic: str, main_tree: Path, home: Path) -> dict:
     shown = read_bead(epic, main_tree)
-    settings = repo_settings.load(repo_settings.settings_path(home, main_tree))
+    settings = settings_reader.read_settings(home, main_tree)
     return {"epic": epic, "title": shown.get("title", ""), "spec": shown.get("description") or "",
             "apps": [{"name": app.name, "way_in": app.way_in, "acceptance": app.acceptance}
-                     for app in repo_settings.apps_of(settings)]}
+                     for app in settings_reader.apps_of(settings)]}
 
 
 def write(epic: str, raw: str, main_tree: Path) -> None:
@@ -140,11 +140,11 @@ def main(argv: list[str]) -> int:
     briefing.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         if args.mode == "write":
             write(args.epic, sys.stdin.read(), main_tree)
         elif args.mode == "brief":
-            home = repo_settings.jidoka_home(args.jidoka_home)
+            home = settings_reader.jidoka_home(args.jidoka_home)
             print(json.dumps(brief(args.epic, main_tree, home), indent=2, ensure_ascii=False))
         elif args.task is not None:
             named = [{"holdout": number, **as_json([holdout])[0]}
@@ -152,7 +152,7 @@ def main(argv: list[str]) -> int:
             print(json.dumps(named, indent=2))
         else:
             print(json.dumps(as_json(read(args.epic, main_tree)), indent=2))
-    except (HoldoutsError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (HoldoutsError, CommandError, settings_reader.SettingsError, OSError) as error:
         print(f"holdouts: {error}", file=sys.stderr)
         return 1
     return 0

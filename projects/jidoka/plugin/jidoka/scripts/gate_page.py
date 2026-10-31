@@ -42,7 +42,7 @@ import design_findings
 import diff_view
 import gate_items
 import page as shared
-import repo_settings
+import settings_reader
 import review
 import validation
 from acceptance import branch_and_head_at_the_gate, branch_moved_since_validation, main_moved_since_validation
@@ -92,12 +92,12 @@ class GatePage:
     files: tuple[diff_view.FileDiff, ...]
     evidence: tuple[str, ...]
     checkout: Checkout
-    apps: tuple[repo_settings.App, ...]
+    apps: tuple[settings_reader.App,...]
     items: gate_items.GateItems
     open_findings: tuple[design_findings.OpenFinding, ...]
     low_findings: tuple[review.Finding, ...]
     removals: tuple[cleanup.Removal, ...]
-    hand_run: tuple[repo_settings.HandRunGroup, ...]
+    hand_run: tuple[settings_reader.HandRunGroup,...]
     cost: tuple[str, ...]
     danger: tuple[str, ...]
 
@@ -163,7 +163,7 @@ def checkout_of(epic: str, branch: str, main_tree: Path) -> Checkout:
 
 
 def settings_of(home: Path, main_tree: Path) -> dict:
-    return repo_settings.load(repo_settings.settings_path(home, main_tree))
+    return settings_reader.read_settings(home, main_tree)
 
 
 def paths_main_changed(head: str, main_tree: Path) -> set[str]:
@@ -213,10 +213,10 @@ def gather(epic: str, guide: Guide, home: Path, main_tree: Path) -> GatePage:
     findings = design_findings.ranked_findings([each.path for each in files], main_tree)
     return GatePage(epic, str(shown.get("title") or epic), branch, head, guide,
                     tuple(gate_items.merged_commits(head, main_tree)), files, evidence_lines(shown),
-                    checkout_of(epic, branch, main_tree), tuple(repo_settings.apps_of(settings)),
+                    checkout_of(epic, branch, main_tree), tuple(settings_reader.apps_of(settings)),
                     gate_items.gate_items(epic, str(shown.get("title") or ""), main_tree), tuple(findings),
                     tuple(review.stored_findings(shown, review.LOW_KEY)), tuple(cleanup.removed_before(shown)),
-                    tuple(repo_settings.stored_hand_run_groups(settings)), cost_lines(shown),
+                    tuple(settings_reader.stored_hand_run_groups(settings)), cost_lines(shown),
                     danger_lines(shown, branch, head, main_tree))
 
 
@@ -300,6 +300,9 @@ def assumptions(page: GatePage) -> str:
         parts = [f'<ol class="assumptions">\n{listed}\n</ol>']
     if items.api_changes:
         parts.append("<h3>Public API changes</h3>\n" + bullets([each.row() for each in items.api_changes]))
+    if items.already_passing:
+        parts.append("<h3>Acceptance specs that passed before the build</h3>\n" + bullets(
+            [each.row() for each in items.already_passing]))
     if items.outside:
         parts.append("<h3>Found outside the epic, still open</h3>\n" + bullets(
             [f"{each.bead} {each.title}, found in {each.found_in}" for each in items.outside]))
@@ -377,11 +380,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        home = repo_settings.jidoka_home(args.jidoka_home)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        home = settings_reader.jidoka_home(args.jidoka_home)
         page = gather(args.epic, read_guide(Path(args.guide)), home, main_tree)
         print(write(page, home, main_tree))
-    except (GatePageError, EpicReadError, CommandError, PassError, repo_settings.SettingsError, OSError) as error:
+    except (GatePageError, EpicReadError, CommandError, PassError, settings_reader.SettingsError, OSError) as error:
         print(f"gate page: {error}", file=sys.stderr)
         return 1
     return 0

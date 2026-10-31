@@ -34,7 +34,7 @@ import clock
 import heartbeat
 import lap_record
 import pause
-import repo_settings
+import settings_reader
 import slots
 from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError, NotAWholeNumber, labels_of, metadata_of
 from epic_reader import CLOSED, EpicReadError, read_epic
@@ -136,10 +136,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
     try:
-        main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        printed = status(repo_settings.jidoka_home(args.jidoka_home), main_tree, clock.now())
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        printed = status(settings_reader.jidoka_home(args.jidoka_home), main_tree, clock.now())
     except (EpicsError, EpicReadError, SchedulerError, NotAWholeNumber, CommandError,
-            repo_settings.SettingsError, OSError) as error:
+            settings_reader.SettingsError, OSError) as error:
         print(f"status: {error}", file=sys.stderr)
         return 1
     print(printed)

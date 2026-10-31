@@ -17,7 +17,7 @@ sys.path.insert(0, str(fixture.PROJECT / "plugin" / "jidoka" / "scripts"))
 import beads_stealth  # noqa: E402
 import links  # noqa: E402
 import private_docs  # noqa: E402
-import repo_settings  # noqa: E402
+import settings_reader  # noqa: E402
 
 PRIVILEGE_NOT_HELD = 1314
 
@@ -96,7 +96,7 @@ class RefusedLinksReachThePersonTests(unittest.TestCase):
         (self.main_tree / "docs" / "adr").mkdir(parents=True)
         (self.main_tree / "docs" / "adr" / "0001-start.md").write_text("# 0001\n", encoding="utf-8")
         self.worktree.mkdir()
-        settings = repo_settings.settings_path(self.home, self.main_tree)
+        settings = settings_reader.settings_path(self.home, self.main_tree)
         settings.parent.mkdir(parents=True)
         settings.write_text(json.dumps({"glossary_and_adrs": "private", "glossary": "GLOSSARY.md",
                                         "adrs": "docs/adr"}), encoding="utf-8")
