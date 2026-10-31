@@ -13,6 +13,10 @@ sys.path.insert(0, str(HERE))
 import jidoka_fixture as fixture
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
+sys.path.insert(0, str(PLUGIN / "scripts"))
+
+import slots  # noqa: E402
+
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 HEARTBEAT = PLUGIN / "scripts" / "heartbeat.py"
 STATUS = PLUGIN / "scripts" / "status.py"
@@ -258,6 +262,26 @@ class StatusTests(StatusCase):
         output = self.status()
 
         self.assertIn("no epic is in the factory", output)
+
+    def test_it_lists_the_slots_of_the_epics_whose_manager_beats_and_leaves_out_the_slots_of_a_stale_heartbeat(self):
+        running = self.new_epic("Take card payments", "factory")
+        gone = self.new_epic("Print receipts", "factory")
+        self.write_beat(running, 5, MANAGER_SESSION)
+        self.write_beat(gone, 10 * MINUTE, MANAGER_SESSION)
+        slots.write(self.home, [slots.Claim(running, "task-a", 1, "/work/shop", "till"),
+                                slots.Claim(gone, "task-b", 2, "/work/shop", "receipts"),
+                                slots.Claim("other-repo-epic", "task-c", 3, "/work/mill", "till")])
+        self.write_beat("other-repo-epic", 5, OTHER_SESSION)
+
+        output = self.status()
+
+        listed = output.split("slots on this machine")[1].split()
+        self.assertEqual(["1", running, "task-a", "3", "other-repo-epic", "task-c"], listed)
+
+    def test_it_lists_no_slots_when_no_lap_holds_one(self):
+        self.new_epic("Take card payments", "factory")
+
+        self.assertNotIn("slots", self.status())
 
     def test_it_runs_from_a_second_terminal_with_no_host_and_changes_no_bead(self):
         epic = self.new_epic("Take card payments", "factory")

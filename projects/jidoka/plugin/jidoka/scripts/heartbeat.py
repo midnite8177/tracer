@@ -83,8 +83,15 @@ def fresh_age_seconds(home: Path, epic: str, now: int) -> int | None:
 
 
 def is_fresh(home: Path, epic: str, now: int) -> bool:
-    """True when the epic's last beat is no older than FRESH_SECONDS."""
     return fresh_age_seconds(home, epic, now) is not None
+
+
+def fresh_epics(home: Path, now: int) -> list[str]:
+    """The ids of the epics, in any repo of the machine, whose heartbeat is fresh: the epics a manager runs now."""
+    folder = home / HEARTBEAT_FOLDER
+    if not folder.is_dir():
+        return []
+    return sorted(path.stem for path in folder.glob("*.json") if is_fresh(home, path.stem, now))
 
 
 def mark_stopped(home: Path, epic: str, now: int) -> None:

@@ -62,9 +62,10 @@ _Avoid_: Launch, kickoff, dispatch, submit
 **Factory rules**:
 An epic's own settings and guidance, agreed at its handoff, which bind the
 factory only while it works that epic. A setting is a named value the
-scheduler reads, such as the lap limit, which starts from the repo
-settings' lap limit and can only go lower. Guidance is prose that every
-worker follows and that the Spec check holds each diff to.
+scheduler reads, such as the lap limit, which starts from the lower of the
+machine's and the repo settings' lap limit and can only go lower. Guidance
+is prose that every worker follows and that the Spec check holds each diff
+to.
 _Avoid_: Epic config, run settings, policy, ruleset
 
 **Preset**:
@@ -415,23 +416,26 @@ The detached background script that wakes a manager T3 released. It starts
 when T3 ends the session of an idle host and a manager of that session
 recorded its T3 thread for an epic the factory still holds. It reads the
 epic's beads like the watcher does, beats the epic's heartbeat while it
-waits, and at the first unpark, new task or end of a pause sends the thread
-the prompt that makes the manager run `scheduler carry-on`. At most one
-waker runs for an epic, and landing or dropping the epic deletes its thread
-record and waker file.
+waits, and at the first unpark, new task, end of a pause or room freed by
+another running epic sends the thread the prompt that makes the manager run
+`scheduler carry-on`. At most one waker runs for an epic, and landing or
+dropping the epic deletes its thread record and waker file.
 _Avoid_: Daemon, resumer
 
 **Watcher**:
 The background script the manager starts when nothing can run. It exits
-when a task is unparked, a task is added, a task merges or a pause is
-over, and the manager then goes on. After a failed turn, the lap mod wakes
-a host that sits idle with a timer and a prompt.
+when a task is unparked, a task is added, a task merges, a pause is over,
+or room frees for a ready task of the epic, because another running epic
+freed a slot or an area or stopped reserving a slot, or because room was
+already free when the watch began. The manager then goes on. After a failed
+turn, the lap mod wakes a host that sits idle with a timer and a prompt.
 _Avoid_: Poller, daemon, listener
 
 **Status script**:
 The script that shows, from any terminal and with no host, each epic the
 factory holds and each task's lap, stage, tries and time against its wall
-clock, with the age of the epic's heartbeat. It reads and changes nothing.
+clock, with the age of the epic's heartbeat, and the epic and task that hold
+each of the machine's slots. It reads and changes nothing.
 _Avoid_: Dashboard, monitor
 
 **Manager**:
@@ -504,16 +508,16 @@ _Avoid_: Provider, backend, adapter
 **Machine settings**:
 What install and setup record about one machine in jidoka's home: its
 Python, config dirs, routes, the default budget of an epic, the reserves,
-jidoka's source repo and the jidoka-ui that the installer published, which
-the factory starts. They hold nothing about a repo.
+the lap limit, jidoka's source repo and the jidoka-ui that the installer
+published, which the factory starts. They hold nothing about a repo.
 _Avoid_: Global config, user settings, preferences
 
 **Setup**:
 The step the human takes, with `/jidoka:setup`, to set the machine settings
 that jidoka can propose from what it finds on the machine: a route for each
-tier, the default budget and the reserves. It shows the proposal and writes
-nothing until the human confirms. It is not onboarding, which brings a repo
-under jidoka.
+tier, the default budget, the reserves and the lap limit. It shows the
+proposal and writes nothing until the human confirms. It is not onboarding,
+which brings a repo under jidoka.
 _Avoid_: Configure, install, init
 
 **Account**:
@@ -553,19 +557,31 @@ _Avoid_: Rate card, cost, tariff
 
 **Area**:
 The part of the codebase a task is expected to touch. Handoff names one
-for each task, and two laps in the same area never run at the same time.
+for each task, and two laps in the same area never run at the same time. Areas
+count across the running epics of one repo: no lap opens for a task whose area
+an open lap of another running epic of the same repo holds. Epics in different
+repos never share an area, whatever the areas are called.
 _Avoid_: Zone, lane, component, scope
 
 **Lap limit**:
-The most laps of one epic that run at the same time. The repo settings
-hold it, and an epic's factory rules can only set it lower.
+The most laps of one epic that run at the same time. Three limits cap it,
+and the scheduler applies the lowest: the machine settings' lap limit caps
+every epic on the machine, 4 when they hold none; the repo settings' lap
+limit caps every epic of that repo; and an epic's factory rule caps that
+epic alone, and can only set it lower. The machine's limit also caps the
+laps of all running epics together.
 _Avoid_: Concurrency, parallelism, max workers
 
 **Slot**:
-A number from 1 up that a lap holds while it is open. A new lap takes the
-lowest one that no other open lap of the epic holds. The repo settings'
-slot use says what a lap does with it, such as pick a port, so two laps
-side by side never clash, and so two app checks never share one.
+A number from 1 up that a lap holds while it is open. Slots belong to the
+machine, not to an epic or a repo: slot numbers are unique on the machine. A
+new lap takes the lowest one that no open lap on the machine holds, from one
+record in the jidoka home that every running epic's scheduler shares under a
+lock. A slot held by an epic whose heartbeat went stale, or by a lap that is no
+longer open, is free again, and each running epic keeps at least one. The repo
+settings' slot use says what a lap does with it, such as pick a port, so two
+laps side by side never clash, even laps of two repos, and so two app checks
+never share one.
 _Avoid_: Port, seat, index
 
 **Scratch folder**:

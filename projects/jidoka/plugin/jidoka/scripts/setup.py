@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Proposes this machine's routes, budget default and reserves, and writes them once the human has confirmed.
+"""Proposes this machine's routes, budget default, reserves and lap limit, and writes them once confirmed.
 
 `propose` looks at the machine and prints one JSON object, and writes nothing:
   found      the path of each harness on the PATH, or null: `claude` and `codex`.
@@ -13,13 +13,16 @@
   reserves   0.2 for the claude account when it is on a subscription, because only a subscription has a usage window
              to hold back, and the lap mod reads the usage of the claude account alone. An account on an API key
              has none, and no reserve is proposed for codex.
-  recorded   the routes, budget and reserves the settings hold now, each null when they hold none.
+  lap_limit  the most open laps the machine allows: it caps every epic's laps, and the laps of all the running
+             epics together. The one the settings hold, else 4.
+  recorded   the routes, budget, reserves and lap limit the settings hold now, each null when they hold none.
 
-`write --confirmed` reads a JSON object on stdin with `routes`, `budget` and `reserves`, the proposal as the human
-confirmed or edited it, checks all three before it writes any, and puts them into <jidoka-home>/settings.json. Every
-other key of the settings stays as it is, and the routes replace the stored ones whole. A route on codex is refused
-for a tier that has a stage which writes, because codex exec runs read-only review only. The flag is required: the
-manager passes it only after the human said yes. A proposal that fails a check is refused and nothing is written.
+`write --confirmed` reads a JSON object on stdin with `routes`, `budget`, `reserves` and `lap_limit`, the proposal as
+the human confirmed or edited it, checks all four before it writes any, and puts them into <jidoka-home>/settings.json.
+Every other key of the settings stays as it is, and the routes replace the stored ones whole. A route on codex is
+refused for a tier that has a stage which writes, because codex exec runs read-only review only. A lap limit that is not
+a whole number above zero is refused. The flag is required: the manager passes it only after the human said yes. A
+proposal that fails a check is refused and nothing is written.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
@@ -48,7 +51,7 @@ KEY_VARIABLES = {routes.NATIVE_HARNESS: ["ANTHROPIC_API_KEY"],
 SUBSCRIPTION_BUDGET = 50
 API_KEY_BUDGET = 20
 SUBSCRIPTION_RESERVE = 0.2
-OWNED_KEYS = ("routes", "budget", "reserves")
+OWNED_KEYS = ("routes", "budget", "reserves", "lap_limit")
 
 
 class SetupError(Exception):
@@ -71,6 +74,7 @@ def propose(home: Path) -> dict:
         "routes": routes.default_routes(found[routes.CODEX_HARNESS] is not None),
         "budget": SUBSCRIPTION_BUDGET if claude_billing == SUBSCRIPTION else API_KEY_BUDGET,
         "reserves": {routes.NATIVE_HARNESS: SUBSCRIPTION_RESERVE} if claude_billing == SUBSCRIPTION else {},
+        "lap_limit": rules.machine_lap_limit(home),
         "recorded": {key: recorded.get(key) for key in OWNED_KEYS},
     }
 
@@ -100,6 +104,8 @@ def check(confirmed: object) -> dict:
         raise SetupError("budget must be a number of dollars above zero")
     if not rules.is_map_of(confirmed["reserves"], rules.is_share):
         raise SetupError("reserves must be an object of account names to a share above 0 and below 1")
+    if not rules.is_positive_whole(confirmed["lap_limit"]):
+        raise SetupError("lap_limit must be a whole number above zero")
     return {key: confirmed[key] for key in OWNED_KEYS}
 
 
@@ -111,8 +117,9 @@ def write(confirmed: object, home: Path) -> dict:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="setup.py", description="Propose this machine's routes, budget default "
-                                                                   "and reserves, and write them once confirmed.")
+    parser = argparse.ArgumentParser(prog="setup.py", description="Propose this machine's routes, budget default, "
+                                                                   "reserves and lap limit, and write them once "
+                                                                   "confirmed.")
     modes = parser.add_subparsers(dest="mode", required=True)
     proposing = modes.add_parser("propose", help="print the proposal and write nothing")
     proposing.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")

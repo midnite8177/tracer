@@ -159,6 +159,21 @@ class ProposeTests(SetupCase):
         self.assertEqual(SETTINGS_FROM_THE_INSTALLER["routes"], recorded["routes"])
         self.assertIsNone(recorded["budget"])
         self.assertIsNone(recorded["reserves"])
+        self.assertIsNone(recorded["lap_limit"])
+
+    def test_a_lap_limit_of_four_is_proposed_when_the_settings_hold_none(self):
+        self.without_codex()
+        self.record_installer_settings()
+
+        self.assertEqual(4, self.proposal()["lap_limit"])
+
+    def test_the_recorded_lap_limit_is_proposed_when_the_settings_hold_one(self):
+        self.without_codex()
+        (self.home / "settings.json").write_text(json.dumps({"lap_limit": 2}), encoding="utf-8")
+
+        proposal = self.proposal()
+
+        self.assertEqual((2, 2), (proposal["lap_limit"], proposal["recorded"]["lap_limit"]))
 
     def test_proposing_writes_nothing(self):
         self.without_codex()
@@ -182,6 +197,7 @@ class WriteTests(SetupCase):
         "routes": {"deep": NATIVE_OPUS, "second": CODEX},
         "budget": 35.5,
         "reserves": {"claude": 0.25},
+        "lap_limit": 3,
     }
 
     def test_confirming_writes_the_routes_the_budget_default_and_the_reserves(self):
@@ -192,6 +208,7 @@ class WriteTests(SetupCase):
         self.assertEqual(self.CONFIRMED["routes"], settings["routes"])
         self.assertEqual(35.5, settings["budget"])
         self.assertEqual({"claude": 0.25}, settings["reserves"])
+        self.assertEqual(3, settings["lap_limit"])
 
     def test_confirming_keeps_every_setting_the_installer_recorded_besides_the_routes(self):
         self.record_installer_settings()
@@ -225,6 +242,15 @@ class WriteTests(SetupCase):
         self.assertEqual(1, done.returncode)
         self.assertIn("budget", done.stderr)
         self.assertEqual(["python"], self.home_files())
+
+    def test_a_lap_limit_that_is_not_a_whole_number_above_zero_is_refused_and_nothing_is_written(self):
+        before = self.record_installer_settings()
+        for bad in (0, -1, 2.5, "3", True, None):
+            done = self.confirm({**self.CONFIRMED, "lap_limit": bad})
+
+            self.assertEqual(1, done.returncode, bad)
+            self.assertIn("lap_limit must be a whole number above zero", done.stderr)
+            self.assertEqual(before, (self.home / "settings.json").read_bytes())
 
     def test_a_route_without_a_harness_is_refused(self):
         bad = {**self.CONFIRMED, "routes": {"deep": {"model": "opus"}}}
@@ -264,6 +290,7 @@ class WriteTests(SetupCase):
         self.assertEqual(NATIVE_OPUS, settings["routes"]["second"])
         self.assertEqual(50, settings["budget"])
         self.assertEqual({"claude": 0.2}, settings["reserves"])
+        self.assertEqual(4, settings["lap_limit"])
 
 
 if __name__ == "__main__":

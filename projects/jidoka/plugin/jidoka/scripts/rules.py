@@ -10,8 +10,9 @@ BEADS_ACTOR of the writes.
 
 The settings:
   lap_test_scope             targeted or full.
-  lap_limit                  a whole number above zero and below the repo
-                             settings' lap limit, so an epic only goes lower.
+  lap_limit                  a whole number above zero and below the lower of the
+                             machine settings' and the repo settings' lap limit,
+                             so an epic only goes lower.
   wall_clocks                an object of stage names to whole minutes.
   passes                     the most passes, a whole number above zero.
   discovered_bugs_into_epic  true to file a bug a lap finds inside the epic.
@@ -73,6 +74,7 @@ KEY_PREFIX = "rules."
 GUIDANCE_KEY = f"{KEY_PREFIX}guidance"
 COMMENT_HEADING = "Factory rules:"
 LAP_LIMIT = "lap_limit"
+DEFAULT_MACHINE_LAP_LIMIT = 4
 ONE_COMMIT = "one"
 PER_TASK = "per_task"
 COMMITS_ON_MAIN = [ONE_COMMIT, PER_TASK]
@@ -152,11 +154,6 @@ class Rules:
     settings: dict[str, object]
     guidance: str
 
-    def lap_limit_under(self, repo_limit: int) -> int:
-        """The most laps of the epic at once. It is the repo's limit, or the epic's own when that is lower."""
-        own = self.settings.get(LAP_LIMIT)
-        return min(repo_limit, own) if is_whole(own) else repo_limit
-
     @property
     def commits_on_main(self) -> str:
         """How landing puts the epic on main: ONE_COMMIT, or PER_TASK for a commit of each task."""
@@ -167,6 +164,52 @@ def repo_lap_limit(settings: dict) -> int:
     """The repo settings' lap limit, or zero when they hold none."""
     limit = settings.get(LAP_LIMIT)
     return limit if is_positive_whole(limit) else 0
+
+
+def machine_lap_limit(home: Path) -> int:
+    """The machine settings' lap limit, or DEFAULT_MACHINE_LAP_LIMIT when they hold none that is a whole number
+    above zero. Settings that cannot be read give the default, and a line on stderr."""
+    held = routes.machine_default(home, LAP_LIMIT, "lap limit",
+                                  lambda value: value if is_positive_whole(value) else None)
+    return held if held is not None else DEFAULT_MACHINE_LAP_LIMIT
+
+
+@dataclass(frozen=True)
+class LapCeiling:
+    """The most laps one epic runs at once before its own rule says less: the lower of the machine settings' lap
+    limit and the repo settings', which is zero when they hold none."""
+    machine: int
+    repo: int
+
+    @property
+    def limit(self) -> int:
+        return min(self.machine, self.repo)
+
+    @property
+    def owner(self) -> str:
+        """Whose limit is the lower, worded for a refusal."""
+        return "machine's" if self.machine < self.repo else "repo's"
+
+
+@dataclass(frozen=True)
+class LapLimits:
+    """The most laps at once: the epic's own, which is the lowest of the machine's, the repo's and the epic's factory
+    rule, and the machine's across every running epic."""
+    epic: int
+    machine: int
+
+
+def lap_ceiling(settings: dict, home: Path) -> LapCeiling:
+    """The ceiling that the machine settings and the repo settings put on an epic's lap limit."""
+    return LapCeiling(machine_lap_limit(home), repo_lap_limit(settings))
+
+
+def lap_limits(shown: dict, settings: dict, home: Path) -> LapLimits:
+    """The lap limits that apply to the epic as bd shows it: its own factory rule counts only when it is lower than
+    the ceiling."""
+    ceiling = lap_ceiling(settings, home)
+    own = of_epic(shown).settings.get(LAP_LIMIT)
+    return LapLimits(min(ceiling.limit, own) if is_whole(own) else ceiling.limit, ceiling.machine)
 
 
 def encode(value: object) -> str:
@@ -220,19 +263,19 @@ def codex_route_problems(wanted: dict[str, object], held: dict[str, object]) -> 
     return [f"tier_routes: {refusal}" for refusal in refusals if refusal]
 
 
-def problems_in(wanted: dict[str, object], repo_limit: int, held: dict[str, object]) -> list[str]:
+def problems_in(wanted: dict[str, object], ceiling: LapCeiling, held: dict[str, object]) -> list[str]:
     problems = []
     for name, value in wanted.items():
         if name not in SETTINGS:
             problems.append(f"{name} is not a setting. The settings are {', '.join(SETTINGS)}")
         elif not SETTINGS[name][0](value):
             problems.append(f"{name} must be {SETTINGS[name][1]}, not {encode(value)}")
-        elif name == LAP_LIMIT and not repo_limit:
+        elif name == LAP_LIMIT and not ceiling.repo:
             problems.append("the repo settings hold no lap limit, so none can be set lower. "
                             "Run /jidoka:onboard to record one")
-        elif name == LAP_LIMIT and value >= repo_limit:
-            problems.append(f"{LAP_LIMIT} must be below the repo's {repo_limit}, because an epic can only go "
-                            f"lower, not {encode(value)}")
+        elif name == LAP_LIMIT and value >= ceiling.limit:
+            problems.append(f"{LAP_LIMIT} must be below the {ceiling.owner} {ceiling.limit}, because an epic can "
+                            f"only go lower, not {encode(value)}")
     if not problems and ("tier_routes" in wanted or "stage_tiers" in wanted):
         problems.extend(codex_route_problems(wanted, held))
     return problems
@@ -250,14 +293,14 @@ def change_comment(name: str, value: object, before: object | None) -> str:
     return f"{COMMENT_HEADING} {name} set to {encode(value)}{was}."
 
 
-def write_settings(epic: str, wanted: dict[str, object], repo_limit: int, main_tree: Path) -> dict[str, object]:
+def write_settings(epic: str, wanted: dict[str, object], ceiling: LapCeiling, main_tree: Path) -> dict[str, object]:
     """Checks every wanted setting, then writes each that differs from the epic's, with a comment for each.
 
     Returns the settings it changed.
     """
     shown = epic_to_write(epic, main_tree)
     held = of_epic(shown).settings
-    problems = problems_in(wanted, repo_limit, held)
+    problems = problems_in(wanted, ceiling, held)
     if problems:
         raise RulesError(f"the factory rules of {epic} were not changed:\n"
                          + "\n".join(f"  {problem}" for problem in problems))
@@ -289,9 +332,10 @@ def write_guidance(epic: str, text: str, main_tree: Path) -> bool:
 
 
 def write_preset(epic: str, preset: str, repo_limit: int, main_tree: Path) -> dict[str, object]:
-    """Writes the settings and the guidance that the preset holds; the settings it changed."""
+    """Writes the settings and the guidance that the preset holds; the settings it changed. No preset sets a
+    lap_limit, so the repo's limit stands for the whole ceiling."""
     chosen = PRESETS[preset]
-    changed = write_settings(epic, chosen.settings, repo_limit, main_tree)
+    changed = write_settings(epic, chosen.settings, LapCeiling(repo_limit, repo_limit), main_tree)
     if chosen.guidance:
         write_guidance(epic, chosen.guidance, main_tree)
     return changed
@@ -302,7 +346,7 @@ def allow_extra_command(epic: str, command: str, home: Path, main_tree: Path) ->
     held = of_epic(epic_to_write(epic, main_tree)).settings.get(EXTRA_COMMANDS, [])
     if not isinstance(held, list) or command in held:
         return False
-    write_settings(epic, {EXTRA_COMMANDS: [*held, command]}, repo_limit_of(home, main_tree), main_tree)
+    write_settings(epic, {EXTRA_COMMANDS: [*held, command]}, ceiling_of(home, main_tree), main_tree)
     return True
 
 
@@ -332,18 +376,18 @@ def shown_rules(epic: str, main_tree: Path) -> dict:
     return {"epic": epic, "settings": rules.settings, "guidance": rules.guidance}
 
 
-def pickable_choices(repo_limit: int) -> dict[str, list]:
+def pickable_choices(ceiling: LapCeiling) -> dict[str, list]:
     """The settings that take one of a short list, each with the values a person can pick."""
     return {"lap_test_scope": list(repo_settings.TEST_SCOPES),
-            LAP_LIMIT: list(range(1, repo_limit)),
+            LAP_LIMIT: list(range(1, ceiling.limit)),
             "discovered_bugs_into_epic": [True, False],
             "commits_on_main": list(COMMITS_ON_MAIN)}
 
 
-def shown_choices(epic: str, repo_limit: int, main_tree: Path) -> dict:
+def shown_choices(epic: str, ceiling: LapCeiling, main_tree: Path) -> dict:
     held = of_epic(epic_to_write(epic, main_tree)).settings
     return {"epic": epic, "settings": [{"name": name, "choices": choices, "value": held.get(name)}
-                                       for name, choices in pickable_choices(repo_limit).items()]}
+                                       for name, choices in pickable_choices(ceiling).items()]}
 
 
 def parsed_setting(argument: str) -> tuple[str, object]:
@@ -356,8 +400,8 @@ def parsed_setting(argument: str) -> tuple[str, object]:
         return name.strip(), text
 
 
-def repo_limit_of(home: Path, main_tree: Path) -> int:
-    return repo_lap_limit(repo_settings.load(repo_settings.settings_path(home, main_tree)))
+def ceiling_of(home: Path, main_tree: Path) -> LapCeiling:
+    return lap_ceiling(repo_settings.load(repo_settings.settings_path(home, main_tree)), home)
 
 
 def main(argv: list[str]) -> int:
@@ -385,16 +429,16 @@ def main(argv: list[str]) -> int:
         elif args.mode == "show":
             printed = shown_rules(args.epic, main_tree)
         elif args.mode == "choices":
-            printed = shown_choices(args.epic, repo_limit_of(home, main_tree), main_tree)
+            printed = shown_choices(args.epic, ceiling_of(home, main_tree), main_tree)
         elif args.mode == "guidance":
             printed = {"epic": args.epic, "changed": write_guidance(args.epic, sys.stdin.read(), main_tree)}
         else:
-            limit = repo_limit_of(home, main_tree)
+            ceiling = ceiling_of(home, main_tree)
             if args.mode == "preset":
-                changed = write_preset(args.epic, args.preset, limit, main_tree)
+                changed = write_preset(args.epic, args.preset, ceiling.repo, main_tree)
             else:
                 wanted = dict(parsed_setting(argument) for argument in args.settings)
-                changed = write_settings(args.epic, wanted, limit, main_tree)
+                changed = write_settings(args.epic, wanted, ceiling, main_tree)
             printed = {**shown_rules(args.epic, main_tree), "changed": changed}
     except (RulesError, CommandError, repo_settings.SettingsError, OSError) as error:
         print(f"rules: {error}", file=sys.stderr)

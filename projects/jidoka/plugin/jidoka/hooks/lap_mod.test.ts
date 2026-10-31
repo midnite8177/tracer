@@ -964,6 +964,7 @@ type Call = { argv: string[]; cwd: string | undefined }
 test("a host permission prompt calls the notify script from the host's folder and still reaches the host", async ($, on) => {
   const calls: Call[] = []
   on('session.cwd', () => ({ value: HOST_FOLDER }))
+  on('session.id', () => ({ value: 'session-1' }))
   on('process.run', (_, e) => {
     calls.push({ argv: e.argv, cwd: e.init?.cwd })
     return { value: RAN }
@@ -978,7 +979,7 @@ test("a host permission prompt calls the notify script from the host's folder an
   expect(calls[0]?.argv[0]).toBe('sh')
   expect(launcher.endsWith('/bin/jidoka-run')).toBe(true)
   expect(script).toBe(`${launcher.slice(0, -'/bin/jidoka-run'.length)}/scripts/notify.py`)
-  expect(calls[0]?.argv.slice(3)).toEqual(['permission-prompt'])
+  expect(calls[0]?.argv.slice(3)).toEqual(['permission-prompt', '--session', 'session-1'])
   expect(calls[0]?.cwd).toBe(HOST_FOLDER)
 })
 

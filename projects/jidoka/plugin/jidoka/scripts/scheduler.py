@@ -16,7 +16,7 @@ the orphan workers left in its worktree, abandons a rebase left half done, and e
 does, which counts no cutoff and no try, so that the task is ready again with a new lap on the work it left. A merge
 lock whose holder is gone is cleared. It reports each on stderr. Then it makes the checks below and opens the laps.
 
-`carry-on <epic>` is the call that goes on after a pause, an unpark, a new task or a merge: it does what `next` does
+`carry-on <epic>` is the call that goes on after a pause, an unpark, a new task or a merge. It does what `next` does
 after any outcome, with no restart and no heartbeat check.
 
 `stop <epic>` is the call a manager makes when the human tells the host to stop at once. It ends every open lap of
@@ -54,17 +54,21 @@ checkout's copies, and a worktree that holds its own copy stops the call, with t
 is claimed. Then, with BEADS_ACTOR set to jidoka, the task goes to in_progress with the assignee jidoka, and its
 metadata gets `lap.number` (1, or one more than the number of the lap the task left parked, blocked or interrupted),
 `lap.stage` (the build, or the research on the full track while the task holds no `research brief:` comment),
-`lap.tries` (0), `lap.workspace` (the worktree), `lap.slot` (the lowest slot from 1 up that no open lap of the epic
-holds) and `lap.branch`. A rerun after a failure, and the lap that follows a park, reuse the worktree and branch they
-find. A reused lap branch that lacks the epic branch's head is first rebased onto it under the merge lock, with the
-work its worktree holds uncommitted kept as it was, so the lap starts from the work left behind on top of the epic
-branch as it is now. A rebase that conflicts is aborted, and the task parks with the conflicting files named and no
-action, its worktree and branch as they were. A new lap starts with no tries, no cutoffs, no send-backs and no merge
-tries, because each is a cap on one lap.
+`lap.tries` (0), `lap.workspace` (the worktree), `lap.slot` (the lowest slot from 1 up that no open lap on the
+machine holds, as slots.py says) and `lap.branch`. A rerun after a failure, and the lap that follows a park, reuse
+the worktree and branch they find. A reused lap branch that lacks the epic branch's head is first rebased onto it
+under the merge lock, with the work its worktree holds uncommitted kept as it was, so the lap starts from the work
+left behind on top of the epic branch as it is now. A rebase that conflicts is aborted, and the task parks with the
+conflicting files named and no action, its worktree and branch as they were. A new lap starts with no tries, no
+cutoffs, no send-backs and no merge tries, because each is a cap on one lap.
 A lap opens for each ready task, in bd priority order and then by id, while the open laps of the epic number fewer
-than the lap limit, which is the repo settings' lap_limit or the epic's own factory rule when that is lower, read
-afresh on every call, and never for a task whose area an open lap already holds. A task is ready when every bead it
-waits on is closed, it has no open lap, no assignee and no `human` label, and its `lap.area` metadata names its area.
+than the lap limit, which is the lowest of the machine settings' lap_limit (4 when they hold none), the repo
+settings' lap_limit and the epic's own factory rule, read afresh on every call, and never for a task whose area an
+open lap already holds, whether a lap of this epic or of another running epic of the same repo. The open laps of
+every running epic on the machine, in any repo, number no more than the machine settings' lap limit together;
+slots.py holds that rule and the one that keeps each running epic at least one slot. A task is ready when every bead
+it waits on is closed, it has no open lap, no assignee and no `human` label, and its `lap.area` metadata names its
+area.
 
 An epic whose spend has reached its budget, as budget.py describes, starts no stage: no lap opens, no pass stage runs,
 and a lap that would go back to a worker ends interrupted as a pause ends it. The stages already running finish and
@@ -109,8 +113,8 @@ the call and writes nothing. A stage that files tasks in the epic has this call 
 Each call prints one JSON object:
   epic       the epic's id.
   branch     the epic branch.
-  lap_limit  the lap limit this call applied: the repo settings' lap limit,
-             or the epic's factory rule when that is lower.
+  lap_limit  the lap limit this call applied: the lowest of the machine settings' lap limit, the repo settings'
+             lap limit and the epic's factory rule.
   validation null, or when this call ran validation, its result (pass,
              fail or pending), head (the commit validated), tests, skipped,
              seconds, filed (the id of the first task a red run filed, or
@@ -123,7 +127,8 @@ Each call prints one JSON object:
              human or in an open lap is left out.
   paused     null, or while the epic's pause waits, {"cause", "since", "until", "retries", "wait_seconds"}.
   watch      true when the epic has an open task and is not at the acceptance gate, so a manager with nothing
-             running waits with watch.py instead of ending.
+             running waits with watch.py instead of ending. It stays true while the ready tasks wait on the
+             room of another running epic, and watch.py then ends when that room frees.
   actions    the lap a report sent back to a worker or on to the next one,
              then the laps this call opened, then the pass stage's actions
              (test-cleanup, tidy, fix or the review lanes), then the
@@ -172,7 +177,6 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
 import sys
 from collections.abc import Callable
@@ -202,13 +206,15 @@ import repo_settings
 import reserves
 import resume
 import rules
+import slots
 import spec_check
 from bench import BenchError, Workspace, make_worktree
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, SCRATCH_FOLDER, CommandError,
-                      NotAWholeNumber, bd_comments, env_as_factory, is_labeled_for_human, labels_of, metadata_of,
+                      NotAWholeNumber, bd_comments, env_as_factory, labels_of, metadata_of,
                       run, set_metadata)
 from epic_branch import branch_head
-from epic_reader import BLOCKING, BRANCH_KEY, CLOSED, ONBOARD, Epic, EpicReadError, Rerun, epic_of, problems_while_held
+from epic_reader import (BRANCH_KEY, ONBOARD, Epic, EpicReadError, Rerun, by_priority, epic_of, is_unclaimed,
+                         problems_while_held)
 from epics import state_of
 from lap_outcomes import BLOCKED, CANNOT_JUDGE, CUT_OFF, DONE, FAILED, PASS, QUESTION, SEND_BACK, SchedulerError
 from lap_record import (APP_CHECK, BRIEF_PREFIX, BUILD, FULL_TRACK, MERGE, RESEARCH, SPEC_CHECK, WORKER_STAGES, Lap,
@@ -223,32 +229,15 @@ PASS_OUTCOMES = {"failed": FAILED, "cut-off": CUT_OFF}
 WORKER_OUTCOMES = {"done": DONE, **PASS_OUTCOMES}
 NATIVE_ROUTE = "native"
 OUTCOMES = [DONE, FAILED, CUT_OFF, QUESTION, SEND_BACK, BLOCKED, PASS, CANNOT_JUDGE]
-FIRST_SLOT = 1
 SECONDS_PER_MINUTE = 60
 HANDOFF = "/jidoka:handoff"
 RERUN = Rerun(on_the_holding_epic="Run the scheduler on the epic that holds it",
               after_onboarding="run the scheduler again")
 
 
-def waits_on_open_bead(task: dict) -> bool:
-    return any(isinstance(link, dict) and link.get("dependency_type") == BLOCKING and link.get("status") != CLOSED
-               for link in task.get("dependencies") or [])
-
-
-def is_ready(task: dict) -> bool:
-    return (open_lap(task) is None and not task.get("assignee") and not is_labeled_for_human(task)
-            and bool(lap_record.area_of(metadata_of(task))) and not waits_on_open_bead(task))
-
-
 def lacks_only_an_area(task: dict) -> bool:
     """A task no lap will open for because its `lap.area` is missing, such as one added after handoff."""
-    return (open_lap(task) is None and not task.get("assignee") and not is_labeled_for_human(task)
-            and not lap_record.area_of(metadata_of(task)))
-
-
-def by_priority(task: dict) -> tuple[int, str]:
-    priority = task.get("priority")
-    return (priority if isinstance(priority, int) else sys.maxsize, str(task["id"]))
+    return is_unclaimed(task) and not lap_record.area_of(metadata_of(task))
 
 
 def scheduler_problems(epic: Epic, settings: dict, main_tree: Path) -> list[str]:
@@ -295,25 +284,6 @@ def first_stage(task: str, track: str, main_tree: Path) -> str:
                                        for comment in bd_comments(task, main_tree)):
         return RESEARCH
     return BUILD
-
-
-def planned_laps(ready: list[dict], held: list[Lap], limit: int, now: int, main_tree: Path) -> list[Lap]:
-    """The laps that fit beside the open ones: within the limit, one per area, each on the lowest free slot."""
-    areas = {lap.area for lap in held}
-    slots = {lap.slot for lap in held}
-    planned: list[Lap] = []
-    for task in sorted(ready, key=by_priority):
-        if len(held) + len(planned) >= limit:
-            break
-        area = lap_record.area_of(metadata_of(task))
-        if area in areas:
-            continue
-        slot = next(number for number in itertools.count(FIRST_SLOT) if number not in slots)
-        stage = first_stage(str(task["id"]), track_of(metadata_of(task)), main_tree)
-        planned.append(lap_record.new_lap(task, slot, stage, now, main_tree))
-        areas.add(area)
-        slots.add(slot)
-    return planned
 
 
 def open_workspace(lap: Lap, epic_head: str, home: Path, main_tree: Path) -> list[str]:
@@ -595,17 +565,30 @@ def unplaced_tasks(tasks: list[dict]) -> list[str]:
     return unplaced
 
 
-def open_laps(epic: Epic, holds: Holds, resumed: set[str], limit: int, now: int, home: Path,
+def open_laps(epic: Epic, holds: Holds, resumed: set[str], limit: rules.LapLimits, now: int, home: Path,
               main_tree: Path) -> list[Lap]:
-    """Opens a lap for each ready task that fits beside the open laps, unless the epic is parked or paused; the
-    brake lets through only the tasks whose laps this call ended."""
-    openable = [task for task in epic.open_task_beads
-                if is_ready(task) and (not holds.brake.is_on or str(task["id"]) in resumed)]
-    planned = [] if holds.stops_new_laps else planned_laps(openable, holds.held, limit, now, main_tree)
+    """Opens a lap for each ready task that fits beside the open laps of the epic and of the machine, and whose area
+    no other running epic of the repo holds, unless the epic is parked or paused; the brake lets through only the
+    tasks whose laps this call ended.
+
+    The slots of the laps the epic holds and of the laps it opens are recorded for the machine, as slots.py says,
+    before any lap is opened. A lap that ends gives its slot back at the epic's next call.
+    """
+    openable = {str(task["id"]): task for task in sorted(epic.ready_task_beads, key=by_priority)
+                if not holds.brake.is_on or str(task["id"]) in resumed}
     epic_branch = epic.branch
     epic_head = branch_head(epic_branch, main_tree)
     if epic_head is None:
         raise SchedulerError(f"the epic branch {epic_branch} went away during the call, and nothing was written")
+
+    candidates = [] if holds.stops_new_laps else [slots.Candidate(task, lap_record.area_of(metadata_of(bead)))
+                                                   for task, bead in openable.items()]
+    placements = slots.share(slots.Standing(home, epic.id, main_tree, limit.machine, now), holds.held, candidates,
+                             limit.epic)
+    planned = [lap_record.new_lap(openable[placed.task], placed.slot,
+                                  first_stage(placed.task, track_of(metadata_of(openable[placed.task])), main_tree),
+                                  now, main_tree)
+               for placed in placements]
     if planned:
         hide_worktrees(main_tree)
         git_exclude.add(git_exclude.exclude_file(main_tree), [git_exclude.exclude_line(SCRATCH_FOLDER, True)])
@@ -647,12 +630,12 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
                         main_tree)
     if standstill.parking is not None and not holds.held:
         standstill.parking.park()
-    limit = rules.of_epic(epic.shown).lap_limit_under(rules.repo_lap_limit(settings))
+    limit = rules.lap_limits(epic.shown, settings, home)
     unplaced = unplaced_tasks(tasks)
-    planned = open_laps(epic, holds, resumed, limit, now, home, main_tree)
     heartbeat.claim(home, epic.id, clock.now())
+    planned = open_laps(epic, holds, resumed, limit, now, home, main_tree)
     metadata = {str(task["id"]): metadata_of(task) for task in tasks}
-    return {"epic": epic.id, "branch": epic.branch, "lap_limit": limit,
+    return {"epic": epic.id, "branch": epic.branch, "lap_limit": limit.epic,
             "validation": state.validated.fields() if state.validated is not None else None, "no_area": unplaced,
             "brake": holds.brake.fields() if holds.brake.is_on else None,
             "paused": holds.waiting.fields(now) if holds.waiting is not None else None,

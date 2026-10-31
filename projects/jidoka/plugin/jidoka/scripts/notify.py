@@ -2,7 +2,7 @@
 """Tells the human that the factory waits on them: one notification for one event on one bead.
 
 `notify.py <event> <bead>` sends one notification, once. Run it from inside any checkout of the repo. The
-events are:
+events that name a bead are:
   task-parked        a task is parked; the bead is the task.
   epic-parked        an epic is parked, apart from the acceptance gate; the bead is the epic.
   only-parked-left   every open task of the epic is parked; the bead is the epic.
@@ -13,9 +13,12 @@ events are:
   factory-paused     the epic's pause waits on the human: a billing error, an auth failure, or an outage
                      that has lasted an hour; the bead is the epic. A pause on a usage limit waits on the
                      reset, and sends nothing.
-  permission-prompt  the host asks the human for a permission while an epic runs. It takes no bead, and
-                     names the running epic: an open epic with the `factory` label that is neither parked
-                     nor at the gate. Where none runs, it sends nothing.
+
+`notify.py permission-prompt --session <id>` is the one event about a session: the host asks the human for a
+permission while an epic runs. It takes `--session <id>`, the id of the host session, and no bead, and names the
+running epic (an open epic with the `factory` label that is neither parked nor at the gate) whose heartbeat
+records that session. A session that manages no running epic sends nothing, even when another epic runs in the
+repo. It records and delivers as the other events do.
 
 The script checks that the bead is in the state the event names, so a caller that asks for an event that
 does not hold sends nothing. A notification points at one bead: the task for task-parked, the first parked
@@ -24,8 +27,8 @@ which the host shows. It records itself in the epic's `notification` metadata, a
 `<event>:<bead>` to an object with the `fingerprint` of the state it announced and the `title` and `text` it
 said, which jidoka-ui shows as they stand, and it sends nothing for an event whose fingerprint the object
 already holds (an entry is an object with a `fingerprint` field, or the bare fingerprint string), so a park
-is announced once and a later park of the same task is a new one. And it sends a Pushover message where this machine has Pushover keys, with a link to the bead in
-jidoka-ui.
+is announced once and a later park of the same task is a new one. It also sends a Pushover message where this
+machine has Pushover keys, with a link to the bead in jidoka-ui.
 
 The Pushover keys live in <jidoka-home>/pushover.json, which install.py writes: `user_key` and `app_token`,
 both required, `ui_url` (the address jidoka-ui answers at, http://localhost:5099 when left out) and `api_url`
@@ -54,6 +57,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import clock
+import heartbeat
 import lap_record
 import park
 import pause
@@ -61,7 +65,7 @@ import repo_settings
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, env_as_factory, is_labeled_for_human, metadata_of,
                       parent_of, read_bead, run)
 from epic_reader import EpicReadError, NotAnEpic, read_epic, shown_epic, validated_head
-from epics import PARKED, WAITING, EpicsError, at_the_gate, epics_of, is_closed, is_running, state_of
+from epics import PARKED, WAITING, EpicsError, at_the_gate, is_closed, state_of
 
 TASK_PARKED = "task-parked"
 EPIC_PARKED = "epic-parked"
@@ -70,8 +74,7 @@ ACCEPTANCE_GATE = "acceptance-gate"
 FACTORY_STOPPED = "factory-stopped"
 FACTORY_PAUSED = "factory-paused"
 PERMISSION_PROMPT = "permission-prompt"
-EVENTS = [TASK_PARKED, EPIC_PARKED, ONLY_PARKED_LEFT, ACCEPTANCE_GATE, FACTORY_STOPPED, FACTORY_PAUSED,
-          PERMISSION_PROMPT]
+BEAD_EVENTS = [TASK_PARKED, EPIC_PARKED, ONLY_PARKED_LEFT, ACCEPTANCE_GATE, FACTORY_STOPPED, FACTORY_PAUSED]
 PAUSE_HINTS = {pause.BILLING: "Fix the billing, and the factory carries on at its next retry.",
                pause.AUTH: "Sign in again, and the factory carries on at its next retry.",
                pause.OUTAGE: "The factory keeps retrying by itself, once an hour.",
@@ -222,26 +225,20 @@ def paused_on_the_human(epic: str, main_tree: Path) -> Notice:
                   digest(held.cause, str(held.since)))
 
 
-def running_epic(main_tree: Path) -> str:
-    """The id of the first epic that runs, or raises NothingToSend."""
-    for shown in epics_of(main_tree):
-        if is_running(shown):
-            return str(shown["id"])
-    raise NothingToSend("no epic is running")
-
-
-def host_prompt(epic: str, main_tree: Path) -> Notice:
+def host_prompt(session: str, home: Path, main_tree: Path) -> Notice:
+    """The notification for a permission prompt in the host of `session`, which names the running epic that a
+    manager of that session claimed; raises NothingToSend when the session manages none."""
+    managed = heartbeat.managed_by(home, main_tree, session)
+    if not managed:
+        raise NothingToSend(f"session {session} manages no running epic")
+    epic = managed[0]
     shown = epic_of(epic, main_tree)
     return Notice(PERMISSION_PROMPT, epic, epic, f"Permission prompt: {shown.get('title') or epic}",
                   "The host asks you for a permission while the epic runs.", str(time.time_ns()))
 
 
-def notice_for(event: str, bead: str | None, main_tree: Path) -> Notice:
+def notice_for(event: str, bead: str, main_tree: Path) -> Notice:
     """The notification the event makes on the bead; raises NothingToSend when the event does not hold."""
-    if event == PERMISSION_PROMPT:
-        return host_prompt(bead or running_epic(main_tree), main_tree)
-    if bead is None:
-        raise NotifyError(f"{event} needs the bead it is about")
     makers = {TASK_PARKED: parked_task, EPIC_PARKED: parked_epic, ONLY_PARKED_LEFT: only_parked_tasks_left,
               ACCEPTANCE_GATE: at_acceptance_gate, FACTORY_STOPPED: stopped_with_work_left,
               FACTORY_PAUSED: paused_on_the_human}
@@ -319,9 +316,9 @@ def send_pushover(pushover: Pushover, notice: Notice, main_tree: Path) -> None:
         print(f"notify: Pushover did not take the message: {error}", file=sys.stderr)
 
 
-def notify(event: str, bead: str | None, home: Path, main_tree: Path) -> str:
-    """Sends the notification once and returns the line for the host; raises NothingToSend when there is none."""
-    notice = notice_for(event, bead, main_tree)
+def deliver(notice: Notice, home: Path, main_tree: Path) -> str:
+    """Records the notice, sends it, and returns the line for the host; raises NothingToSend when the epic's key
+    already holds it."""
     record(notice, main_tree)
     pushover = pushover_settings(home)
     if pushover is not None:
@@ -329,7 +326,12 @@ def notify(event: str, bead: str | None, home: Path, main_tree: Path) -> str:
     return f"jidoka: {notice.title}. {notice.text} ({notice.bead})"
 
 
-def announce(event: str, bead: str | None, home: Path, main_tree: Path, caller: str) -> None:
+def notify(event: str, bead: str, home: Path, main_tree: Path) -> str:
+    """Sends the notification once and returns the line for the host; raises NothingToSend when there is none."""
+    return deliver(notice_for(event, bead, main_tree), home, main_tree)
+
+
+def announce(event: str, bead: str, home: Path, main_tree: Path, caller: str) -> None:
     """Sends the notification and puts the line the host shows on stderr, with the caller's name in front of any
     reason it was not sent.
 
@@ -344,14 +346,22 @@ def announce(event: str, bead: str | None, home: Path, main_tree: Path, caller: 
 
 
 def main(argv: list[str]) -> int:
+    home_flag = argparse.ArgumentParser(add_help=False)
+    home_flag.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     parser = argparse.ArgumentParser(prog="notify.py", description="Tell the human that the factory waits on them.")
-    parser.add_argument("event", choices=EVENTS)
-    parser.add_argument("bead", nargs="?", help="the bead the event is about; permission-prompt finds its own")
-    parser.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
+    events = parser.add_subparsers(dest="event", required=True)
+    for event in BEAD_EVENTS:
+        events.add_parser(event, parents=[home_flag]).add_argument("bead", help="the bead the event is about")
+    about_a_session = events.add_parser(PERMISSION_PROMPT, parents=[home_flag])
+    about_a_session.add_argument("--session", required=True, help="the id of the host session")
     args = parser.parse_args(argv)
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        line = notify(args.event, args.bead, repo_settings.jidoka_home(args.jidoka_home), main_tree)
+        home = repo_settings.jidoka_home(args.jidoka_home)
+        if args.event == PERMISSION_PROMPT:
+            line = deliver(host_prompt(args.session, home, main_tree), home, main_tree)
+        else:
+            line = notify(args.event, args.bead, home, main_tree)
     except NothingToSend as reason:
         print(f"notify: nothing to send: {reason}", file=sys.stderr)
         return 0

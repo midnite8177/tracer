@@ -16,9 +16,10 @@ the record and that file, as landing or dropping the epic does.
   t3_wake.py record <epic> --thread <id> --jidoka-home <folder>
       Writes <jidoka-home>/t3-thread/<epic>.json: `epic` and `thread`.
   t3_wake.py wait <epic> --thread <id> --jidoka-home <folder> [--interval <seconds>]
-      Reads the epic's beads every --interval seconds and, at the first unpark, new task or end of a pause, runs
-      `t3 thread send <id> <prompt>` and exits 0. A merge is no reason to wake: the watch goes on from what the
-      epic holds then. While it waits it renews the epic's heartbeat at each read, with the session the heartbeat
+      Reads the epic's beads and the machine's slot record every --interval seconds and, at the first unpark, new
+      task, end of a pause or room that opens for a ready task (watch.py describes it, and a task that can open when
+      the wait begins counts), runs `t3 thread send <id> <prompt>` and exits 0. A merge is no reason to wake: the
+      watch goes on from what the epic holds then. While it waits it renews the epic's heartbeat at each read, with the session the heartbeat
       names, so a waiting factory does not show as stopped and no second manager starts. A heartbeat that names no
       session, such as one a stop left stale, is not renewed. It exits 0 and sends nothing once the factory no
       longer holds the epic: it landed or was dropped. It exits 1 when the beads or the send fail, with the reason
@@ -48,6 +49,7 @@ import file_lock
 import heartbeat
 import processes
 import repo_settings
+import rules
 import watch
 from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError, labels_of
 from epic_reader import EpicReadError, shown_epic
@@ -59,7 +61,7 @@ SEND_TIMEOUT_SECONDS = 120
 GIT_TIMEOUT_SECONDS = 5
 T3_VARIABLE = "T3CODE_CLI_PATH"
 INTERVAL_VARIABLE = "JIDOKA_WAKE_INTERVAL_SECONDS"
-WAKE_EVENTS = (watch.UNPARKED, watch.NEW_TASK, watch.PAUSE_OVER)
+WAKE_EVENTS = (watch.UNPARKED, watch.NEW_TASK, watch.PAUSE_OVER, watch.ROOM_FREED)
 
 
 def record_path(home: Path, epic: str) -> Path:
@@ -253,9 +255,10 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = repo_settings.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         wait_and_send(args.epic, thread, home, args.interval,
-                      beating(home, args.epic, lambda: watch.snapshot_of(args.epic, main_tree), clock.now),
+                      beating(home, args.epic, lambda: watch.snapshot_of(args.epic, main_tree, home, clock.now()),
+                              clock.now),
                       lambda: is_held(args.epic, main_tree), watch.REAL_PACING, send)
-    except (EpicReadError, CommandError, repo_settings.SettingsError, OSError) as error:
+    except (EpicReadError, CommandError, repo_settings.SettingsError, rules.RulesError, OSError) as error:
         print(f"t3_wake: {error}", file=sys.stderr)
         return 1
     return 0

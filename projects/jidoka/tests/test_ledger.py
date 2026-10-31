@@ -184,7 +184,7 @@ class TheLedgerPricesEveryWorkerRunTests(LedgerCase):
 class EachModelIsPricedByItsOwnListPriceTests(LedgerCase):
     def dollars_of(self, model: str, input_tokens: int, output_tokens: int, cache_read: int,
                    cache_creation: int) -> float | None:
-        lap = self.open_one_lap()
+        lap = self.open_lap_in(f"area-of-{model}")
         self.leave_tokens("agent-1", tokens(model, input_tokens, output_tokens, cache_read, cache_creation))
         self.report_at(lap, "failed", 5, "--agent", "agent-1", "--why", "red")
         [row] = self.listed(lap.epic)["rows"]
@@ -410,7 +410,7 @@ class TheEpicsRunningTotalTests(LedgerCase):
 
     def test_another_epics_rows_stay_out_of_the_total(self):
         first = self.open_one_lap()
-        second = self.open_one_lap()
+        second = self.open_lap_in("receipts")
         self.leave_tokens("agent-a", tokens(SONNET, 1_000_000, 0, 0, 0))
         self.leave_tokens("agent-b", tokens(SONNET, 2_000_000, 0, 0, 0))
 

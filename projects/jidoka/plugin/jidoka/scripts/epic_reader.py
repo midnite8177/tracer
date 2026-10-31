@@ -7,12 +7,14 @@ held-epic checks passes its own `Rerun`, so a refusal names the script the reade
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import holdouts
 import repo_settings
 from commands import bd_list, is_labeled_for_human, metadata_of, read_bead, run
+from lap_record import area_of, open_lap
 
 BRANCH_KEY = "factory.branch"
 VALIDATED_HEAD_KEY = "validation.head"
@@ -36,7 +38,6 @@ class Rerun:
 
 @dataclass(frozen=True)
 class Task:
-    """One of the epic's tasks, with its description."""
     id: str
     title: str
     status: str
@@ -56,7 +57,6 @@ class Epic:
 
     @property
     def branch(self) -> str:
-        """The epic branch the epic records, or an empty string when it records none."""
         return recorded_branch(self.shown)
 
     @property
@@ -71,9 +71,36 @@ class Epic:
         return [child for child in self.children if str(child["id"]) in open_ids]
 
     @property
+    def ready_task_beads(self) -> list[dict]:
+        """The beads of the epic's open tasks that a lap could open for: no open lap, no assignee, no human label, an
+        area, and no open bead they wait on."""
+        return [task for task in self.open_task_beads if is_ready(task)]
+
+    @property
     def labeled_task_ids(self) -> set[str]:
         """The ids of the epic's open tasks that carry the human label."""
         return {str(task["id"]) for task in self.open_task_beads if is_labeled_for_human(task)}
+
+
+def waits_on_open_bead(task: dict) -> bool:
+    return any(isinstance(link, dict) and link.get("dependency_type") == BLOCKING and link.get("status") != CLOSED
+               for link in task.get("dependencies") or [])
+
+
+def is_unclaimed(task: dict) -> bool:
+    """A lap could open for the task but for its area and the beads it waits on: it has no open lap, no assignee and
+    no human label."""
+    return open_lap(task) is None and not task.get("assignee") and not is_labeled_for_human(task)
+
+
+def is_ready(task: dict) -> bool:
+    return is_unclaimed(task) and bool(area_of(metadata_of(task))) and not waits_on_open_bead(task)
+
+
+def by_priority(task: dict) -> tuple[int, str]:
+    """The order laps open in: bd priority, then id."""
+    priority = task.get("priority")
+    return (priority if isinstance(priority, int) else sys.maxsize, str(task["id"]))
 
 
 def validated_head(metadata: dict) -> str:

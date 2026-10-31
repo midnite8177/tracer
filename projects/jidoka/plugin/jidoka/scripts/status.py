@@ -12,6 +12,9 @@ table follows with one row for each task of the epic:
   tries  the tries the lap has used against the cap of its stage, three for the build, two for the merge.
   time   for a lap at a stage with a wall clock, the minutes the stage has run, the clock, and the minutes
          left, or over when the clock has run out.
+After the epics it lists the slots the machine's running epics hold, as slots.py records them, one line for each with
+the slot, the epic and the task that hold it. Those are the epics of every repo whose heartbeat is fresh, not only
+this repo's, and the list is left out when no slot is held.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
@@ -32,6 +35,7 @@ import heartbeat
 import lap_record
 import pause
 import repo_settings
+import slots
 from commands import COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError, NotAWholeNumber, labels_of, metadata_of
 from epic_reader import CLOSED, EpicReadError, read_epic
 from epics import EpicsError, epics_of, is_closed, state_of
@@ -109,11 +113,21 @@ def epic_lines(epic: dict, home: Path, main_tree: Path, now: int) -> list[str]:
     return lines + table(read_epic(epic, main_tree).task_beads, now)
 
 
+def slot_lines(home: Path, now: int) -> list[str]:
+    """The slots the machine's running epics hold, in any repo, each with the epic and the task that hold it."""
+    claims = slots.live(home, now)
+    if not claims:
+        return []
+    return ["slots on this machine"] + [f"  {claim.slot}  {claim.epic}  {claim.task}" for claim in claims]
+
+
 def status(home: Path, main_tree: Path, now: int) -> str:
     epics = [epic for epic in epics_of(main_tree) if FACTORY_LABEL in labels_of(epic) and not is_closed(epic)]
-    if not epics:
-        return "no epic is in the factory"
-    return "\n\n".join("\n".join(epic_lines(epic, home, main_tree, now)) for epic in epics)
+    sections = ["\n".join(epic_lines(epic, home, main_tree, now)) for epic in epics]
+    held = slot_lines(home, now)
+    if held:
+        sections.append("\n".join(held))
+    return "\n\n".join(sections) if sections else "no epic is in the factory"
 
 
 def main(argv: list[str]) -> int:

@@ -1,6 +1,7 @@
 import json
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -103,6 +104,12 @@ class SchedulerCase(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
+    def tearDown(self):
+        """Leaves the home with no heartbeat and no slot on record, because the epics of a test would otherwise keep
+        fresh heartbeats and hold slots on the machine for the tests after it."""
+        shutil.rmtree(self.home / "heartbeat", ignore_errors=True)
+        (self.home / "slots.json").unlink(missing_ok=True)
+
     def create(self, title: str, *flags: str) -> str:
         return json.loads(fixture.run([self.bd, "create", "--title", title, *flags, "--json"], self.repo))["id"]
 
@@ -136,7 +143,6 @@ class SchedulerCase(unittest.TestCase):
                                     RUN_TIMEOUT_SECONDS)
 
     def hand_off(self, epic: str, areas: dict[str, str]) -> str:
-        """Hands the epic to the factory through handoff.py, and returns its epic branch."""
         done = self.launch(HANDOFF, "take", epic, *(f"--area={task}={area}" for task, area in areas.items()))
         if done.returncode != 0:
             raise fixture.FixtureError(f"handoff.py take failed: {done.stderr}")
@@ -157,7 +163,7 @@ class SchedulerCase(unittest.TestCase):
     def handed_off_epic(self, areas: int) -> str:
         epic = self.new_epic()
         tasks = [self.new_task_under(epic) for _ in range(areas)]
-        self.hand_off(epic, {task: f"area-{index}" for index, task in enumerate(tasks)})
+        self.hand_off(epic, {task: f"{epic}-area-{index}" for index, task in enumerate(tasks)})
         return epic
 
     def next_moves(self, epic: str) -> subprocess.CompletedProcess:
@@ -236,9 +242,14 @@ class SchedulerCase(unittest.TestCase):
         return subprocess.run(["git", "merge-base", "--is-ancestor", commit, branch], cwd=self.repo).returncode == 0
 
     def open_one_lap(self) -> OpenLap:
+        return self.open_lap_in("till")
+
+    def open_lap_in(self, area: str) -> OpenLap:
+        """Opens a lap for a new epic with one task in the area. Two epics of one repo never run laps in one area
+        together, so a test that holds two epics' laps open names a different area for each."""
         epic = self.new_epic()
         task = self.new_task_under(epic)
-        branch = self.hand_off(epic, {task: "till"})
+        branch = self.hand_off(epic, {task: area})
         [action] = self.next_printed(epic)["actions"]
         return OpenLap(epic, task, branch, Path(action["worktree"]))
 
@@ -303,6 +314,151 @@ class SchedulerOpensLapsTests(SchedulerCase):
         metadata = self.metadata(task)
         self.assertEqual((0, 3, 0, 2), (metadata["lap.tries"], metadata["lap.trycap"], metadata["lap.mergetries"],
                                         metadata["lap.mergetrycap"]))
+
+
+class SchedulerSharesSlotsTests(SchedulerCase):
+    """Two epics run against one jidoka home, as the epics of two repos do, with the machine's lap limit between them."""
+
+    def set_machine_limit(self, limit: int) -> None:
+        path = self.home / "settings.json"
+        path.write_text(json.dumps({"lap_limit": limit}), encoding="utf-8")
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+    def beat(self, epic: str, seconds_ago: int) -> None:
+        """Writes the epic's heartbeat as a manager that beat that many seconds ago leaves it."""
+        path = self.home / "heartbeat" / f"{epic}.json"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps({"epic": epic, "time": int(time.time()) - seconds_ago, "session": "manager"}),
+                        encoding="utf-8")
+
+    def test_two_epics_open_no_more_laps_together_than_the_machines_lap_limit_each_on_a_slot_of_its_own(self):
+        self.set_machine_limit(3)
+        first, second = self.handed_off_epic(3), self.handed_off_epic(3)
+
+        opened_first = self.next_printed(first)
+        opened_second = self.next_printed(second)
+
+        self.assertEqual([1, 2], [action["slot"] for action in opened_first["actions"]])
+        self.assertEqual([3], [action["slot"] for action in opened_second["actions"]])
+        self.assertEqual(3, len(opened_first["laps"]) + len(opened_second["laps"]))
+
+    def test_an_epic_whose_manager_beats_opens_a_lap_though_the_other_epic_could_fill_the_machine(self):
+        self.write_settings({"lap_limit": 3})
+        self.addCleanup(self.write_settings, {})
+        self.set_machine_limit(3)
+        waiting, filling = self.handed_off_epic(1), self.handed_off_epic(3)
+        self.beat(waiting, 0)
+
+        opened_filling = self.next_printed(filling)
+        opened_waiting = self.next_printed(waiting)
+
+        self.assertEqual([1, 2], [action["slot"] for action in opened_filling["actions"]])
+        self.assertEqual([3], [action["slot"] for action in opened_waiting["actions"]])
+
+    def test_a_slot_held_by_an_epic_whose_heartbeat_went_stale_is_taken_by_the_next_lap_that_needs_one(self):
+        self.set_machine_limit(2)
+        gone, running = self.handed_off_epic(2), self.handed_off_epic(1)
+        self.next_printed(gone)
+        self.assertEqual([], self.next_printed(running)["actions"])
+        self.beat(gone, 10 * 60)
+
+        [taken] = self.next_printed(running)["actions"]
+
+        self.assertEqual(1, taken["slot"])
+
+    def test_a_slot_freed_by_a_lap_that_is_no_longer_open_is_taken_by_the_other_epics_next_lap(self):
+        self.set_machine_limit(2)
+        first, second = self.new_epic(), self.new_epic()
+        parked, kept = self.new_task_under(first), self.new_task_under(first)
+        waiting = self.new_task_under(second)
+        self.hand_off(first, {parked: "till", kept: "receipts"})
+        self.hand_off(second, {waiting: "reports"})
+        opened = {action["task"]: action for action in self.next_printed(first)["actions"]}
+        self.assertEqual([], self.next_printed(second)["actions"])
+        for _ in range(3):
+            self.report_printed(first, parked, "failed")
+
+        [taken] = self.next_printed(second)["actions"]
+
+        self.assertEqual(opened[parked]["slot"], taken["slot"])
+
+    def epic_in_area(self, area: str) -> tuple[str, str]:
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: area})
+        return epic, task
+
+    def test_two_running_epics_of_one_repo_never_hold_laps_in_the_same_area(self):
+        self.set_machine_limit(4)
+        (first, held), (second, _) = self.epic_in_area("api"), self.epic_in_area("api")
+
+        opened_first = self.next_printed(first)
+        opened_second = self.next_printed(second)
+
+        self.assertEqual([held], [action["task"] for action in opened_first["actions"]])
+        self.assertEqual(([], []), (opened_second["actions"], opened_second["laps"]))
+
+    def test_an_epic_whose_ready_task_waits_only_on_the_slots_of_another_epic_prints_watch_true(self):
+        self.set_machine_limit(1)
+        (first, _), (second, _) = self.epic_in_area("api"), self.epic_in_area("web")
+        self.next_printed(first)
+
+        waiting = self.next_printed(second)
+
+        self.assertEqual(([], True), (waiting["actions"], waiting["watch"]))
+
+    def test_an_epic_whose_ready_task_waits_only_on_the_area_of_another_epic_prints_watch_true(self):
+        self.set_machine_limit(4)
+        (first, _), (second, _) = self.epic_in_area("api"), self.epic_in_area("api")
+        self.next_printed(first)
+
+        waiting = self.next_printed(second)
+
+        self.assertEqual(([], True), (waiting["actions"], waiting["watch"]))
+
+    def test_the_task_that_waited_for_the_area_opens_its_lap_on_the_first_call_after_the_other_epics_lap_merges(self):
+        self.set_machine_limit(4)
+        (first, held), (second, waiting) = self.epic_in_area("api"), self.epic_in_area("api")
+        [action] = self.next_printed(first)["actions"]
+        self.assertEqual([], self.next_printed(second)["actions"])
+        self.commit_in(Path(action["worktree"]), "card.txt", "built\n")
+        self.build_done(first, held)
+
+        opened = self.next_printed(second)
+
+        self.assertEqual([waiting], [each["task"] for each in opened["actions"]])
+
+    def test_epics_of_one_repo_open_laps_in_different_areas_at_once(self):
+        self.set_machine_limit(4)
+        (first, _), (second, other) = self.epic_in_area("api"), self.epic_in_area("web")
+
+        self.next_printed(first)
+        opened = self.next_printed(second)
+
+        self.assertEqual([other], [action["task"] for action in opened["actions"]])
+
+    def test_an_epic_of_another_repo_opens_a_lap_in_an_area_of_the_same_name_at_once(self):
+        self.set_machine_limit(4)
+        elsewhere = "mill-1"
+        (self.home / "slots.json").write_text(json.dumps({"slots": [
+            {"epic": elsewhere, "task": "mill-2", "slot": 1, "repo": str(self.root / "mill"), "area": "api"}]}),
+            encoding="utf-8")
+        self.beat(elsewhere, 0)
+        epic, task = self.epic_in_area("api")
+
+        opened = self.next_printed(epic)
+
+        self.assertEqual([(task, 2)], [(action["task"], action["slot"]) for action in opened["actions"]])
+
+    def test_an_epic_whose_heartbeat_went_stale_holds_no_area(self):
+        self.set_machine_limit(4)
+        (gone, _), (running, waiting) = self.epic_in_area("api"), self.epic_in_area("api")
+        self.next_printed(gone)
+        self.beat(gone, 10 * 60)
+
+        opened = self.next_printed(running)
+
+        self.assertEqual([waiting], [action["task"] for action in opened["actions"]])
 
 
 class SchedulerReadyTaskTests(SchedulerCase):
@@ -2236,6 +2392,62 @@ class SchedulerReadsRulesTests(SchedulerCase):
 
         self.assertEqual((LAP_LIMIT, LAP_LIMIT), (printed["lap_limit"], len(printed["actions"])))
 
+    def machine_settings(self, settings: dict) -> None:
+        path = self.home / "settings.json"
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+    def test_the_machines_lap_limit_caps_the_laps_when_it_is_below_the_repo_settings_and_the_rules(self):
+        epic = self.handed_off_epic(2)
+        self.machine_settings({"lap_limit": 1})
+
+        printed = self.next_printed(epic)
+
+        self.assertEqual((1, 1), (printed["lap_limit"], len(printed["actions"])))
+
+    def test_a_machine_lap_limit_above_the_repo_settings_leaves_the_repo_settings_in_force(self):
+        epic = self.handed_off_epic(3)
+        self.machine_settings({"lap_limit": 3})
+
+        printed = self.next_printed(epic)
+
+        self.assertEqual((LAP_LIMIT, LAP_LIMIT), (printed["lap_limit"], len(printed["actions"])))
+
+    def test_machine_settings_with_no_lap_limit_apply_four(self):
+        self.write_settings({"lap_limit": 6})
+        self.addCleanup(self.write_settings, {})
+        epic = self.handed_off_epic(5)
+        self.machine_settings({"budget": 50})
+
+        printed = self.next_printed(epic)
+
+        self.assertEqual((4, 4), (printed["lap_limit"], len(printed["actions"])))
+
+    def test_an_epic_lap_limit_at_or_above_the_machines_is_refused_though_the_repo_settings_allow_it(self):
+        self.write_settings({"lap_limit": 6})
+        self.addCleanup(self.write_settings, {})
+        epic = self.handed_off_epic(1)
+        self.machine_settings({"lap_limit": 3})
+
+        refused = self.rules("set", epic, "lap_limit=3")
+        accepted = self.rules("set", epic, "lap_limit=2")
+
+        self.assertEqual(1, refused.returncode)
+        self.assertIn("lap_limit must be below the machine's 3", refused.stderr)
+        self.assertEqual(0, accepted.returncode, accepted.stderr)
+
+    def test_the_lap_limits_an_epic_can_pick_stop_below_the_machines_when_the_repo_settings_allow_more(self):
+        self.write_settings({"lap_limit": 6})
+        self.addCleanup(self.write_settings, {})
+        epic = self.handed_off_epic(1)
+        self.machine_settings({"lap_limit": 3})
+
+        done = self.rules("choices", epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        [picks] = [each for each in json.loads(done.stdout)["settings"] if each["name"] == "lap_limit"]
+        self.assertEqual([1, 2], picks["choices"])
+
     def test_the_scheduler_reads_the_rules_again_on_every_call(self):
         epic = self.handed_off_epic(3)
         first = self.next_printed(epic)
@@ -2261,7 +2473,6 @@ class SchedulerReadsRulesTests(SchedulerCase):
 
 
 class FullTrackCase(SchedulerCase):
-    """The helpers of the tests of a full-track lap."""
     BRIEF = "Files to change: card.txt\nSeam: the card reader\n"
 
     def open_full_lap(self) -> OpenLap:

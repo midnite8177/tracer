@@ -612,13 +612,15 @@ own failure.
    When `actions` is empty and no worker of yours is running, go to step 6.
 6. **Wait or end.** When `watch` is true, something is still open and
    nothing can run now: the epic is paused, parked, or holds only parked
-   or blocked tasks. Write `<epic-id>: waiting`, then start the watcher
-   in the background (`run_in_background: true`) with
-   `watcher <epic-id>` and wait. It exits when a task is unparked, a task is
-   added, a task merges, or the pause is over, and prints which. Write
-   nothing more while it waits. Under T3, let the host be released: the T3
-   waker wakes the thread when a task is unparked, a task is added or the
-   pause is over. On any event run
+   or blocked tasks, or its ready tasks wait on a slot or an area that
+   another running epic holds. Write `<epic-id>: waiting`, then start the
+   watcher in the background (`run_in_background: true`) with
+   `watcher <epic-id> --jidoka-home ...` and wait. It exits when a task is
+   unparked, a task is added, a task merges, the pause is over, or another
+   epic frees a slot or an area for a ready task (`room-freed`), and prints
+   which. Write nothing more while it waits. Under T3, let the host be
+   released: the T3 waker wakes the thread when a task is unparked, a task
+   is added, the pause is over or another epic frees room. On any event run
    `scheduler carry-on <epic-id> --jidoka-home ...`, which opens what fits,
    with no restart, and go on from step 4. A prompt that starts with
    `jidoka: the last turn ended on an API error` wakes you the same way: run

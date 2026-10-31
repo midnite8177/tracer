@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Propose this machine's routes, the default budget and the reserves from what is installed here, and write them once you confirm.
+description: Propose this machine's routes, the default budget, the reserves and the lap limit from what is installed here, and write them once you confirm.
 disable-model-invocation: true
 argument-hint: "[the route, budget or reserve to change]"
 ---
@@ -19,18 +19,22 @@ and writes the machine settings in `~/.jidoka`, so it runs from any folder.
      tier is proposed on native Opus, which is claude at its Opus model.
    - the default budget, in dollars at list price. It is lower for an
      account that bills by API key, where the dollars are real.
-   - the reserve of the claude account: the share of its usage window the
+   - the reserve of the claude account, which is the share of its usage window the
      factory leaves unused. The factory reads the usage of the claude account
      alone, so no other account gets a reserve, and a claude account on an API
      key has no window and no reserve.
+   - the lap limit, which is the most open laps the machine allows. It caps every
+     epic's laps, and the laps of all the running epics together. It is 4
+     unless the settings hold another. A repo's own lap limit and an epic's
+     rule can only lower it for them.
    - what the settings hold now, where it differs from the proposal.
    Say that a route that fails reruns its stage once on the native route.
 3. **Ask.** Ask whether to write the proposal as it is, or with changes.
-   Take the human's changes into the proposal's `routes`, `budget` and
-   `reserves`. Write nothing yet. When the human declines, stop here; the
+   Take the human's changes into the proposal's `routes`, `budget`,
+   `reserves` and `lap_limit`. Write nothing yet. When the human declines, stop here; the
    settings are as they were.
 4. **Write.** Only after the human said yes, pipe the confirmed proposal to
-   `setup.py write --confirmed` on stdin. It checks all three parts before
+   `setup.py write --confirmed` on stdin. It checks all four parts before
    it writes any, and keeps every other machine setting. When it refuses,
    show its message, fix the proposal with the human and run it again.
 5. **Report.** Say which settings were written.

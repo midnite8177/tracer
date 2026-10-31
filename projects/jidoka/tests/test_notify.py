@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.parse
 from pathlib import Path
@@ -12,7 +13,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import jidoka_fixture as fixture  # noqa: E402
+import jidoka_fixture as fixture
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
@@ -405,12 +406,23 @@ class EpicEventTests(NotifyCase):
 
 
 class PermissionPromptTests(NotifyCase):
-    def test_a_host_permission_prompt_while_an_epic_runs_names_the_running_epic(self):
+    def claim(self, epic: str, session: str, seconds_ago: int) -> None:
+        """Writes the heartbeat that a manager of `session` leaves on the epic, `seconds_ago` old."""
+        folder = self.home / "heartbeat"
+        folder.mkdir(exist_ok=True)
+        beat = {"epic": epic, "time": int(time.time()) - seconds_ago, "session": session, "fresh_seconds": 90}
+        (folder / f"{epic}.json").write_text(json.dumps(beat), encoding="utf-8")
+
+    def prompt(self, session: str) -> subprocess.CompletedProcess:
+        return self.notify("permission-prompt", "--session", session)
+
+    def test_a_host_permission_prompt_names_the_epic_whose_manager_runs_in_that_host(self):
         self.configure_pushover()
         self.new_epic()
         running = self.new_epic("factory")
+        self.claim(running, "host-1", 0)
 
-        done = self.notify("permission-prompt")
+        done = self.prompt("host-1")
 
         self.assertEqual(0, done.returncode, done.stderr)
         [message] = self.sent_to_pushover()
@@ -418,34 +430,78 @@ class PermissionPromptTests(NotifyCase):
         self.assertEqual(self.link_to(running), message["url"])
         self.assertIn(running, done.stdout)
 
-    def test_each_permission_prompt_is_announced(self):
+    def test_a_prompt_in_host_b_names_epic_b_though_epic_a_runs_first_in_the_repo(self):
         self.configure_pushover()
-        self.new_epic("factory")
+        epic_a = self.new_epic("factory")
+        epic_b = self.new_epic("factory")
+        self.claim(epic_a, "host-a", 0)
+        self.claim(epic_b, "host-b", 0)
 
-        self.notify("permission-prompt")
-        self.notify("permission-prompt")
+        done = self.prompt("host-b")
 
-        self.assertEqual(2, len(self.sent_to_pushover()))
+        self.assertEqual(0, done.returncode, done.stderr)
+        [message] = self.sent_to_pushover()
+        self.assertEqual(self.link_to(epic_b), message["url"])
+        self.assertEqual({f"permission-prompt:{epic_b}"}, set(self.notified(epic_b)))
+        self.assertNotIn("notification", self.shown(epic_a).get("metadata", {}))
 
-    def test_a_permission_prompt_with_no_epic_running_sends_nothing(self):
+    def test_a_session_that_manages_no_epic_sends_nothing_though_another_epic_runs(self):
         self.configure_pushover()
-        self.new_epic()
-        self.new_epic("factory", "human")
+        running = self.new_epic("factory")
+        self.claim(running, "host-a", 0)
 
-        done = self.notify("permission-prompt")
+        done = self.prompt("host-b")
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual("", done.stdout)
-        self.assertIn("no epic is running", done.stderr)
+        self.assertIn("manages no running epic", done.stderr)
         self.assertEqual([], self.sent_to_pushover())
+
+    def test_a_session_whose_epic_is_parked_sends_nothing(self):
+        self.configure_pushover()
+        parked = self.new_epic("factory", "human")
+        self.claim(parked, "host-1", 0)
+
+        done = self.prompt("host-1")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("", done.stdout)
+        self.assertEqual([], self.sent_to_pushover())
+
+    def test_a_stale_heartbeat_still_names_the_epic_of_its_session(self):
+        self.configure_pushover()
+        running = self.new_epic("factory")
+        self.claim(running, "host-1", 3600)
+
+        done = self.prompt("host-1")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        [message] = self.sent_to_pushover()
+        self.assertEqual(self.link_to(running), message["url"])
+
+    def test_each_permission_prompt_is_announced(self):
+        self.configure_pushover()
+        running = self.new_epic("factory")
+        self.claim(running, "host-1", 0)
+
+        self.prompt("host-1")
+        self.prompt("host-1")
+
+        self.assertEqual(2, len(self.sent_to_pushover()))
+
+    def test_a_permission_prompt_without_a_session_is_refused(self):
+        done = self.notify("permission-prompt")
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("--session", done.stderr)
 
 
 class UsageTests(NotifyCase):
     def test_an_event_that_needs_a_bead_refuses_without_one(self):
         done = self.notify("task-parked")
 
-        self.assertEqual(1, done.returncode)
-        self.assertIn("needs the bead", done.stderr)
+        self.assertEqual(2, done.returncode)
+        self.assertIn("bead", done.stderr)
 
 
 if __name__ == "__main__":

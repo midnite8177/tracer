@@ -112,13 +112,14 @@ async function lapOf($: EngineInterface, agentId: string): Promise<LapWorker | u
 
 /**
  * Tells jidoka's notify script that the host is about to ask the human for a
- * permission, run in the host's own folder so that it finds the repo and the
- * epic that runs there. The notify script sends nothing where no epic runs,
- * and a failure here never changes what the host asks.
+ * permission, run in the host's own folder so that it finds the repo, and
+ * naming this session so that it finds the epic this session manages. The
+ * notify script sends nothing for a session that manages no epic, and a
+ * failure here never changes what the host asks.
  */
 async function notifyPermissionPrompt($: EngineInterface): Promise<void> {
   try {
-    await runScript($, 'notify', ['permission-prompt'], await $.session.cwd())
+    await runScript($, 'notify', ['permission-prompt', '--session', await $.session.id()], await $.session.cwd())
   } catch {
     return
   }

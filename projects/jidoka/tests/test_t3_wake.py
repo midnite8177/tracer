@@ -223,7 +223,7 @@ class TheWakerHeartbeatTests(WakeCase):
 
 
 TASKS = frozenset({"t-1", "t-2"})
-QUIET = watch.Snapshot(parked=frozenset(), tasks=TASKS, open_tasks=TASKS, paused_until=None)
+QUIET = watch.Snapshot(parked=frozenset(), tasks=TASKS, open_tasks=TASKS, paused_until=None, openable=())
 
 
 class FakeEpic:
@@ -305,6 +305,20 @@ class TheWakerTests(unittest.TestCase):
         epic = FakeEpic([(dataclasses.replace(QUIET, paused_until=1500), True)])
 
         self.assertEqual("pause-over", epic.wait_and_send(1500))
+        self.assertEqual(1, len(epic.sent))
+
+    def test_room_that_another_epic_frees_for_a_ready_task_sends_the_carry_on_prompt(self):
+        epic = FakeEpic([(QUIET, True), (dataclasses.replace(QUIET, openable=("t-1",)), True)])
+
+        self.assertEqual("room-freed", epic.wait_and_send(1000))
+        [(_, prompt)] = epic.sent
+        self.assertIn("scheduler carry-on epic-1", prompt)
+
+    def test_room_that_was_already_free_when_the_wait_began_sends_the_carry_on_prompt_at_once(self):
+        epic = FakeEpic([(dataclasses.replace(QUIET, openable=("t-1",)), True)])
+
+        self.assertEqual("room-freed", epic.wait_and_send(1000))
+        self.assertEqual(0, epic.step)
         self.assertEqual(1, len(epic.sent))
 
     def test_a_merge_alone_sends_nothing_and_the_watch_goes_on_from_what_the_epic_holds_then(self):
