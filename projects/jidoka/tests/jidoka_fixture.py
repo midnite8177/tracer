@@ -411,11 +411,21 @@ def process_is_running(pid: int) -> bool:
 
 
 def end_process(pid: int) -> None:
-    """Ends the process and the processes it started, and does nothing when it is gone."""
+    """Ends the process and the processes it started, and returns once the process is gone or REMOVAL_WAIT_SECONDS
+    have passed. It does nothing when the process is not running. Windows gives the id of an ended process to the
+    next one that starts, and ending that one would stop a script of another test.
+
+    A process that is ending still holds its working folder and its files, which keep a folder from being removed.
+    """
+    if not process_is_running(pid):
+        return
     if WINDOWS:
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
     else:
         subprocess.run(["kill", "-9", str(pid)], capture_output=True)
+    deadline = time.monotonic() + REMOVAL_WAIT_SECONDS
+    while process_is_running(pid) and time.monotonic() < deadline:
+        time.sleep(REMOVAL_POLL_SECONDS)
 
 
 def end_orphans_in(folder: Path) -> None:

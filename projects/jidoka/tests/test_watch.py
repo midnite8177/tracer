@@ -30,7 +30,7 @@ class WatchCase(StopCase):
         (self.home / "settings.json").write_text(json.dumps({"lap_limit": limit}), encoding="utf-8")
 
     def other_epic_holds(self, slot: int, area: str, repo: Path) -> None:
-        """Records a lap of a running epic: its heartbeat is fresh and the slot record holds its one claim."""
+        """Records a lap of a running epic. Its heartbeat is fresh and the slot record holds its one claim."""
         self.other_epic_beats(0)
         claim = {"epic": "other-1", "task": "other-2", "slot": slot, "repo": str(repo), "area": area}
         (self.home / "slots.json").write_text(json.dumps({"slots": [claim]}), encoding="utf-8")
@@ -58,6 +58,7 @@ class WatchCase(StopCase):
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
                                    env={**environment, "PATH": fixture.path_with(self.bin),
                                         "JIDOKA_HOME": str(self.home), "BEADS_ACTOR": HUMAN})
+        self.addCleanup(fixture.let_bd_go_of, self.root)
         self.addCleanup(watcher.stdout.close)
         self.addCleanup(watcher.stderr.close)
         self.addCleanup(watcher.wait)

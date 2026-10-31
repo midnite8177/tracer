@@ -261,6 +261,17 @@ def wait_until_gone(pid: int) -> bool:
     return not fixture.process_is_running(pid)
 
 
+class EndProcessTests(unittest.TestCase):
+    def test_the_process_is_gone_when_end_process_returns(self):
+        sleeper = subprocess.Popen([sys.executable, "-c", fixture.SLEEP_FOR_AN_HOUR], start_new_session=True)
+        self.addCleanup(sleeper.wait)
+        self.addCleanup(sleeper.kill)
+
+        fixture.end_process(sleeper.pid)
+
+        self.assertFalse(fixture.process_is_running(sleeper.pid))
+
+
 class BdFolderTests(unittest.TestCase):
     """A folder that real bd ran in can hold processes bd left behind, which keep Windows from removing it."""
 

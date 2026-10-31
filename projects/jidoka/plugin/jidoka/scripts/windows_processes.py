@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ctypes
 import subprocess
+import time
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,8 @@ TH32CS_SNAPPROCESS = 0x2
 PEB_PROCESS_PARAMETERS = 0x20
 PARAMETERS_CURRENT_DIRECTORY = 0x38
 TASKKILL_TIMEOUT_SECONDS = 30
+END_WAIT_SECONDS = 10.0
+END_POLL_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -115,17 +118,21 @@ def process_table() -> dict[int, Entry]:
     return {pid: Entry(parent, created_at(pid)) for pid, parent in parents.items()}
 
 
+def living_parent(table: dict[int, Entry], entry: Entry) -> Entry | None:
+    """The entry's parent, or None when the parent is gone. Windows keeps the parent id after the parent ends, so a
+    parent that the table lacks, or that began after its child, is a process that ended and whose id another process
+    took."""
+    parent = table.get(entry.parent)
+    if parent is None:
+        return None
+    if parent.created is not None and entry.created is not None and entry.created < parent.created:
+        return None
+    return parent
+
+
 def orphans_of(table: dict[int, Entry]) -> list[int]:
-    """The processes whose parent is gone. Windows keeps the parent id after the parent ends, so a parent that the
-    table lacks, or that began after its child, is a process that ended and whose id another process took."""
-    found = []
-    for pid, entry in table.items():
-        parent = table.get(entry.parent)
-        if parent is None:
-            found.append(pid)
-        elif parent.created is not None and entry.created is not None and parent.created > entry.created:
-            found.append(pid)
-    return sorted(found)
+    """The processes whose parent is gone."""
+    return sorted(pid for pid, entry in table.items() if living_parent(table, entry) is None)
 
 
 def current_folder_of(pid: int) -> Path | None:
@@ -175,11 +182,36 @@ def orphans_with_cwd_in(worktree: Path, own_pid: int) -> list[int]:
     return found
 
 
+def descendants_of(table: dict[int, Entry], root: int) -> list[int]:
+    """The processes that the root started, and those they started, in order of id."""
+    children: dict[int, list[int]] = {}
+    for pid, entry in table.items():
+        if living_parent(table, entry) is not None:
+            children.setdefault(entry.parent, []).append(pid)
+    found: set[int] = set()
+    pending = [root]
+    while pending:
+        for child in children.get(pending.pop(), []):
+            if child != root and child not in found:
+                found.add(child)
+                pending.append(child)
+    return sorted(found)
+
+
 def end_tree(pid: int) -> None:
-    """Ends the process and the processes it started. A process without a window cannot be asked to close, so the
-    end is forced."""
+    """Ends the process and the processes it started, and returns once they are gone or END_WAIT_SECONDS have passed.
+    A process without a window cannot be asked to close, so the end is forced.
+
+    taskkill returns when it has asked for the end, and the files a process holds stay held until the process is
+    gone. A caller that starts the app again, or removes its folder, right after would meet a log or a folder still
+    held.
+    """
+    tree = [pid, *descendants_of(process_table(), pid)]
     try:
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
                        timeout=TASKKILL_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError):
         return
+    deadline = time.monotonic() + END_WAIT_SECONDS
+    while any(is_alive(member) for member in tree) and time.monotonic() < deadline:
+        time.sleep(END_POLL_SECONDS)

@@ -21,6 +21,7 @@ NOTIFY = PLUGIN / "scripts" / "notify.py"
 PARK = PLUGIN / "scripts" / "park.py"
 
 RUN_TIMEOUT_SECONDS = 120
+SCRIPT_EXIT_CODES = (0, 1, 2)
 HUMAN = "Pat Human"
 USER_KEY = "u-pat"
 APP_TOKEN = "a-jidoka"
@@ -79,9 +80,13 @@ class NotifyCase(unittest.TestCase):
         (self.home / "pushover.json").write_text(json.dumps({**keys, **changes}), encoding="utf-8")
 
     def script(self, script: Path, *args: str) -> subprocess.CompletedProcess:
-        return fixture.run_launcher(LAUNCHER, [str(script), *args], None,
+        done = fixture.run_launcher(LAUNCHER, [str(script), *args], None,
                                     {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
                                      "BEADS_ACTOR": HUMAN}, self.repo, RUN_TIMEOUT_SECONDS)
+        if done.returncode not in SCRIPT_EXIT_CODES:
+            self.fail(f"{script.name} {' '.join(args)} exited {done.returncode}, which no jidoka script returns, so "
+                      f"the launcher or a process it ran ended.\nstdout: {done.stdout}\nstderr: {done.stderr}")
+        return done
 
     def notify(self, *args: str) -> subprocess.CompletedProcess:
         return self.script(NOTIFY, *args)
