@@ -1,7 +1,7 @@
 """The acceptance specs of a validation: which specs an epic's validation runs, and the run of them side by side.
 
 The specs are the ones the epic's tasks record, those they make pass and those planning marked as already true, each
-under the app of the task that records it, because the spec command cannot list the specs it holds. A spec that two
+under the app that the task records beside them, because the spec command cannot list the specs it holds. A spec that two
 tasks record runs once. Each spec runs alone, as run_specs.py runs a named spec, in the validation worktree.
 
 `specs_to_run` plans the run from the epic's beads and the repo settings, and refuses what cannot run, so that
@@ -29,8 +29,7 @@ import settings_reader
 import slots
 import spec_commands
 import specs
-from commands import metadata_of, read_bead
-from lap_record import area_of
+from commands import read_bead
 from pass_support import PassError
 
 SLOT_VARIABLE = "JIDOKA_SLOT"
@@ -111,17 +110,14 @@ NO_SPECS = SpecsRun([])
 
 
 def recorded_specs(epic: str, main_tree: Path) -> dict[str, list[str]]:
-    """The spec names the epic's tasks record, by the name of the app of the task that records them, in the order the
-    tasks are read."""
+    """The spec names the epic's tasks record, by the name of the app they are recorded under, in the order the tasks
+    are read."""
     try:
         found = epic_reader.read_epic(read_bead(epic, main_tree), main_tree)
         by_app: dict[str, list[str]] = {}
         for task in found.task_beads:
             names = [*specs.specs_of(task), *specs.already_true_of(task)]
-            app = area_of(metadata_of(task))
-            if names and not app:
-                raise SpecsRunError(f"{task['id']} records acceptance specs but no area, so validation cannot tell "
-                                    "which app runs them")
+            app = specs.app_of(task)
             if names:
                 by_app.setdefault(app, []).extend(names)
         return {app: specs.named_specs(names) for app, names in by_app.items()}

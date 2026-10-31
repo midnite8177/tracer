@@ -31,16 +31,6 @@ def is_protected(path: str, folders: list[PurePosixPath]) -> bool:
     return any(folder == PurePosixPath(path) or folder in PurePosixPath(path).parents for folder in folders)
 
 
-def apps_changing(settings: dict, changed: list[str]) -> list[settings_reader.App]:
-    """The apps whose acceptance folder holds at least one of the changed paths."""
-    touched = []
-    for app in settings_reader.apps_of(settings):
-        folder = folder_of(app)
-        if folder is not None and any(is_protected(path, [folder]) for path in changed):
-            touched.append(app)
-    return touched
-
-
 def epic_of_task(task: dict, main_tree: Path) -> dict | None:
     """The epic bead the task is a child of, or None for a task with no parent."""
     parent = parent_of(task)

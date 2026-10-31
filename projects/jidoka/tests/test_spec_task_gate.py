@@ -59,9 +59,10 @@ class SpecTaskGateTests(SchedulerCase):
         spec_task = self.new_task_under(epic)
         maker = self.new_task_under(epic)
         self.assertEqual(0, self.launch(SPECS, "spec-task", epic, spec_task).returncode)
-        self.assertEqual(0, self.launch(SPECS, "makes-pass", epic, maker, *new).returncode)
+        self.assertEqual(0, self.launch(SPECS, "makes-pass", epic, maker, "--app", "shop", *new).returncode)
         if already_true:
-            self.assertEqual(0, self.launch(SPECS, "already-true", epic, spec_task, *already_true).returncode)
+            self.assertEqual(0, self.launch(SPECS, "already-true", epic, spec_task, "--app", "shop",
+                                            *already_true).returncode)
         branch = self.hand_off(epic, {spec_task: f"{epic}-driver", maker: f"{epic}-till"})
         epic_head = self.commit_on_epic_branch(branch, RESULTS, json.dumps(before))
         [action] = [each for each in self.next_printed(epic)["actions"] if each["task"] == spec_task]
@@ -123,12 +124,13 @@ class SpecTaskGateTests(SchedulerCase):
 
         self.assert_refused_naming(lap, epic_head, f"the spec {TRUE!r}, which planning marked as already true")
 
-    def test_it_refuses_a_spec_task_whose_lap_changed_no_acceptance_folder(self):
+    def test_it_refuses_a_spec_task_whose_epic_records_its_specs_under_two_apps(self):
         lap, epic_head = self.spec_task_lap({OLD: "pass"}, {OLD: "pass", NEW: "fail"}, [NEW], [])
-        git(lap.worktree, "reset", "-q", "--hard", epic_head)
-        self.commit_in(lap.worktree, "card.txt", "built\n")
+        other = self.new_task_under(lap.epic)
+        recorded = self.launch(SPECS, "makes-pass", lap.epic, other, "--app", "mill", ANOTHER_NEW)
+        self.assertEqual(0, recorded.returncode, recorded.stderr)
 
-        self.assert_refused_naming(lap, epic_head, "changed the acceptance folder of no app")
+        self.assert_refused_naming(lap, epic_head, "belong to mill, shop", "exactly one app")
 
 
 if __name__ == "__main__":

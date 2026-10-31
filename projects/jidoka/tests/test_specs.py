@@ -13,6 +13,8 @@ import test_handoff as handoff  # noqa: E402
 import test_handoff_page as handoff_page  # noqa: E402
 
 SPECS = handoff.PLUGIN / "scripts" / "specs.py"
+APP = "shop"
+OTHER_APP = "mill"
 PAYS = "A shopper pays by card and the till prints a receipt"
 REFUNDS = "A shopper refunds a card payment"
 FULL_FOR_SPEC_TASK = "it is the spec task, whose lap alone changes the code beneath the acceptance specs"
@@ -50,21 +52,53 @@ class SpecsRecordingTests(SpecsCase):
         epic, first, second = self.epic_with_two_tasks()
 
         self.printed("spec-task", epic, first)
-        self.printed("makes-pass", epic, first, PAYS)
-        shown = self.printed("makes-pass", epic, second, PAYS, REFUNDS)
+        self.printed("makes-pass", epic, first, "--app", APP, PAYS)
+        shown = self.printed("makes-pass", epic, second, "--app", APP, PAYS, REFUNDS)
 
         self.assertEqual({"epic": epic, "spec_task": first,
-                          "tasks": [{"id": first, "specs": [PAYS]}, {"id": second, "specs": [PAYS, REFUNDS]}]},
+                          "tasks": [{"id": first, "app": APP, "specs": [PAYS]},
+                                    {"id": second, "app": APP, "specs": [PAYS, REFUNDS]}]},
                          shown)
         self.assertEqual(shown, self.printed("show", epic))
 
-    def test_recording_the_specs_of_a_task_again_replaces_them(self):
+    def test_recording_the_specs_of_a_task_again_replaces_them_and_their_app(self):
         epic, first, _ = self.epic_with_two_tasks()
-        self.printed("makes-pass", epic, first, PAYS, REFUNDS)
+        self.printed("makes-pass", epic, first, "--app", APP, PAYS, REFUNDS)
 
-        shown = self.printed("makes-pass", epic, first, REFUNDS, REFUNDS)
+        shown = self.printed("makes-pass", epic, first, "--app", OTHER_APP, REFUNDS, REFUNDS)
 
-        self.assertEqual([{"id": first, "specs": [REFUNDS]}], shown["tasks"])
+        self.assertEqual([{"id": first, "app": OTHER_APP, "specs": [REFUNDS]}], shown["tasks"])
+
+    def test_the_two_lists_of_one_task_belong_to_one_app_and_a_second_app_is_refused_with_nothing_written(self):
+        epic, first, _ = self.epic_with_two_tasks()
+        self.printed("makes-pass", epic, first, "--app", APP, PAYS)
+
+        done = self.specs("already-true", epic, first, "--app", OTHER_APP, REFUNDS)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("belong to one app", done.stderr)
+        metadata = self.shown(first)["metadata"]
+        self.assertEqual(APP, metadata["acceptance.app"])
+        self.assertNotIn("acceptance.already_true", metadata)
+
+    def test_specs_recorded_with_no_app_name_are_refused_and_nothing_is_written(self):
+        epic, first, _ = self.epic_with_two_tasks()
+
+        missing = self.specs("makes-pass", epic, first, PAYS)
+        blank = self.specs("makes-pass", epic, first, "--app", "  ", PAYS)
+
+        self.assertEqual((2, 1), (missing.returncode, blank.returncode))
+        self.assertIn("the specs need the app they belong to", blank.stderr)
+        self.assertNotIn("acceptance.specs", self.shown(first).get("metadata") or {})
+
+    def test_a_task_whose_specs_record_no_app_cannot_be_shown_and_says_how_to_record_it_again(self):
+        epic, first, _ = self.epic_with_two_tasks()
+        fixture.run([self.bd, "update", first, "--set-metadata", f"acceptance.specs={json.dumps([PAYS])}"], self.repo)
+
+        done = self.specs("show", epic)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(f"{first} records acceptance specs but no app they belong to", done.stderr)
 
     def test_naming_another_spec_task_replaces_the_first(self):
         epic, first, second = self.epic_with_two_tasks()
@@ -76,19 +110,21 @@ class SpecsRecordingTests(SpecsCase):
         epic, first, _ = self.epic_with_two_tasks()
 
         self.printed("spec-task", epic, first)
-        self.printed("makes-pass", epic, first, PAYS)
+        self.printed("makes-pass", epic, first, "--app", APP, PAYS)
 
         self.assertEqual(first, self.shown(epic)["metadata"]["acceptance.spec_task"])
         self.assertEqual([PAYS], json.loads(self.shown(first)["metadata"]["acceptance.specs"]))
+        self.assertEqual(APP, self.shown(first)["metadata"]["acceptance.app"])
 
     def test_the_specs_planning_marked_as_already_true_are_the_tasks_own_record_and_stay_out_of_show(self):
         epic, first, _ = self.epic_with_two_tasks()
-        self.printed("already-true", epic, first, PAYS, REFUNDS)
+        self.printed("already-true", epic, first, "--app", APP, PAYS, REFUNDS)
 
-        shown = self.printed("already-true", epic, first, REFUNDS)
+        shown = self.printed("already-true", epic, first, "--app", APP, REFUNDS)
 
         self.assertEqual({"epic": epic, "spec_task": "", "tasks": []}, shown)
         self.assertEqual([REFUNDS], json.loads(self.shown(first)["metadata"]["acceptance.already_true"]))
+        self.assertEqual(APP, self.shown(first)["metadata"]["acceptance.app"])
         self.assertNotIn("acceptance.specs", self.shown(first)["metadata"])
 
     def test_a_task_that_the_epic_does_not_hold_is_refused_for_both_records_and_nothing_is_written(self):
@@ -97,7 +133,7 @@ class SpecsRecordingTests(SpecsCase):
         stranger = self.new_task_under(other_epic)
 
         named = self.specs("spec-task", epic, stranger)
-        passing = self.specs("makes-pass", epic, stranger, PAYS)
+        passing = self.specs("makes-pass", epic, stranger, "--app", APP, PAYS)
 
         for done in (named, passing):
             self.assertEqual(1, done.returncode)
@@ -109,7 +145,7 @@ class SpecsRecordingTests(SpecsCase):
     def test_a_spec_name_with_no_letter_or_digit_is_refused_and_nothing_is_written(self):
         epic, first, _ = self.epic_with_two_tasks()
 
-        done = self.specs("makes-pass", epic, first, PAYS, "  --  ")
+        done = self.specs("makes-pass", epic, first, "--app", APP, PAYS, "  --  ")
 
         self.assertEqual(1, done.returncode)
         self.assertIn("needs a letter or a digit", done.stderr)
@@ -137,7 +173,7 @@ class HandoffShowsTheSpecsTests(SpecsCase):
     def test_check_prints_the_specs_of_each_task_and_the_spec_task(self):
         epic, first, second = self.epic_with_two_tasks()
         self.printed("spec-task", epic, first)
-        self.printed("makes-pass", epic, second, PAYS, REFUNDS)
+        self.printed("makes-pass", epic, second, "--app", APP, PAYS, REFUNDS)
 
         checked = self.checked(epic)
 
@@ -165,7 +201,7 @@ class HandoffShowsTheSpecsTests(SpecsCase):
     def test_taking_the_epic_shows_the_specs_in_the_comment_and_the_page_and_puts_the_spec_task_on_the_full_track(self):
         epic, first, second = self.epic_with_two_tasks()
         self.printed("spec-task", epic, first)
-        self.printed("makes-pass", epic, second, PAYS, REFUNDS)
+        self.printed("makes-pass", epic, second, "--app", APP, PAYS, REFUNDS)
 
         done = self.handoff("take", epic, "--area", f"{first}=driver", "--area", f"{second}=till")
 
@@ -194,7 +230,7 @@ class HandoffShowsTheSpecsTests(SpecsCase):
 
     def test_a_task_that_is_closed_shows_no_row_and_its_specs_are_left_out(self):
         epic, first, second = self.epic_with_two_tasks()
-        self.printed("makes-pass", epic, first, PAYS)
+        self.printed("makes-pass", epic, first, "--app", APP, PAYS)
         fixture.run([self.bd, "close", first], self.repo)
 
         checked = self.checked(epic)

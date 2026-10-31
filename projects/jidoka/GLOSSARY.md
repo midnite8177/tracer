@@ -414,9 +414,11 @@ The task that builds what an epic's new acceptance specs need from the
 protocol driver, so that they run and fail. Its lap is the only one that
 may change the code beneath the acceptance specs, and the tasks that make
 them pass wait on it. The specs script records it in the epic's metadata,
-with the specs each task makes pass and the specs planning marked as
-already true, and handoff shows those specs and proposes the full track for
-it. The merge gate runs all of the app's specs on its lap and merges it only
+with the specs each task makes pass, the app they belong to, and the specs
+planning marked as already true, and handoff shows those specs and proposes the
+full track for it. The red run, the green run, the merge gate and validation all
+run a task's specs on that recorded app, whatever app the task's targeted tests
+belong to. The merge gate runs all of the app's specs on its lap and merges it only
 when each new spec fails as a failed check, never as a build or driver error,
 and every other spec passes.
 _Avoid_: Driver task, harness task

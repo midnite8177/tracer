@@ -134,7 +134,7 @@ def check(lap: LapToMerge, settings: dict, epic_head: str, lap_head: str, main_t
     unrun = spec_runs.refusal(task, lap_head)
     if unrun:
         raise GateRefused(f"the task's spec runs do not support the merge: {unrun}")
-    unjudged = (spec_task_gate.refusal(task, epic, settings, epic_head, lap_head, lap.worktree, main_tree)
+    unjudged = (spec_task_gate.refusal(task, epic, settings, lap.worktree, main_tree)
                 if is_spec_task and epic is not None else None)
     if unjudged:
         raise GateRefused(f"the spec task's specs do not support the merge: {unjudged}")

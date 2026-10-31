@@ -14,8 +14,10 @@ A line is `pass <name>` or `fail <name>`, on stdout. The output of each run that
 run. A run that executed no specs fails, because a name that selects nothing would otherwise pass. The script
 reads that from the output the way runner_summary.py does, and judges output in no known shape by its exit code.
 
-`run_specs.py <app> --checkout <folder> --record red|green --task <task>` runs the specs the task makes pass, which
-specs.py records, and records the run on the task as spec_runs.py describes. It takes no SPEC. A red run is a build
+`run_specs.py --checkout <folder> --record red|green --task <task>` runs the specs the task makes pass, which
+specs.py records, on the app that specs.py records beside them, and records the run on the task as spec_runs.py
+describes. It takes no app and no SPEC, so the red and the green run of a task are on the same app, whichever app the
+task's targeted tests belong to. A red run is a build
 worker's, made before it writes code: `--expect "<spec>=<the failure you expect>"` gives the failure expected of each
 spec, a spec that fails without one records nothing, a spec that passes is recorded as already passing, and a task
 that holds a red run takes no second one. A green run needs a checkout with no uncommitted change to a tracked file,
@@ -26,7 +28,7 @@ Exit codes:
   1  it refused, with the reason on stderr and nothing recorded: the repo has no settings, the app is unknown or
      incomplete, has no acceptance folder or no spec command, the spec target lacks one placeholder, a spec name
      has no letter or digit, the checkout is no folder of a git repo, or a recording is refused (the task makes no
-     spec pass, holds a red run already, or a failing spec has no expected failure).
+     spec pass, records no app for its specs, holds a red run already, or a failing spec has no expected failure).
   2  a usage error.
   3  at least one run failed, and a green run was recorded.
 """
@@ -70,10 +72,11 @@ class SpecRun:
 
 @dataclass(frozen=True)
 class Recording:
-    """A run to record on a task: which one, the task, the specs it owes, the commit the run is made on and the
-    failure expected of each spec."""
+    """A run to record on a task: which one, the task, the app its specs belong to, the specs it owes, the commit the
+    run is made on and the failure expected of each spec."""
     mode: str
     task: str
+    app: str
     names: list[str]
     head: str
     expected: dict[str, str]
@@ -101,13 +104,20 @@ def runs_of(app: settings_reader.App, given: list[str], checkout: Path) -> list[
     return [run_command(name, one, checkout) for name, one in commands]
 
 
-def app_of(home: Path, checkout: Path, name: str) -> tuple[settings_reader.App, Path]:
-    """The app the repo settings name, and the repo's main worktree."""
+def settings_of(home: Path, checkout: Path) -> tuple[dict, Path]:
+    """The repo settings of the checkout's repo, and the repo's main worktree."""
     if not checkout.is_dir():
         raise RunSpecsError(f"{checkout} is not a folder")
     try:
         main_tree = settings_reader.main_worktree(checkout, COMMAND_TIMEOUT_SECONDS)
-        return settings_reader.app_named(settings_reader.require_settings(home, main_tree), name), main_tree
+        return settings_reader.require_settings(home, main_tree), main_tree
+    except settings_reader.SettingsError as error:
+        raise RunSpecsError(str(error)) from error
+
+
+def app_named(settings: dict, name: str) -> settings_reader.App:
+    try:
+        return settings_reader.app_named(settings, name)
     except settings_reader.SettingsError as error:
         raise RunSpecsError(str(error)) from error
 
@@ -136,10 +146,11 @@ def head_of(checkout: Path, must_be_clean: bool) -> str:
 
 def plan_recording(mode: str, task: str, given: list[str], checkout: Path, main_tree: Path) -> Recording:
     """What a recorded run owes, checked before any spec runs; raises RunSpecsError for a task that makes no spec
-    pass, a second red run and an expectation that names no spec of the task."""
+    pass or records no app for them, a second red run and an expectation that names no spec of the task."""
     shown = read_bead(task, main_tree)
     try:
         names = specs.specs_of(shown)
+        app = specs.app_of(shown)
         held = spec_runs.red_run_of(shown)
     except (specs.SpecsError, spec_runs.SpecRunsError) as error:
         raise RunSpecsError(str(error)) from error
@@ -149,7 +160,7 @@ def plan_recording(mode: str, task: str, given: list[str], checkout: Path, main_
     if mode == RED and held is not None:
         raise RunSpecsError(f"{task} holds a red run already, made at {held.head}. A second one would run specs "
                             "the build has changed the app for, so the first stands")
-    return Recording(mode, task, names, head_of(checkout, mode == GREEN), expectations_of(names, given))
+    return Recording(mode, task, app, names, head_of(checkout, mode == GREEN), expectations_of(names, given))
 
 
 def record(plan: Recording, runs: list[SpecRun], main_tree: Path) -> None:
@@ -164,19 +175,19 @@ def record(plan: Recording, runs: list[SpecRun], main_tree: Path) -> None:
     spec_runs.record(RECORD_KEYS[plan.mode], plan.task, RecordedRun(plan.head, results), main_tree)
 
 
-def runs_to_record(app: settings_reader.App, mode: str, task: str, expect: list[str], checkout: Path,
+def runs_to_record(settings: dict, mode: str, task: str, expect: list[str], checkout: Path,
                    main_tree: Path) -> tuple[Recording, list[SpecRun]]:
-    """Runs the specs the task makes pass in the checkout, and returns the runs with the recording they await. The
-    caller can show the runs before `record` refuses them."""
+    """Runs the specs the task makes pass in the checkout, on the app the task records for them, and returns the runs
+    with the recording they await. The caller can show the runs before `record` refuses them."""
     plan = plan_recording(mode, task, expect, checkout, main_tree)
-    return plan, runs_of(app, plan.names, checkout)
+    return plan, runs_of(app_named(settings, plan.app), plan.names, checkout)
 
 
-def recorded_runs(app: settings_reader.App, mode: str, task: str, expect: list[str], checkout: Path,
+def recorded_runs(settings: dict, mode: str, task: str, expect: list[str], checkout: Path,
                   main_tree: Path) -> list[SpecRun]:
     """Runs the specs the task makes pass in the checkout and records the run on the task; the runs, passed or not,
     once recorded."""
-    plan, runs = runs_to_record(app, mode, task, expect, checkout, main_tree)
+    plan, runs = runs_to_record(settings, mode, task, expect, checkout, main_tree)
     record(plan, runs, main_tree)
     return runs
 
@@ -191,7 +202,7 @@ def print_runs(runs: list[SpecRun]) -> None:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="run_specs.py", description="Run an app's acceptance specs on a checkout "
                                                                      "and print pass or fail for each.")
-    parser.add_argument("app")
+    parser.add_argument("app", nargs="?", help="the app whose specs run; a recorded run takes none")
     parser.add_argument("--checkout", required=True, help="the folder the specs run in")
     parser.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     parser.add_argument("--record", choices=[RED, GREEN], help="run the task's specs and record the run on the task")
@@ -202,19 +213,22 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     if args.record is None and (args.task is not None or args.expect):
         parser.error("--task and --expect belong to a recorded run, with --record")
-    if args.record is not None and (args.task is None or args.specs):
-        parser.error("--record takes --task and no SPEC, because it runs the specs the task makes pass")
+    if args.record is not None and (args.task is None or args.specs or args.app is not None):
+        parser.error("--record takes --task, no app and no SPEC, because it runs the specs the task makes pass on the "
+                     "app the task records for them")
+    if args.record is None and args.app is None:
+        parser.error("the app is required")
     if args.expect and args.record != RED:
         parser.error("--expect belongs to a red run")
 
     checkout = Path(args.checkout).resolve()
     try:
-        app, main_tree = app_of(settings_reader.jidoka_home(args.jidoka_home), checkout, args.app)
+        settings, main_tree = settings_of(settings_reader.jidoka_home(args.jidoka_home), checkout)
         if args.record is None:
-            runs = runs_of(app, args.specs, checkout)
+            runs = runs_of(app_named(settings, args.app), args.specs, checkout)
             print_runs(runs)
         else:
-            plan, runs = runs_to_record(app, args.record, args.task, args.expect, checkout, main_tree)
+            plan, runs = runs_to_record(settings, args.record, args.task, args.expect, checkout, main_tree)
             print_runs(runs)
             record(plan, runs, main_tree)
     except (spec_commands.SpecCommandError, CommandError, OSError) as error:

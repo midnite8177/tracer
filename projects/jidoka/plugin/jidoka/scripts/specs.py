@@ -6,6 +6,11 @@ are its `acceptance.specs` metadata, a JSON list of spec names as text. A spec n
 human approved it; the script does not check a name against the app's acceptance folder. Handoff reads both
 through `spec_task_of` and `specs_of`.
 
+The app that a task's specs belong to is the task's `acceptance.app` metadata, the name of one of the repo settings'
+apps, recorded beside the specs. The red run, the green run, the spec task gate and validation each read it through
+`app_of`, so that all four run a task's specs on the same app, whatever app the task's targeted tests or its area
+belong to.
+
 The specs planning marked as already true are the spec task's `acceptance.already_true` metadata, a JSON list of
 spec names too. They pass before the epic's work, so the merge gate asks the spec task's lap to leave them passing,
 where it asks it to leave every spec that another task makes pass failing. `already_true_of` reads them.
@@ -16,11 +21,14 @@ with its specs, as JSON.
 `spec-task <epic> <task>` records the task as the epic's spec task, in place of any other. The task must be one of
 the epic's tasks.
 
-`makes-pass <epic> <task> <spec> ...` records the specs the task makes pass, in place of any it held. The task must be
-one of the epic's tasks, and each spec name must have a letter or a digit. A spec named twice is recorded once.
+`makes-pass <epic> <task> --app <app> <spec> ...` records the specs the task makes pass and the app they belong to, in
+place of any it held. The task must be one of the epic's tasks, each spec name must have a letter or a digit, and the
+app must be named. A spec named twice is recorded once. A task whose other list of specs belongs to another app is
+refused, because a task's specs belong to one app. Each task prints with its app beside its specs.
 
-`already-true <epic> <task> <spec> ...` records the specs planning marked as already true on the task, in place of any
-it held, under the same rules as `makes-pass`. It prints what `show` prints, which leaves them out.
+`already-true <epic> <task> --app <app> <spec> ...` records the specs planning marked as already true on the task and
+their app, in place of any it held, under the same rules as `makes-pass`. It prints what `show` prints, which leaves
+them out.
 
 All writes run under the repo's git user.name. A write that changes nothing writes nothing. Every write prints what
 `show` prints.
@@ -43,6 +51,7 @@ from epic_reader import Epic, EpicReadError, Rerun, epic_of
 
 SPEC_TASK_KEY = "acceptance.spec_task"
 SPECS_KEY = "acceptance.specs"
+APP_KEY = "acceptance.app"
 ALREADY_TRUE_KEY = "acceptance.already_true"
 RERUN = Rerun(on_the_holding_epic="Name the specs on the epic that holds it", after_onboarding="name the specs")
 
@@ -68,6 +77,20 @@ def already_true_of(shown: dict) -> list[str]:
     return names_under(shown, ALREADY_TRUE_KEY)
 
 
+def app_of(shown: dict) -> str:
+    """The name of the app the task's specs belong to, or an empty string when the task records no specs; raises
+    SpecsError when it records specs, those it makes pass or those already true, and no app."""
+    app = recorded_app(shown)
+    if not app and (specs_of(shown) or already_true_of(shown)):
+        raise SpecsError(f"{shown.get('id')} records acceptance specs but no app they belong to. Record the specs "
+                         "again with makes-pass or already-true and --app")
+    return app
+
+
+def recorded_app(shown: dict) -> str:
+    return str(metadata_of(shown).get(APP_KEY) or "").strip()
+
+
 def names_under(shown: dict, key: str) -> list[str]:
     stored = metadata_of(shown).get(key)
     if stored is None:
@@ -88,7 +111,7 @@ def encode(names: list[str]) -> str:
 
 def shown_specs(epic: Epic) -> dict:
     return {"epic": epic.id, "spec_task": spec_task_of(epic.shown),
-            "tasks": [{"id": str(task["id"]), "specs": specs}
+            "tasks": [{"id": str(task["id"]), "app": app_of(task), "specs": specs}
                       for task in epic.task_beads if (specs := specs_of(task))]}
 
 
@@ -115,11 +138,24 @@ def record_spec_task(epic: Epic, task: str, main_tree: Path) -> None:
         run(["bd", "update", epic.id, *set_metadata((SPEC_TASK_KEY, task))], main_tree, env_as_git_user(main_tree))
 
 
-def record_specs(epic: Epic, task: str, key: str, given: list[str], main_tree: Path) -> None:
+def named_app(given: str) -> str:
+    app = given.strip()
+    if not app:
+        raise SpecsError("the specs need the app they belong to. Name it with --app")
+    return app
+
+
+def record_specs(epic: Epic, task: str, key: str, app: str, given: list[str], main_tree: Path) -> None:
     bead = task_in(epic, task)
     names = named_specs(given)
-    if names_under(bead, key) != names:
-        run(["bd", "update", task, *set_metadata((key, encode(names)))], main_tree,
+    named = named_app(app)
+    other = ALREADY_TRUE_KEY if key == SPECS_KEY else SPECS_KEY
+    held = recorded_app(bead)
+    if names_under(bead, other) and held != named:
+        raise SpecsError(f"{task} records its {other} under the app {held!r}, and the specs of a task belong to one "
+                         f"app, so {named!r} is refused. Record both lists under the same app")
+    if names_under(bead, key) != names or held != named:
+        run(["bd", "update", task, *set_metadata((key, encode(names)), (APP_KEY, named))], main_tree,
             env_as_git_user(main_tree))
 
 
@@ -134,9 +170,11 @@ def main(argv: list[str]) -> int:
     naming.add_argument("task")
     passing = modes.add_parser("makes-pass", parents=[shared], help="record the specs a task makes pass")
     passing.add_argument("task")
+    passing.add_argument("--app", required=True, help="the app the specs belong to")
     passing.add_argument("specs", nargs="+", metavar="SPEC")
     true = modes.add_parser("already-true", parents=[shared], help="record the specs planning marked as already true")
     true.add_argument("task")
+    true.add_argument("--app", required=True, help="the app the specs belong to")
     true.add_argument("specs", nargs="+", metavar="SPEC")
     args = parser.parse_args(argv)
 
@@ -145,9 +183,9 @@ def main(argv: list[str]) -> int:
         if args.mode == "spec-task":
             record_spec_task(epic_of(args.epic, main_tree, RERUN), args.task, main_tree)
         elif args.mode == "makes-pass":
-            record_specs(epic_of(args.epic, main_tree, RERUN), args.task, SPECS_KEY, args.specs, main_tree)
+            record_specs(epic_of(args.epic, main_tree, RERUN), args.task, SPECS_KEY, args.app, args.specs, main_tree)
         elif args.mode == "already-true":
-            record_specs(epic_of(args.epic, main_tree, RERUN), args.task, ALREADY_TRUE_KEY, args.specs, main_tree)
+            record_specs(epic_of(args.epic, main_tree, RERUN), args.task, ALREADY_TRUE_KEY, args.app, args.specs, main_tree)
         printed = shown_specs(epic_of(args.epic, main_tree, RERUN))
     except (SpecsError, EpicReadError, CommandError, settings_reader.SettingsError, OSError) as error:
         print(f"specs: {error}", file=sys.stderr)

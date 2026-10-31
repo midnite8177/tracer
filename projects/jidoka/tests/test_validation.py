@@ -766,10 +766,15 @@ class ValidationSpecsCase(ValidationCase):
     def epic_with_specs_made_pass_by_a_closed_task(self, specs: list[str]) -> tuple[str, str]:
         """An epic with a closed task that makes the specs pass and one task whose build is done but for the last
         report; returns the epic and that task."""
+        return self.epic_with_specs_of_a_closed_task_in_an_area(specs, "shop")
+
+    def epic_with_specs_of_a_closed_task_in_an_area(self, specs: list[str], area: str) -> tuple[str, str]:
+        """Like `epic_with_specs_made_pass_by_a_closed_task`, with the closed task in the area, whatever app that names;
+        its specs belong to the shop."""
         epic = self.new_epic()
         made = self.new_task_under(epic)
-        fixture.run([self.bd, "update", made, "--set-metadata", "lap.area=shop", "--set-metadata",
-                     "acceptance.specs=" + json.dumps(specs)], self.repo)
+        fixture.run([self.bd, "update", made, "--set-metadata", f"lap.area={area}", "--set-metadata",
+                     "acceptance.specs=" + json.dumps(specs), "--set-metadata", "acceptance.app=shop"], self.repo)
         fixture.run([self.bd, "close", made, "--reason", "done"], self.repo)
         task = self.new_task_under(epic)
         self.hand_off(epic, {task: "till"})
@@ -810,6 +815,13 @@ class ValidationRunsTheSpecsTests(ValidationSpecsCase):
 
         self.assertEqual(("pass", sorted(SPECS)), (printed["validation"]["result"], self.specs_run()))
         self.assertIn("human", self.shown(epic)["labels"])
+
+    def test_validation_runs_the_specs_on_the_app_that_records_them_whatever_the_area_of_their_task_names(self):
+        epic, task = self.epic_with_specs_of_a_closed_task_in_an_area(SPECS, "the-till-area")
+
+        printed = self.build_done(epic, task)
+
+        self.assertEqual(("pass", sorted(SPECS)), (printed["validation"]["result"], self.specs_run()))
 
     def test_validation_runs_no_spec_when_the_suite_fails(self):
         epic, task = self.epic_with_specs_made_pass_by_a_closed_task(SPECS)

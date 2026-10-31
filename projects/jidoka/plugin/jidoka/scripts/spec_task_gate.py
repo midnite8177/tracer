@@ -1,6 +1,7 @@
 """What the merge gate asks of the spec task's lap: its new specs fail as checks and every other spec passes.
 
-The gate picks the one app whose acceptance folder the lap changed, then runs that app's specs in the lap's worktree,
+The gate picks the one app that the specs record, those of the spec task and those of the epic's other open tasks, then
+runs that app's specs in the lap's worktree,
 with the app's spec_command and spec_target as run_specs.py does, and judges each run by its exit code and the summary
 a test runner prints (runner_summary.py reads unittest's and dotnet test's):
 
@@ -20,17 +21,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import epic_reader
-import protected_paths
 import settings_reader
 import spec_commands
 import specs
 from commands import run_test_command
-from land import changed_paths
 from runner_summary import Finished, Verdict
 
 
 class OneAppExpected(Exception):
-    """A spec task's lap that changed the acceptance folder of no app or of several, worded for the gate's refusal."""
+    """Specs recorded under no app or under several, worded for the gate's refusal."""
 
 
 def finished(command: str, checkout: Path) -> Finished:
@@ -38,21 +37,23 @@ def finished(command: str, checkout: Path) -> Finished:
     return Finished(done.returncode, f"{done.stdout}\n{done.stderr}")
 
 
-def app_the_lap_changed(settings: dict, changed: list[str]) -> settings_reader.App:
-    """The one app whose acceptance folder the changed paths touch; raises OneAppExpected when they touch none or
-    several."""
-    touched = protected_paths.apps_changing(settings, changed)
-    if len(touched) != 1:
-        named = ", ".join(app.name for app in touched) or "no app"
-        raise OneAppExpected(f"the spec task's lap changed the acceptance folder of {named}, and the gate judges the "
-                             "specs of exactly one app")
-    return touched[0]
-
-
-def new_specs(task: dict, epic: dict, main_tree: Path) -> list[str]:
-    """The specs another open task of the epic makes pass, less those planning marked as already true."""
+def other_open_tasks(task: dict, epic: dict, main_tree: Path) -> list[dict]:
     task_id = str(task.get("id") or "")
-    others = [bead for bead in epic_reader.read_epic(epic, main_tree).open_task_beads if str(bead["id"]) != task_id]
+    return [bead for bead in epic_reader.read_epic(epic, main_tree).open_task_beads if str(bead["id"]) != task_id]
+
+
+def app_the_specs_belong_to(settings: dict, beads: list[dict]) -> settings_reader.App:
+    """The one app that the beads record for their specs; raises OneAppExpected when they record none or several, and
+    SettingsError for an app the repo settings do not list."""
+    named = sorted({app for bead in beads if (app := specs.app_of(bead))})
+    if len(named) != 1:
+        raise OneAppExpected(f"the specs of the spec task and of the epic's other open tasks belong to "
+                             f"{', '.join(named) or 'no app'}, and the gate judges the specs of exactly one app")
+    return settings_reader.app_named(settings, named[0])
+
+
+def new_specs(task: dict, others: list[dict]) -> list[str]:
+    """The specs another open task of the epic makes pass, less those planning marked as already true."""
     already_true = specs.already_true_of(task)
     return [name for name in dict.fromkeys(name for bead in others for name in specs.specs_of(bead))
             if name not in already_true]
@@ -87,19 +88,19 @@ def old_specs_problem(everything: Finished, failing_by_name: int) -> str | None:
     return None
 
 
-def refusal(task: dict, epic: dict, settings: dict, epic_head: str, lap_head: str, worktree: Path,
-            main_tree: Path) -> str | None:
+def refusal(task: dict, epic: dict, settings: dict, worktree: Path, main_tree: Path) -> str | None:
     """Why the spec task's lap, checked out in the worktree, does not support the merge, or None when it does. The task
-    and its epic beads say which specs are new and which are already true, and the paths the lap changed between the
-    epic's head and its own say which app's specs to run."""
+    and its epic beads say which specs are new and which are already true, and the app they record for their specs
+    says which app's specs to run."""
     try:
-        app = app_the_lap_changed(settings, changed_paths(epic_head, lap_head, main_tree))
-        new = new_specs(task, epic, main_tree)
+        others = other_open_tasks(task, epic, main_tree)
+        app = app_the_specs_belong_to(settings, [task, *others])
+        new = new_specs(task, others)
         already_true = specs.already_true_of(task)
         command, target = spec_commands.spec_commands(app)
         named = {name: finished(spec_commands.command_for_one(app, command, target, name), worktree)
                  for name in [*new, *already_true]}
-    except (OneAppExpected, spec_commands.SpecCommandError) as error:
+    except (OneAppExpected, specs.SpecsError, settings_reader.SettingsError, spec_commands.SpecCommandError) as error:
         return str(error)
     problems = [new_spec_problem(name, named[name]) for name in new]
     problems += [already_true_problem(name, named[name]) for name in already_true]

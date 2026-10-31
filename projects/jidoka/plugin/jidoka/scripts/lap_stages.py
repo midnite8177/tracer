@@ -12,8 +12,8 @@ The outcomes of a worker's stage, for a task on the simple track, whose lap star
              commits it as one commit whose message is the task's title, under the repo's git user; a build that left
              no changes makes no commit. It runs that app's targeted tests with that filter, through
              targeted_tests.py, on the lap's head rebased onto the epic branch, and again after a fresh rebase when
-             the epic branch moved during the run. A pass runs the acceptance specs the task makes pass, green on that
-             head, and records the run for the gate (spec_runs.py); a spec that is not green is a try. A pass of both
+             the epic branch moved during the run. A pass runs the acceptance specs the task makes pass, on the app the
+             task records for them, green on that head, and records the run for the gate (spec_runs.py); a spec that is not green is a try. A pass of both
              goes to the merge gate, merge_gate.py. When the gate finds
              the epic branch moved since the run, the tests run again, and that is not a try. A `done` also files the
              discovered work placed `epic` and `outside` before it commits, and a `blocks` finding on a `done` is a
@@ -514,8 +514,8 @@ def green_run_sends_away(lap: Lap, context: GateContext) -> list[Lap] | None:
     try:
         if not specs.specs_of(read_bead(lap.task, context.main_tree)):
             return None
-        app = settings_reader.app_named(context.settings, lap.app)
-        runs = run_specs.recorded_runs(app, run_specs.GREEN, lap.task, [], lap.worktree, context.main_tree)
+        runs = run_specs.recorded_runs(context.settings, run_specs.GREEN, lap.task, [], lap.worktree,
+                                       context.main_tree)
     except (specs.SpecsError, spec_commands.SpecCommandError, settings_reader.SettingsError,
             CommandError) as error:
         raise SchedulerError(f"the specs of {lap.task} did not run: {error}") from error

@@ -32,36 +32,58 @@ print("Ran 1 tests in 0.001s")
 sys.exit(0 if passes else 1)
 '''
 
+MILL_MISSING = "missing: mill.txt"
+
+MILL_SPEC_RUNNER = f'''import sys
+from pathlib import Path
+
+passes = Path("mill.txt").exists()
+print("ok" if passes else {MILL_MISSING!r})
+print("Ran 1 tests in 0.001s")
+sys.exit(0 if passes else 1)
+'''
+
 
 class SpecRunsCase(SchedulerCase):
-    """The scheduler tests' shop repo, whose app also records a spec command, and helpers that open a lap for a task
-    that makes specs pass."""
+    """The scheduler tests' shop repo, whose app also records a spec command, a second app, mill, whose specs pass
+    on other files, and helpers that open a lap for a task that makes specs pass."""
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         runner = cls.root / "spec_runner.py"
         runner.write_text(SPEC_RUNNER, encoding="utf-8")
+        mill_runner = cls.root / "mill_spec_runner.py"
+        mill_runner.write_text(MILL_SPEC_RUNNER, encoding="utf-8")
+        python = Path(sys.executable).as_posix()
         cls.write_settings({"apps": [{
             "name": "shop", "kind": "program", "way_in": "its command line", "build": "make", "run": None,
             "test": cls.test_command, "test_target": "-k <name>", "test_full": None, "hand_run": [],
-            "acceptance": ACCEPTANCE, "spec_command": f'"{Path(sys.executable).as_posix()}" "{runner.as_posix()}"',
+            "acceptance": ACCEPTANCE, "spec_command": f'"{python}" "{runner.as_posix()}"',
+            "spec_target": "--spec <spec>"}, {
+            "name": "mill", "kind": "program", "way_in": "its command line", "build": "make", "run": None,
+            "test": cls.test_command, "test_target": "-k <name>", "test_full": None, "hand_run": [],
+            "acceptance": "mill/acceptance", "spec_command": f'"{python}" "{mill_runner.as_posix()}"',
             "spec_target": "--spec <spec>"}]})
 
     def open_lap_making_pass(self, *names: str) -> tuple[OpenLap, dict]:
         """Opens a lap for a new epic whose one task makes the specs pass, or none when no spec is named, in an area of
         its own; returns the lap and its build action."""
+        return self.open_lap_making_pass_of("shop", *names)
+
+    def open_lap_making_pass_of(self, app: str, *names: str) -> tuple[OpenLap, dict]:
+        """Opens a lap like `open_lap_making_pass`, with the specs recorded under the app."""
         epic = self.new_epic()
         task = self.new_task_under(epic)
         if names:
-            recorded = self.launch(SPECS, "makes-pass", epic, task, *names)
+            recorded = self.launch(SPECS, "makes-pass", epic, task, "--app", app, *names)
             self.assertEqual(0, recorded.returncode, recorded.stderr)
         branch = self.hand_off(epic, {task: f"{epic}-area"})
         [action] = self.next_printed(epic)["actions"]
         return OpenLap(epic, task, branch, Path(action["worktree"])), action
 
     def run_specs(self, lap: OpenLap, *flags: str) -> subprocess.CompletedProcess:
-        return self.launch(RUN_SPECS, "shop", "--checkout", str(lap.worktree), *flags)
+        return self.launch(RUN_SPECS, "--checkout", str(lap.worktree), *flags)
 
     def red_run(self, lap: OpenLap, *expected: str) -> subprocess.CompletedProcess:
         return self.run_specs(lap, "--record", "red", "--task", lap.task,
@@ -164,6 +186,29 @@ class RedRunTests(SpecRunsCase):
 
         self.assertEqual(2, self.run_specs(lap, "--task", lap.task, PAYS).returncode)
 
+    def test_a_recorded_run_takes_no_app_because_the_task_records_the_app_of_its_specs(self):
+        lap, _ = self.open_lap_making_pass(PAYS)
+
+        done = self.launch(RUN_SPECS, "shop", "--checkout", str(lap.worktree), "--record", "red", "--task", lap.task)
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("no app", done.stderr)
+        self.assertNotIn("acceptance.red", self.metadata(lap.task))
+
+    def test_a_plain_run_needs_an_app(self):
+        lap, _ = self.open_lap_making_pass(PAYS)
+
+        self.assertEqual(2, self.launch(RUN_SPECS, "--checkout", str(lap.worktree)).returncode)
+
+    def test_a_task_whose_specs_record_no_app_has_no_red_run(self):
+        lap, _ = self.open_lap_making_pass(PAYS)
+        fixture.run([self.bd, "update", lap.task, "--unset-metadata", "acceptance.app"], self.repo)
+
+        done = self.red_run(lap, f"{PAYS}=no receipt")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("records acceptance specs but no app", done.stderr)
+
 
 class GreenRunTests(SpecRunsCase):
     def test_a_green_run_records_the_checkouts_head_and_exits_3_when_a_spec_fails(self):
@@ -189,6 +234,41 @@ class GreenRunTests(SpecRunsCase):
         self.assertEqual(1, done.returncode)
         self.assertIn("uncommitted changes", done.stderr)
         self.assertNotIn("acceptance.green", self.metadata(lap.task))
+
+
+class SpecsOfAnotherAppThanTheTargetedTestsTests(SpecRunsCase):
+    def test_the_red_run_and_the_green_run_run_the_specs_on_the_app_that_records_them(self):
+        lap, _ = self.open_lap_making_pass_of("mill", PAYS)
+
+        red = self.red_run(lap, f"{PAYS}=mill.txt is missing")
+        self.commit_in(lap.worktree, "mill.txt", "built\n")
+        green = self.green_run(lap)
+
+        self.assertEqual((0, f"fail {PAYS}\n"), (red.returncode, red.stdout))
+        self.assertIn(MILL_MISSING, red.stderr)
+        self.assertEqual((0, f"pass {PAYS}\n"), (green.returncode, green.stdout))
+
+    def test_a_build_whose_targeted_tests_are_the_shops_merges_when_the_specs_of_the_mill_are_green(self):
+        lap, _ = self.open_lap_making_pass_of("mill", PAYS)
+        self.assertEqual(0, self.red_run(lap, f"{PAYS}=mill.txt is missing").returncode)
+        self.leave_in(lap.worktree, "mill.txt", "built\n")
+
+        printed = self.build_done(lap.epic, lap.task)
+
+        self.assertEqual([], self.lap_actions(printed))
+        self.assertEqual("closed", self.shown(lap.task)["status"])
+        self.assertEqual(True, self.recorded(lap.task, "acceptance.green")["runs"][0]["passed"])
+
+    def test_a_build_whose_specs_of_the_mill_are_red_goes_back_to_the_build_even_when_the_shops_would_pass(self):
+        lap, _ = self.open_lap_making_pass_of("mill", PAYS)
+        self.assertEqual(0, self.red_run(lap, f"{PAYS}=mill.txt is missing").returncode)
+        self.leave_in(lap.worktree, "card.txt", "built for the shop\n")
+
+        printed = self.build_done(lap.epic, lap.task)
+
+        [again] = self.lap_actions(printed)
+        self.assertEqual(("build", lap.task), (again["action"], again["task"]))
+        self.assertIn(f"not green on the lap's head: {PAYS}", "\n".join(self.texts(lap.task)))
 
 
 class MergeGateSpecRunTests(SpecRunsCase):

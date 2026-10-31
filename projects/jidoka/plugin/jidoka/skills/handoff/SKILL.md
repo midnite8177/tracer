@@ -33,7 +33,8 @@ The skill folder is the directory that holds this SKILL.md. Pass
    which the rule proposes on the full track. The human names the spec task
    and the specs with the specs script before the check:
    `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/specs.py" spec-task <epic-id> <task-id>`
-   and `makes-pass <epic-id> <task-id> <spec> ...`; `show <epic-id>` prints
+   and `makes-pass <epic-id> <task-id> --app <app> <spec> ...`, where the app
+   is the one the specs belong to; `show <epic-id>` prints
    what it holds. A spec whose Out of Scope section is
    missing or empty fails the check like any other form problem; the human
    writes it, and handoff runs again.
