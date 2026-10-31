@@ -23,6 +23,18 @@ public sealed class BeadQuestionTests
     }
 
     [Fact]
+    public void ReadsAnOptionWithNoConfidenceAsHavingNone()
+    {
+        var question = QuestionOn("""
+            "metadata": {"question.options": [{"name": "Approve"}, {"name": "Ask back", "confidence": 0}]}
+            """);
+
+        Assert.Equal(
+            [new QuestionOption("Approve", null), new QuestionOption("Ask back", 0)],
+            question?.Options);
+    }
+
+    [Fact]
     public void ReadsTheOptionsWhenBdPrintsThemAsAnArrayAndNotAsAString()
     {
         var question = QuestionOn("""

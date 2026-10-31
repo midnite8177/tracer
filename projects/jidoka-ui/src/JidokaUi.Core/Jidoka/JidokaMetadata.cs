@@ -149,9 +149,9 @@ public static class JidokaMetadata
             return null;
         }
 
-        var confidence = element.TryGetProperty("confidence", out var sure) && sure.TryGetInt32(out var percent)
+        int? confidence = element.TryGetProperty("confidence", out var sure) && sure.TryGetInt32(out var percent)
             ? percent
-            : 0;
+            : null;
         return new QuestionOption(name.GetString() ?? string.Empty, confidence);
     }
 

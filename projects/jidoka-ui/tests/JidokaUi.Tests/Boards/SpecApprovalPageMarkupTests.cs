@@ -58,7 +58,7 @@ public sealed class SpecApprovalPageMarkupTests : BunitContext
 
     private const string TheMetadata =
         """
-        "metadata": {"question.options": "[{\"name\":\"Approve\",\"confidence\":0},{\"name\":\"Ask back\",\"confidence\":0}]"}
+        "metadata": {"question.options": "[{\"name\":\"Approve\"},{\"name\":\"Ask back\"}]"}
         """;
 
     private static readonly string TheEpicWaitingForApproval =
@@ -84,6 +84,17 @@ public sealed class SpecApprovalPageMarkupTests : BunitContext
         Assert.Contains("till.run(\"pay\", \"--card\", \"5.00\")", sides[0].QuerySelector("pre code")?.TextContent, StringComparison.Ordinal);
         Assert.Equal("Pay 5.00 by card and the till prints receipt 1.", sides[1].QuerySelector(".reading")?.TextContent);
         Assert.Contains("the spec fails", sides[1].QuerySelector(".deletion")?.TextContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ShowsApproveAndAskBackWithNoPercentBecauseNeitherCarriesAConfidence()
+    {
+        var page = TheSpecApprovalPageOf(TheEpicWaitingForApproval);
+
+        Assert.Equal(
+            ["Approve", "Ask back"],
+            page.FindAll(".answer-panel .answer-press").Select(press => press.TextContent));
+        Assert.Empty(page.FindAll(".answer-panel .answer-confidence"));
     }
 
     [Fact]

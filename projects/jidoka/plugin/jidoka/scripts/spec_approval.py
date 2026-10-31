@@ -88,7 +88,7 @@ def post(epic: str, raw: str, home: Path, main_tree: Path) -> dict:
         raise SpecApprovalError(f"the spec approval page could not be written: {error}") from error
     env = env_as_factory()
     run(["bd", "comment", epic, comment_of(epic, proposed, interface, page)], main_tree, env)
-    options = json.dumps([{"name": name, "confidence": park.LEAST_CONFIDENCE} for name in (APPROVE, ASK_BACK)])
+    options = park.options_json_of([(APPROVE, None), (ASK_BACK, None)])
     run(["bd", "update", epic, f"--add-label={HUMAN_LABEL}", *set_metadata((park.OPTIONS_KEY, options)),
          *unset_metadata(park.RECOMMENDED_KEY)], main_tree, env)
     return {"epic": epic, "page": str(page)}

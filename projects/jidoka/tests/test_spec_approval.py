@@ -4,6 +4,8 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -126,7 +128,7 @@ class SpecApprovalBeadTests(SpecApprovalCase):
         shown = self.shown(self.epic)
 
         self.assertIn("human", shown["labels"])
-        self.assertEqual([{"name": "Approve", "confidence": 0}, {"name": "Ask back", "confidence": 0}],
+        self.assertEqual([{"name": "Approve"}, {"name": "Ask back"}],
                          json.loads(shown["metadata"]["question.options"]))
         self.assertNotIn("question.recommended", shown["metadata"])
 
@@ -141,7 +143,7 @@ class SpecApprovalBeadTests(SpecApprovalCase):
                       "fails.", text)
         self.assertIn(f"1. {PAYS}\n```\n{PAYS_CODE}\n```", text)
         self.assertIn("| Pay by card | `till pay --card <amount>` | 1, 2 |", text)
-        self.assertEqual(printed["page"], str(Path(PAGE_LINK.search(text).group(1).removeprefix("file://"))))
+        self.assertEqual(printed["page"], url2pathname(urlparse(PAGE_LINK.search(text).group(1)).path))
         self.assertNotIn("<", text.replace("<amount>", "").replace("<receipt>", ""))
 
     def test_code_that_holds_a_fence_is_fenced_by_a_longer_one(self):

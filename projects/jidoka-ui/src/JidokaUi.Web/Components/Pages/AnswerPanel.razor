@@ -35,7 +35,10 @@
                         disabled="@(!CanAnswer(option))"
                         aria-busy="@AriaBusy"
                         @onclick="() => AnswerAsync(option)">@option.Name</button>
-                <span class="answer-confidence">@option.Confidence%</span>
+                @if (option.Confidence is { } confidence)
+                {
+                    <span class="answer-confidence">@confidence%</span>
+                }
                 @if (Question.Recommends(option))
                 {
                     <span class="answer-recommended-mark pill-chip">Recommended</span>

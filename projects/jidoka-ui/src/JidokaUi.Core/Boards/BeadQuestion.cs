@@ -2,8 +2,8 @@ namespace JidokaUi.Core.Boards;
 
 /// <summary>One answer that a question offers, and how sure the worker was that it is the right one.</summary>
 /// <param name="Name">The words of the answer, which the answer comment carries as they are.</param>
-/// <param name="Confidence">The worker's confidence, in whole percent from 0 to 100.</param>
-public sealed record QuestionOption(string Name, int Confidence);
+/// <param name="Confidence">The worker's confidence, in whole percent from 0 to 100, or null when the option carries none.</param>
+public sealed record QuestionOption(string Name, int? Confidence);
 
 /// <summary>
 /// The question that jidoka asked on a bead, with the options it offers and the name of the one it
