@@ -9,21 +9,14 @@ the other apps took beside them.
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
 import design_findings
 import settings_reader
-from pass_support import PassError
 from validation_specs import SpecsRun
 
-SLOW_SPECS_KEY = "validation.slow_specs"
 SLOWEST_COUNT = 5
-
-
-class SlowSpecsError(PassError):
-    """A reason the slow specs an epic records cannot be read, worded for the person who reads stderr."""
 
 
 @dataclass(frozen=True)
@@ -83,24 +76,6 @@ def over_the_limit(settings: dict, run: SpecsRun) -> list[OverTheLimit]:
 def lines_of(over: list[OverTheLimit]) -> list[str]:
     """What acceptance shows for every overrun, one after another."""
     return [line for each in over for line in each.lines()]
-
-
-def as_text(over: list[OverTheLimit]) -> str:
-    return json.dumps([each.fields() for each in over])
-
-
-def of_metadata(value: object) -> list[OverTheLimit]:
-    """The overruns a validation recorded on the epic; none when it recorded none."""
-    if value is None:
-        return []
-    try:
-        listed = json.loads(value) if isinstance(value, str) else value
-        return [OverTheLimit(str(each["app"]), str(each["acceptance"]), float(each["limit"]), float(each["seconds"]),
-                             int(each["count"]),
-                             tuple(SlowSpec(str(spec["spec"]), float(spec["seconds"])) for spec in each["slowest"]))
-                for each in listed]
-    except (ValueError, KeyError, TypeError) as error:
-        raise SlowSpecsError(f"the {SLOW_SPECS_KEY} metadata of the epic cannot be read: {error!r}") from error
 
 
 def file_design_findings(epic: str, over: list[OverTheLimit], main_tree: Path) -> None:

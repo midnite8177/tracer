@@ -20,13 +20,14 @@ takes the label off gives the worker a new set of tries.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import caps
 import holdouts
 import park
 import pass_ledger
+import recorded_validation
 import spec_time_limit
 import validation
 import validation_merge
@@ -39,8 +40,8 @@ from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, count_of, park_epic, worktree_at
 from report_text import shortened_title
 from settings_reader import apps_of
-from validation import FAIL, PASS, RESULT_KEY, RUNS_KEY, ValidationError
-from validation_specs import SpecFigures
+from recorded_validation import RESULT_KEY, RUNS_KEY, RecordedValidation
+from validation import FAIL, PASS, ValidationError
 from worktrees import remove_worktree
 
 TRIES_KEY = "validation.tries"
@@ -76,25 +77,19 @@ class Verdict:
 
 @dataclass(frozen=True)
 class ValidationResult:
-    """What validating an epic left, as the scheduler prints it: the commit validated, each command's run, the figures
-    of the acceptance specs run, the tasks filed, and the run of the holdouts when one is owed. The result is fail
-    when the suite, a spec or a holdout ended red, pending while the run of the holdouts is owed, and pass
-    otherwise."""
-    failed: bool
-    head: str
-    runs: list[validation.CommandRun]
-    specs: SpecFigures
+    """What validating an epic left, as the scheduler prints it: the validation the epic records, the tasks filed, and
+    the run of the holdouts when one is owed. The result is fail when the suite, a spec or a holdout ended red,
+    pending while the run of the holdouts is owed, and pass otherwise."""
+    recorded: RecordedValidation
     filed: list[str]
     to_run: HoldoutsToRun | None
 
     @property
     def result(self) -> str:
-        if self.failed:
-            return FAIL
-        return PENDING if self.to_run is not None else PASS
+        return self.recorded.result
 
     def fields(self) -> dict:
-        return validation.fields_of(self.result, self.head, self.runs, self.specs, self.filed)
+        return self.recorded.fields(self.filed)
 
 
 def validate(epic: str, branch: str, settings: dict, home: Path, main_tree: Path) -> ValidationResult:
@@ -104,14 +99,12 @@ def validate(epic: str, branch: str, settings: dict, home: Path, main_tree: Path
     suite = validation.run_suite(epic, branch, settings, home, main_tree, bool(listed))
     if suite.kept is None:
         settled = validation.settle(epic, branch, suite, main_tree)
-        return ValidationResult(settled.result == FAIL, settled.head, settled.runs, settled.specs.figures,
-                                settled.filed, None)
+        return ValidationResult(settled.recorded(settled.result), settled.filed, None)
     validated = suite.validated
-    validation.record(epic, validated, WAITING_HEADLINE, PENDING, set_metadata((HOLDOUTS_PENDING_KEY, PENDING)),
-                      main_tree)
+    recorded = validated.recorded(PENDING)
+    validation.record(epic, recorded, WAITING_HEADLINE, set_metadata((HOLDOUTS_PENDING_KEY, PENDING)), main_tree)
     spec_time_limit.file_design_findings(epic, validated.slow, main_tree)
-    return ValidationResult(False, validated.head, validated.runs, validated.specs.figures, [],
-                            HoldoutsToRun(epic, validated.head, suite.kept, len(listed)))
+    return ValidationResult(recorded, [], HoldoutsToRun(epic, validated.head, suite.kept, len(listed)))
 
 
 def holdouts_to_run(epic: str, shown: dict, home: Path, main_tree: Path) -> HoldoutsToRun:
@@ -209,9 +202,11 @@ def settle_holdouts(epic: str, branch: str, settings: dict, home: Path, main_tre
     verdicts = verdicts_of(to_run.report, holdouts.of_epic(shown))
     red = [verdict for verdict in verdicts if not verdict.passed]
     filed = [file_holdout_failure(epic, verdict, settings, main_tree) for verdict in red]
-    runs = validation.runs_of(metadata_of(shown).get(RUNS_KEY))
-    specs = validation.spec_figures_of(metadata_of(shown))
-    settled = ValidationResult(bool(red), to_run.head, runs, specs, filed, None)
+    recorded = recorded_validation.read(metadata_of(shown))
+    if recorded is None:
+        raise ValidationError(f"{epic} waits on its holdouts but records no {RUNS_KEY} of its validation. Run its "
+                              "validation again by taking the validation metadata off the epic")
+    settled = ValidationResult(replace(recorded, result=FAIL if red else PASS), filed, None)
     env = env_as_factory()
     run(["bd", "comment", epic, f"Holdouts: {len(verdicts) - len(red)} of {len(verdicts)} passed on {to_run.head}."
          + (f" The red ones are filed as {', '.join(filed)}." if filed else "")], main_tree, env)
@@ -221,6 +216,5 @@ def settle_holdouts(epic: str, branch: str, settings: dict, home: Path, main_tre
     if red:
         pass_ledger.end_pass(epic, main_tree)
     else:
-        validation.reach_the_gate(epic, branch, to_run.head, validation.figures_lines(to_run.head, runs, specs),
-                                  hand_run, main_tree)
+        validation.reach_the_gate(epic, branch, settled.recorded, hand_run, main_tree)
     return settled

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -19,8 +20,10 @@ sys.path.insert(0, str(test_scheduler.PLUGIN / "scripts"))
 
 import heartbeat  # noqa: E402
 import slots  # noqa: E402
+import recorded_validation  # noqa: E402
 import spec_time_limit  # noqa: E402
-from validation_specs import SpecsRun, TimedSpecRun  # noqa: E402
+from recorded_validation import CommandRun, RecordedValidation, SuiteCommand  # noqa: E402
+from validation_specs import SpecFigures, SpecsRun, TimedSpecRun  # noqa: E402
 
 HOLDOUTS = test_scheduler.PLUGIN / "scripts" / "holdouts.py"
 SCENARIO = "Run `till total` with items 3.50 and 4.25, then read the line the till prints."
@@ -1036,6 +1039,47 @@ class SpecTimeLimitTests(unittest.TestCase):
         over = spec_time_limit.over_the_limit(settings, run)
 
         self.assertEqual([("mill", 60.0)], [(each.app, each.seconds) for each in over])
+
+
+class RecordedValidationTests(unittest.TestCase):
+    def recorded(self) -> RecordedValidation:
+        runs = [CommandRun(SuiteCommand("shop", "dotnet test"), 0, 1.25, 7, 2, "out"),
+                CommandRun(SuiteCommand("kiosk", "make test"), 1, 0.5, None, 0, "")]
+        slow = [spec_time_limit.OverTheLimit("shop", "shop/specs", 5.0, 9.5, 3,
+                                             (spec_time_limit.SlowSpec("A till total", 4.0),))]
+        return RecordedValidation("fail", "abc123", runs, SpecFigures(3, 9.5), slow)
+
+    def written_then_read(self, recorded: RecordedValidation) -> RecordedValidation | None:
+        arguments = recorded.metadata()
+        pairs = [pair.split("=", 1) for flag, pair in zip(arguments, arguments[1:]) if flag == "--set-metadata"]
+        return recorded_validation.read(dict(pairs))
+
+    def test_a_recorded_validation_is_read_back_as_it_was_written_apart_from_the_output_of_its_commands(self):
+        recorded = self.recorded()
+
+        read = self.written_then_read(recorded)
+
+        without_output = [replace(each, output="") for each in recorded.runs]
+        self.assertEqual(replace(recorded, runs=without_output), read)
+
+    def test_the_totals_are_those_of_the_commands_and_untested_commands_count_no_tests(self):
+        recorded = self.recorded()
+
+        self.assertEqual((7, 2, 1.75), (recorded.tests, recorded.skipped, recorded.seconds))
+
+    def test_no_runs_on_the_epic_is_no_recorded_validation(self):
+        self.assertIsNone(recorded_validation.read({"validation.result": "pass"}))
+
+    def test_a_validation_without_slow_specs_takes_the_key_off_the_epic(self):
+        recorded = replace(self.recorded(), slow=[])
+
+        self.assertEqual(["--unset-metadata", "validation.slow_specs"], recorded.metadata()[-2:])
+
+    def test_the_comment_gives_the_headline_the_figures_and_the_slow_specs(self):
+        lines = self.recorded().comment_lines("Validation failed.")
+
+        self.assertEqual(["Validation failed.", "Validation of abc123: 7 tests, 2 skipped, 1.75 s."], lines[:2])
+        self.assertIn("A till total: 4.0 s", lines)
 
 
 class ValidationSlotHoldTests(unittest.TestCase):

@@ -43,12 +43,11 @@ import diff_view
 import gate_items
 import page as shared
 import settings_reader
+import recorded_validation
 import review
-import spec_time_limit
-import validation
 from acceptance import branch_and_head_at_the_gate, branch_moved_since_validation, main_moved_since_validation
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, metadata_of, read_bead, run, worktree_list
-from epic_reader import EpicReadError, validated_head
+from epic_reader import EpicReadError
 from land import changed_paths, edited_paths, main_checkout
 from pass_support import MAIN_BRANCH, PassError
 from worktrees import stage_worktree
@@ -145,14 +144,8 @@ def changed_files(head: str, main_tree: Path) -> tuple[diff_view.FileDiff, ...]:
 
 
 def evidence_lines(shown: dict) -> tuple[str, ...]:
-    metadata = metadata_of(shown)
-    runs = metadata.get(validation.RUNS_KEY)
-    if not runs:
-        return ()
-    figures = [f"{each.suite.app}: {each.suite.command}, {each.figures()}" for each in validation.runs_of(runs)]
-    return (f"Validation of {validated_head(metadata)} ended {metadata.get(validation.RESULT_KEY) or 'unknown'}: "
-            f"{metadata.get(validation.TESTS_KEY, '?')} tests in {metadata.get(validation.SECONDS_KEY, '?')} s.",
-            *figures)
+    recorded = recorded_validation.read(metadata_of(shown))
+    return tuple(recorded.evidence_lines()) if recorded is not None else ()
 
 
 def checkout_of(epic: str, branch: str, main_tree: Path) -> Checkout:
@@ -199,12 +192,10 @@ def danger_lines(shown: dict, branch: str, head: str, main_tree: Path) -> tuple[
 
 
 def cost_lines(shown: dict) -> tuple[str, ...]:
-    metadata = metadata_of(shown)
-    seconds = metadata.get(validation.SECONDS_KEY)
-    if seconds is None:
+    recorded = recorded_validation.read(metadata_of(shown))
+    if recorded is None:
         return ("No validation time is recorded on this epic.",)
-    slow = spec_time_limit.lines_of(spec_time_limit.of_metadata(metadata.get(spec_time_limit.SLOW_SPECS_KEY)))
-    return (f"Validation took {seconds} s.", *slow)
+    return (f"Validation took {recorded.seconds} s.", *recorded.slow_lines())
 
 
 def gather(epic: str, guide: Guide, home: Path, main_tree: Path) -> GatePage:

@@ -377,9 +377,9 @@ class RecordSectionTests(GatePageCase):
 
     def test_cost_gives_the_seconds_validation_recorded_and_says_so_when_there_are_none(self):
         epic, *_ = self.epic_with_changes()
-        seconds = self.metadata(epic)["validation.seconds"]
+        seconds = test_validation.recorded_validation.read(self.metadata(epic)).seconds
         self.assertIn(f"Validation took {seconds} s.", section_of(self.page_for(epic), "Cost"))
-        fixture.run([self.bd, "update", epic, "--unset-metadata", "validation.seconds"], self.repo)
+        fixture.run([self.bd, "update", epic, "--unset-metadata", "validation.runs"], self.repo)
 
         self.assertIn("No validation time is recorded on this epic.", section_of(self.page_for(epic), "Cost"))
 
