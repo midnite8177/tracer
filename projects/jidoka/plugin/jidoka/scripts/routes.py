@@ -45,8 +45,6 @@ NATIVE_ROUTES: dict[str, dict] = {
 HOST_OWN_ROUTE = native(None, None, None)
 
 
-# The stages that change files, each with the tier the factory skill's Stages and tiers table runs it on. A test
-# compares the two.
 WRITING_STAGE_TIERS: tuple[tuple[str, str], ...] = (
     ("build", "standard"),
     ("build", "deep"),
@@ -67,7 +65,6 @@ def writing_stages_on(tier: str, stage_tiers: dict[str, str]) -> list[str]:
     return stages
 
 
-# The harnesses that run read-only stages only, each with the reason a stage that writes cannot run on it.
 READ_ONLY_HARNESSES: dict[str, str] = {
     CODEX_HARNESS: "codex exec runs read-only review only",
     T3_HARNESS: ("T3 starts a child task in the main checkout or in a checkout of its own, never in a lap's "
@@ -83,6 +80,27 @@ def writing_refusal(tier: str, harness: object, stage_tiers: dict[str, str]) -> 
     if reason is None or not writing:
         return None
     return f"{reason}, so the {tier} tier cannot run on {harness}: {', '.join(writing)} write on it"
+
+
+OPENCODE_DRIVER = "opencode"
+OPENCODE_STAGE = "tidy"
+
+
+def is_opencode_route(route: object) -> bool:
+    """Whether the route is a t3 route whose provider is an OpenCode one, which `driver` names with the driver kind
+    of T3's catalog."""
+    return (isinstance(route, dict) and route.get("harness") == T3_HARNESS
+            and route.get("driver") == OPENCODE_DRIVER)
+
+
+def opencode_refusal(tier: str) -> str | None:
+    """Why a t3 OpenCode route cannot serve the tier, or None when it can. The tier may take the route because its
+    only writing stage is the tidy, whose T3 child has its shell held for approval by T3's auto-accept-edits mode."""
+    writing = writing_stages_on(tier, {})
+    if writing == [OPENCODE_STAGE]:
+        return None
+    on_it = f"{', '.join(writing)} write on it" if writing else f"the {OPENCODE_STAGE} does not run on it"
+    return f"a t3 OpenCode route runs the {OPENCODE_STAGE} alone, so the {tier} tier cannot run on it: {on_it}"
 
 
 class RouteError(Exception):

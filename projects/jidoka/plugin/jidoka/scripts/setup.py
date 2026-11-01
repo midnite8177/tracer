@@ -29,6 +29,12 @@ route needs a provider, a model and an effort. A lap limit that is not a whole n
 is required: the manager passes it only after the human said yes. A proposal that fails a check is refused and
 nothing is written.
 
+A t3 route whose `driver` is `opencode` is the one t3 route a tier that writes can have, and only the tier whose
+writing stage is the tidy alone: the tidy's batches run as T3 children in auto-accept-edits mode, where the edit tool
+goes through and a shell command waits for an approval. T3 reaches OpenCode through the provider the route names, so
+setup looks for nothing of OpenCode on this machine and touches none of its config. The proposal never offers one; the
+human chooses it.
+
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
 Exit codes:
@@ -165,7 +171,8 @@ def check_route(tier: str, route: object) -> None:
         for field in ("provider", "model", "effort"):
             if not rules.is_text(route.get(field)):
                 raise SetupError(f"the t3 route of the tier {tier!r} needs a {field}")
-    refusal = routes.writing_refusal(tier, route.get("harness"), {})
+    refusal = (routes.opencode_refusal(tier) if routes.is_opencode_route(route)
+               else routes.writing_refusal(tier, route.get("harness"), {}))
     if refusal:
         raise SetupError(refusal)
 

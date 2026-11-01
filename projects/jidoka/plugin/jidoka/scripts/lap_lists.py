@@ -77,7 +77,8 @@ LAP = "lap"
 CHECK = "check"
 LOOKS_REFUSING = ["--output"]
 SPECS_REFUSING = ["--jidoka-home"]
-PASS_PREFIXES = [cleanup.STAGE.prefix, tidy.STAGE.prefix, review.REVIEW_PREFIX, review.FIX_PREFIX]
+PASS_PREFIXES = [cleanup.STAGE.prefix, tidy.STAGE.prefix, tidy.LOCAL_STAGE.prefix, review.REVIEW_PREFIX,
+                 review.FIX_PREFIX]
 PART_ERRORS = (lap_record.NotALapWorktree, rules.RulesError, CommandError, settings_reader.SettingsError, OSError)
 Part = TypeVar("Part")
 

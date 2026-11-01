@@ -17,6 +17,7 @@ import cleanup
 import holdouts_run
 import review
 import tidy
+import tidy_trial
 import validation_merge
 from epic_reader import Epic
 from epics import state_of
@@ -56,7 +57,7 @@ REPORT_MODES = {
                                  None),
     "report-tidy": ReportMode("tidy", tidy.ACTION,
                               "take the word of every tidy batch's worker that it is done, and print the next moves",
-                              tidy.settle, None),
+                              tidy_trial.settle, None),
     "report-review": ReportMode("review", review.REVIEW_ACTION,
                                 "take the reports of the review's lanes, and print the next moves", review.settle,
                                 None),
@@ -111,7 +112,7 @@ def pass_stage_actions(epic: Epic, settings: Settings, home: Path, main_tree: Pa
     cleaned = cleanup.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
     if cleaned is not None:
         return [cleaned.fields()]
-    tidied = tidy.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
+    tidied = tidy_trial.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
     if tidied is not None:
         return tidied.actions()
     fixing = review.fix_to_run(epic.id, epic.shown, branch, settings, home, main_tree)

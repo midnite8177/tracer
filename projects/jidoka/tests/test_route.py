@@ -131,6 +131,17 @@ class FallbackTests(RouteCase):
 
         self.assertTrue(printed["rerun"])
 
+    def test_a_failed_tidy_batch_reruns_on_native_sonnet_and_each_batch_of_the_pass_falls_back_once(self):
+        epic = self.new_task()
+
+        first = self.fall_back(epic, "tidy", "local", "abc123-batch-1")
+        second = self.fall_back(epic, "tidy", "local", "abc123-batch-2")
+        again = self.fall_back(epic, "tidy", "local", "abc123-batch-2")
+
+        self.assertEqual({"rerun": True, "route": NATIVE_LOCAL}, first)
+        self.assertEqual({"rerun": True, "route": NATIVE_LOCAL}, second)
+        self.assertFalse(again["rerun"])
+
     def test_a_route_that_already_runs_natively_has_nothing_to_fall_back_to(self):
         task = self.new_task()
 

@@ -24,7 +24,14 @@ and writes the machine settings in `~/.jidoka`, so it runs from any folder.
      Codex, on model gpt-6.1-sol at high effort when the catalog offers
      them, else on a model and effort it does offer. A t3 route needs a
      provider, a model and an effort, and no tier whose stages write may
-     take it, as none may take codex. Without a catalog, and when `codex` is not on the PATH, the
+     take it, as none may take codex. The one exception is the local tier,
+     which runs the tidy alone: the human can choose a t3 route there on an
+     OpenCode provider of the catalog, written with `"driver": "opencode"`
+     beside its provider, model and effort. Setup never proposes it. It
+     accepts it for the local tier alone, because the child runs in T3's
+     auto-accept-edits mode, where a shell command waits for an approval
+     no one gives, and refuses it for any tier that writes more than the
+     tidy. Without a catalog, and when `codex` is not on the PATH, the
      second tier is proposed on native Opus, which is claude at its Opus
      model.
    - the default budget, in dollars at list price. It is lower for an
@@ -45,6 +52,7 @@ and writes the machine settings in `~/.jidoka`, so it runs from any folder.
    settings are as they were.
 4. **Write.** Only after the human said yes, pipe the confirmed proposal to
    `setup.py write --confirmed` on stdin. It checks all four parts before
-   it writes any, and keeps every other machine setting. When it refuses,
+   it writes any, and keeps every other machine setting. It touches
+   nothing in OpenCode's config. When it refuses,
    show its message, fix the proposal with the human and run it again.
 5. **Report.** Say which settings were written.

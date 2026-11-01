@@ -20,6 +20,7 @@ The scripts, run from inside the repo:
 - route: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/route.py"`
 - codex lane: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/codex_lane.py"`
 - T3 lane: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_lane.py"`
+- T3 tidy: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_tidy.py"`
 - repo settings: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py"`
 - watcher: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/watch.py"`
 - T3 waker: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_wake.py"`
@@ -130,6 +131,21 @@ write one line that says the second tier fell back to the native route. That
 is no failure, and `route fallback` is not called for it. A child that
 fails, or a refusal of the T3 lane script, is a failed route: run `route
 fallback` as for codex.
+
+The local tier's route can be t3 OpenCode: its harness is `t3` and its
+`driver` is `opencode`. Its one stage is the tidy, and the manager runs each
+tidy batch as an OpenCode child task in T3's auto-accept-edits mode, with the T3 tidy
+script, as the tidy paragraph of step 4 says. A host with no `delegate_task`
+tool cannot start the child: start each batch as an agent on the local
+tier's native route, before anything else runs, and write one line that
+says the local tier fell back to the native route. That is no failure, and
+`route fallback` is not called for it. A batch whose child fails, or a
+refusal of the T3 tidy script, is a failed route: run `route fallback` for
+it with the epic as the bead, `tidy` as the stage, `local` as the tier and
+`<head>-batch-<batch>` as the mark, with the action's `head` and `batch`,
+so that each batch falls back once. A child that asks for an approval is such
+a failure, and it is one at once: the tidy paragraph of step 4 says how. Start that batch again as an agent on
+the printed route, native Sonnet, with the prompt of a native batch.
 
 ## Steps
 
@@ -401,10 +417,13 @@ fallback` as for codex.
    Actions whose `action` is `tidy` come together, one for each tidy batch,
    and have no task: every task has merged and the test cleanup is done. Each
    batch is a few of the epic's files, its own `files`, numbered by its
-   `batch`. Run `bench route local` once, and start one lap worker for each
-   batch, side by side, all on that route; the local route runs in the host's
-   own harness until the local-model trial, so it falls back to native with
-   no extra step. Each prompt's first line is
+   `batch`. Each also holds `base`, the commit where the epic branch left
+   main, so that a worker can see the epic's change to its `files`. Run
+   `bench route local` once. When its harness is `t3` and its `driver` is
+   `opencode`, run every batch as the T3 tidy paragraph below says. Otherwise
+   start one lap worker for each batch, side by side, all on that route; a
+   route whose harness this session has no tool to start falls back to native
+   with no extra step. Each prompt's first line is
    `jidoka lap worktree: <worktree>`, the action's `worktree`, which the
    batches share. Each prompt holds the paths of the glossary and the house
    rules, and these limits: it works only in the worktree, commits nothing,
@@ -427,6 +446,69 @@ fallback` as for codex.
    `{"outcome": "failed", "why": "<one line>"}`. Write the event line
    `<epic-id> tidy started: batch <batch>, <files> files on <head>` for each,
    with the count of the action's `files`.
+
+   When the local tier's route is t3 OpenCode, each batch is a T3 child task
+   in T3's auto-accept-edits mode, which lets its edits through with
+   OpenCode's edit tool and holds any shell command for approval. No one gives
+   that approval, and T3 ends a wait on the child when the child asks for one,
+   so a batch that tries a shell command fails and falls back at once, and this session
+   has to have the `delegate_task` tool for it; without it, the batches fall
+   back as the routes paragraph above says. Otherwise, for each batch, side
+   by side:
+
+   1. Save the batch action, the JSON object the scheduler printed, with the
+      Write tool to `<scratch>/action.json`. Run `T3 tidy start --action
+      <scratch>/action.json --doc <path> ... --jidoka-home ...`, with one
+      `--doc` for the glossary and for each file of the house rules. It
+      records the route and the start, and prints `delegate_task`, whose task
+      holds the batch's diff and its files by absolute path, `reply`,
+      `wall_seconds` and `deadline`. Exit 1 is the route failing: run `route
+      fallback`.
+   2. Call `delegate_task` with the printed `delegate_task` object as its
+      arguments, changed in no part. It is a wait: the call returns when the
+      child ends, when the printed `timeoutMs` passes, or as soon as the child
+      asks for an approval or puts a question. Keep the `taskId`. When it
+      returns before the printed `deadline`, which is in epoch seconds, with
+      the child not ended, the child asked: call `task_cancel` with the
+      `taskId`, save no reply, and run step 4 with `--asked-for-approval`.
+      When the child is not ended and the time has passed the `deadline`,
+      call `task_cancel` with the `taskId` and go on to step 4 with no reply.
+      Otherwise read `task_status` until the `workState` is
+      `result_available`.
+   3. Save the child's last reply, verbatim, with the Write tool to the
+      printed `reply` path. That file and the action file are the only
+      files the manager writes. When the child failed, asked for an
+      approval, was cancelled or left no reply, save nothing there.
+   4. Run `T3 tidy finish --scratch <scratch> --jidoka-home ...`, with
+      `--asked-for-approval` when step 2 cancelled the child for asking. The script
+      records the batch's ledger row with harness t3, the route's model and
+      effort, the wall time and the outcome, with no tokens; a run past the
+      deadline is `cut off`, any other failure, a child that asked for an
+      approval included, `failed`. It exits 0 when
+      the child ended `{"outcome": "done"}`. Any other exit is the route
+      failing, a run past the deadline and a main checkout that changed
+      while the child ran included. The script has put the batch's files
+      back as they were: run `route fallback` for it as the routes paragraph
+      says, and start the batch again as an agent on the printed route.
+
+   An epic on the local-model trial (its rule `local_trial`) tidies twice in
+   its first pass, one tidy after the other, never together. The first tidy's
+   batch actions hold `route` `local`: run them as above, on the local tier's
+   route. The local tidy is evidence only; the scheduler keeps it on a ref of
+   its own and changes nothing on the epic branch. Its report prints the
+   second tidy, whose batch actions hold `route` `native` and `native_route`:
+   start one lap worker for each batch on `native_route`, the local tier's
+   native route, even when the local tier's route is t3 OpenCode, and call
+   the T3 tidy script for none of them. Name each of those workers in the
+   report as `--worker <agent id> local native`, so that the ledger prices it
+   as the native model. Write the event lines of each tidy as above. The
+   second tidy's report prints the review.
+
+   The tidy's report names no `--worker` for a batch that ran as a T3 child,
+   because the script wrote its row. The edits a child leaves are in the
+   shared worktree, and the tidy's report commits them as it does the edits
+   of any worker. Write the batch's event line with `t3` for the model, and
+   a second line when the batch reruns, with the printed route's model.
 
    Actions whose `action` is `review` come together, one for each lane that
    runs, and have no task: the tidy is done. The `comments`, `standards` and
@@ -598,7 +680,8 @@ fallback` as for codex.
    each run from the tokens the lap mod summed under its agent id, and
    writes it with no task. A `spec` lane that ran in codex or as a T3 child
    task has no agent id, and its script wrote its row, so the review's report
-   names no `--worker` for it. A worker that reran on the native route after `route fallback` is
+   names no `--worker` for it; a tidy batch that ran as a T3 child task is
+   the same, and the tidy's report names no `--worker` for it. A worker that reran on the native route after `route fallback` is
    named with the tier it failed on and the word `native` after it, as
    `--worker <agent id> second native`, so that its row is priced as the
    native route's model, not as codex. A task report names it with

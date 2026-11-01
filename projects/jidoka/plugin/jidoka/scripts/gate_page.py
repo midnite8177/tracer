@@ -14,9 +14,13 @@ change works; `steps`, a list of numbered steps that reach the change in the run
 what no test or holdout checked. Every other part is read from git, bd, the repo settings and the jidoka home.
 
 The page reads top to bottom: In short, Before and after, How it works, What changed, Evidence, Assumptions, Design
-findings, Tests removed, What nothing checked, Cost, Merge danger and Decide. What changed lists every file the epic
-branch changes from main, and each file opens its real diff in a unified or a split layout. Evidence holds the
-validation figures, the worktree of the epic branch, each app's build and run commands and the guide's steps.
+findings, Tests removed, Tidy trial, What nothing checked, Cost, Merge danger and Decide. Tidy trial is there only for
+an epic that ran the local-model trial (tidy_trial.py), and sets its two tidies side by side: for each the route, the
+model, the wall time, the files changed and the diff, and for the local one each batch, named as done by the local model
+or as fallen back to the native route's model, with a note on a batch whose child ran out the wall clock. What changed
+lists every file the epic branch changes from main, and each file opens its real diff in a unified or a split layout.
+Evidence holds the validation figures, the worktree of the epic branch, each app's build and run commands and the
+guide's steps.
 Assumptions are numbered as the gate comment numbers them, and list the public API changes and the beads found outside
 the epic after them, all read by gate_items.py. Decide marks `data-jidoka-slot="decide-panel"`, where jidoka-ui draws
 Merge and Drop. Send back runs in /jidoka:accept.
@@ -33,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
@@ -42,9 +47,11 @@ import design_findings
 import diff_view
 import gate_items
 import page as shared
+import routes
 import settings_reader
 import recorded_validation
 import review
+import tidy_trial
 from acceptance import branch_and_head_at_the_gate, branch_moved_since_validation, main_moved_since_validation
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, capture, keeping_reads, metadata_of, read_bead, run,
                       worktree_list)
@@ -82,6 +89,13 @@ class Checkout:
 
 
 @dataclass(frozen=True)
+class TrialTidyDiff:
+    """One tidy of the local-model trial, and the files of its diff."""
+    tidy: tidy_trial.TrialTidy
+    files: tuple[diff_view.FileDiff, ...]
+
+
+@dataclass(frozen=True)
 class GatePage:
     """What the gate page shows: the epic and its guide, then what the scripts read from git, bd and the settings."""
     epic: str
@@ -98,6 +112,7 @@ class GatePage:
     open_findings: tuple[design_findings.OpenFinding, ...]
     low_findings: tuple[review.Finding, ...]
     removals: tuple[cleanup.Removal, ...]
+    trial: tuple[TrialTidyDiff, ...]
     hand_run: tuple[settings_reader.HandRunGroup,...]
     cost: tuple[str, ...]
     danger: tuple[str, ...]
@@ -195,6 +210,13 @@ def cost_lines(shown: dict) -> tuple[str, ...]:
     return (f"Validation took {recorded.seconds} s.", *recorded.slow_lines())
 
 
+def trial_tidies(shown: dict, main_tree: Path) -> tuple[TrialTidyDiff, ...]:
+    """The tidies the epic's local-model trial ran, the local one first, each with its diff read from git."""
+    ran = tidy_trial.trial_of(shown)
+    return tuple(TrialTidyDiff(ran[route], tuple(diff_view.parse(tidy_trial.diff_of(ran[route], main_tree))))
+                 for route in (tidy_trial.LOCAL, tidy_trial.NATIVE) if route in ran)
+
+
 def gather(epic: str, guide: Guide, home: Path, main_tree: Path) -> GatePage:
     """Reads everything the page shows; raises GatePageError when the epic does not wait at the gate."""
     shown = read_bead(epic, main_tree)
@@ -207,7 +229,7 @@ def gather(epic: str, guide: Guide, home: Path, main_tree: Path) -> GatePage:
                     checkout_of(epic, branch, main_tree), settings.apps,
                     gate_items.gate_items(epic, str(shown.get("title") or ""), main_tree), tuple(findings),
                     tuple(review.stored_findings(shown, review.LOW_KEY)), tuple(cleanup.removed_before(shown)),
-                    settings.hand_run(), cost_lines(shown),
+                    trial_tidies(shown, main_tree), settings.hand_run(), cost_lines(shown),
                     danger_lines(shown, branch, head, main_tree))
 
 
@@ -237,15 +259,20 @@ def how_it_works(guide: Guide) -> str:
     return shared.diagram(guide.how, "How the change works, step by step")
 
 
-def file_html(file: diff_view.FileDiff) -> str:
+def both_layouts(file: diff_view.FileDiff) -> str:
+    return f"{diff_view.unified(file)}\n{diff_view.split(file)}"
+
+
+def file_html(file: diff_view.FileDiff, css_class: str, layouts: Callable[[diff_view.FileDiff], str]) -> str:
+    """One file's `details` element, of the class, whose body is what `layouts` draws of its hunks."""
     counts = f'<span class="add">+{file.added}</span> <span class="del">-{file.removed}</span>'
     if file.status == diff_view.BINARY:
         body = paragraph("Git cannot show a binary file as text.")
     elif not file.hunks:
         body = paragraph("The file's content did not change.")
     else:
-        body = f"{diff_view.unified(file)}\n{diff_view.split(file)}"
-    return (f'<details class="file" data-path="{escape(file.path, quote=True)}">\n'
+        body = layouts(file)
+    return (f'<details class="{css_class}" data-path="{escape(file.path, quote=True)}">\n'
             f'<summary><span class="path">{escape(file.path)}</span> <span class="status">{file.status}</span> '
             f'{counts}</summary>\n{body}\n</details>')
 
@@ -255,7 +282,8 @@ def what_changed(page: GatePage) -> str:
     toggle = ('<div class="layout"><input type="radio" name="diff-layout" id="layout-unified" checked>'
               '<label for="layout-unified">Unified</label>'
               '<input type="radio" name="diff-layout" id="layout-split"><label for="layout-split">Split</label></div>')
-    files = "\n".join(file_html(each) for each in page.files) or paragraph("No file differs from main.")
+    files = ("\n".join(file_html(each, "file", both_layouts) for each in page.files)
+             or paragraph("No file differs from main."))
     return (f"<h3>Commits</h3>\n{commits}\n<h3>{len(page.files)} files</h3>\n{toggle}\n{files}")
 
 
@@ -323,6 +351,41 @@ def tests_removed(page: GatePage) -> str:
     return f"<table><tr><th>Test</th><th>File</th><th>Covered by</th></tr>{rows}</table>"
 
 
+def fallen_back_to() -> str:
+    """The model the local tier's native route names, which a batch the local model did not do fell back to."""
+    model = routes.native_route_of(tidy_trial.TIER).get("model")
+    return model.capitalize() if isinstance(model, str) and model else "the native route"
+
+
+def batch_line(batch: tidy_trial.TrialBatch) -> str:
+    if batch.local:
+        return f"Batch {batch.number}: the local model did it"
+    ran_out = ("; its child ran out the wall clock"
+               if batch.cut_off else "")
+    return f"Batch {batch.number}: fell back to {fallen_back_to()}{ran_out}"
+
+
+def trial_tidy_html(each: TrialTidyDiff) -> str:
+    ran = each.tidy
+    title = "Local route" if ran.route == tidy_trial.LOCAL else "Native route"
+    model = ", ".join(part for part in (ran.model, f"effort {ran.effort}" if ran.effort else None) if part)
+    cut_off = sum(batch.cut_off for batch in ran.batches)
+    figures = bullets([f"Harness: {ran.harness or 'unknown'}", f"Model: {model or 'unknown'}",
+                       f"Wall time: {ran.seconds} s",
+                       f"{len(each.files)} file{'' if len(each.files) == 1 else 's'} changed",
+                       *([f"{cut_off} of {len(ran.batches)} batches ran out the wall clock"] if cut_off else [])])
+    who = bullets([batch_line(batch) for batch in ran.batches]) if ran.batches else ""
+    files = ("\n".join(file_html(file, "trial-file", diff_view.unified) for file in each.files)
+             or paragraph("This tidy changed no file."))
+    return f'<div class="example"><h3>{title}</h3>\n{figures}\n{who}\n{files}</div>'
+
+
+def tidy_trial_html(page: GatePage) -> str:
+    return ('<p>The epic ran its first pass\'s tidy twice from one head. The native tidy is on the epic branch, and '
+            'the local one is kept only as evidence.</p>\n<div class="examples">\n'
+            + "\n".join(trial_tidy_html(each) for each in page.trial) + "\n</div>")
+
+
 def unchecked(page: GatePage) -> str:
     parts = []
     if page.guide.unchecked:
@@ -350,6 +413,7 @@ def body(page: GatePage) -> str:
         section("Assumptions", assumptions(page), ""),
         section("Design findings", design_findings_html(page), ""),
         section("Tests removed", tests_removed(page), ""),
+        section("Tidy trial", tidy_trial_html(page), "") if page.trial else "",
         section("What nothing checked", unchecked(page), ""),
         section("Cost", bullets(page.cost), ""),
         section("Merge danger", bullets(page.danger), ""),

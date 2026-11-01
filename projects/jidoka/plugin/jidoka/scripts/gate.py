@@ -74,7 +74,8 @@ call of the scheduler runs the new tasks and the pass cleans and tidies again. A
 each note once files nothing.
 
 `drop <epic>` closes the epic without landing it, records gate.decision=drop, ends the laps still open on its tasks,
-and removes the factory and human labels. The epic branch stays.
+and removes the factory and human labels. The epic branch stays. Landing and dropping both delete the ref that keeps
+the local tidy of an epic on trial.
 
 An epic whose human label comes off with no decision is parked again by the scheduler, as gate_guard.py says.
 
@@ -110,6 +111,7 @@ import pass_ledger
 import settings_reader
 import rules
 import t3_wake
+import tidy_trial
 from acceptance import branch_and_head_at_the_gate, moved_since_validation
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, MAIN_REF, CommandError, capture,
                       env_as_git_user, labels_of, metadata_of, read_bead, run, set_metadata, unset_metadata,
@@ -310,12 +312,14 @@ def remove_branches(epic: EpicAtTheGate, main_tree: Path) -> None:
 
 
 def release_from_factory(epic: EpicAtTheGate, home: Path, main_tree: Path, env: dict[str, str]) -> list[str]:
-    """Takes the factory and human labels off the epic and forgets its T3 record and waker, as landing or dropping the
-    epic does, and returns the label steps that failed."""
+    """Takes the factory and human labels off the epic, deletes the ref that keeps its local tidy, and forgets its T3
+    record and waker, as landing or dropping the epic does, and returns the steps that failed."""
     failed: list[str] = []
     for label in (FACTORY_LABEL, HUMAN_LABEL):
         if label in epic.labels:
             attempt(f"bd label remove {label}", ["bd", "label", "remove", epic.id, label], main_tree, env, failed)
+    attempt("delete the ref of the local tidy", ["git", "update-ref", "-d", tidy_trial.ref_of(epic.id)], main_tree,
+            None, failed)
     t3_wake.forget(home, epic.id)
     return failed
 

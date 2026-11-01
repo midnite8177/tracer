@@ -25,6 +25,9 @@ The settings:
   reserves                   an object of account names to a share above 0 and
                              below 1 of that account's usage window.
   commits_on_main            one or per_task.
+  local_trial                true to make the epic's first pass run the tidy twice from the same head: on the
+                             local tier's route, kept on a ref of its own as evidence, and native, which lands on
+                             the epic branch.
 
 `show <epic>` prints the epic, its settings and its guidance as JSON.
 
@@ -80,6 +83,7 @@ ONE_COMMIT = "one"
 PER_TASK = "per_task"
 COMMITS_ON_MAIN = [ONE_COMMIT, PER_TASK]
 EXTRA_COMMANDS = "extra_commands"
+LOCAL_TRIAL = "local_trial"
 
 
 class RulesError(Exception):
@@ -126,6 +130,7 @@ SETTINGS: dict[str, tuple[Callable[[object], bool], str]] = {
     "reserves": (lambda value: is_map_of(value, is_share),
                  "an object of account names to a share above 0 and below 1"),
     "commits_on_main": (lambda value: value in COMMITS_ON_MAIN, f"one of {', '.join(COMMITS_ON_MAIN)}"),
+    LOCAL_TRIAL: (lambda value: isinstance(value, bool), "true or false"),
 }
 
 @dataclass(frozen=True)
@@ -150,6 +155,11 @@ class Rules:
     """An epic's settings by name, and its guidance, or an empty string when it has none."""
     settings: dict[str, object]
     guidance: str
+
+    @property
+    def local_trial(self) -> bool:
+        """Whether the epic's first pass runs the tidy twice: on the local route, and native."""
+        return self.settings.get(LOCAL_TRIAL) is True
 
     @property
     def commits_on_main(self) -> str:

@@ -110,7 +110,7 @@ class FactoryRulesTests(test_scheduler.SchedulerCase):
         wanted = {"lap_test_scope": "full", "lap_limit": 1, "wall_clocks": {"build": 30}, "passes": 2,
                   "discovered_bugs_into_epic": True, "extra_commands": ["make lint"],
                   "tier_routes": {"deep": "opus-high"}, "stage_tiers": {"build": "deep"}, "budget": 12.5,
-                  "reserves": {"home": 0.2}, "commits_on_main": "per_task"}
+                  "reserves": {"home": 0.2}, "commits_on_main": "per_task", "local_trial": True}
 
         self.rules_set(epic, *(f"{name}={json.dumps(value)}" for name, value in wanted.items()))
 
@@ -118,6 +118,15 @@ class FactoryRulesTests(test_scheduler.SchedulerCase):
         self.assertEqual(wanted, shown["settings"])
         self.assertEqual(len(wanted), len(self.rule_comments(epic)))
         self.assertTrue(all("\n" not in comment["text"] for comment in self.rule_comments(epic)))
+
+    def test_the_local_trial_is_true_or_false_and_nothing_else(self):
+        epic = self.handed_off_epic(1)
+
+        done = self.rules("set", epic, "local_trial=yes")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("local_trial must be true or false", done.stderr)
+        self.assertNotIn("rules.local_trial", self.metadata(epic))
 
     def test_a_bare_word_is_taken_as_text_and_a_change_names_the_value_it_replaced(self):
         epic = self.handed_off_epic(1)

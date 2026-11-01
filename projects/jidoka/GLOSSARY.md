@@ -204,8 +204,16 @@ over the files the epic added or changed outside the acceptance folders, in
 tidy batches side by side on the local tier, with no human prompt. It edits
 only those files and may add a new file, never in an acceptance folder, and
 once every batch's worker is done a script commits their changes as one
-commit of their own. The local tier falls back to the
-host's own harness until the local-model trial.
+commit of their own. The local tier can route to t3 OpenCode: each batch then
+runs as a child task started in T3's auto-accept-edits mode, so its edits go
+through and a shell command asks for an approval, which no one gives. The
+batch's action carries the epic's base and its file list, the child's task
+holds the diff against the base, and the child edits the files through
+OpenCode's edit tool. T3 ends the manager's wait on a child as soon as the
+child asks for an approval, so the manager cancels it and the batch fails at
+once. A batch whose child fails, asks for an approval, or runs out its time
+reruns on the native route; a child that ran out its time is told
+from one that failed in the ledger and on the gate page.
 _Avoid_: Polish, comment pass, prose cleanup
 
 **Tidy batch**:
@@ -213,6 +221,26 @@ A slice of the tidy's files, a few of them and of a bounded size, that one
 tidy worker reads whole and edits. The batches of one tidy share its
 worktree and its head, and no file is in two of them.
 _Avoid_: Lane (that is the review's), chunk, shard
+
+**Local-model trial**:
+A factory rule, `local_trial`, that makes an epic's first pass run the tidy
+twice from the same head, one tidy after the other: first on the local
+tier's route, then native. The native tidy lands on the epic branch as every
+tidy does. The local tidy is evidence only: its commit is kept on a ref of
+its own, the epic branch does not change, and landing or dropping the epic
+deletes the ref. The acceptance gate page shows the two tidies side by
+side, each with its route, model, wall time, files changed and diff, so the
+human can judge the local route on one real pass. The gate has no button to
+switch routes; the human changes the local route with `/jidoka:setup`.
+_Avoid_: Bake-off, A/B test, shadow run
+
+**Trial tidy**:
+One of the local-model trial's two tidies, the local tidy or the native
+tidy. The epic records each with the route that ran it, as the settings
+named it when the tidy was first handed out, its wall time, its commit and
+its files, and for the local tidy each batch with whether the local model
+did it.
+_Avoid_: Arm, side, variant
 
 **Review**:
 The stage of a pass after the tidy, in which the Comments, Standards and
@@ -593,10 +621,19 @@ harness, or in another harness. A t3 route is a child task that T3 runs on
 a provider, a model and an effort from its catalog, which setup reads under
 T3. A t3 route, like a codex route, may not serve a tier whose stages
 write: T3 starts a child in the main checkout or in a checkout of its own,
-never in a lap's worktree. Each machine keeps its own routes, and a route
-that cannot run falls back to the host's harness. A route that fails reruns
-its stage once on the native route, the host's own harness at the model and
-effort the tier asks for; a second failure is the stage's own failure.
+never in a lap's worktree. The one exception is a t3 OpenCode route, which
+names `opencode` as its driver and serves the local tier, whose only writing
+stage is the tidy: its child runs in T3's auto-accept-edits mode, where a
+shell command asks for an approval, and changes the files of the tidy's
+worktree through OpenCode's edit tool. T3 cannot pick an OpenCode agent, so
+the child runs under OpenCode's default one. A child that asks for such an
+approval fails its batch at once and falls back; the lap mod, which
+keeps a permission prompt from holding a lap, does not guard a T3 child.
+Setup checks nothing of OpenCode on the machine for the route. Each machine
+keeps its own routes, and a route that cannot run falls back to the host's
+harness. A route that fails reruns its stage once on the native route, the
+host's own harness at the model and effort the tier asks for; a second
+failure is the stage's own failure.
 _Avoid_: Provider, backend, adapter
 
 **Machine settings**:

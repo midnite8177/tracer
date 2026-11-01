@@ -70,6 +70,17 @@ class TidyStartsAfterTheTestCleanupTests(TidyCase):
         self.assertEqual([], self.validation_runs_of(epic))
         self.assertTrue(Path(action["worktree"]).is_dir())
 
+    def test_each_tidy_action_carries_the_epics_base_and_no_diff(self):
+        files = {f"till_{number}.txt": f"total = {number}  # add one\n" for number in range(1, 6)}
+        _, printed = self.finish_epic_whose_task_built(files)
+
+        actions = self.tidy_actions_of(printed)
+
+        self.assertEqual(2, len(actions))
+        for action in actions:
+            self.assertEqual(test_validation.git(self.repo, "rev-parse", "main"), action["base"])
+            self.assertNotIn("diff", action)
+
     def test_no_tidy_starts_while_a_task_of_the_epic_is_still_open(self):
         epic = self.new_epic()
         first = self.new_task_under(epic)

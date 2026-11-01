@@ -155,11 +155,10 @@ def owed_in_worktree(stage: Stage, epic: str, shown: dict, branch: str, settings
     return found
 
 
-def settle_worktree(found: StageToRun, check: Callable[[list[str]], None], settings: Settings, home: Path,
-                    main_tree: Path) -> Committed:
+def commit_worktree(found: StageToRun, check: Callable[[list[str]], None], settings: Settings) -> Committed:
     """Takes what the stage's worker left in its worktree: stages it, refuses a path inside an acceptance folder and
-    a path the stage may not touch, lets `check` refuse the changed paths, commits them as one commit, moves the epic
-    branch to it and removes the worktree. Nothing is committed when nothing changed."""
+    a path the stage may not touch, lets `check` refuse the changed paths, and commits them as one commit in the
+    worktree. Nothing is committed when nothing changed, and the head is then the one the worker started from."""
     changed = changed_within(found.worktree, found.files, protected_folders(settings), found.stage.name,
                              found.stage.allowed_kind, found.stage.may_add_files)
     check(changed)
@@ -167,9 +166,17 @@ def settle_worktree(found: StageToRun, check: Callable[[list[str]], None], setti
     if changed:
         run(["git", "commit", "--quiet", "--message", found.stage.commit_message], found.worktree, env_as_factory())
         head = head_of("HEAD", found.worktree) or found.head
-        move_epic_branch(found.branch, found.head, head, home, main_tree)
-    remove_worktree(found.worktree, main_tree)
     return Committed(head, changed)
+
+
+def settle_worktree(found: StageToRun, check: Callable[[list[str]], None], settings: Settings, home: Path,
+                    main_tree: Path) -> Committed:
+    """Commits what the stage's worker left, as `commit_worktree` does, moves the epic branch to the commit and
+    removes the worktree."""
+    committed = commit_worktree(found, check, settings)
+    move_epic_branch(found.branch, found.head, committed.head, home, main_tree)
+    remove_worktree(found.worktree, main_tree)
+    return committed
 
 
 def epic_files(branch_head: str, settings: Settings, main_tree: Path) -> list[str]:

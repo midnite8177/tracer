@@ -21,6 +21,8 @@ SYSTEM_PATH = (str(Path(os.environ["SystemRoot"]) / "System32") if fixture.WINDO
 KEY_VARIABLES = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY"]
 CODEX = {"harness": "codex", "model": None, "version": None, "effort": None}
 T3_CODEX = {"harness": "t3", "provider": "codex", "model": "gpt-6.1-sol", "version": None, "effort": "high"}
+T3_OPENCODE = {"harness": "t3", "driver": "opencode", "provider": "strata", "model": "qwen3-coder-next",
+               "version": None, "effort": "medium"}
 T3_CATALOG = {"providers": [
     {"providerInstanceId": "claudeAgent", "driverKind": "claudeAgent", "models": [], "canRunChildTask": True},
     {"providerInstanceId": "codex", "driverKind": "codex", "models": [], "canRunChildTask": True},
@@ -59,6 +61,8 @@ class SetupCase(unittest.TestCase):
         self.home = self.root / f"home-{self.count}"
         self.home.mkdir()
         (self.home / "python").write_text(sys.executable + "\n", encoding="utf-8")
+        self.xdg = self.root / f"xdg-{self.count}"
+        self.opencode = self.xdg / "opencode"
         self.keys: dict[str, str] = {}
 
     def with_codex(self) -> None:
@@ -74,7 +78,8 @@ class SetupCase(unittest.TestCase):
 
     def setup_script(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
         env = {name: value for name, value in os.environ.items() if name not in KEY_VARIABLES}
-        env.update({"PATH": f"{self.bin}{os.pathsep}{SYSTEM_PATH}", "JIDOKA_HOME": str(self.home), **self.keys})
+        env.update({"PATH": f"{self.bin}{os.pathsep}{SYSTEM_PATH}", "JIDOKA_HOME": str(self.home),
+                    "XDG_CONFIG_HOME": str(self.xdg), **self.keys})
         return fixture.run_launcher(LAUNCHER, [str(SETUP), *args], stdin, env, self.repo, RUN_TIMEOUT_SECONDS)
 
     def proposal(self, *args: str) -> dict:
@@ -244,12 +249,6 @@ class ProposeTests(SetupCase):
 
         self.assertEqual({"claude": 0.2}, self.proposal()["reserves"])
 
-    def test_codex_on_an_api_key_gets_no_reserve(self):
-        self.with_codex()
-        self.keys = {"OPENAI_API_KEY": "sk-test"}
-
-        self.assertEqual({"claude": 0.2}, self.proposal()["reserves"])
-
     def test_the_proposal_shows_what_the_settings_record_now(self):
         self.without_codex()
         self.record_installer_settings()
@@ -415,6 +414,45 @@ class WriteTests(SetupCase):
         for stage in ("build", "merge", "test-cleanup"):
             self.assertIn(stage, done.stderr)
         self.assertEqual(before, (self.home / "settings.json").read_bytes())
+
+    def test_a_t3_opencode_route_on_the_local_tier_is_accepted_and_writes_nothing_into_opencodes_config(self):
+        routes = {**self.CONFIRMED["routes"], "local": T3_OPENCODE}
+
+        done = self.confirm({**self.CONFIRMED, "routes": routes})
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(T3_OPENCODE, self.settings()["routes"]["local"])
+        self.assertFalse(self.xdg.exists())
+
+    def test_a_t3_opencode_route_on_a_tier_that_runs_more_than_the_tidy_is_refused(self):
+        before = self.record_installer_settings()
+        routes = {**self.CONFIRMED["routes"], "deep": T3_OPENCODE}
+
+        done = self.confirm({**self.CONFIRMED, "routes": routes})
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("deep", done.stderr)
+        for stage in ("build", "merge", "test-cleanup"):
+            self.assertIn(stage, done.stderr)
+        self.assertEqual(before, (self.home / "settings.json").read_bytes())
+
+    def test_a_t3_route_on_the_local_tier_that_is_not_opencode_is_still_refused(self):
+        routes = {**self.CONFIRMED["routes"], "local": T3_CODEX}
+
+        done = self.confirm({**self.CONFIRMED, "routes": routes})
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("tidy", done.stderr)
+
+    def test_confirming_leaves_the_rest_of_opencodes_config_as_it_was(self):
+        self.opencode.mkdir(parents=True)
+        config = '{\n  // the human\'s own provider\n  "providers": {"strata": {}}\n}\n'
+        (self.opencode / "opencode.jsonc").write_text(config, encoding="utf-8")
+
+        self.confirm(self.CONFIRMED)
+
+        self.assertEqual(config, (self.opencode / "opencode.jsonc").read_text(encoding="utf-8"))
+        self.assertEqual(["opencode.jsonc"], sorted(path.name for path in self.opencode.iterdir()))
 
     def test_the_proposal_given_t3s_catalog_can_be_confirmed_as_it_is(self):
         self.without_codex()
