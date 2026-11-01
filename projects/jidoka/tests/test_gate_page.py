@@ -16,7 +16,8 @@ import test_validation
 
 GATE_PAGE = test_scheduler.PLUGIN / "scripts" / "gate_page.py"
 SECTIONS = ["In short", "Before and after", "How it works", "What changed", "Evidence", "Assumptions",
-            "Design findings", "Tests removed", "What nothing checked", "Cost", "Merge danger", "Decide"]
+            "Design findings", "Tests removed", "What nothing checked", "Cost", "Merge danger", "Commit message",
+            "Decide"]
 IN_SHORT = "Customers pay by card at the till, and the receipt shows the card's last four digits."
 BEFORE = "Pay 5.00 by card.\nThe till says: card not supported."
 AFTER = "Pay 5.00 by card.\nThe till prints: PAID CARD ****1234"
@@ -441,6 +442,26 @@ class MergeDangerTests(GatePageCase):
         section = section_of(self.page_for(epic), "Merge danger")
 
         self.assertIn(f"Uncommitted edits in the main checkout touch menu-{number}.txt", section)
+
+
+class CommitMessageTests(GatePageCase):
+    def test_the_message_saved_at_the_gate_is_shown_as_text_in_a_block_that_can_be_copied(self):
+        epic, *_ = self.epic_with_changes()
+        saved = self.launch(test_gate.GATE, "message", epic, "--message",
+                            "Show <b>card</b> & cash totals\n\nThe till adds them up.")
+        self.assertEqual(0, saved.returncode, saved.stderr)
+
+        section = section_of(self.page_for(epic), "Commit message")
+
+        self.assertIn("<pre>Show &lt;b&gt;card&lt;/b&gt; &amp; cash totals\n\nThe till adds them up.</pre>", section)
+
+    def test_the_section_says_so_when_no_message_is_proposed_yet(self):
+        epic, *_ = self.epic_with_changes()
+
+        section = section_of(self.page_for(epic), "Commit message")
+
+        self.assertIn("No commit message is proposed yet.", section)
+        self.assertNotIn("<pre>", section)
 
 
 class DecideTests(GatePageCase):

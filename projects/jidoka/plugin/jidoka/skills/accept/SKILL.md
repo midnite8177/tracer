@@ -89,17 +89,27 @@ to each run.
 5. **Ask for the choice.** The human merges the epic, sends it back with
    new tasks, or drops it. Merge goes on at step 6, Send back at the
    section below, and Drop at the one after it.
-6. **Write the message.** Read the style of the repo's log with
-   `git log -15 --format=%B` on main. Write one commit message in that
-   style, about what the epic changes, with `unslop` applied. It names no
-   bead and carries no bead id. Show it to the human, and change it as
-   they say until they agree.
+6. **Write the message.** First run `gate message <epic-id>
+   --jidoka-home ...`. It prints the message saved at an earlier run, or
+   nothing. When it prints one, offer that message as it is, and start
+   any edit from it. When it prints nothing, read the style of the repo's
+   log with `git log -15 --format=%B` on main, and write one commit
+   message in that style, about what the epic changes, with `unslop`
+   applied. It names no bead and carries no bead id. After each proposal,
+   and after each edit the human asks for, save it with `gate message
+   <epic-id> --message "<message>" --jidoka-home ...`, then run
+   `gate_page` again with the same `--guide` path, so the page's Commit
+   message section shows it and the human can copy it from there. On
+   exit 1 the save was refused and nothing was saved: show its message
+   verbatim and change the message as it says. Show the message to the
+   human, and change it as they say until they agree.
 7. **Merge.** Run `gate merge <epic-id> --message "<message>"
-   --jidoka-home ...`. The script lands the epic as one commit on local
-   main and never pushes. The exit code says what happened:
+   --jidoka-home ...` with the agreed message. The script lands the epic
+   as one commit on local main and never pushes. The exit code says what
+   happened:
    - 0: landed and closed. Print the sha, then each hand-run test with
      its command from the script's output, and say that the epic, its lap
-     branches and the epic branch are gone.
+     branches, the epic branch and the saved message are gone.
    - 3: uncommitted edits in main's checkout touch files the epic
      changed. Main is unchanged and the epic still waits at the gate.
      Show the files the script names, say that landing waits on them, and
@@ -156,7 +166,8 @@ the human's own words, and may be pinned to a line of the epic's diff.
    `--note` for each note in order, `--proposals "<the send-back.json
    path>"` and `--jidoka-home ...`. On exit 0 the script printed the new
    task for each note. Print it, and say that the epic left the gate and
-   that its pass count starts again. Tell the human to run
+   that its pass count starts again. A saved commit message stays, and
+   step 6 offers it when the epic comes back. Tell the human to run
    `/jidoka:factory <epic-id>` to start the next pass. On exit 1 show the
    script's message verbatim, change the file as it says, and run it
    again. Nothing was written.
@@ -168,5 +179,5 @@ The human gives up on the epic. It closes without reaching main.
 1. **Confirm.** Say that dropping closes the epic and its branch stays
    until they delete it, and ask once whether to go on.
 2. **Drop.** Run `gate drop <epic-id> --jidoka-home ...`. On exit 0 print
-   the script's line, which names the epic branch it kept. On exit 1 show
-   its message verbatim and stop.
+   the script's line, which names the epic branch it kept. The saved
+   commit message is gone. On exit 1 show its message verbatim and stop.

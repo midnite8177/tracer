@@ -75,7 +75,12 @@ each note once files nothing.
 
 `drop <epic>` closes the epic without landing it, records gate.decision=drop, ends the laps still open on its tasks,
 and removes the factory and human labels. The epic branch stays. Landing and dropping both delete the ref that keeps
-the local tidy of an epic on trial.
+the local tidy of an epic on trial, and remove the saved commit message.
+
+`message <epic> --message <text>` saves the commit message /jidoka:accept proposes in a text file beside the gate page,
+as gate_message.py keeps it, after the checks the merge makes: the epic waits at the gate, and the message is not
+empty and names no bead. A refusal saves nothing. `message <epic>` writes nothing and prints the saved message, or
+nothing when none is saved. A send back keeps the saved message.
 
 An epic whose human label comes off with no decision is parked again by the scheduler, as gate_guard.py says.
 
@@ -83,9 +88,10 @@ The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka. After exit 0,
 4 or 5 the merge lists each app's hand-run tests, as land.py does.
 
 Exit codes:
-  0  landed and closed, and the sha is printed; or the decision is written.
-  1  refused or failed before the fast-forward, with main unchanged and nothing written; or the decision is refused,
-     and nothing is written.
+  0  landed and closed, and the sha is printed; or the decision or the message is written; or the saved message is
+     printed.
+  1  refused or failed before the fast-forward, with main unchanged and nothing written; or the decision or the
+     message is refused, and nothing is written.
   2  a usage error.
   3  waiting on uncommitted edits in main's checkout.
   4  main has the commit but a closing step failed; the sha is printed.
@@ -103,6 +109,7 @@ from pathlib import Path
 
 import cleanup
 import gate_drop
+import gate_message
 import gate_promote
 import gate_restore
 import gate_send_back
@@ -142,6 +149,7 @@ CLOSE_FINDING = "close-finding"
 SEND_BACK = "send-back"
 PROMOTE = "promote"
 DROP = "drop"
+MESSAGE = "message"
 WRONG_PREFIX = "Assumption marked wrong at the acceptance gate: "
 WORKTREE_PREFIX = "landing-"
 TURNED_BACK_EXIT_CODE = FULL_SUITE_FAILED_EXIT_CODE
@@ -312,14 +320,19 @@ def remove_branches(epic: EpicAtTheGate, main_tree: Path) -> None:
 
 
 def release_from_factory(epic: EpicAtTheGate, home: Path, main_tree: Path, env: dict[str, str]) -> list[str]:
-    """Takes the factory and human labels off the epic, deletes the ref that keeps its local tidy, and forgets its T3
-    record and waker, as landing or dropping the epic does, and returns the steps that failed."""
+    """Takes the factory and human labels off the epic, deletes the ref that keeps its local tidy, removes its saved
+    commit message, and forgets its T3 record and waker, as landing or dropping the epic does, and returns the steps
+    that failed."""
     failed: list[str] = []
     for label in (FACTORY_LABEL, HUMAN_LABEL):
         if label in epic.labels:
             attempt(f"bd label remove {label}", ["bd", "label", "remove", epic.id, label], main_tree, env, failed)
     attempt("delete the ref of the local tidy", ["git", "update-ref", "-d", tidy_trial.ref_of(epic.id)], main_tree,
             None, failed)
+    try:
+        gate_message.forget(epic.id, home, main_tree)
+    except OSError as error:
+        failed.append(f"remove the saved commit message: {error}")
     t3_wake.forget(home, epic.id)
     return failed
 
@@ -496,8 +509,21 @@ def drop_epic(epic_id: str, home: Path, main_tree: Path) -> str:
     return f"{epic.id} is dropped and closed.{laps} Its epic branch {epic.branch} stays until you delete it."
 
 
+def save_message(epic_id: str, message: str, home: Path, main_tree: Path) -> str:
+    """Keeps the commit message proposed for the epic beside its gate page, after the checks the merge makes of it."""
+    epic = epic_waiting(epic_id, main_tree)
+    refuse_bad_message(message, epic.id, main_checkout(main_tree))
+    gate_message.save(epic.id, message, home, main_tree)
+    return f"The commit message of {epic.id} is saved."
+
+
 def decide(args: argparse.Namespace, home: Path, main_tree: Path) -> str:
-    """Writes one of the gate's decisions short of the merge and returns the line that says what changed."""
+    """Writes one of the gate's decisions short of the merge and returns the line that says what changed, or returns
+    the message saved for the epic."""
+    if args.mode == MESSAGE:
+        if args.message is None:
+            return gate_message.saved(args.epic, home, main_tree)
+        return save_message(args.epic, args.message, home, main_tree)
     if args.mode == SEND_BACK:
         return send_epic_back(args.epic, args.note, Path(args.proposals), main_tree)
     if args.mode == DROP:
@@ -519,9 +545,12 @@ def run_decision(args: argparse.Namespace) -> int:
     try:
         main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         home = settings_reader.jidoka_home(args.jidoka_home)
-        print(decide(args, home, main_tree))
-    except (GateError, gate_promote.PromoteError, HoldoutsError, gate_restore.RestoreError, gate_send_back.SendBackError, PassError, EpicReadError, CommandError,
-            settings_reader.SettingsError, rules.RulesError, OSError) as error:
+        printed = decide(args, home, main_tree)
+        if printed:
+            print(printed)
+    except (GateError, LandingError, gate_promote.PromoteError, HoldoutsError, gate_restore.RestoreError,
+            gate_send_back.SendBackError, PassError, EpicReadError, CommandError, settings_reader.SettingsError,
+            rules.RulesError, OSError) as error:
         print(f"gate: {error}", file=sys.stderr)
         return 1
     return 0
@@ -560,7 +589,11 @@ def parsed_arguments(argv: list[str]) -> argparse.Namespace:
                                                                  "for each note")
     dropping = modes.add_parser(DROP, help="close the epic without landing it and keep its epic branch")
     dropping.add_argument("epic")
-    for mode in (merging, listing, wrong, promoting, restoring, keeping, closing, sending_back, dropping):
+    proposing = modes.add_parser(MESSAGE, help="save the proposed commit message, or print the one saved")
+    proposing.add_argument("epic")
+    proposing.add_argument("--message", help="the proposed commit message, which names no bead; without it the "
+                                             "saved message is printed")
+    for mode in (merging, listing, wrong, promoting, restoring, keeping, closing, sending_back, dropping, proposing):
         mode.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     return parser.parse_args(argv)
 

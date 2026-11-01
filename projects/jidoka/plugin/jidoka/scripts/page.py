@@ -4,7 +4,8 @@ and the diagram.
 
 question_page.py, handoff_page.py and gate_page.py import it and supply only their body sections. A page is one
 self-contained HTML file in `<jidoka-home>/pages/<repo>/<kind>-<bead>.html`, never in the repo, and a later page of
-the same kind for the same bead replaces it. The look is the stylesheet of the explain skill, inlined.
+the same kind for the same bead replaces it. A text file the page shows sits beside it, as
+`<kind>-<bead>-<name>.txt`. The look is the stylesheet of the explain skill, inlined.
 """
 from __future__ import annotations
 
@@ -34,8 +35,16 @@ class PageHead:
     title: str
 
 
+def pages_of_repo(home: Path, main_tree: Path) -> Path:
+    return home / PAGES_FOLDER / main_tree.name
+
+
 def page_path(head: PageHead, home: Path, main_tree: Path) -> Path:
-    return home / PAGES_FOLDER / main_tree.name / f"{head.kind}-{head.bead}.html"
+    return pages_of_repo(home, main_tree) / f"{head.kind}-{head.bead}.html"
+
+
+def text_beside(kind: str, bead: str, name: str, home: Path, main_tree: Path) -> Path:
+    return pages_of_repo(home, main_tree) / f"{kind}-{bead}-{name}.txt"
 
 
 def section(title: str, body: str, css: str) -> str:

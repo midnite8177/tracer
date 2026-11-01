@@ -350,7 +350,8 @@ _Avoid_: Report, artifact, view, explainer, dashboard
 The page at the acceptance gate, read top to bottom: what the epic does in
 short, before and after, how it works, what changed with each file's diff,
 the evidence, assumptions, design findings, removed tests, what nothing
-checked, cost and merge danger, then the human's decision.
+checked, cost, merge danger and the proposed commit message, then the
+human's decision.
 _Avoid_: Gate report, summary, PR description
 
 ### Holdouts

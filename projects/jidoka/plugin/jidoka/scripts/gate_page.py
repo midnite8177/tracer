@@ -14,16 +14,17 @@ change works; `steps`, a list of numbered steps that reach the change in the run
 what no test or holdout checked. Every other part is read from git, bd, the repo settings and the jidoka home.
 
 The page reads top to bottom: In short, Before and after, How it works, What changed, Evidence, Assumptions, Design
-findings, Tests removed, Tidy trial, What nothing checked, Cost, Merge danger and Decide. Tidy trial is there only for
-an epic that ran the local-model trial (tidy_trial.py), and sets its two tidies side by side: for each the route, the
-model, the wall time, the files changed and the diff, and for the local one each batch, named as done by the local model
-or as fallen back to the native route's model, with a note on a batch whose child ran out the wall clock. What changed
-lists every file the epic branch changes from main, and each file opens its real diff in a unified or a split layout.
-Evidence holds the validation figures, the worktree of the epic branch, each app's build and run commands and the
-guide's steps.
+findings, Tests removed, Tidy trial, What nothing checked, Cost, Merge danger, Commit message and Decide. Tidy trial is
+there only for an epic that ran the local-model trial (tidy_trial.py), and sets its two tidies side by side: for each
+the route, the model, the wall time, the files changed and the diff, and for the local one each batch, named as done by
+the local model or as fallen back to the native route's model, with a note on a batch whose child ran out the wall
+clock. What changed lists every file the epic branch changes from main, and each file opens its real diff in a unified
+or a split layout. Evidence holds the validation figures, the worktree of the epic branch, each app's build and run
+commands and the guide's steps.
 Assumptions are numbered as the gate comment numbers them, and list the public API changes and the beads found outside
-the epic after them, all read by gate_items.py. Decide marks `data-jidoka-slot="decide-panel"`, where jidoka-ui draws
-Merge and Drop. Send back runs in /jidoka:accept.
+the epic after them, all read by gate_items.py. Commit message shows the message /jidoka:accept last saved beside the
+page with `gate.py message`, as gate_message.py keeps it, or says that none is proposed yet. Decide marks
+`data-jidoka-slot="decide-panel"`, where jidoka-ui draws Merge and Drop. Send back runs in /jidoka:accept.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
@@ -46,6 +47,7 @@ import cleanup
 import design_findings
 import diff_view
 import gate_items
+import gate_message
 import page as shared
 import routes
 import settings_reader
@@ -60,7 +62,7 @@ from land import changed_paths, edited_paths, main_checkout
 from pass_support import MAIN_BRANCH, PassError
 from worktrees import stage_worktree
 
-KIND = "gate"
+KIND = gate_message.PAGE_KIND
 DECIDE_SLOT = "decide-panel"
 WORKTREE_PREFIX = "gate-"
 
@@ -116,6 +118,7 @@ class GatePage:
     hand_run: tuple[settings_reader.HandRunGroup,...]
     cost: tuple[str, ...]
     danger: tuple[str, ...]
+    message: str
 
 
 def texts_of(value: object, name: str) -> tuple[str, ...]:
@@ -230,7 +233,7 @@ def gather(epic: str, guide: Guide, home: Path, main_tree: Path) -> GatePage:
                     gate_items.gate_items(epic, str(shown.get("title") or ""), main_tree), tuple(findings),
                     tuple(review.stored_findings(shown, review.LOW_KEY)), tuple(cleanup.removed_before(shown)),
                     trial_tidies(shown, main_tree), settings.hand_run(), cost_lines(shown),
-                    danger_lines(shown, branch, head, main_tree))
+                    danger_lines(shown, branch, head, main_tree), gate_message.saved(epic, home, main_tree))
 
 
 def paragraph(text: str) -> str:
@@ -397,6 +400,14 @@ def unchecked(page: GatePage) -> str:
                                          "recorded.")
 
 
+def commit_message(page: GatePage) -> str:
+    """The commit message /jidoka:accept last proposed, in a block the human can select and copy."""
+    if not page.message:
+        return paragraph("No commit message is proposed yet. /jidoka:accept proposes one before the merge and "
+                         "writes this page again.")
+    return paragraph("The last message /jidoka:accept proposed for the merge.") + f"\n<pre>{escape(page.message)}</pre>"
+
+
 def decide() -> str:
     return shared.slot(DECIDE_SLOT, "Decide", "jidoka-ui draws Merge and Drop here. Send back runs in /jidoka:accept. "
                                               "The bead holds the gate comment in plain text.")
@@ -417,6 +428,7 @@ def body(page: GatePage) -> str:
         section("What nothing checked", unchecked(page), ""),
         section("Cost", bullets(page.cost), ""),
         section("Merge danger", bullets(page.danger), ""),
+        section("Commit message", commit_message(page), ""),
         decide()])
 
 

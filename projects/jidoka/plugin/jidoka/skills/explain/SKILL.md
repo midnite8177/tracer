@@ -97,7 +97,10 @@ the rest from git, bd and the repo settings.
     validation, so that the merge runs the full suite again, the files
     that main and the epic both changed, and uncommitted edits in the main
     checkout over files the epic changed.
-12. **Decide.** An empty section with the attribute
+12. **Commit message.** The message `/jidoka:accept` last proposed and
+    saved with `gate.py message`, in a `pre` block the human can select
+    and copy, or a line that says none is proposed yet.
+13. **Decide.** An empty section with the attribute
     `data-jidoka-slot="decide-panel"`. jidoka-ui draws Merge and Drop
     there, because a file on disk cannot write to a bead. Send back runs
     in `/jidoka:accept`.
