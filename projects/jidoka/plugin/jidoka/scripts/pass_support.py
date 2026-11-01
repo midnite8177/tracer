@@ -12,9 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import git_exclude
+import park
 import private_docs
 from commands import (HUMAN_LABEL, SCRATCH_FOLDER, NotAWholeNumber, capture, count_in, env_as_factory, head_of,
-                      metadata_of, run, set_metadata)
+                      metadata_of, run, set_metadata, unset_metadata)
 from epic_branch import (EditedCheckout, EpicBranchLeftTheHead, fast_forward, refuse_edited_checkout,
                          required_head)
 from land import merge_locked
@@ -189,10 +190,12 @@ def epic_files(branch_head: str, settings: Settings, main_tree: Path) -> list[st
 
 def park_epic(epic: str, comment: str, metadata: dict[str, str], main_tree: Path) -> None:
     """Parks the epic on the human: the comment says why, the metadata is set, and the human label goes on last, so a
-    labeled epic always has its comment."""
+    labeled epic always has its comment. The options and the recommendation of an earlier question come off, so the
+    epic does not show that question again."""
     env = env_as_factory()
     run(["bd", "comment", epic, comment], main_tree, env)
-    run(["bd", "update", epic, *set_metadata(*metadata.items()), f"--add-label={HUMAN_LABEL}"], main_tree, env)
+    run(["bd", "update", epic, *set_metadata(*metadata.items()),
+         *unset_metadata(*park.question_keys_unset_by(metadata)), f"--add-label={HUMAN_LABEL}"], main_tree, env)
 
 
 def worktree_at(path: Path, head: str, home: Path, main_tree: Path) -> None:

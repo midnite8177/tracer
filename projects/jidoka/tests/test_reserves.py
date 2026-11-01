@@ -8,6 +8,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import jidoka_fixture as fixture  # noqa: E402
+import test_gate  # noqa: E402
 from test_scheduler import PLUGIN, SCHEDULER, SchedulerCase  # noqa: E402
 
 STATUS = PLUGIN / "scripts" / "status.py"
@@ -408,6 +409,27 @@ class TheSevenDayReserveTests(ReservesCase):
         self.launch(SCHEDULER, "carry-on", epic)
 
         self.assertEqual([], self.question_comments(epic))
+
+
+class AReserveQuestionAnsweredBeforeTheGateTests(ReservesCase, test_gate.GateCase):
+    def test_an_epic_that_went_on_into_the_reserve_reaches_the_gate_with_no_options_of_the_reserve_question(self):
+        epic = self.new_epic()
+        task = self.new_task_under(epic)
+        self.hand_off(epic, {task: "till"})
+        self.leave_usage(seven_day=76, resets_in=DAY)
+        self.next_printed(epic)
+        self.assertIn("question.options", self.metadata(epic))
+        fixture.run([self.bd, "label", "remove", epic, "human"], self.repo)
+        [action] = self.next_printed(epic)["actions"]
+        self.leave_in(Path(action["worktree"]), self.work_file(task), "built\n")
+
+        self.build_done(epic, task)
+
+        metadata = self.metadata(epic)
+        self.assertEqual("waiting", metadata["gate.state"])
+        self.assertIn("human", self.labels(epic))
+        self.assertNotIn("question.options", metadata)
+        self.assertNotIn("question.recommended", metadata)
 
 
 if __name__ == "__main__":

@@ -83,7 +83,7 @@ import question_page
 import settings_reader
 import rules
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_ACTOR, HUMAN_LABEL, CommandError, bd_comments, env_as_factory,
-                      metadata_of, parent_of, read_bead, run, set_metadata)
+                      metadata_of, parent_of, read_bead, run, set_metadata, unset_metadata)
 from discovered import BLOCKED_PREFIX
 from report_text import parsed_report
 
@@ -365,11 +365,18 @@ def answer_of(task: str, recommended: str, main_tree: Path) -> Answer | None:
 
 
 def park(task: str, tries: int, comment: str, metadata: list[tuple[str, str]], main_tree: Path) -> None:
-    """Comments on the task and ends its lap parked, under the actor jidoka."""
+    """Comments on the task and ends its lap parked, under the actor jidoka. The options and the recommendation of an
+    earlier question come off, so the task does not show that question again."""
     env = env_as_factory()
     run(["bd", "comment", task, comment], main_tree, env)
     run(["bd", "update", task, f"--add-label={HUMAN_LABEL}", *lap_record.resting_with_tries(lap_record.PARKED, tries),
-         *set_metadata(*metadata)], main_tree, env)
+         *set_metadata(*metadata), *unset_metadata(*question_keys_unset_by(dict(metadata)))], main_tree, env)
+
+
+def question_keys_unset_by(metadata: dict[str, str]) -> list[str]:
+    """The question keys, options and recommendation, that a park setting `metadata` removes. A key the park sets
+    itself stays."""
+    return [key for key in (OPTIONS_KEY, RECOMMENDED_KEY) if key not in metadata]
 
 
 def options_json_of(named: list[tuple[str, int | None]]) -> str:

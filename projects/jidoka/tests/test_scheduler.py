@@ -1555,6 +1555,19 @@ class QuestionTests(SchedulerCase):
 
         self.assertIsNone(action["answer"])
 
+    def test_an_answered_question_leaves_no_options_on_the_task_once_it_parks_on_its_tries(self):
+        lap = self.ask_and_park()
+        self.take_the_human_label_off(lap.task)
+        self.next_printed(lap.epic)
+
+        for _ in range(3):
+            self.report_printed(lap.epic, lap.task, "failed")
+
+        metadata = self.metadata(lap.task)
+        self.assertEqual(("parked", ["human"]), (metadata["lap.stage"], self.shown(lap.task).get("labels")))
+        self.assertNotIn("question.options", metadata)
+        self.assertNotIn("question.recommended", metadata)
+
     def test_a_lap_opened_after_three_failed_build_tries_is_lap_two_in_the_parked_laps_worktree_and_branch(self):
         lap = self.open_one_lap()
         committed = self.commit_in(lap.worktree, "till.txt", "rounded\n")
