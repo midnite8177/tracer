@@ -12,7 +12,9 @@ It prints what unittest prints, on stderr: a status character per test,
 then each error and failure with its traceback and buffered output, then
 "Ran N tests in X.XXXs" and OK, FAILED (...) or NO TESTS RAN. It exits
 0 when every test passed, 1 when one did not, and 5 when no test ran and
-none was skipped.
+none was skipped. With --durations it then lists the ten test classes that
+took longest, slowest first, each with the seconds its worker spent on it,
+class fixtures included.
 
 Every worker sees the same folder in JIDOKA_SUITE_SHARED_FOLDER, for
 fixtures that one run makes once and every worker reuses. The run removes
@@ -35,6 +37,7 @@ SHARED_FOLDER = "JIDOKA_SUITE_SHARED_FOLDER"
 SUITE = Path(__file__).resolve().parent
 NO_TESTS_EXIT_CODE = 5
 WINDOWS_WORKER_LIMIT = 61
+SLOWEST_LISTED = 10
 SEPARATOR_1 = "=" * 70
 SEPARATOR_2 = "-" * 70
 
@@ -57,6 +60,7 @@ class ClassOutcome:
     skipped: int
     expected_failures: int
     unexpected_successes: list[str]
+    seconds: float
 
     def successful(self) -> bool:
         return not self.errors and not self.failures and not self.unexpected_successes
@@ -106,7 +110,9 @@ def run_tests(suite: unittest.TestSuite) -> ClassOutcome:
     stream = io.StringIO()
     result = unittest.TextTestResult(stream, True, 1)
     result.buffer = True
+    started = time.perf_counter()
     suite(result)
+    seconds = time.perf_counter() - started
     return ClassOutcome(
         statuses=stream.getvalue(),
         tests_run=result.testsRun,
@@ -115,6 +121,7 @@ def run_tests(suite: unittest.TestSuite) -> ClassOutcome:
         skipped=len(result.skipped),
         expected_failures=len(result.expectedFailures),
         unexpected_successes=[result.getDescription(test) for test in result.unexpectedSuccesses],
+        seconds=seconds,
     )
 
 
@@ -130,7 +137,7 @@ def report_progress(outcome: ClassOutcome) -> None:
 
 def worker_crash(key: str, count: int, error: BaseException) -> ClassOutcome:
     problem = Problem("ERROR", f"{key} (the worker process running it)", f"{type(error).__name__}: {error}\n")
-    return ClassOutcome("E", count, [problem], [], 0, 0, [])
+    return ClassOutcome("E", count, [problem], [], 0, 0, [], 0.0)
 
 
 def summary(outcomes: list[ClassOutcome], seconds: float) -> tuple[str, int]:
@@ -167,8 +174,17 @@ def summary(outcomes: list[ClassOutcome], seconds: float) -> tuple[str, int]:
     return text + (f"{verdict} ({', '.join(infos)})" if infos else verdict) + "\n", code
 
 
+def slowest_classes(outcomes: dict[str, ClassOutcome]) -> str:
+    """The SLOWEST_LISTED classes that took longest, slowest first, one per line under a heading."""
+    slowest = sorted(outcomes, key=lambda key: outcomes[key].seconds, reverse=True)[:SLOWEST_LISTED]
+    return "\nSlowest test classes:\n" + "".join(f"  {outcomes[key].seconds:7.3f}s  {key}\n" for key in slowest)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Runs the test classes beside this script in parallel.")
+    parser.add_argument("--durations", action="store_true",
+                        help=f"after the summary, list the {SLOWEST_LISTED} test classes that took longest, "
+                             "slowest first")
     parser.add_argument("-k", dest="patterns", action="append", default=[], metavar="PATTERN",
                         help="only run tests whose dotted name matches the pattern, as unittest's -k does; "
                              "repeat it to run the tests any pattern matches")
@@ -176,7 +192,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str]) -> int:
-    patterns = parse_args(argv).patterns
+    args = parse_args(argv)
+    patterns = args.patterns
     started = time.perf_counter()
     discovered = flatten(loader_for(patterns).discover(str(SUITE), pattern="test*.py", top_level_dir=str(SUITE)))
     classes: dict[str, list[str]] = {}
@@ -205,6 +222,8 @@ def main(argv: list[str]) -> int:
                     report_progress(outcomes[key])
     text, code = summary([unloadable, *(outcomes[key] for key in classes)], time.perf_counter() - started)
     sys.stderr.write(text)
+    if args.durations:
+        sys.stderr.write(slowest_classes(outcomes))
     sys.stderr.flush()
     return code
 

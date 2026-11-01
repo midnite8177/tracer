@@ -22,6 +22,7 @@ sh projects/jidoka/plugin/jidoka/bin/jidoka-run <script.py> [args...]           
 sh projects/jidoka/plugin/jidoka/bin/jidoka-run projects/jidoka/plugin/jidoka/scripts/repo_settings.py show   # the settings of the repo you are in
 python3 projects/jidoka/tests/run_suite.py                                         # all tests, from the repo root
 python3 projects/jidoka/tests/run_suite.py -k <part of a test's dotted name>       # only the tests it matches; repeat -k for more
+python3 projects/jidoka/tests/run_suite.py --durations                              # ends with the ten slowest test classes and their times
 ```
 
 `install.py`, `release.py` and `untracer.py` take `--jidoka-home` to use a
@@ -230,7 +231,7 @@ the same tests one at a time, and makes the workspace once in its process.
 | `tests/fake_bd.py` | The fake `bd`: it answers `show`, `list` (also by label and type), `ready`, `blocked`, `create`, `update` (with `--description`, `--set-metadata` and `--unset-metadata`), `label`, `comment`, `comments`, `close`, `dep add` and `prime` in the forms jidoka's scripts, the issues and context skills' scripts, and their tests call them, from a JSON store it finds from the working folder upward or in the main checkout of a linked worktree, and exits 1 naming any other subcommand or flag |
 | `tests/test_fake_bd.py` | The fake bd's contract tests: the same calls run against real bd in a stealth beads workspace and against the fake, from the main checkout and from a linked worktree, comparing the fields the scripts read, with bead ids replaced by each bead's role, the fake's refusals, and the store that `fake_beads_call` writes in the test's process, which equals the store the fake bd writes as a process |
 | `tests/test_jidoka_fixture.py` | The test of the copied stealth beads workspace, against real bd |
-| `tests/run_suite.py` | Runs the test classes in parallel worker processes, takes unittest's `-k`, and prints and exits as unittest does |
+| `tests/run_suite.py` | Runs the test classes in parallel worker processes, takes unittest's `-k`, prints and exits as unittest does, and with `--durations` ends with the ten slowest test classes |
 | `tests/test_run_suite.py` | The suite runner tests, run as a process over throwaway test modules |
 | `tests/test_untracer.py` | The untracer tests, at the process seam. The repo they copy holds the fake bd's beads and a plain `CLAUDE.md`; the three classes named above build it with real bd instead |
 | `tests/tracer_fixture.py` | Builds fixture repos with a stealth or a committed tracer install, from the files in `tests/fixtures/`, on a template repo that holds either the fake bd's beads or, from `build_bd_repo`, a real stealth workspace with bd's hooks and marked block |

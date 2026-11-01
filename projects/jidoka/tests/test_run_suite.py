@@ -128,6 +128,28 @@ class SecondTests(unittest.TestCase):
         record_shared_folder()
 """
 
+SLEEPING_TESTS = """\
+import time
+import unittest
+
+
+class QuickTests(unittest.TestCase):
+    def test_quick(self):
+        pass
+
+
+class SlowTests(unittest.TestCase):
+    def test_slow(self):
+        time.sleep(0.6)
+
+
+class MiddlingTests(unittest.TestCase):
+    def test_middling(self):
+        time.sleep(0.3)
+"""
+
+CLASS_TIME_LINE = re.compile(r"^ +(\d+\.\d{3})s  (\S+)$")
+
 
 class SuiteRunnerTests(unittest.TestCase):
     """Runs the suite runner as a process over throwaway test modules that sit beside a copy of it."""
@@ -274,6 +296,42 @@ class SuiteRunnerTests(unittest.TestCase):
         self.assertEqual(1, len(set(folders)), folders)
         self.assertNotEqual("none", folders[0])
         self.assertFalse(Path(folders[0]).exists())
+
+    def test_the_durations_option_lists_the_test_classes_slowest_first_after_the_summary(self):
+        self.write_module("test_sleeping", SLEEPING_TESTS)
+
+        done = self.run_suite("--durations")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        summary, _, listing = done.stderr.partition("Slowest test classes:\n")
+        self.assertTrue(summary.endswith("\n\nOK\n\n"), done.stderr)
+        rows = [CLASS_TIME_LINE.match(line) for line in listing.splitlines()]
+        self.assertNotIn(None, rows, listing)
+        self.assertEqual(["test_sleeping.SlowTests", "test_sleeping.MiddlingTests", "test_sleeping.QuickTests"],
+                         [row.group(2) for row in rows])
+        seconds = [float(row.group(1)) for row in rows]
+        self.assertGreaterEqual(seconds[0], 0.6)
+        self.assertGreaterEqual(seconds[1], 0.3)
+        self.assertEqual(sorted(seconds, reverse=True), seconds)
+
+    def test_the_durations_option_lists_at_most_the_ten_slowest_classes(self):
+        self.write_module("test_many", "import unittest\n" + "".join(
+            f"\n\nclass Class{number:02}Tests(unittest.TestCase):\n    def test_it(self):\n        pass\n"
+            for number in range(12)))
+
+        done = self.run_suite("--durations")
+
+        listing = done.stderr.partition("Slowest test classes:\n")[2]
+        self.assertEqual(10, len(listing.splitlines()), listing)
+
+    def test_a_run_without_the_durations_option_lists_no_times(self):
+        self.write_module("test_sleeping", SLEEPING_TESTS)
+
+        done = self.run_suite()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("Slowest", done.stderr)
+        self.assertTrue(done.stderr.endswith("\n\nOK\n"), done.stderr)
 
 
 class WorkerCountTests(unittest.TestCase):
