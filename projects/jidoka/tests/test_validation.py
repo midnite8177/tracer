@@ -23,7 +23,8 @@ import slots  # noqa: E402
 import recorded_validation  # noqa: E402
 import settings_reader  # noqa: E402
 import spec_time_limit  # noqa: E402
-from recorded_validation import CommandRun, RecordedValidation  # noqa: E402
+from full_suite import CommandRun  # noqa: E402
+from recorded_validation import RecordedValidation  # noqa: E402
 from settings_reader import SuiteCommand  # noqa: E402
 from validation_specs import SpecFigures, SpecsRun, TimedSpecRun  # noqa: E402
 
