@@ -313,6 +313,16 @@ def add_fake_beads(repo: Path, bin_dir: Path) -> Path:
     return write_forwarder(bin_dir / "bd", [sys.executable, str(Path(fake_bd.__file__).resolve())])
 
 
+def fake_beads_call(repo: Path, args: list[str], actor: str) -> str:
+    """Answers one fake bd call against the repo's store in this process, with no bd process to start, and returns what
+    the fake printed. A test uses it to set its beads up, as the actor who would have run bd; the scripts under test
+    still call the fake bd as a process and read the same store."""
+    try:
+        return fake_bd.call_here(args, repo, {**os.environ, "BEADS_ACTOR": actor})
+    except fake_bd.CallFailed as failed:
+        raise FixtureError(str(failed)) from failed
+
+
 def path_with(bin_dir: Path) -> str:
     """The caller's PATH with bin_dir first, so the tools in it stand in for the installed ones."""
     return f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"

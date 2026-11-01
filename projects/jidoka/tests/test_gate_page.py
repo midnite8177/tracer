@@ -298,7 +298,7 @@ class EvidenceTests(GatePageCase):
 
 class RecordSectionTests(GatePageCase):
     def comment_on(self, bead: str, text: str) -> None:
-        fixture.run([self.bd, "comment", bead, text], self.repo)
+        self.bd_here("comment", bead, text)
 
     def test_assumptions_lists_each_one_a_worker_recorded_on_the_epic_or_its_tasks_in_the_gates_order(self):
         epic, task, *_ = self.epic_with_changes()
@@ -338,7 +338,7 @@ class RecordSectionTests(GatePageCase):
     def test_tests_removed_is_a_table_of_the_deletions_the_cleanup_recorded(self):
         epic, *_ = self.epic_with_changes()
         removed = [{"test": "test_a", "file": "tests/test_a.py", "covered_by": "test_b"}]
-        fixture.run([self.bd, "update", epic, "--set-metadata", f"cleanup.removed={json.dumps(removed)}"], self.repo)
+        self.bd_here("update", epic, "--set-metadata", f"cleanup.removed={json.dumps(removed)}")
 
         section = section_of(self.page_for(epic), "Tests removed")
 
@@ -358,7 +358,7 @@ class RecordSectionTests(GatePageCase):
         self.assertEqual(0, filed.returncode, filed.stderr)
         low = [{"lane": "design", "file": "till.py", "line": 9, "title": "Long function", "note": "It grew.",
                 "size": "medium", "confidence": "low"}]
-        fixture.run([self.bd, "update", epic, "--set-metadata", f"review.low={json.dumps(low)}"], self.repo)
+        self.bd_here("update", epic, "--set-metadata", f"review.low={json.dumps(low)}")
 
         section = section_of(self.page_for(epic), "Design findings")
 
@@ -379,7 +379,7 @@ class RecordSectionTests(GatePageCase):
         epic, *_ = self.epic_with_changes()
         seconds = test_validation.recorded_validation.read(self.metadata(epic)).seconds
         self.assertIn(f"Validation took {seconds} s.", section_of(self.page_for(epic), "Cost"))
-        fixture.run([self.bd, "update", epic, "--unset-metadata", "validation.runs"], self.repo)
+        self.bd_here("update", epic, "--unset-metadata", "validation.runs")
 
         self.assertIn("No validation time is recorded on this epic.", section_of(self.page_for(epic), "Cost"))
 

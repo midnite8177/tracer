@@ -666,7 +666,7 @@ class ValidationMergeConflictTests(ValidationCase):
         epic, _, _ = self.conflicting_epic()
         self.report_merge_printed(epic, "--ended", "failed", "--why", "first")
         self.report_merge_printed(epic, "--ended", "failed", "--why", "second")
-        fixture.run([self.bd, "label", "remove", epic, "human"], self.repo)
+        self.bd_here("label", "remove", epic, "human")
 
         again = self.next_printed(epic)
 
@@ -794,9 +794,9 @@ class ValidationSpecsCase(ValidationCase):
         its specs belong to the shop."""
         epic = self.new_epic()
         made = self.new_task_under(epic)
-        fixture.run([self.bd, "update", made, "--set-metadata", f"lap.area={area}", "--set-metadata",
-                     "acceptance.specs=" + json.dumps(specs), "--set-metadata", "acceptance.app=shop"], self.repo)
-        fixture.run([self.bd, "close", made, "--reason", "done"], self.repo)
+        self.bd_here("update", made, "--set-metadata", f"lap.area={area}", "--set-metadata",
+                     "acceptance.specs=" + json.dumps(specs), "--set-metadata", "acceptance.app=shop")
+        self.bd_here("close", made, "--reason", "done")
         task = self.new_task_under(epic)
         self.hand_off(epic, {task: "till"})
         [action] = self.next_printed(epic)["actions"]
@@ -974,11 +974,10 @@ class ValidationSlowSpecsTests(ValidationSpecsCase):
     def setUp(self):
         super().setUp()
         for each in self.open_design_beads():
-            fixture.run([self.bd, "close", each["id"], "--reason", "closed by the test"], self.repo)
+            self.bd_here("close", each["id"], "--reason", "closed by the test")
 
     def open_design_beads(self) -> list[dict]:
-        return json.loads(fixture.run([self.bd, "list", "--label", "design", "--type", "task", "--limit", "0",
-                                       "--json"], self.repo))
+        return json.loads(self.bd_here("list", "--label", "design", "--type", "task", "--limit", "0", "--json"))
 
     def limit_the_spec_run_to(self, seconds: float) -> None:
         self.write_settings({"apps": [{**self.shop, "spec_seconds_limit": seconds}]})

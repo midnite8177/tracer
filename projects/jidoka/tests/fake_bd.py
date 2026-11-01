@@ -60,12 +60,15 @@ calls a script made. A call it refuses is not recorded.
 """
 from __future__ import annotations
 
+import contextlib
 import getpass
+import io
 import json
 import math
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -83,6 +86,10 @@ PRIME_TEXT = "# Beads Workflow Context\n\nThe fake bd stands in for bd prime her
 
 class Refused(Exception):
     """A call the fake does not answer, worded for the person who reads the test's failure."""
+
+
+class CallFailed(Exception):
+    """A call that call_here answered with a failure."""
 
 
 @dataclass
@@ -175,8 +182,8 @@ def bead_in(store: dict, bead_id: str) -> dict:
     return bead
 
 
-def actor(cwd: Path) -> str:
-    named = os.environ.get("BEADS_ACTOR")
+def actor(cwd: Path, environ: Mapping[str, str]) -> str:
+    named = environ.get("BEADS_ACTOR")
     if named:
         return named
     done = subprocess.run(["git", "config", "user.name"], cwd=cwd, capture_output=True, text=True,
@@ -350,11 +357,11 @@ def add_label(bead: dict, label: str) -> None:
         bead["labels"].append(label)
 
 
-def update(store: dict, flags: Flags, cwd: Path) -> bool:
+def update(store: dict, flags: Flags, cwd: Path, environ: Mapping[str, str]) -> bool:
     need_positionals("update", flags, 1)
     bead = bead_in(store, flags.positionals[0])
     if "--claim" in flags.switches:
-        claimer = actor(cwd)
+        claimer = actor(cwd, environ)
         if bead["assignee"] and bead["assignee"] != claimer:
             print(f"Error claiming {bead['id']}: issue already claimed by {bead['assignee']}", file=sys.stderr)
             return False
@@ -400,11 +407,11 @@ def label(store: dict, flags: Flags) -> bool:
     return True
 
 
-def comment(store: dict, flags: Flags, cwd: Path) -> bool:
+def comment(store: dict, flags: Flags, cwd: Path, environ: Mapping[str, str]) -> bool:
     need_positionals("comment", flags, 2)
     bead_id, text = flags.positionals
     bead_in(store, bead_id)
-    store["comments"].append({"id": str(len(store["comments"]) + 1), "issue_id": bead_id, "author": actor(cwd),
+    store["comments"].append({"id": str(len(store["comments"]) + 1), "issue_id": bead_id, "author": actor(cwd, environ),
                               "text": text})
     return True
 
@@ -439,19 +446,20 @@ def dep(store: dict, flags: Flags) -> bool:
     return True
 
 
-def answer(argv: list[str], cwd: Path) -> bool:
+def answer(argv: list[str], cwd: Path, environ: Mapping[str, str]) -> bool:
     """Answers one call, saving the store when the call changed it; returns whether the call succeeded."""
     if not argv:
         raise Refused("bd needs a subcommand")
     command, args = argv[0], argv[1:]
     path = store_path(cwd)
     store = json.loads(path.read_text(encoding="utf-8"))
-    answered = answer_from(store, path, command, args, cwd)
+    answered = answer_from(store, path, command, args, cwd, environ)
     record_call(path, argv)
     return answered
 
 
-def answer_from(store: dict, path: Path, command: str, args: list[str], cwd: Path) -> bool:
+def answer_from(store: dict, path: Path, command: str, args: list[str], cwd: Path,
+                environ: Mapping[str, str]) -> bool:
     """Answers the call against the store, saving the store when the call changed it."""
     if command == "show":
         return show(store, parse(command, args, set(), {"--json"}))
@@ -473,9 +481,9 @@ def answer_from(store: dict, path: Path, command: str, args: list[str], cwd: Pat
         "update": lambda: update(store, parse(command, args, {"--status", "--assignee", "--parent", "--add-label",
                                                               "--description", "--set-metadata",
                                                               "--unset-metadata"},
-                                              {"--claim"}), cwd),
+                                              {"--claim"}), cwd, environ),
         "label": lambda: label(store, parse(command, args, set(), set())),
-        "comment": lambda: comment(store, parse(command, args, set(), set()), cwd),
+        "comment": lambda: comment(store, parse(command, args, set(), set()), cwd, environ),
         "close": lambda: close(store, parse(command, args, {"--reason"}, set())),
         "dep": lambda: dep(store, parse(command, args, {"--blocked-by"}, set())),
     }
@@ -486,9 +494,25 @@ def answer_from(store: dict, path: Path, command: str, args: list[str], cwd: Pat
     return succeeded
 
 
+def call_here(argv: list[str], cwd: Path, environ: Mapping[str, str]) -> str:
+    """Answers one call in the caller's own process, as the fake bd started in cwd with environ would answer it, and
+    returns what it printed. A test sets its beads up this way, with no process to start. A call the fake fails
+    raises CallFailed with what it printed on stderr."""
+    printed, complained = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(complained):
+        try:
+            succeeded = answer(argv, cwd, environ)
+        except Refused as refused:
+            print(f"fake bd: {refused}", file=sys.stderr)
+            succeeded = False
+    if not succeeded:
+        raise CallFailed(f"bd {' '.join(argv)} failed in {cwd}: {complained.getvalue().strip()}")
+    return printed.getvalue()
+
+
 def main(argv: list[str]) -> int:
     try:
-        return 0 if answer(argv, Path.cwd()) else 1
+        return 0 if answer(argv, Path.cwd(), os.environ) else 1
     except Refused as refused:
         print(f"fake bd: {refused}", file=sys.stderr)
         return 1

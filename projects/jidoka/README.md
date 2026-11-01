@@ -41,7 +41,10 @@ holds copies of the scripts and the plugin folder, a temporary jidoka home,
 and a fake `bd`, `tests/fake_bd.py`, first on the PATH. The fake keeps its
 beads in a JSON file in the repo's `.beads/`, because each call of real bd
 opens its database and takes a second or more. It answers only the calls
-the scripts and their tests make, and fails on any other.
+the scripts and their tests make, and fails on any other. A test sets its
+beads up with `fake_beads_call` in `tests/jidoka_fixture.py`, which answers
+the call against the store in the test's own process, so the setup starts no
+fake bd; the scripts under test still call the fake as a process.
 `tests/test_fake_bd.py` runs those calls against real bd and the fake and
 compares what they print. Real bd still runs where a test needs what it
 writes. These are the stealth script's tests, the installer's stealth
@@ -225,7 +228,7 @@ the same tests one at a time, and makes the workspace once in its process.
 | `tests/test_skill_scripts.py` | The tests of the scripts the skills carry, run as processes through the launcher from inside a repo with the fake bd's beads |
 | `tests/jidoka_fixture.py` | Builds the temporary checkout and the fake `claude`, `codex` and `dotnet` and the `bd` stub the installer tests run against, and gives a test repo a stealth beads workspace copied from the one bd init made for the run, or that workspace committed to git, or a copy of what plain bd init committed in a repo of its own, or an empty store of the fake bd with the fake in a bin folder. On Windows `write_executable` stores each fake as a `.exe` launcher from pip with its script packed behind it, and runs a shell fake through the `sh` of Git for Windows. `remove_tree` removes a folder with Git's read-only object files in it and retries while a process still holds a file, and `let_bd_go_of` ends the processes bd left in a repo on Windows. Every call of the real bd that `run` makes has a HOME and a USERPROFILE of its own, because on Windows bd takes `~` literally when HOME is missing and writes `~/.config/bd/config.yaml` inside the repo. `folder_without_beads_above` takes the top it looks up to |
 | `tests/fake_bd.py` | The fake `bd`: it answers `show`, `list` (also by label and type), `ready`, `blocked`, `create`, `update` (with `--description`, `--set-metadata` and `--unset-metadata`), `label`, `comment`, `comments`, `close`, `dep add` and `prime` in the forms jidoka's scripts, the issues and context skills' scripts, and their tests call them, from a JSON store it finds from the working folder upward or in the main checkout of a linked worktree, and exits 1 naming any other subcommand or flag |
-| `tests/test_fake_bd.py` | The fake bd's contract tests: the same calls run against real bd in a stealth beads workspace and against the fake, from the main checkout and from a linked worktree, comparing the fields the scripts read, with bead ids replaced by each bead's role, and the fake's refusals |
+| `tests/test_fake_bd.py` | The fake bd's contract tests: the same calls run against real bd in a stealth beads workspace and against the fake, from the main checkout and from a linked worktree, comparing the fields the scripts read, with bead ids replaced by each bead's role, the fake's refusals, and the store that `fake_beads_call` writes in the test's process, which equals the store the fake bd writes as a process |
 | `tests/test_jidoka_fixture.py` | The test of the copied stealth beads workspace, against real bd |
 | `tests/run_suite.py` | Runs the test classes in parallel worker processes, takes unittest's `-k`, and prints and exits as unittest does |
 | `tests/test_run_suite.py` | The suite runner tests, run as a process over throwaway test modules |

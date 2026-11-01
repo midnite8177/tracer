@@ -110,8 +110,16 @@ class SchedulerCase(unittest.TestCase):
         shutil.rmtree(self.home / "heartbeat", ignore_errors=True)
         (self.home / "slots.json").unlink(missing_ok=True)
 
+    def bd_here(self, *args: str) -> str:
+        """Answers a call of the fake bd in this process as the git user, which is how a test sets its beads up
+        without starting the fake bd."""
+        return self.bd_here_as(JEFF, *args)
+
+    def bd_here_as(self, actor: str, *args: str) -> str:
+        return fixture.fake_beads_call(self.repo, list(args), actor)
+
     def create(self, title: str, *flags: str) -> str:
-        return json.loads(fixture.run([self.bd, "create", "--title", title, *flags, "--json"], self.repo))["id"]
+        return json.loads(self.bd_here("create", "--title", title, *flags, "--json"))["id"]
 
     def new_epic(self) -> str:
         type(self).count += 1
@@ -464,7 +472,7 @@ class SchedulerReadyTaskTests(SchedulerCase):
     def test_a_task_waiting_on_an_open_task_in_the_epic_does_not_open_a_lap(self):
         epic = self.new_epic()
         first, second = self.new_task_under(epic), self.new_task_under(epic)
-        fixture.run([self.bd, "dep", "add", second, "--blocked-by", first], self.repo)
+        self.bd_here("dep", "add", second, "--blocked-by", first)
         self.hand_off(epic, {first: "till", second: "receipts"})
 
         printed = self.next_printed(epic)
@@ -487,7 +495,7 @@ class SchedulerReadyTaskTests(SchedulerCase):
         epic = self.new_epic()
         task = self.new_task_under(epic)
         self.hand_off(epic, {task: "till"})
-        fixture.run([self.bd, "update", task, "--assignee=Jeff Scheduler"], self.repo)
+        self.bd_here("update", task, "--assignee=Jeff Scheduler")
 
         printed = self.next_printed(epic)
 
@@ -527,7 +535,7 @@ class SchedulerTaskWithNoAreaTests(SchedulerCase):
         handed_off = self.new_task_under(epic)
         self.hand_off(epic, {handed_off: "till"})
         added = self.new_task_under(epic)
-        fixture.run([self.bd, "update", added, "--set-metadata", "lap.area=receipts"], self.repo)
+        self.bd_here("update", added, "--set-metadata", "lap.area=receipts")
 
         done = self.next_moves(epic)
 
@@ -565,7 +573,7 @@ class SchedulerOrderTests(SchedulerCase):
         epic = self.new_epic()
         task = self.new_task_under(epic)
         self.hand_off(epic, {task: "till"})
-        fixture.run([self.bd, "close", task, "--reason", "built"], self.repo)
+        self.bd_here("close", task, "--reason", "built")
 
         printed = self.next_printed(epic)
 
@@ -575,7 +583,7 @@ class SchedulerOrderTests(SchedulerCase):
         epic = self.new_epic()
         task = self.new_task_under(epic)
         self.hand_off(epic, {task: "till"})
-        fixture.run([self.bd, "close", task, "--reason", "built"], self.repo)
+        self.bd_here("close", task, "--reason", "built")
         return epic
 
     def test_an_epic_whose_tasks_are_all_closed_runs_its_validation(self):
@@ -589,7 +597,7 @@ class SchedulerOrderTests(SchedulerCase):
         epic = self.finished_epic()
         now = int(time.time())
         waiting = json.dumps({"cause": "usage-limit", "since": now, "until": now + 3600, "retries": 0})
-        fixture.run([self.bd, "update", epic, "--set-metadata", f"pause={waiting}"], self.repo)
+        self.bd_here("update", epic, "--set-metadata", f"pause={waiting}")
 
         printed = self.next_printed(epic)
 
@@ -736,7 +744,7 @@ class SchedulerLapStateTests(SchedulerCase):
         self.hand_off(epic, {first: "till", same_area: "till", other_area: "receipts"})
         self.assertEqual([first], [action["task"] for action in self.next_printed(epic)["actions"]])
         for task in (same_area, other_area):
-            fixture.run([self.bd, "label", "remove", task, "human"], self.repo)
+            self.bd_here("label", "remove", task, "human")
 
         printed = self.next_printed(epic)
 
@@ -1253,7 +1261,7 @@ class MergedLapTests(SchedulerCase):
     def test_the_report_that_merges_a_lap_opens_the_lap_of_the_task_that_waited_on_it(self):
         epic = self.new_epic()
         first, second = self.new_task_under(epic), self.new_task_under(epic)
-        fixture.run([self.bd, "dep", "add", second, "--blocked-by", first], self.repo)
+        self.bd_here("dep", "add", second, "--blocked-by", first)
         branch = self.hand_off(epic, {first: "till", second: "receipts"})
         [action] = self.next_printed(epic)["actions"]
         built = self.commit_in(Path(action["worktree"]), "card.txt", "built\n")
@@ -1405,10 +1413,10 @@ class QuestionTests(SchedulerCase):
         self.assertEqual([], [text for text in self.texts(lap.task) if text.startswith("Question: ")])
 
     def human_comments(self, task: str, text: str) -> None:
-        fixture.run_with_env([self.bd, "comment", task, text], self.repo, {**os.environ, "BEADS_ACTOR": JEFF})
+        self.bd_here_as(JEFF, "comment", task, text)
 
     def take_the_human_label_off(self, task: str) -> None:
-        fixture.run([self.bd, "label", "remove", task, "human"], self.repo)
+        self.bd_here("label", "remove", task, "human")
 
     def ask_and_park(self) -> OpenLap:
         lap = self.open_one_lap()
@@ -1904,7 +1912,7 @@ class DiscoveredWorkTests(SchedulerCase):
                          {"name": "exact", "confidence": 30, "next": "The receipt keeps cents."}],
              "recommended": "five cents"}))
         self.report_printed(epic, task, "question")
-        fixture.run([self.bd, "label", "remove", task, "human"], self.repo)
+        self.bd_here("label", "remove", task, "human")
         self.next_printed(epic)
         new_task, printed = self.block_on(lap, "Round the receipt total")
         [new_action] = printed["actions"]
@@ -1922,7 +1930,7 @@ class TaskAddedToAHeldEpicTests(SchedulerCase):
         self.hand_off(epic, {first: "till"})
         [action] = self.next_printed(epic)["actions"]
         added = self.new_task_under(epic, "--deps", first)
-        fixture.run([self.bd, "update", added, "--set-metadata", "lap.area=receipts"], self.repo)
+        self.bd_here("update", added, "--set-metadata", "lap.area=receipts")
         self.assertEqual([first], [open_lap["task"] for open_lap in self.next_printed(epic)["laps"]])
         self.commit_in(Path(action["worktree"]), "card.txt", "built\n")
 
@@ -1933,8 +1941,7 @@ class TaskAddedToAHeldEpicTests(SchedulerCase):
 
 class CapTests(SchedulerCase):
     def age_stage(self, task: str, seconds: int) -> None:
-        fixture.run([self.bd, "update", task, "--set-metadata", f"lap.started={int(time.time()) - seconds}"],
-                    self.repo)
+        self.bd_here("update", task, "--set-metadata", f"lap.started={int(time.time()) - seconds}")
 
     def test_the_third_failed_build_parks_the_task_with_a_comment_naming_the_try_cap(self):
         lap = self.open_one_lap()
@@ -2060,7 +2067,7 @@ class BrakeTests(SchedulerCase):
         self.assertIn("no new lap opens until a fix task is filed", still_braked.stderr)
 
         fix = self.new_task_under(epic)
-        fixture.run([self.bd, "update", fix, "--set-metadata", "lap.area=fix"], self.repo)
+        self.bd_here("update", fix, "--set-metadata", "lap.area=fix")
         lifted = self.next_printed(epic)
 
         self.assertIsNone(lifted["brake"])
@@ -2082,10 +2089,10 @@ class BrakeTests(SchedulerCase):
 
 class HumanLabelBrakeTests(SchedulerCase):
     def label(self, bead: str) -> None:
-        fixture.run([self.bd, "label", "add", bead, "human"], self.repo)
+        self.bd_here("label", "add", bead, "human")
 
     def unlabel(self, bead: str) -> None:
-        fixture.run([self.bd, "label", "remove", bead, "human"], self.repo)
+        self.bd_here("label", "remove", bead, "human")
 
     def test_a_human_label_put_on_a_task_with_a_running_build_stops_the_build_that_a_failed_try_would_start(self):
         lap = self.open_one_lap()
@@ -2167,7 +2174,7 @@ class HumanLabelBrakeTests(SchedulerCase):
     def test_a_running_stage_finishes_when_the_epic_is_parked_and_the_laps_resume_when_the_label_comes_off(self):
         epic = self.new_epic()
         first, second = self.new_task_under(epic), self.new_task_under(epic)
-        fixture.run([self.bd, "dep", "add", second, "--blocked-by", first], self.repo)
+        self.bd_here("dep", "add", second, "--blocked-by", first)
         self.hand_off(epic, {first: "till", second: "receipts"})
         [action] = self.next_printed(epic)["actions"]
         self.commit_in(Path(action["worktree"]), "card.txt", "built\n")
@@ -2216,8 +2223,8 @@ class MergeGateRefusalTests(SchedulerCase):
 
 class MergeGateRecordTests(SchedulerCase):
     def record_tests(self, task: str, base: str, result: str) -> None:
-        fixture.run([self.bd, "update", task, "--set-metadata", "tests.command=make test -k test_card",
-                     "--set-metadata", f"tests.base={base}", "--set-metadata", f"tests.result={result}"], self.repo)
+        self.bd_here("update", task, "--set-metadata", "tests.command=make test -k test_card",
+                     "--set-metadata", f"tests.base={base}", "--set-metadata", f"tests.result={result}")
 
     def assert_nothing_merged(self, lap: OpenLap, epic_head: str) -> None:
         self.assertEqual(epic_head, git(self.repo, "rev-parse", lap.epic_branch))
@@ -2237,7 +2244,7 @@ class MergeGateRecordTests(SchedulerCase):
         self.assert_nothing_merged(lap, epic_head)
 
     def name_spec_task(self, epic: str, task: str) -> None:
-        fixture.run([self.bd, "update", epic, "--set-metadata", f"acceptance.spec_task={task}"], self.repo)
+        self.bd_here("update", epic, "--set-metadata", f"acceptance.spec_task={task}")
 
     def test_the_gate_refuses_a_lap_that_changed_the_acceptance_folder_when_another_task_is_the_spec_task(self):
         lap = self.open_one_lap()
@@ -2405,7 +2412,7 @@ class SchedulerRefusalTests(SchedulerCase):
         task = self.new_task_under(epic)
         self.hand_off(epic, {task: "till"})
         outside = self.create("Pick a card reader", "--type=task")
-        fixture.run([self.bd, "dep", "add", task, "--blocked-by", outside], self.repo)
+        self.bd_here("dep", "add", task, "--blocked-by", outside)
         inner = self.create("Refund a card", "--type=epic", "--parent", epic)
 
         done = self.next_moves(epic)
@@ -2541,7 +2548,7 @@ class SchedulerReadsRulesTests(SchedulerCase):
 
     def test_the_scheduler_refuses_an_epic_whose_stored_rules_cannot_be_read(self):
         epic = self.handed_off_epic(1)
-        fixture.run([self.bd, "update", epic, "--set-metadata", "rules.lap_limit=0"], self.repo)
+        self.bd_here("update", epic, "--set-metadata", "rules.lap_limit=0")
 
         done = self.next_moves(epic)
 
@@ -2556,7 +2563,7 @@ class FullTrackCase(SchedulerCase):
         epic = self.new_epic()
         task = self.new_task_under(epic)
         branch = self.hand_off(epic, {task: "till"})
-        fixture.run([self.bd, "update", task, "--set-metadata", "lap.track=full"], self.repo)
+        self.bd_here("update", task, "--set-metadata", "lap.track=full")
         [action] = self.next_printed(epic)["actions"]
         self.assertEqual("research", action["action"])
         return OpenLap(epic, task, branch, Path(action["worktree"]))
@@ -2702,8 +2709,8 @@ class FullTrackLapTests(FullTrackCase):
         epic = self.new_epic()
         task = self.new_task_under(epic)
         self.hand_off(epic, {task: "till"})
-        fixture.run([self.bd, "update", task, "--set-metadata", "lap.track=full"], self.repo)
-        fixture.run([self.bd, "comment", task, "research brief: Files to change: card.txt"], self.repo)
+        self.bd_here("update", task, "--set-metadata", "lap.track=full")
+        self.bd_here("comment", task, "research brief: Files to change: card.txt")
 
         [action] = self.next_printed(epic)["actions"]
 
@@ -2803,7 +2810,7 @@ class AppCheckTests(FullTrackCase):
         task = self.new_task_under(epic, "--priority", "1")
         other = self.new_task_under(epic, "--priority", "2")
         branch = self.hand_off(epic, {task: "till", other: "till"})
-        fixture.run([self.bd, "update", task, "--set-metadata", "lap.track=full"], self.repo)
+        self.bd_here("update", task, "--set-metadata", "lap.track=full")
         self.write_holdouts(epic, [{"app": "shop", "tasks": [other], "scenario": self.UNRELATED},
                                    {"app": "shop", "tasks": [task], "scenario": self.FIRST},
                                    {"app": "shop", "tasks": [task, other], "scenario": self.SECOND}])
@@ -2980,7 +2987,7 @@ class AppCheckTests(FullTrackCase):
         first, second = self.new_task_under(epic), self.new_task_under(epic)
         self.hand_off(epic, {first: "till", second: "receipts"})
         for task in (first, second):
-            fixture.run([self.bd, "update", task, "--set-metadata", "lap.track=full"], self.repo)
+            self.bd_here("update", task, "--set-metadata", "lap.track=full")
         self.write_holdouts(epic, [{"app": "shop", "tasks": [first, second], "scenario": self.FIRST}])
         laps = {action["task"]: OpenLap(epic, action["task"], "", Path(action["worktree"]))
                 for action in self.next_printed(epic)["actions"]}

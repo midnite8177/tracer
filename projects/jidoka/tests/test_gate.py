@@ -62,8 +62,8 @@ class GateCase(test_validation.ValidationCase):
         after the given number of passes; returns the epic, the merged task and the open one."""
         epic, task, _ = self.epic_at_the_gate()
         open_task = self.new_task_under(epic)
-        fixture.run([self.bd, "update", epic, "--unset-metadata", "gate.state", "--set-metadata",
-                     f"review.passes={passes}", "--set-metadata", f"pass.asked={passes}"], self.repo)
+        self.bd_here("update", epic, "--unset-metadata", "gate.state", "--set-metadata",
+                     f"review.passes={passes}", "--set-metadata", f"pass.asked={passes}")
         return epic, task, open_task
 
     def work_file(self, task: str) -> str:
@@ -402,7 +402,7 @@ class MergeAtThePassCapTests(GateCase):
 
     def test_an_epic_at_the_pass_cap_with_no_open_task_is_refused(self):
         epic, _, open_task = self.parked_at_the_pass_cap(3)
-        fixture.run([self.bd, "close", open_task, "--reason", "done"], self.repo)
+        self.bd_here("close", open_task, "--reason", "done")
 
         done = self.merge(epic)
 

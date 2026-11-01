@@ -10,6 +10,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import fake_bd  # noqa: E402
 import jidoka_fixture as fixture  # noqa: E402
 
 RUN_TIMEOUT_SECONDS = 120
@@ -344,6 +345,95 @@ class FakeBdContractTests(unittest.TestCase):
     def test_show_of_a_bead_that_does_not_exist_fails(self):
         self.assertNotEqual(0, self.real.calls["show a bead that does not exist"].returncode)
         self.assertNotEqual(0, self.fake.calls["show a bead that does not exist"].returncode)
+
+
+class FakeBdInProcessTests(unittest.TestCase):
+    """A test that sets its beads up through the fixture writes the store the fake bd reads, and gets the answers the
+    fake bd as a process gives."""
+
+    ACTOR = "Jeff Contract"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.tmp.name).resolve()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def workspace(self, name: str) -> tuple[Path, str]:
+        """A committed repo called shop in a folder of its own, with its fake bd; returns the repo and the fake."""
+        repo = self.root / name / "shop"
+        committed_repo(repo)
+        return repo, str(fixture.add_fake_beads(repo, self.root / name / "bin"))
+
+    def as_process(self, fake: str, repo: Path, args: list[str]) -> str:
+        return fixture.run_with_env([fake, *args], repo, {**os.environ, "BEADS_ACTOR": self.ACTOR})
+
+    def as_fixture_call(self, fake: str, repo: Path, args: list[str]) -> str:
+        return fixture.fake_beads_call(repo, args, self.ACTOR)
+
+    def beads_set_up(self, call) -> dict[str, object]:
+        """The calls that set up the beads of a scheduler test, answered by the call function; returns what the ones
+        that print an id printed."""
+        epic = json.loads(call(["create", "--title", "Take card payments", "--type=epic",
+                                "--description", NOTE, "--labels", "factory", "--json"]))["id"]
+        first = json.loads(call(["create", "--title", "Read the card", "--type=task", "--parent", epic,
+                                 "--priority", "1", "--deps", epic, "--json"]))["id"]
+        second = json.loads(call(["create", "--title", "Print the receipt", "--type=task", "--parent", epic,
+                                  "--deps", f"discovered-from:{first}", "--json"]))["id"]
+        call(["dep", "add", second, "--blocked-by", first])
+        call(["label", "add", first, "human"])
+        call(["label", "remove", first, "human"])
+        call(["comment", first, "research brief: Files to change: till.txt"])
+        call(["update", first, "--claim"])
+        call(["update", second, "--set-metadata", "lap.area=till", "--set-metadata", "lap.tries=2",
+              "--add-label", "urgent"])
+        call(["update", epic, "--set-metadata", "pause=1", "--unset-metadata", "pause"])
+        call(["close", first, "--reason", "built"])
+        return {"epic": epic, "first": first, "second": second}
+
+    def test_the_store_the_fixture_writes_is_the_store_the_fake_bd_writes(self):
+        process_repo, process_fake = self.workspace("process")
+        fixture_repo, fixture_fake = self.workspace("fixture")
+
+        self.beads_set_up(lambda args: self.as_process(process_fake, process_repo, args))
+        self.beads_set_up(lambda args: self.as_fixture_call(fixture_fake, fixture_repo, args))
+
+        self.assertEqual(json.loads((process_repo / fake_bd.STORE).read_text(encoding="utf-8")),
+                         json.loads((fixture_repo / fake_bd.STORE).read_text(encoding="utf-8")))
+
+    def test_the_fake_bd_as_a_process_reads_the_beads_the_fixture_wrote_as_the_fixture_reads_them(self):
+        repo, fake = self.workspace("reads")
+        made = self.beads_set_up(lambda args: self.as_fixture_call(fake, repo, args))
+
+        by_process = self.as_process(fake, repo, ["show", made["epic"], made["first"], made["second"], "--json"])
+        by_fixture = self.as_fixture_call(fake, repo, ["show", made["epic"], made["first"], made["second"], "--json"])
+        comments = json.loads(self.as_process(fake, repo, ["comments", made["first"], "--json"]))
+
+        self.assertEqual(json.loads(by_process), json.loads(by_fixture))
+        self.assertEqual([{"text": "research brief: Files to change: till.txt", "author": self.ACTOR}],
+                         [kept(comment, COMMENT_FIELDS) for comment in comments])
+
+    def test_a_call_answers_with_no_fake_bd_to_start(self):
+        repo, fake = self.workspace("none")
+        Path(fake).unlink()
+
+        made = json.loads(self.as_fixture_call(fake, repo, ["create", "--title", "Read the card", "--json"]))
+
+        self.assertEqual("shop-1", made["id"])
+
+    def test_a_call_the_fake_fails_raises_and_leaves_the_store_as_it_was(self):
+        repo, fake = self.workspace("fails")
+        store = (repo / fake_bd.STORE).read_text(encoding="utf-8")
+
+        with self.assertRaisesRegex(fixture.FixtureError, "no issue found matching 'shop-9'"):
+            self.as_fixture_call(fake, repo, ["close", "shop-9", "--reason", "built"])
+        with self.assertRaisesRegex(fixture.FixtureError, "does not answer bd delete"):
+            self.as_fixture_call(fake, repo, ["delete", "shop-1"])
+
+        self.assertEqual(store, (repo / fake_bd.STORE).read_text(encoding="utf-8"))
 
 
 class FakeBdRefusalTests(unittest.TestCase):
