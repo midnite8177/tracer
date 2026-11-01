@@ -53,6 +53,10 @@ in the folder that holds the repo's common git folder, so a linked
 worktree elsewhere shares it too, as bd finds its database. Each call reads
 it whole and replaces it whole; the scripts and their tests call bd one
 call at a time, so no call holds a lock.
+
+Each call it answers adds one line to fake-bd-calls.jsonl, beside the store:
+the JSON list of the call's arguments. A test reads the file to see which
+calls a script made. A call it refuses is not recorded.
 """
 from __future__ import annotations
 
@@ -66,6 +70,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 STORE = Path(".beads") / "fake-bd.json"
+CALL_LOG = "fake-bd-calls.jsonl"
 DEFAULT_TYPE = "task"
 DEFAULT_PRIORITY = 2
 STATUSES = {"open", "in_progress", "blocked", "deferred", "closed"}
@@ -115,6 +120,12 @@ def store_path(cwd: Path) -> Path:
     if main is not None and (main / STORE).is_file():
         return main / STORE
     raise Refused(f"no fake beads store {STORE} in {cwd}, a folder above it or its repo's main checkout")
+
+
+def record_call(store_file: Path, argv: list[str]) -> None:
+    """Adds the call's arguments to the call log beside the store."""
+    with open(store_file.with_name(CALL_LOG), "a", encoding="utf-8") as lines:
+        lines.write(json.dumps(argv) + "\n")
 
 
 def save(path: Path, store: dict) -> None:
@@ -435,6 +446,13 @@ def answer(argv: list[str], cwd: Path) -> bool:
     command, args = argv[0], argv[1:]
     path = store_path(cwd)
     store = json.loads(path.read_text(encoding="utf-8"))
+    answered = answer_from(store, path, command, args, cwd)
+    record_call(path, argv)
+    return answered
+
+
+def answer_from(store: dict, path: Path, command: str, args: list[str], cwd: Path) -> bool:
+    """Answers the call against the store, saving the store when the call changed it."""
     if command == "show":
         return show(store, parse(command, args, set(), {"--json"}))
     if command == "list":

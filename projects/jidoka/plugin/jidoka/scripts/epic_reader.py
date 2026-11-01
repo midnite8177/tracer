@@ -6,14 +6,13 @@ held-epic checks passes its own `Rerun`, so a refusal names the script the reade
 """
 from __future__ import annotations
 
-import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import holdouts
 import settings_reader
-from commands import bd_list, is_labeled_for_human, metadata_of, read_bead, run
+from commands import UnreadableShow, bd_list, bd_show_all, is_labeled_for_human, metadata_of, read_bead
 from lap_record import area_of, open_lap
 from settings_reader import ONBOARD
 
@@ -104,14 +103,10 @@ def by_priority(task: dict) -> tuple[int, str]:
 def shown_beads(ids: list[str], main_tree: Path) -> list[dict]:
     if not ids:
         return []
-    output = run(["bd", "show", *ids, "--json"], main_tree, None)
     try:
-        parsed = json.loads(output)
-    except ValueError as error:
-        raise EpicReadError(f"bd show did not print JSON: {output.strip()[:200]!r}") from error
-    if not isinstance(parsed, list):
-        raise EpicReadError("bd show printed JSON that is not a list")
-    return [bead for bead in parsed if isinstance(bead, dict)]
+        return bd_show_all(ids, main_tree)
+    except UnreadableShow as error:
+        raise EpicReadError(str(error)) from error
 
 
 def child_ids(epic: str, main_tree: Path) -> list[str]:

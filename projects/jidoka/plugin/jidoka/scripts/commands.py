@@ -3,14 +3,18 @@ output, and holds what the scripts read from a bead and from the repo's layout: 
 factory's labels, the worktree folder and the main ref."""
 from __future__ import annotations
 
+import copy
 import json
 import os
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+from runner_summary import Finished
 
 COMMAND_TIMEOUT_SECONDS = 120
 GIT_BASH_VARIABLE = "CLAUDE_CODE_GIT_BASH_PATH"
@@ -45,6 +49,60 @@ class Worktree:
     branch: str
 
 
+class BeadReads:
+    """What one call of a script has read from bd, kept so that the call does not ask bd for the same thing twice.
+
+    A bd command that writes drops the copies it can change: the written bead's own, the shows of the beads that wait
+    on it or sit under it, because bd embeds a bead in the show of each bead linked to it, and every list. A command
+    that bd does not read with is taken as a write to every bead, so a new bd subcommand costs a read, never a stale
+    copy. It holds the beads as bd printed them and hands out copies, so a caller can change what it gets.
+    """
+
+    READING = frozenset({"show", "list", "comments", "ready", "blocked", "prime", "where", "info", "version"})
+    WRITING_ONE_BEAD = {"update": 1, "comment": 1, "close": 1, "label": 2}
+
+    def __init__(self) -> None:
+        self.shown: dict[str, dict] = {}
+        self.comments: dict[str, list[dict]] = {}
+        self.lists: dict[tuple[str, ...], list[dict]] = {}
+
+    def forget_after(self, bd_args: list[str]) -> None:
+        """Drops what a bd command with these arguments, after the `bd`, can have changed."""
+        if not bd_args or bd_args[0] in self.READING:
+            return
+        written = self.WRITING_ONE_BEAD.get(bd_args[0])
+        if written is None or len(bd_args) <= written or any(argument.startswith("--parent") for argument in bd_args):
+            self.shown.clear()
+            self.comments.clear()
+            self.lists.clear()
+            return
+        bead = bd_args[written]
+        self.shown = {key: held for key, held in self.shown.items() if not self.is_affected_by(bead, key, held)}
+        self.comments.pop(bead, None)
+        self.lists.clear()
+
+    @staticmethod
+    def is_affected_by(bead: str, key: str, held: dict) -> bool:
+        links = [link.get("id") for link in held.get("dependencies") or [] if isinstance(link, dict)]
+        return bead in (key, held.get("id"), *links)
+
+
+_reads: BeadReads | None = None
+
+
+@contextmanager
+def keeping_reads() -> Iterator[None]:
+    """For the length of the block, the bd reads of bd_show, bd_list, bd_comments and bd_show_all are kept, and a bd
+    command that writes drops the copies it can change. A script that runs once and exits keeps its reads for its
+    whole call; one that polls bd keeps none, because it waits for another process to change a bead."""
+    global _reads
+    outer, _reads = _reads, BeadReads()
+    try:
+        yield
+    finally:
+        _reads = outer
+
+
 def capture(args: list[str], cwd: Path, env: dict[str, str] | None) -> subprocess.CompletedProcess:
     """Runs the command in env, or in the inherited environment when env is None."""
     try:
@@ -54,6 +112,9 @@ def capture(args: list[str], cwd: Path, env: dict[str, str] | None) -> subproces
         raise CommandError(f"cannot run {args[0]}: {error}") from error
     except subprocess.TimeoutExpired as error:
         raise CommandError(f"{' '.join(args[:3])} did not finish in {COMMAND_TIMEOUT_SECONDS} seconds") from error
+    finally:
+        if _reads is not None and args[:1] == ["bd"]:
+            _reads.forget_after(args[1:])
 
 
 def run(args: list[str], cwd: Path, env: dict[str, str] | None) -> str:
@@ -161,19 +222,55 @@ def worktree_list(cwd: Path) -> list[Worktree]:
     return found
 
 
+class UnreadableShow(CommandError):
+    """`bd show --json` printed something other than a JSON list."""
+
+
+def print_shown(beads: list[str], cwd: Path) -> list[dict]:
+    """The objects in the JSON list that one bd show prints for the beads."""
+    output = run(["bd", "show", *beads, "--json"], cwd, None)
+    try:
+        parsed = json.loads(output)
+    except ValueError as error:
+        raise UnreadableShow(f"bd show did not print JSON: {output.strip()[:200]!r}") from error
+    if not isinstance(parsed, list):
+        raise UnreadableShow("bd show printed JSON that is not a list")
+    return [bead for bead in parsed if isinstance(bead, dict)]
+
+
+def bd_show_all(beads: list[str], cwd: Path) -> list[dict]:
+    """The beads as bd show --json prints them. With reads off, in the order bd prints them. While reads are kept, one
+    bd show asks for the beads the call has not read yet, and none when it has read them all, and the beads come back
+    in the order asked, only those found in the cache.
+
+    The cache is keyed by the id bd prints. The one exception is a single bead asked for alone: it is kept under the id
+    asked for, whatever id bd prints it under, because a caller may ask by a short form of the id and ask again. A bead
+    asked for among several is found only under the id bd prints. Output that is not a JSON list raises
+    UnreadableShow.
+    """
+    if _reads is None:
+        return print_shown(beads, cwd)
+    held = _reads.shown
+    missing = [bead for bead in dict.fromkeys(beads) if bead not in held]
+    if missing:
+        printed = print_shown(missing, cwd)
+        if len(missing) == 1 and len(printed) == 1:
+            held[missing[0]] = printed[0]
+        else:
+            held.update((str(bead.get("id")), bead) for bead in printed)
+    return copy.deepcopy([held[bead] for bead in beads if bead in held])
+
+
 def bd_show(bead: str, cwd: Path) -> dict | None:
     """The bead as bd show --json prints it, or None when the output holds no bead.
 
     A caller that goes on without the bead takes None. A caller that needs the bead calls read_bead.
     """
-    output = run(["bd", "show", bead, "--json"], cwd, None)
     try:
-        parsed = json.loads(output)
-    except ValueError:
+        printed = bd_show_all([bead], cwd)
+    except UnreadableShow:
         return None
-    if not isinstance(parsed, list) or not parsed or not isinstance(parsed[0], dict):
-        return None
-    return parsed[0]
+    return printed[0] if printed else None
 
 
 def read_bead(bead: str, cwd: Path) -> dict:
@@ -187,8 +284,18 @@ def read_bead(bead: str, cwd: Path) -> dict:
 def printed_beads(args: list[str], cwd: Path) -> list[dict]:
     """The objects in the JSON list that the bd command prints, an empty list when it prints nothing.
 
-    Output that is not a JSON list raises CommandError.
+    Output that is not a JSON list raises CommandError. While reads are kept, the command runs once between writes.
     """
+    if _reads is None:
+        return print_list(args, cwd)
+    key = tuple(args)
+    if key not in _reads.lists:
+        _reads.lists[key] = print_list(args, cwd)
+    return copy.deepcopy(_reads.lists[key])
+
+
+def print_list(args: list[str], cwd: Path) -> list[dict]:
+    """The objects in the JSON list that the bd command prints, read afresh."""
     output = run(args, cwd, None)
     name = " ".join(args[:2])
     try:
@@ -215,7 +322,12 @@ def bd_list(filters: list[str], cwd: Path) -> list[dict]:
 
 def bd_comments(bead: str, cwd: Path) -> list[dict]:
     """The comments on the bead as bd comments --json prints them, oldest first."""
-    return printed_beads(["bd", "comments", bead, "--json"], cwd)
+    command = ["bd", "comments", bead, "--json"]
+    if _reads is None:
+        return print_list(command, cwd)
+    if bead not in _reads.comments:
+        _reads.comments[bead] = print_list(command, cwd)
+    return copy.deepcopy(_reads.comments[bead])
 
 
 def git_bash_path(git: str | None, environ: Mapping[str, str]) -> Path | None:
@@ -272,3 +384,12 @@ def run_test_command(command: str, cwd: Path) -> subprocess.CompletedProcess:
                                   errors="replace")
     except OSError as error:
         raise CommandError(f"cannot run the tests: {error}") from error
+
+
+def run_finished(command: str, cwd: Path) -> Finished:
+    """Runs a test command line, as run_test_command does, and gives how it exited and what it printed: standard output,
+    then standard error. A newline separates them when standard output ends without one, because the summary lines
+    that runner_summary reads are anchored at the start of a line."""
+    done = run_test_command(command, cwd)
+    separator = "\n" if done.stdout and not done.stdout.endswith("\n") else ""
+    return Finished(done.returncode, f"{done.stdout}{separator}{done.stderr}")

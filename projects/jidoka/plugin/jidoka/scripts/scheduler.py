@@ -49,10 +49,13 @@ once the wait is over, ends the pause. The JIDOKA_NOW variable stands in for the
 lap_opening.py opens the laps, and its docstring holds the rule: which ready tasks get a lap within the lap limits, and
 what opening a lap makes and records.
 
-An epic whose spend has reached its budget, as budget.py describes, starts no stage: no lap opens, no pass stage runs,
+An epic whose spend has reached its budget, as budget.py describes, starts no stage. No lap opens, no pass stage runs,
 and a lap that would go back to a worker ends interrupted as a pause ends it. The stages already running finish and
 are reported as always. When none runs, the call parks the epic with a comment that names the spend and sends the
 epic-parked notification through notify.py.
+
+A call reads each bead from bd once and keeps the copy for the rest of the call, as commands.keeping_reads says; a bd
+write to a bead drops the copies it can change, so the next read sees the write.
 
 Every call reads the account's usage windows afresh, as reserves.py describes. A five-hour window past its reserve
 pauses the epic on the cause `reserve` until the window resets, and a reading under the reserve ends that pause. A
@@ -200,7 +203,7 @@ import spec_check
 import specs
 from bench import BenchError
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError,
-                      NotAWholeNumber, env_as_factory, labels_of, metadata_of,
+                      NotAWholeNumber, env_as_factory, keeping_reads, labels_of, metadata_of,
                       run, set_metadata)
 from epic_branch import branch_head
 from epic_reader import (BRANCH_KEY, ONBOARD, Epic, EpicReadError, Rerun, by_priority, epic_of, is_unclaimed,
@@ -725,19 +728,20 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         home = settings_reader.jidoka_home(args.jidoka_home)
-        if args.mode == "next":
-            printed = next_moves(args.epic, home, main_tree, [], True)
-        elif args.mode == "carry-on":
-            printed = next_moves(args.epic, home, main_tree, [], False)
-        elif args.mode in pass_stages.REPORT_MODES:
-            printed = report_stage(args.mode, args.epic, args.ended, getattr(args, "why", None), workers_of(args),
-                                   home, main_tree)
-        elif args.mode == "stop":
-            printed = stop(args.epic, home, main_tree)
-        else:
-            said = WorkerReport(args.outcome, args.app, args.filter, args.cause, args.why)
-            worker = ledger.Worker(args.agent, args.tier, args.route == NATIVE_ROUTE)
-            printed = report(args.epic, args.task, said, worker, home, main_tree)
+        with keeping_reads():
+            if args.mode == "next":
+                printed = next_moves(args.epic, home, main_tree, [], True)
+            elif args.mode == "carry-on":
+                printed = next_moves(args.epic, home, main_tree, [], False)
+            elif args.mode in pass_stages.REPORT_MODES:
+                printed = report_stage(args.mode, args.epic, args.ended, getattr(args, "why", None),
+                                       workers_of(args), home, main_tree)
+            elif args.mode == "stop":
+                printed = stop(args.epic, home, main_tree)
+            else:
+                said = WorkerReport(args.outcome, args.app, args.filter, args.cause, args.why)
+                worker = ledger.Worker(args.agent, args.tier, args.route == NATIVE_ROUTE)
+                printed = report(args.epic, args.task, said, worker, home, main_tree)
     except (SchedulerError, NotAWholeNumber, PassError, park.QuestionError, EpicReadError, BenchError, CommandError,
             settings_reader.SettingsError, holdouts.HoldoutsError, private_docs.ClashError, OSError) as error:
         print(f"scheduler: {error}", file=sys.stderr)

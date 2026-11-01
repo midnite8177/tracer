@@ -399,6 +399,18 @@ class FakeBdRefusalTests(unittest.TestCase):
         self.assertEqual(1, done.returncode)
         self.assertIn("--json", done.stderr)
 
+    def test_the_fake_records_each_call_it_answers_and_none_it_refuses(self):
+        log = self.repo / ".beads" / "fake-bd-calls.jsonl"
+        before = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+        self.bd("show", self.task, "--json")
+        self.bd("delete", self.task, "--json")
+        self.bd("comment", self.task, "Seen at the till.")
+
+        recorded = log.read_text(encoding="utf-8").splitlines()[len(before):]
+        self.assertEqual([["show", self.task, "--json"], ["comment", self.task, "Seen at the till."]],
+                         [json.loads(line) for line in recorded])
+
     def test_a_call_outside_a_repo_with_a_fake_beads_store_fails(self):
         done = subprocess.run([self.fake, "show", self.task, "--json"], capture_output=True, text=True,
                               encoding="utf-8", cwd=self.repo.parent, timeout=RUN_TIMEOUT_SECONDS)
