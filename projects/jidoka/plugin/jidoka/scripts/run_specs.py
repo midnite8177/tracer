@@ -93,14 +93,14 @@ def run_command(name: str, command: str, checkout: Path) -> SpecRun:
 
 
 def runs_of(app: settings_reader.App, given: list[str], checkout: Path) -> list[SpecRun]:
-    command, target = spec_commands.spec_commands(app)
+    command = spec_commands.command_for_all(app)
     try:
         names = specs.named_specs(given)
     except specs.SpecsError as error:
         raise RunSpecsError(str(error)) from error
     if not names:
         return [run_command(ALL_SPECS, command, checkout)]
-    commands = [(name, spec_commands.command_for_one(app, command, target, name)) for name in names]
+    commands = [(name, spec_commands.command_for_one(app, name)) for name in names]
     return [run_command(name, one, checkout) for name, one in commands]
 
 

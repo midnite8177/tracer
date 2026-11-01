@@ -24,17 +24,12 @@ import epic_reader
 import settings_reader
 import spec_commands
 import specs
-from commands import run_test_command
+from commands import run_finished
 from runner_summary import Finished, Verdict
 
 
 class OneAppExpected(Exception):
     """Specs recorded under no app or under several, worded for the gate's refusal."""
-
-
-def finished(command: str, checkout: Path) -> Finished:
-    done = run_test_command(command, checkout)
-    return Finished(done.returncode, f"{done.stdout}\n{done.stderr}")
 
 
 def other_open_tasks(task: dict, epic: dict, main_tree: Path) -> list[dict]:
@@ -97,13 +92,13 @@ def refusal(task: dict, epic: dict, settings: settings_reader.Settings, worktree
         app = app_the_specs_belong_to(settings, [task, *others])
         new = new_specs(task, others)
         already_true = specs.already_true_of(task)
-        command, target = spec_commands.spec_commands(app)
-        named = {name: finished(spec_commands.command_for_one(app, command, target, name), worktree)
+        command = spec_commands.command_for_all(app)
+        named = {name: run_finished(spec_commands.command_for_one(app, name), worktree)
                  for name in [*new, *already_true]}
     except (OneAppExpected, specs.SpecsError, settings_reader.SettingsError, spec_commands.SpecCommandError) as error:
         return str(error)
     problems = [new_spec_problem(name, named[name]) for name in new]
     problems += [already_true_problem(name, named[name]) for name in already_true]
     failing_by_name = sum(tally.failed for each in named.values() if (tally := each.tally) is not None)
-    problems.append(old_specs_problem(finished(command, worktree), failing_by_name))
+    problems.append(old_specs_problem(run_finished(command, worktree), failing_by_name))
     return "; ".join(problem for problem in problems if problem) or None

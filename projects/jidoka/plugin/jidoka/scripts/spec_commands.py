@@ -14,20 +14,23 @@ class SpecCommandError(Exception):
     """A reason an app has no command line for its specs, worded for the person who reads stderr."""
 
 
-def spec_commands(app: settings_reader.App) -> tuple[str, str | None]:
-    """The app's spec_command and spec_target; raises SpecCommandError, saying what to do, for an app with no
-    acceptance folder or no spec command."""
+def command_for_all(app: settings_reader.App) -> str:
+    """The command line that runs every spec of the app; raises SpecCommandError, saying what to do, for an app with
+    no acceptance folder or no spec command."""
     if app.acceptance is None:
         raise SpecCommandError(f"{app.name!r} has no acceptance folder, so it has no specs to run. Run "
                                "/jidoka:onboard to record the folder of its acceptance specs")
     if app.spec_command is None:
         raise SpecCommandError(f"{app.name!r} has an acceptance folder but no spec command. Run /jidoka:onboard to "
                                "record the command that runs its specs and how to target one")
-    return app.spec_command, app.spec_target
+    return app.spec_command
 
 
-def command_for_one(app: settings_reader.App, command: str, target: str | None, spec: str) -> str:
-    """The command line that runs the one spec, its name quoted for the shell."""
+def command_for_one(app: settings_reader.App, spec: str) -> str:
+    """The command line that runs the one spec, its name quoted for the shell; raises SpecCommandError for an app
+    that cannot run its specs or has no way to target one."""
+    command = command_for_all(app)
+    target = app.spec_target
     if target is None:
         raise SpecCommandError(f"{app.name!r} has a spec command but does not say how to target a spec. "
                                "Run /jidoka:onboard to record it")

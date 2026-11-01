@@ -10,7 +10,7 @@ validation asks for it before its suite and not after. `run_all` runs a plan.
 The specs run on the slots that no other running epic holds, at least one, as slots.py says, and never more at once
 than those slots. Each running spec has a slot of its own, which it learns from the environment variable JIDOKA_SLOT,
 so that the protocol driver turns it into what the repo settings' `slot_use` says, such as a port, and two specs side
-by side never clash. The slots are held for the run and given back after it, even when a run raises.
+by side never clash. The run holds the slots and gives them back after it, even when a run raises.
 """
 from __future__ import annotations
 
@@ -132,8 +132,7 @@ def specs_to_run(epic: str, settings: settings_reader.Settings, main_tree: Path)
     for name, listed in recorded_specs(epic, main_tree).items():
         try:
             app = settings.app_named(name)
-            command, target = spec_commands.spec_commands(app)
-            jobs += [SpecToRun(name, spec, spec_commands.command_for_one(app, command, target, spec))
+            jobs += [SpecToRun(name, spec, spec_commands.command_for_one(app, spec))
                      for spec in listed]
         except (settings_reader.SettingsError, spec_commands.SpecCommandError) as error:
             raise SpecsRunError(str(error)) from error
