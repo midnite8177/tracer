@@ -14,7 +14,7 @@ events that name a bead are:
                      that has lasted an hour; the bead is the epic. A pause on a usage limit waits on the
                      reset, and sends nothing.
 
-`notify.py permission-prompt --session <id>` is the one event about a session: the host asks the human for a
+`notify.py permission-prompt --session <id>` is the one event about a session. The host asks the human for a
 permission while an epic runs. It takes `--session <id>`, the id of the host session, and no bead, and names the
 running epic (an open epic with the `factory` label that is neither parked nor at the gate) whose heartbeat
 records that session. A session that manages no running epic sends nothing, even when another epic runs in the
@@ -64,8 +64,9 @@ import pause
 import settings_reader
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, env_as_factory, is_labeled_for_human, metadata_of,
                       parent_of, read_bead, run)
-from epic_reader import EpicReadError, NotAnEpic, read_epic, shown_epic, validated_head
+from epic_reader import EpicReadError, NotAnEpic, read_epic, shown_epic
 from epics import PARKED, WAITING, EpicsError, at_the_gate, is_closed, state_of
+from recorded_validation import validated_head
 
 TASK_PARKED = "task-parked"
 EPIC_PARKED = "epic-parked"

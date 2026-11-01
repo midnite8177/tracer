@@ -1,7 +1,7 @@
 """Reads an epic and its tasks from bd, and holds the checks that stay true for as long as the factory holds the epic.
 
 The handoff script and the scheduler both read an epic this way, and the scripts that watch epics read its children
-through it. It also holds the recorded branch and the validated head of an epic. Each script that runs the
+through it. It also holds the recorded branch of an epic. Each script that runs the
 held-epic checks passes its own `Rerun`, so a refusal names the script the reader ran.
 """
 from __future__ import annotations
@@ -18,7 +18,6 @@ from lap_record import area_of, open_lap
 from settings_reader import ONBOARD
 
 BRANCH_KEY = "factory.branch"
-VALIDATED_HEAD_KEY = "validation.head"
 BLOCKING = "blocks"
 CLOSED = "closed"
 EPIC_TYPE = "epic"
@@ -100,11 +99,6 @@ def by_priority(task: dict) -> tuple[int, str]:
     """The order laps open in: bd priority, then id."""
     priority = task.get("priority")
     return (priority if isinstance(priority, int) else sys.maxsize, str(task["id"]))
-
-
-def validated_head(metadata: dict) -> str:
-    """The commit of the epic branch that validation checked, or an empty string when none is recorded."""
-    return str(metadata.get(VALIDATED_HEAD_KEY) or "")
 
 
 def shown_beads(ids: list[str], main_tree: Path) -> list[dict]:

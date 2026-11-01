@@ -33,13 +33,12 @@ import validation
 import validation_merge
 from commands import (HUMAN_LABEL, NONE_YET, SCRATCH_FOLDER, env_as_factory, metadata_of, read_bead, run, set_metadata,
                       unset_metadata)
-from epic_reader import VALIDATED_HEAD_KEY, validated_head
 from epic_task import NewTask, file_task
 from epics import HOLDOUTS_PENDING_KEY, PENDING, awaits_holdouts
 from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, count_of, park_epic, worktree_at
 from report_text import shortened_title
-from recorded_validation import RUNS_KEY, RecordedValidation
+from recorded_validation import RUNS_KEY, VALIDATED_HEAD_KEY, RecordedValidation, validated_head
 from settings_reader import Settings
 from validation import FAIL, PASS, ValidationError
 from worktrees import remove_worktree

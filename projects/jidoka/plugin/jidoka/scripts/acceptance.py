@@ -13,9 +13,10 @@ from pathlib import Path
 import pass_ledger
 from commands import MAIN_REF
 from epic_branch import branch_head, required_head
-from epic_reader import BRANCH_KEY, EPIC_TYPE, read_epic, recorded_branch, validated_head
+from epic_reader import BRANCH_KEY, EPIC_TYPE, read_epic, recorded_branch
 from epics import GATE_STATE_KEY, WAITING, at_the_gate, is_closed
 from merge_gate import contains
+from recorded_validation import validated_head
 
 
 def is_parked_at_the_cap(shown: dict, main_tree: Path) -> bool:

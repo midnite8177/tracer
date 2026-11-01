@@ -2,7 +2,7 @@
 
 A `RecordedValidation` is the result, the validated head, each command's run, the figures of the acceptance specs and
 the specs that ran over their app's time limit. `metadata` and `comment_lines` write it, `read` reads it back from the
-epic's metadata, and `result_metadata` writes the result alone, as settling the holdouts does. A figure added to the
+epic's metadata, `validated_head` reads the head alone, and `result_metadata` writes the result alone, as settling the holdouts does. A figure added to the
 record is added here.
 """
 from __future__ import annotations
@@ -12,46 +12,22 @@ from dataclasses import dataclass
 
 import spec_time_limit
 from commands import set_metadata, unset_metadata
-from epic_reader import VALIDATED_HEAD_KEY
+from full_suite import CommandRun
 from pass_support import PassError
 from settings_reader import SuiteCommand
 from spec_time_limit import OverTheLimit
 from validation_specs import SpecFigures
 
 RESULT_KEY = "validation.result"
+VALIDATED_HEAD_KEY = "validation.head"
 RUNS_KEY = "validation.runs"
 SPECS_KEY = "validation.specs"
 SPEC_SECONDS_KEY = "validation.spec_seconds"
 SLOW_SPECS_KEY = "validation.slow_specs"
-UNKNOWN_FIGURES = "no test count in its output"
 
 
 class RecordError(PassError):
     """A reason the validation an epic records cannot be read, worded for the person who reads stderr."""
-
-
-@dataclass(frozen=True)
-class CommandRun:
-    """One run of a full-suite command: how it exited, how long it took, and what its output counted."""
-    suite: SuiteCommand
-    exit_code: int
-    seconds: float
-    tests: int | None
-    skipped: int
-    output: str
-
-    @property
-    def passed(self) -> bool:
-        return self.exit_code == 0
-
-    def figures(self) -> str:
-        if self.tests is None:
-            return f"exit code {self.exit_code}, {UNKNOWN_FIGURES}, {self.seconds:.1f} s"
-        return f"exit code {self.exit_code}, {self.tests} tests, {self.skipped} skipped, {self.seconds:.1f} s"
-
-    def fields(self) -> dict:
-        return {"app": self.suite.app, "command": self.suite.command, "exit_code": self.exit_code,
-                "seconds": self.seconds, "tests": self.tests, "skipped": self.skipped}
 
 
 def runs_of(value: object) -> list[CommandRun]:
@@ -63,6 +39,12 @@ def runs_of(value: object) -> list[CommandRun]:
                            int(each["skipped"]), "") for each in listed]
     except (ValueError, KeyError, TypeError) as error:
         raise RecordError(f"the {RUNS_KEY} metadata of the epic cannot be read: {error!r}") from error
+
+
+def run_fields(run: CommandRun) -> dict:
+    """The entry that the record keeps for a run; `runs_of` reads it back by the same keys."""
+    return {"app": run.suite.app, "command": run.suite.command, "exit_code": run.exit_code, "seconds": run.seconds,
+            "tests": run.tests, "skipped": run.skipped}
 
 
 def spec_figures_of(metadata: dict) -> SpecFigures:
@@ -139,7 +121,7 @@ class RecordedValidation:
                 else unset_metadata(SLOW_SPECS_KEY))
         return [*set_metadata((RESULT_KEY, self.result), (VALIDATED_HEAD_KEY, self.head),
                               (SPECS_KEY, self.specs.count), (SPEC_SECONDS_KEY, self.specs.seconds),
-                              (RUNS_KEY, json.dumps([each.fields() for each in self.runs]))), *slow]
+                              (RUNS_KEY, json.dumps([run_fields(each) for each in self.runs]))), *slow]
 
 
 def result_metadata(result: str) -> list[str]:
@@ -147,10 +129,15 @@ def result_metadata(result: str) -> list[str]:
     return set_metadata((RESULT_KEY, result))
 
 
+def validated_head(metadata: dict) -> str:
+    """The commit of the epic branch that validation checked, or an empty string when the epic records none."""
+    return str(metadata.get(VALIDATED_HEAD_KEY) or "")
+
+
 def read(metadata: dict) -> RecordedValidation | None:
     """The validation the epic's metadata records; none when it records no runs, as for an epic never validated."""
     runs = metadata.get(RUNS_KEY)
     if not runs:
         return None
-    return RecordedValidation(str(metadata.get(RESULT_KEY) or "unknown"), str(metadata.get(VALIDATED_HEAD_KEY) or ""),
+    return RecordedValidation(str(metadata.get(RESULT_KEY) or "unknown"), validated_head(metadata),
                               runs_of(runs), spec_figures_of(metadata), slow_specs_of(metadata.get(SLOW_SPECS_KEY)))

@@ -1096,6 +1096,14 @@ class RecordedValidationTests(unittest.TestCase):
         without_output = [replace(each, output="") for each in recorded.runs]
         self.assertEqual(replace(recorded, runs=without_output), read)
 
+    def test_the_validated_head_is_the_one_the_record_wrote_and_empty_when_none_is_recorded(self):
+        recorded = self.recorded()
+        arguments = recorded.metadata()
+        pairs = dict(pair.split("=", 1) for flag, pair in zip(arguments, arguments[1:]) if flag == "--set-metadata")
+
+        self.assertEqual((recorded.head, ""), (recorded_validation.validated_head(pairs),
+                                               recorded_validation.validated_head({})))
+
     def test_the_totals_are_those_of_the_commands_and_untested_commands_count_no_tests(self):
         recorded = self.recorded()
 
