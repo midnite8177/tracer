@@ -81,7 +81,7 @@ import rules
 import specs
 from bench import slug
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, MAIN_REF, CommandError, bd_comments, env_as_git_user,
-                      head_of, labels_of, run)
+                      head_of, keeping_reads, labels_of, run)
 from epic_branch import branch_head
 from epic_reader import BRANCH_KEY, Epic, EpicReadError, Rerun, Task, epic_of, problems_while_held
 from lap_record import FULL_TRACK, SIMPLE_TRACK
@@ -378,10 +378,11 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         home = settings_reader.jidoka_home(args.jidoka_home)
-        if args.mode == "check":
-            printed = check(args.epic, home, main_tree)
-        else:
-            printed = take(args.epic, args.area, args.track, args.preset, home, main_tree)
+        with keeping_reads():
+            if args.mode == "check":
+                printed = check(args.epic, home, main_tree)
+            else:
+                printed = take(args.epic, args.area, args.track, args.preset, home, main_tree)
     except (HandoffError, EpicReadError, CommandError, settings_reader.SettingsError, holdouts.HoldoutsError,
             rules.RulesError, specs.SpecsError, OSError) as error:
         print(f"handoff: {error}", file=sys.stderr)

@@ -323,6 +323,65 @@ def fake_beads_call(repo: Path, args: list[str], actor: str) -> str:
         raise FixtureError(str(failed)) from failed
 
 
+def fake_beads_calls(repo: Path) -> list[list[str]]:
+    """Every call the fake bd answered in the repo so far, as the arguments after `bd`, oldest first."""
+    log = repo / ".beads" / fake_bd.CALL_LOG
+    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+
+
+FAKE_BD_READS = {"show", "comments", "list", "ready", "blocked"}
+
+
+def still_fresh(read: tuple[str, ...], write: list[str]) -> bool:
+    """Whether a read of the fake bd, as `("show", bead)`, `("comments", bead)` or the whole call of a list, would
+    print the same after the bd write. One clause for each thing a write changes:
+
+    - A list prints every bead, so any write makes it stale.
+    - A bead's own show and comments go stale when the write names the bead, or names the bead it is created under with
+      --parent.
+    - A show goes stale when the write names the bead it sits under, for bd shows a bead with its parent, and a bead
+      sits under the id before the last dot of its own.
+
+    The oracle differs from BeadReads on purpose, so that it checks BeadReads and does not copy it. For a `label` or
+    `dep` write it takes the word after the subcommand as the one bead written, and leaves the reads of the bead on
+    the other end of a dependency fresh. BeadReads drops every read on a `dep` write, so it reads again after one
+    where the oracle counts the read of a bead the write did not name as a repeat.
+    """
+    command, words = write[0], [word for word in write[1:] if not word.startswith("--")]
+    written = words[1:2] if command in ("label", "dep") else words[:1]
+    created_under = [word.split("=", 1)[-1] for word in write if word.startswith("--parent")]
+    if read[0] not in ("show", "comments"):
+        return False
+    bead = read[1]
+    if bead in written or bead in created_under:
+        return False
+    if read[0] == "show" and bead.rsplit(".", 1)[0] in written:
+        return False
+    return True
+
+
+def repeated_reads(calls: list[list[str]]) -> list[str]:
+    """The reads among the fake bd's calls that print what an earlier read printed, with no write that changes it
+    between them. `still_fresh` says which writes change which reads."""
+    fresh: set[tuple[str, ...]] = set()
+    repeated: list[str] = []
+    for call in calls:
+        command = call[0]
+        if command in ("show", "comments"):
+            for bead in [word for word in call[1:] if not word.startswith("--")]:
+                if (command, bead) in fresh:
+                    repeated.append(f"bd {command} {bead}")
+                fresh.add((command, bead))
+        elif command in FAKE_BD_READS:
+            key = tuple(call)
+            if key in fresh:
+                repeated.append(" ".join(["bd", *call]))
+            fresh.add(key)
+        else:
+            fresh = {key for key in fresh if still_fresh(key, call)}
+    return repeated
+
+
 def path_with(bin_dir: Path) -> str:
     """The caller's PATH with bin_dir first, so the tools in it stand in for the installed ones."""
     return f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
@@ -766,7 +825,6 @@ def git_bash_beside(git: str) -> str:
 
 
 def git_bash() -> str:
-    """The Git Bash of the machine's git."""
     return git_bash_beside(real_tool("git"))
 
 

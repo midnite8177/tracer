@@ -106,6 +106,19 @@ class GatePageFileTests(GatePageCase):
         self.assertEqual(1, len(list((self.home / "pages" / "shop").glob(f"gate-{epic}.html"))))
 
 
+class GatePageReadsEachBeadOnceTests(GatePageCase):
+    def test_a_page_for_an_epic_of_two_tasks_reads_every_bead_at_most_once_between_writes_to_it(self):
+        epic, *_ = self.epic_with_changes()
+        self.new_task_under(epic)
+        guide_file = self.write_guide("guide")
+        before = len(fixture.fake_beads_calls(self.repo))
+
+        done = self.launch(GATE_PAGE, epic, "--guide", str(guide_file))
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([], fixture.repeated_reads(fixture.fake_beads_calls(self.repo)[before:]))
+
+
 class GuideSectionTests(GatePageCase):
     def test_in_short_holds_the_gate_workers_words_and_markup_in_them_is_shown_as_text(self):
         epic, *_ = self.epic_with_changes()

@@ -795,47 +795,17 @@ class SchedulerReadsEachBeadOnceTests(SchedulerCase):
     """The fake bd records each call it answers. A bd write to a bead changes what a read of that bead, of a list and of
     the beads under it would print, because bd shows a bead with the bead it sits under."""
 
-    READS = {"show", "comments", "list", "ready", "blocked"}
-
-    def call_log(self) -> list[list[str]]:
-        log = self.repo / ".beads" / "fake-bd-calls.jsonl"
-        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
-
-    def repeated_reads(self, calls: list[list[str]]) -> list[str]:
-        """The reads that print what an earlier read printed, with no write to that bead between them."""
-        fresh: set[tuple[str, ...]] = set()
-        repeated: list[str] = []
-        for call in calls:
-            command, positionals = call[0], [word for word in call[1:] if not word.startswith("--")]
-            if command in ("show", "comments"):
-                for bead in positionals:
-                    if (command, bead) in fresh:
-                        repeated.append(f"bd {command} {bead}")
-                    fresh.add((command, bead))
-            elif command in self.READS:
-                key = tuple(call)
-                if key in fresh:
-                    repeated.append(" ".join(["bd", *call]))
-                fresh.add(key)
-            else:
-                touched = positionals[1:2] if command in ("label", "dep") else positionals[:1]
-                parent = [word.split("=", 1)[-1] for word in call if word.startswith("--parent")]
-                fresh = {key for key in fresh
-                         if key[0] in ("show", "comments") and key[1] not in touched + parent
-                         and not (key[0] == "show" and key[1].rsplit(".", 1)[0] in touched)}
-        return repeated
-
     def test_a_next_call_on_a_two_task_epic_reads_every_bead_at_most_once_between_writes_to_it(self):
         epic = self.new_epic()
         first, second = self.new_task_under(epic), self.new_task_under(epic)
         self.hand_off(epic, {first: "till", second: "receipts"})
-        before = len(self.call_log())
+        before = len(fixture.fake_beads_calls(self.repo))
 
         printed = self.next_printed(epic)
-        made = self.call_log()[before:]
+        made = fixture.fake_beads_calls(self.repo)[before:]
 
         self.assertEqual([first, second], [action["task"] for action in printed["actions"]])
-        self.assertEqual([], self.repeated_reads(made))
+        self.assertEqual([], fixture.repeated_reads(made))
 
     def test_a_report_on_a_two_task_epic_reads_every_bead_at_most_once_between_writes_to_it(self):
         epic = self.new_epic()
@@ -843,14 +813,14 @@ class SchedulerReadsEachBeadOnceTests(SchedulerCase):
         self.hand_off(epic, {first: "till", second: "receipts"})
         for action in self.next_printed(epic)["actions"]:
             self.commit_in(Path(action["worktree"]), f"{action['task']}.txt", "built\n")
-        before = len(self.call_log())
+        before = len(fixture.fake_beads_calls(self.repo))
 
         printed = self.build_done(epic, first)
-        made = self.call_log()[before:]
+        made = fixture.fake_beads_calls(self.repo)[before:]
 
         self.assertEqual([], printed["actions"])
         self.assertEqual("closed", self.shown(first)["status"])
-        self.assertEqual([], self.repeated_reads(made))
+        self.assertEqual([], fixture.repeated_reads(made))
 
 
 class LinearEpicBranchTests(SchedulerCase):

@@ -260,6 +260,35 @@ class HandoffCheckTests(HandoffCase):
         self.assert_nothing_written(epic, [task], name)
 
 
+class HandoffReadsEachBeadOnceTests(HandoffCase):
+    """The fake bd records each call it answers, and the epic here holds two tasks."""
+
+    def calls_of(self, *args: str) -> tuple[subprocess.CompletedProcess, list[list[str]]]:
+        before = len(fixture.fake_beads_calls(self.repo))
+        done = self.handoff(*args)
+        return done, fixture.fake_beads_calls(self.repo)[before:]
+
+    def test_a_check_of_a_two_task_epic_reads_every_bead_at_most_once_between_writes_to_it(self):
+        epic, _ = self.new_epic()
+        first, second = self.new_task_under(epic), self.new_task_under(epic)
+
+        done, made = self.calls_of("check", epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([first, second], [task["id"] for task in json.loads(done.stdout)["tasks"]])
+        self.assertEqual([], fixture.repeated_reads(made))
+
+    def test_a_take_of_a_two_task_epic_with_a_preset_reads_every_bead_at_most_once_between_writes_to_it(self):
+        epic, _ = self.new_epic()
+        first, second = self.new_task_under(epic), self.new_task_under(epic)
+
+        done, made = self.calls_of("take", epic, "--area", f"{first}=till", "--area", f"{second}=receipts",
+                                   "--preset", "bug-epic")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([], fixture.repeated_reads(made))
+
+
 class HandoffAreaTests(HandoffCase):
     def test_take_refuses_a_task_with_no_area_and_writes_nothing(self):
         epic, name = self.new_epic()

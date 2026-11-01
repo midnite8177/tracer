@@ -359,6 +359,29 @@ class ValidationHoldoutsTests(ValidationHoldoutsCase):
         self.assertEqual(("build", "shop", "in_progress"),
                          (self.metadata(action["task"]).get("lap.stage"), action["area"], filed["status"]))
 
+    def test_a_holdouts_report_with_a_red_holdout_reads_every_bead_at_most_once_between_writes_to_it(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO, SECOND_SCENARIO])
+        self.write_report(self.holdouts_action_of(printed),
+                          [{"holdout": 1, "verdict": "pass", "saw": ""},
+                           {"holdout": 2, "verdict": "fail", "saw": WHAT_A_USER_SAW}])
+        before = len(fixture.fake_beads_calls(self.repo))
+
+        done = self.report_holdouts(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([], fixture.repeated_reads(fixture.fake_beads_calls(self.repo)[before:]))
+
+    def test_a_holdouts_report_with_every_holdout_green_reads_every_bead_at_most_once_between_writes_to_it(self):
+        epic, _, printed = self.finish_epic_with_holdouts([SCENARIO, SECOND_SCENARIO])
+        self.write_report(self.holdouts_action_of(printed), [{"holdout": 1, "verdict": "pass", "saw": ""},
+                                                             {"holdout": 2, "verdict": "pass", "saw": ""}])
+        before = len(fixture.fake_beads_calls(self.repo))
+
+        done = self.report_holdouts(epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([], fixture.repeated_reads(fixture.fake_beads_calls(self.repo)[before:]))
+
     def test_a_red_holdout_keeps_the_epic_from_the_gate_and_records_the_failure(self):
         epic, _, printed = self.finish_epic_with_holdouts([SCENARIO])
         self.write_report(self.holdouts_action_of(printed), [{"holdout": 1, "verdict": "fail",

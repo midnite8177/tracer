@@ -46,7 +46,8 @@ import settings_reader
 import recorded_validation
 import review
 from acceptance import branch_and_head_at_the_gate, branch_moved_since_validation, main_moved_since_validation
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, metadata_of, read_bead, run, worktree_list
+from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, capture, keeping_reads, metadata_of, read_bead, run,
+                      worktree_list)
 from epic_reader import EpicReadError
 from land import changed_paths, edited_paths, main_checkout
 from pass_support import MAIN_BRANCH, PassError
@@ -372,7 +373,8 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         home = settings_reader.jidoka_home(args.jidoka_home)
-        page = gather(args.epic, read_guide(Path(args.guide)), home, main_tree)
+        with keeping_reads():
+            page = gather(args.epic, read_guide(Path(args.guide)), home, main_tree)
         print(write(page, home, main_tree))
     except (GatePageError, EpicReadError, CommandError, PassError, settings_reader.SettingsError, OSError) as error:
         print(f"gate page: {error}", file=sys.stderr)
