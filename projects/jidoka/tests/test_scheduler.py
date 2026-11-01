@@ -822,6 +822,27 @@ class SchedulerReadsEachBeadOnceTests(SchedulerCase):
         self.assertEqual("closed", self.shown(first)["status"])
         self.assertEqual([], fixture.repeated_reads(made))
 
+    def calls_of_next_on_an_epic_of(self, areas: int) -> list[list[str]]:
+        epic = self.new_epic()
+        tasks = [self.new_task_under(epic) for _ in range(areas)]
+        self.hand_off(epic, {task: f"area-{index}" for index, task in enumerate(tasks)})
+        before = len(fixture.fake_beads_calls(self.repo))
+        self.assertEqual(LAP_LIMIT, len(self.next_printed(epic)["actions"]))
+        return fixture.fake_beads_calls(self.repo)[before:]
+
+    def test_a_next_call_on_a_five_task_epic_makes_the_same_bd_calls_as_on_a_two_task_epic(self):
+        two = self.calls_of_next_on_an_epic_of(2)
+        five = self.calls_of_next_on_an_epic_of(5)
+
+        self.assertEqual(sorted(call[0] for call in two), sorted(call[0] for call in five))
+
+    def test_a_next_call_shows_a_task_only_for_what_the_epic_s_list_leaves_out(self):
+        calls = self.calls_of_next_on_an_epic_of(5)
+
+        shown = [word for call in calls if call[0] == "show" for word in call[1:] if not word.startswith("--")]
+        self.assertEqual(1, len(shown), shown)
+        self.assertEqual(1, len([call for call in calls if call[0] == "list" and "--parent" in call]))
+
 
 class LinearEpicBranchTests(SchedulerCase):
     def test_two_laps_merged_one_after_the_other_leave_the_epic_branch_linear_with_one_commit_per_task(self):

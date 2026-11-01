@@ -43,7 +43,11 @@ class Task:
 
 @dataclass(frozen=True)
 class Epic:
-    """The epic as the scripts read it: the bead itself, every bead it holds, and its tasks among them."""
+    """The epic as the scripts read it: the bead itself, every bead it holds, and its tasks among them.
+
+    `shown` is the epic as bd shows it. A child is as bd lists it, which has no links to other beads, except that a child
+    which waits on a bead is as bd shows it, with its blocking links. Only those children carry `dependencies`, and the
+    others have none to read."""
     shown: dict
     children: tuple[dict, ...]
     tasks: tuple[Task, ...]
@@ -58,12 +62,12 @@ class Epic:
 
     @property
     def task_beads(self) -> list[dict]:
-        """Every bead the epic holds that is not an epic, closed or open, as bd shows it."""
+        """Every bead the epic holds that is not an epic, closed or open, in the form `children` has."""
         return [child for child in self.children if child.get("issue_type") != EPIC_TYPE]
 
     @property
     def open_task_beads(self) -> list[dict]:
-        """The beads of the epic's open tasks, as bd shows them."""
+        """The beads of the epic's open tasks, in the form `children` has."""
         open_ids = {task.id for task in self.tasks}
         return [child for child in self.children if str(child["id"]) in open_ids]
 
@@ -110,13 +114,38 @@ def shown_beads(ids: list[str], main_tree: Path) -> list[dict]:
 
 
 def child_ids(epic: str, main_tree: Path) -> list[str]:
-    return [str(item["id"]) for item in bd_list(["--parent", epic, "--all", "--limit", "0"], main_tree)
-            if item.get("id")]
+    return [str(item["id"]) for item in listed_items(epic, main_tree)]
+
+
+def shown_children(epic: str, main_tree: Path) -> list[dict]:
+    """Every bead the epic holds, each as bd shows it, with its links. A script that reads only what `Epic.children`
+    holds takes them from the epic instead, because that read needs one show for the children that wait on a bead
+    and this one needs a show for them all."""
+    return shown_beads(child_ids(epic, main_tree), main_tree)
+
+
+def listed_items(epic: str, main_tree: Path) -> list[dict]:
+    return [item for item in bd_list(["--parent", epic, "--all", "--limit", "0"], main_tree) if item.get("id")]
+
+
+def waits_on_something(listed: dict) -> bool:
+    """The list left out the beads this one waits on, which only a show prints: it counts some, or does not say."""
+    return listed.get("dependency_count") != 0
+
+
+def listed_children(epic: str, main_tree: Path) -> list[dict]:
+    """The beads the epic holds, as bd list prints them, with the show of each one that waits on a bead in place of its
+    listed form. One bd list gives the labels, metadata and fields of every child, and one bd show gives the links of
+    the children that have any, so the calls do not grow with the tasks."""
+    listed = listed_items(epic, main_tree)
+    shown = {str(bead["id"]): bead
+             for bead in shown_beads([str(item["id"]) for item in listed if waits_on_something(item)], main_tree)}
+    return [shown.get(str(item["id"]), item) for item in listed]
 
 
 def read_epic(shown: dict, main_tree: Path) -> Epic:
     """The epic whose bead is already shown, with every bead it holds read once."""
-    children = tuple(shown_beads(child_ids(str(shown["id"]), main_tree), main_tree))
+    children = tuple(listed_children(str(shown["id"]), main_tree))
     tasks = tuple(Task(str(child["id"]), str(child.get("title") or ""), str(child.get("status") or ""),
                        str(child.get("description") or ""))
                   for child in children

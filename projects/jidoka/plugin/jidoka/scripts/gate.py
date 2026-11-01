@@ -115,14 +115,14 @@ from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, HUMAN_LABEL, MAIN_
                       env_as_git_user, labels_of, metadata_of, read_bead, run, set_metadata, unset_metadata,
                       worktree_list)
 from epic_branch import branch_head, required_head
-from epic_reader import EpicReadError, child_ids, recorded_branch, shown_beads
+from epic_reader import EpicReadError, recorded_branch, shown_children
 from epics import GATE_STATE_KEY, WAITING, is_closed
 from gate_items import assumption, numbered_assumptions, outside_of
 from holdouts import HOLDOUTS_KEY, HoldoutsError
-from land import (FULL_SUITE_FAILED_EXIT_CODE, PARTLY_LANDED_EXIT_CODE, WAITING_ON_EDITS_EXIT_CODE, FullSuiteFailed,
-                  LandingError, LandingSettings, WaitingOnEdits, acquire_lock, attempt, landing_settings,
-                  main_checkout, merge_lock, print_hand_run, refuse_bad_message, refuse_overlapping_edits,
-                  release_lock, run_full_suite, subject)
+from full_suite import FullSuiteFailed, run_full_suite
+from land import (FULL_SUITE_FAILED_EXIT_CODE, PARTLY_LANDED_EXIT_CODE, WAITING_ON_EDITS_EXIT_CODE, LandingError,
+                  LandingSettings, WaitingOnEdits, acquire_lock, attempt, landing_settings, main_checkout, merge_lock,
+                  print_hand_run, refuse_bad_message, refuse_overlapping_edits, release_lock, subject)
 from open_tasks import move_open_tasks
 from pass_support import PassError
 from report_text import tail_of
@@ -259,7 +259,7 @@ def validate_again(epic: EpicAtTheGate, worktree: Path, settings: LandingSetting
     except FullSuiteFailed as failed:
         details: list[str] = []
         for failure in failed.failures:
-            details += ["", f"`{failure.command}` exited {failure.exit_code}. The end of its output:", "",
+            details += ["", f"`{failure.suite.command}` exited {failure.exit_code}. The end of its output:", "",
                         tail_of(failure.output)]
         raise RebuildRefused("main or the epic branch moved since validation, and the full suite failed on the "
                              "epic rebuilt on main", details, TURNED_BACK_EXIT_CODE, epic.waits_at_the_gate,
@@ -290,9 +290,9 @@ def land_on_main(epic: EpicAtTheGate, message: str, settings: LandingSettings, h
 
 def lap_branches(epic: EpicAtTheGate, main_tree: Path) -> list[str]:
     """The branch of every lap the epic's beads opened, from the lap metadata and the lap/<bead> naming."""
-    ids = child_ids(epic.id, main_tree)
-    names = {f"{lap_record.LAP_BRANCH_PREFIX}{bead}" for bead in ids}
-    for bead in shown_beads(ids, main_tree):
+    children = shown_children(epic.id, main_tree)
+    names = {f"{lap_record.LAP_BRANCH_PREFIX}{bead['id']}" for bead in children}
+    for bead in children:
         recorded = lap_record.branch_of(metadata_of(bead))
         if recorded:
             names.add(str(recorded))

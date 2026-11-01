@@ -17,7 +17,8 @@ RUN_TIMEOUT_SECONDS = 120
 SHOWN_FIELDS = ("id", "title", "status", "priority", "issue_type", "assignee", "labels", "metadata", "parent",
                 "close_reason", "description")
 LINK_FIELDS = ("id", "title", "status", "dependency_type")
-LISTED_FIELDS = ("id", "title", "status", "priority", "issue_type", "assignee", "labels", "parent", "description")
+LISTED_FIELDS = ("id", "title", "status", "priority", "issue_type", "assignee", "labels", "metadata", "parent",
+                 "description", "close_reason", "dependency_count")
 COMMENT_FIELDS = ("text", "author")
 NOTE = "## What\nPrint the note.\n\n## Seams\nThe till's command line."
 REPLACED = f"{NOTE}\n\n## Acceptance specs\n\n1. A shopper pays by card | and the till prints a receipt"
@@ -175,6 +176,8 @@ class Play:
         self.listed_beads(self.repo, "list the tasks that carry a label, closed ones left out", "--label", "human",
                           "--type", "task", "--limit", "0")
         self.call("mark the lap merged", "jidoka", "update", first, "--set-metadata", "lap.stage=merged")
+        self.listed_beads(self.repo, "list the epic's children with their fields", "--parent", epic, "--all",
+                          "--limit", "0")
         self.show("show a closed task and the task that waited on it", first, second)
         self.listed("list the children with a closed one", epic)
         self.show("show a bead that does not exist", MISSING)
@@ -278,6 +281,9 @@ class FakeBdContractTests(unittest.TestCase):
     def test_list_of_an_epic_s_children_prints_every_child_closed_ones_too(self):
         self.assert_same("list the epic's children")
         self.assert_same("list the children with a closed one")
+
+    def test_list_of_an_epic_s_children_prints_each_child_with_its_fields_and_how_many_beads_it_waits_on(self):
+        self.assert_same("list the epic's children with their fields")
 
     def test_comments_print_each_comment_s_text_and_author(self):
         self.assert_same("read an epic with no comments")

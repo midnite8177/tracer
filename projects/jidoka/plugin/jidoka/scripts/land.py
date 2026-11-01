@@ -50,7 +50,9 @@ from typing import TextIO
 
 import settings_reader
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_list, capture, head_of, metadata_of, read_bead, run,
-                      run_test_command, worktree_list)
+                      worktree_list)
+from full_suite import FullSuiteFailed, run_full_suite
+from settings_reader import SuiteCommand
 
 LOCK_POLL_SECONDS = 0.1
 WAITING_ON_EDITS_EXIT_CODE = 3
@@ -69,22 +71,8 @@ class WaitingOnEdits(Exception):
 
 
 @dataclass(frozen=True)
-class SuiteFailure:
-    """One command of the full suite that exited nonzero, with what it printed."""
-    command: str
-    exit_code: int
-    output: str
-
-
-class FullSuiteFailed(Exception):
-    def __init__(self, failures: list[SuiteFailure]) -> None:
-        super().__init__("the full suite failed on the branch rebased on main, so nothing landed and main is unchanged")
-        self.failures = failures
-
-
-@dataclass(frozen=True)
 class LandingSettings:
-    full_suite: list[str]
+    full_suite: list[SuiteCommand]
     hand_run: list[settings_reader.HandRunGroup]
     untested_apps: list[str]
 
@@ -164,8 +152,7 @@ def landing_settings(checkout: Path, home: Path) -> LandingSettings:
     try:
         main_tree = settings_reader.main_worktree(checkout, COMMAND_TIMEOUT_SECONDS)
         settings = settings_reader.read_settings(home, main_tree)
-        return LandingSettings([each.command for each in settings.full_suite()], list(settings.hand_run()),
-                               list(settings.untested_apps()))
+        return LandingSettings(list(settings.full_suite()), list(settings.hand_run()), list(settings.untested_apps()))
     except settings_reader.SettingsError as error:
         raise LandingError(str(error)) from error
 
@@ -244,18 +231,6 @@ def rebase_on_main(worktree: Path) -> None:
                        f"{done.stdout.strip()}\n{done.stderr.strip()}".rstrip())
 
 
-def run_full_suite(commands: list[str], worktree: Path) -> None:
-    """Runs every command in the worktree and raises FullSuiteFailed naming each one that failed."""
-    failures = []
-    for command in commands:
-        print(f"running: {command}", flush=True)
-        done = run_test_command(command, worktree)
-        if done.returncode != 0:
-            failures.append(SuiteFailure(command, done.returncode, f"{done.stdout}{done.stderr}"))
-    if failures:
-        raise FullSuiteFailed(failures)
-
-
 def subject(message: str) -> str:
     """The first line of the message that has any text."""
     for line in message.splitlines():
@@ -312,8 +287,8 @@ def close_out(bead: str, branch: str, worktree: Path, message: str, sha: str, ch
     closed = attempt("bd close", ["bd", "close", bead, "--reason", f"{sha}: {subject(message)}"], checkout, None,
                      failed)
     if worktree.exists():
-        # --force is safe here: the commit is already on main, so what the worktree still holds is the
-        # scratch folder and other untracked files, which git would otherwise refuse to remove.
+        # The commit is on main, so the worktree holds only the scratch folder and untracked files, which git refuses
+        # to remove without --force.
         attempt("git worktree remove", ["git", "worktree", "remove", "--force", str(worktree)], checkout, None,
                 failed)
     if closed:
@@ -367,7 +342,8 @@ def main() -> int:
     except FullSuiteFailed as failed:
         print(f"land: {failed}. The failing commands:", file=sys.stderr)
         for failure in failed.failures:
-            print(f"\n{failure.command}\nexited {failure.exit_code}:\n{failure.output.rstrip()}", file=sys.stderr)
+            print(f"\n{failure.suite.command}\nexited {failure.exit_code}:\n{failure.output.rstrip()}",
+                  file=sys.stderr)
         print_hand_run(settings.hand_run, sys.stderr)
         return FULL_SUITE_FAILED_EXIT_CODE
     except (LandingError, CommandError) as error:

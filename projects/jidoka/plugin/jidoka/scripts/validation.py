@@ -13,9 +13,8 @@ the epic branch checked out with uncommitted edits, and when the epic branch
 moved while the suite ran. With BEADS_ACTOR set to jidoka it records on the
 epic `validation.result` (the result its caller gives), `validation.head` (the commit it validated) and
 `validation.runs` (each command's run), and posts a comment that gives the figures summed over the commands and for
-each command. The sums are worked out from the runs and stored nowhere. A command's figures come from its output, as the targeted
-tests read it: dotnet test's summary lines and unittest's "Ran N tests" and
-"skipped=N". Output in neither shape counts no tests and no skips.
+each command. The sums are worked out from the runs and stored nowhere. full_suite.py runs the commands and reads each command's
+figures from its output, as landing does.
 
 validation_specs.py plans the acceptance specs the epic's tasks record before the suite runs, so that a spec of an app
 the repo settings cannot run refuses at once. When every command passed, it runs them, side by side on the machine's
@@ -46,32 +45,29 @@ goes back to the build anyway.
 """
 from __future__ import annotations
 
-import re
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import full_suite
 import gate_items
 import pass_ledger
 import spec_time_limit
-import targeted_tests
 import validation_merge
 import validation_specs
-from commands import env_as_factory, run, run_test_command
+from commands import env_as_factory, run
 from epic_branch import required_head
 from epic_task import NewTask, file_task
 from lap_record import SIMPLE_TRACK
 from pass_support import MAIN_BRANCH, PassError, move_epic_branch, worktree_at
 from report_text import shortened_title, tail_of
 from worktrees import remove_worktree
-from settings_reader import HandRunGroup, Settings, SuiteCommand
-from recorded_validation import CommandRun, RecordedValidation
+from full_suite import CommandRun
+from settings_reader import HandRunGroup, Settings
+from recorded_validation import RecordedValidation
 from spec_time_limit import OverTheLimit
 from validation_specs import NO_SPECS, SpecsRun, TimedSpecRun
 
-DOTNET_SKIPPED = re.compile(r"[A-Za-z]+!\s+-\s+Failed:\s*\d+,\s*Passed:\s*\d+,\s*Skipped:\s*(\d+),\s*Total:\s*\d+")
-UNITTEST_SKIPPED = re.compile(r"^(?:OK|FAILED) \([^)]*\bskipped=(\d+)", re.MULTILINE)
 PASS = "pass"
 FAIL = "fail"
 
@@ -118,22 +114,6 @@ class SuiteRun:
     validated: Validated
     hand_run: list[HandRunGroup]
     kept: Path | None
-
-
-def skipped_in(output: str) -> int:
-    return sum(int(count) for count in DOTNET_SKIPPED.findall(output) + UNITTEST_SKIPPED.findall(output))
-
-
-def run_command(suite: SuiteCommand, worktree: Path) -> CommandRun:
-    print(f"running: {suite.command}", file=sys.stderr, flush=True)
-    started = time.monotonic()
-    done = run_test_command(suite.command, worktree)
-    seconds = time.monotonic() - started
-    output = f"{done.stdout}{done.stderr}"
-    sys.stderr.write(output)
-    sys.stderr.flush()
-    return CommandRun(suite, done.returncode, seconds, targeted_tests.tests_executed(output), skipped_in(output),
-                      output)
 
 
 def hand_run_lines(hand_run: list[HandRunGroup]) -> list[str]:
@@ -213,7 +193,7 @@ def run_suite(epic: str, branch: str, settings: Settings, home: Path, main_tree:
     epic_head = required_head(branch, main_tree, ValidationError)
     worktree, merged_head = validation_merge.merged_worktree(epic, epic_head, main_tree)
     try:
-        runs = [run_command(suite, worktree) for suite in commands]
+        runs = full_suite.run_commands(commands, worktree, sys.stderr, sys.stderr)
         spec_run = NO_SPECS
         if all(each.passed for each in runs):
             spec_run = validation_specs.run_all(spec_jobs, epic, worktree, home, main_tree)

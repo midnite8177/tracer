@@ -44,7 +44,8 @@ blocked when it is not closed and waits on one; blocked prints the ids of
 the beads not yet closed that it waits on. A claim sets the assignee to the actor and the status to
 in_progress, and fails when another actor is the assignee. The actor, who
 also writes each comment, is BEADS_ACTOR, or else the repo's git user.name.
-prime prints a fixed text in place of bd's workflow notes. A list without
+list prints each bead's own fields, metadata included, and a dependency_count of the beads it blocks on, closed or
+not; it prints no dependencies, which only show prints. prime prints a fixed text in place of bd's workflow notes. A list without
 --limit 0 prints every match, where bd stops at 50; no test makes that many.
 
 The store is <repo>/.beads/fake-bd.json, found from the working folder
@@ -219,6 +220,12 @@ def plain(bead: dict) -> dict:
     return printed
 
 
+def listed_form(bead: dict) -> dict:
+    """The bead as bd list prints it: its own fields and how many beads it waits on, which counts each bead it blocks
+    on whether that bead is closed or not, and neither the bead it sits under nor the beads it was found from."""
+    return {**plain(bead), "dependency_count": len(bead["blocked_by"])}
+
+
 def shown(store: dict, bead: dict) -> dict:
     """The bead as bd show prints it: its own fields, and each bead it waits on or sits under with the link's type."""
     links = [(target, BLOCKS) for target in bead["blocked_by"]]
@@ -264,7 +271,7 @@ def list_beads(store: dict, flags: Flags) -> bool:
                 or status is not None:
             raise Refused("the fake bd answers bd list with --label and --type only as "
                           "list --label <label> --type <type> --limit 0 --json")
-        print(json.dumps([plain(bead) for bead in store["beads"].values()
+        print(json.dumps([listed_form(bead) for bead in store["beads"].values()
                           if bead["status"] != CLOSED and label in bead["labels"] and bead["issue_type"] == kind],
                          indent=2))
         return True
@@ -282,7 +289,7 @@ def list_beads(store: dict, flags: Flags) -> bool:
             return bead["status"] == status
         return every or bead["status"] != CLOSED
 
-    print(json.dumps([plain(bead) for bead in store["beads"].values() if listed(bead)], indent=2))
+    print(json.dumps([listed_form(bead) for bead in store["beads"].values() if listed(bead)], indent=2))
     return True
 
 
