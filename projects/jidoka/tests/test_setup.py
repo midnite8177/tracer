@@ -20,6 +20,11 @@ SYSTEM_PATH = (str(Path(os.environ["SystemRoot"]) / "System32") if fixture.WINDO
                else f"/usr/bin{os.pathsep}/bin")
 KEY_VARIABLES = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY"]
 CODEX = {"harness": "codex", "model": None, "version": None, "effort": None}
+T3_CODEX = {"harness": "t3", "provider": "codex", "model": "gpt-6.1-sol", "version": None, "effort": "high"}
+T3_CATALOG = {"providers": [
+    {"providerInstanceId": "claudeAgent", "driverKind": "claudeAgent", "models": [], "canRunChildTask": True},
+    {"providerInstanceId": "codex", "driverKind": "codex", "models": [], "canRunChildTask": True},
+]}
 NATIVE_OPUS = {"harness": "claude", "model": "opus", "version": "5.5", "effort": "high"}
 SETTINGS_FROM_THE_INSTALLER = {
     "python": "/opt/python3",
@@ -62,13 +67,18 @@ class SetupCase(unittest.TestCase):
     def without_codex(self) -> None:
         fixture.executable_file(self.bin / "codex", fixture.WINDOWS).unlink(missing_ok=True)
 
+    def catalog_file(self, catalog: object) -> str:
+        path = self.home / "t3-catalog.json"
+        path.write_text(json.dumps(catalog), encoding="utf-8")
+        return str(path)
+
     def setup_script(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
         env = {name: value for name, value in os.environ.items() if name not in KEY_VARIABLES}
         env.update({"PATH": f"{self.bin}{os.pathsep}{SYSTEM_PATH}", "JIDOKA_HOME": str(self.home), **self.keys})
         return fixture.run_launcher(LAUNCHER, [str(SETUP), *args], stdin, env, self.repo, RUN_TIMEOUT_SECONDS)
 
-    def proposal(self) -> dict:
-        done = self.setup_script("propose")
+    def proposal(self, *args: str) -> dict:
+        done = self.setup_script("propose", *args)
         self.assertEqual(0, done.returncode, done.stderr)
         return json.loads(done.stdout)
 
@@ -96,6 +106,96 @@ class ProposeTests(SetupCase):
         self.with_codex()
 
         self.assertEqual(CODEX, self.proposal()["routes"]["second"])
+
+    def test_given_t3s_catalog_the_t3_route_wins_over_codex_on_the_path(self):
+        self.with_codex()
+
+        proposal = self.proposal("--t3-catalog", self.catalog_file(T3_CATALOG))
+
+        self.assertEqual(T3_CODEX, proposal["routes"]["second"])
+
+    def test_given_t3s_catalog_every_other_tier_stays_on_its_native_route(self):
+        self.without_codex()
+
+        routes = self.proposal("--t3-catalog", self.catalog_file(T3_CATALOG))["routes"]
+
+        self.assertEqual(NATIVE_OPUS, routes["deep"])
+        self.assertEqual("claude", routes["light"]["harness"])
+
+    def second_tier_given(self, models: list) -> dict:
+        self.without_codex()
+        catalog = {"providers": [{**T3_CATALOG["providers"][1], "models": models}]}
+        return self.proposal("--t3-catalog", self.catalog_file(catalog))["routes"]["second"]
+
+    def test_a_catalog_that_lists_the_preferred_model_with_high_effort_proposes_both(self):
+        models = [{"id": "gpt-6-astra", "options": [{"id": "reasoningEffort", "values": ["low", "high"]}]},
+                  {"id": "gpt-6.1-sol", "options": [{"id": "reasoningEffort", "values": ["low", "high", "max"]}]}]
+
+        route = self.second_tier_given(models)
+
+        self.assertEqual(("gpt-6.1-sol", "high"), (route["model"], route["effort"]))
+
+    def test_a_catalog_that_does_not_list_the_preferred_model_proposes_the_first_model_it_lists(self):
+        models = [{"id": "gpt-6-luna", "options": [{"id": "reasoningEffort", "values": ["low", "high"]}]},
+                  {"id": "gpt-6-astra", "options": [{"id": "reasoningEffort", "values": ["low", "high"]}]}]
+
+        route = self.second_tier_given(models)
+
+        self.assertEqual(("gpt-6-luna", "high"), (route["model"], route["effort"]))
+
+    def test_a_model_that_does_not_offer_high_effort_is_proposed_at_its_default_effort(self):
+        models = [{"id": "gpt-6.1-sol",
+                   "options": [{"id": "reasoningEffort", "values": ["low", "medium"], "default": "medium"}]}]
+
+        route = self.second_tier_given(models)
+
+        self.assertEqual(("gpt-6.1-sol", "medium"), (route["model"], route["effort"]))
+
+    def test_a_model_that_offers_neither_high_effort_nor_a_default_is_proposed_at_its_first_effort(self):
+        models = [{"id": "gpt-6.1-sol", "options": [{"id": "reasoningEffort", "values": ["max", "ultra"]}]}]
+
+        route = self.second_tier_given(models)
+
+        self.assertEqual(("gpt-6.1-sol", "max"), (route["model"], route["effort"]))
+
+    def test_a_catalog_with_no_codex_provider_proposes_what_it_does_without_one(self):
+        self.without_codex()
+        catalog = {"providers": [T3_CATALOG["providers"][0]]}
+
+        proposal = self.proposal("--t3-catalog", self.catalog_file(catalog))
+
+        self.assertEqual(NATIVE_OPUS, proposal["routes"]["second"])
+
+    def test_a_catalog_whose_codex_provider_cannot_run_a_child_task_proposes_what_it_does_without_one(self):
+        self.without_codex()
+        catalog = {"providers": [{**T3_CATALOG["providers"][1], "canRunChildTask": False}]}
+
+        proposal = self.proposal("--t3-catalog", self.catalog_file(catalog))
+
+        self.assertEqual(NATIVE_OPUS, proposal["routes"]["second"])
+
+    def test_the_t3_route_names_the_provider_instance_that_the_catalog_gives(self):
+        self.without_codex()
+        catalog = {"providers": [{**T3_CATALOG["providers"][1], "providerInstanceId": "codex-work"}]}
+
+        proposal = self.proposal("--t3-catalog", self.catalog_file(catalog))
+
+        self.assertEqual("codex-work", proposal["routes"]["second"]["provider"])
+
+    def test_a_catalog_that_is_not_json_is_refused(self):
+        path = self.home / "t3-catalog.json"
+        path.write_text("not json", encoding="utf-8")
+
+        done = self.setup_script("propose", "--t3-catalog", str(path))
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("t3-catalog.json", done.stderr)
+
+    def test_a_catalog_file_that_is_missing_is_refused(self):
+        done = self.setup_script("propose", "--t3-catalog", str(self.home / "none.json"))
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("none.json", done.stderr)
 
     def test_every_other_tier_is_proposed_on_the_native_route_of_the_tier(self):
         self.without_codex()
@@ -273,6 +373,56 @@ class WriteTests(SetupCase):
         for stage in ("build", "merge", "test-cleanup"):
             self.assertIn(stage, done.stderr)
         self.assertEqual(before, (self.home / "settings.json").read_bytes())
+
+    def test_a_t3_route_without_a_provider_is_refused_and_nothing_is_written(self):
+        without = {key: value for key, value in T3_CODEX.items() if key != "provider"}
+
+        done = self.confirm({**self.CONFIRMED, "routes": {"second": without}})
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("second", done.stderr)
+        self.assertIn("provider", done.stderr)
+        self.assertEqual(["python"], self.home_files())
+
+    def test_a_t3_route_without_a_model_is_refused_and_nothing_is_written(self):
+        done = self.confirm({**self.CONFIRMED, "routes": {"second": {**T3_CODEX, "model": None}}})
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("second", done.stderr)
+        self.assertIn("model", done.stderr)
+        self.assertEqual(["python"], self.home_files())
+
+    def test_a_t3_route_without_an_effort_is_refused_and_nothing_is_written(self):
+        absent = {key: value for key, value in T3_CODEX.items() if key != "effort"}
+
+        for route in (absent, {**T3_CODEX, "effort": None}, {**T3_CODEX, "effort": " "}):
+            done = self.confirm({**self.CONFIRMED, "routes": {"second": route}})
+
+            self.assertEqual(1, done.returncode)
+            self.assertIn("second", done.stderr)
+            self.assertIn("effort", done.stderr)
+        self.assertEqual(["python"], self.home_files())
+
+    def test_a_t3_route_on_a_tier_whose_stages_write_is_refused_and_nothing_is_written(self):
+        before = self.record_installer_settings()
+        bad = {**self.CONFIRMED, "routes": {**self.CONFIRMED["routes"], "deep": T3_CODEX}}
+
+        done = self.confirm(bad)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("deep", done.stderr)
+        self.assertIn("t3", done.stderr)
+        for stage in ("build", "merge", "test-cleanup"):
+            self.assertIn(stage, done.stderr)
+        self.assertEqual(before, (self.home / "settings.json").read_bytes())
+
+    def test_the_proposal_given_t3s_catalog_can_be_confirmed_as_it_is(self):
+        self.without_codex()
+
+        done = self.confirm(self.proposal("--t3-catalog", self.catalog_file(T3_CATALOG)))
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(T3_CODEX, self.settings()["routes"]["second"])
 
     def test_a_proposal_that_is_not_json_is_refused(self):
         done = self.setup_script("write", "--confirmed", stdin="not json")

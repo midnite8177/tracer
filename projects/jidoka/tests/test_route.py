@@ -20,7 +20,9 @@ JEFF = "Jeff Router"
 CODEX = {"harness": "codex", "model": None, "version": None, "effort": None}
 NATIVE_OPUS = {"harness": "claude", "model": "opus", "version": "5.5", "effort": "high"}
 NATIVE_SONNET = {"harness": "claude", "model": "sonnet", "version": "5.5", "effort": "high"}
-ROUTES = {"standard": NATIVE_SONNET, "deep": NATIVE_OPUS, "second": CODEX}
+T3_CODEX = {"harness": "t3", "provider": "codex", "model": "gpt-6.1-sol", "version": None, "effort": "high"}
+NATIVE_LOCAL = {"harness": "claude", "model": "sonnet", "version": "5.5", "effort": "medium"}
+ROUTES = {"standard": NATIVE_SONNET, "deep": NATIVE_OPUS, "second": CODEX, "local": T3_CODEX}
 
 
 def git(repo: Path, *args: str) -> str:
@@ -82,6 +84,15 @@ class FallbackTests(RouteCase):
         printed = self.fall_back(task, "build", "second", "1")
 
         self.assertEqual({"rerun": True, "route": NATIVE_OPUS}, printed)
+
+    def test_a_failing_t3_route_reruns_its_stage_on_the_native_route_of_its_tier(self):
+        task = self.new_task()
+
+        printed = self.fall_back(task, "review", "local", "1")
+
+        self.assertEqual({"rerun": True, "route": NATIVE_LOCAL}, printed)
+        [comment] = self.comments(task)
+        self.assertIn("t3", comment["text"])
 
     def test_the_fallback_is_written_on_the_task_with_a_comment_that_names_the_failed_route(self):
         task = self.new_task()

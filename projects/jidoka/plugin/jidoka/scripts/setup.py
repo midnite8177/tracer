@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Proposes this machine's routes, budget default, reserves and lap limit, and writes them once confirmed.
 
-`propose` looks at the machine and prints one JSON object, and writes nothing:
+`propose [--t3-catalog <file>]` looks at the machine and prints one JSON object, and writes nothing. The file is
+T3's catalog as `orchestrator_capabilities` prints it, saved by the setup skill under T3; without it the proposal
+is the one for a machine outside T3. A file that cannot be read as JSON is refused.
   found      the path of each harness on the PATH, or null: `claude` and `codex`.
   accounts   how each harness bills, `subscription` or `api_key`. A harness bills by API key when its key
              variable is set: ANTHROPIC_API_KEY for claude, OPENAI_API_KEY or CODEX_API_KEY for codex. Codex is
              listed only when it is found; claude is always listed, because it is the host.
-  routes     a route for each tier. The second tier runs in codex when it is found, else on the native route of the
-             tier, and every other tier runs on its native route.
+  routes     a route for each tier. The second tier runs on t3 Codex when --t3-catalog names a Codex provider
+             that can run a child task: on gpt-6.1-sol when the provider lists it, else on the first model it
+             lists, at high effort when that model offers it, else at its default effort. Else it runs in codex
+             when that is found, else on the native route of the tier. Every other tier runs on its native route.
   budget     the default budget of an epic, in dollars at list price: 50 when the claude account is a subscription,
              and 20 when it bills by API key, where the dollars are real.
   reserves   0.2 for the claude account when it is on a subscription, because only a subscription has a usage window
@@ -19,10 +23,11 @@
 
 `write --confirmed` reads a JSON object on stdin with `routes`, `budget`, `reserves` and `lap_limit`, the proposal as
 the human confirmed or edited it, checks all four before it writes any, and puts them into <jidoka-home>/settings.json.
-Every other key of the settings stays as it is, and the routes replace the stored ones whole. A route on codex is
-refused for a tier that has a stage which writes, because codex exec runs read-only review only. A lap limit that is not
-a whole number above zero is refused. The flag is required: the manager passes it only after the human said yes. A
-proposal that fails a check is refused and nothing is written.
+Every other key of the settings stays as it is, and the routes replace the stored ones whole. A route on codex or
+t3 is refused for a tier that has a stage which writes; routes.READ_ONLY_HARNESSES gives the reason for each. A t3
+route needs a provider, a model and an effort. A lap limit that is not a whole number above zero is refused. The flag
+is required: the manager passes it only after the human said yes. A proposal that fails a check is refused and
+nothing is written.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
@@ -52,6 +57,9 @@ SUBSCRIPTION_BUDGET = 50
 API_KEY_BUDGET = 20
 SUBSCRIPTION_RESERVE = 0.2
 OWNED_KEYS = ("routes", "budget", "reserves", "lap_limit")
+T3_CODEX_MODEL = "gpt-6.1-sol"
+T3_CODEX_EFFORT = "high"
+T3_EFFORT_OPTIONS = ("reasoningEffort", "effort", "variant")
 
 
 class SetupError(Exception):
@@ -62,7 +70,75 @@ def billing_of(harness: str) -> str:
     return API_KEY if any(os.environ.get(name) for name in KEY_VARIABLES[harness]) else SUBSCRIPTION
 
 
-def propose(home: Path) -> dict:
+def read_catalog(path: Path) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise SetupError(f"the T3 catalog {path} cannot be read as JSON: {error}") from error
+
+
+def effort_option(model: dict) -> dict:
+    """The option of a catalog model that sets its effort, or an empty one when the model has none."""
+    options = model.get("options")
+    for each in options if isinstance(options, list) else []:
+        if isinstance(each, dict) and each.get("id") in T3_EFFORT_OPTIONS:
+            return each
+    return {}
+
+
+def t3_effort_of(model: dict) -> str:
+    """The effort a t3 route proposes on the model: high when the model offers it, else the model's default effort,
+    else the first it offers. A model that lists no efforts gets high, because T3 accepts any model of its catalog."""
+    option = effort_option(model)
+    values = option.get("values")
+    efforts = [each for each in values if rules.is_text(each)] if isinstance(values, list) else []
+    if not efforts or T3_CODEX_EFFORT in efforts:
+        return T3_CODEX_EFFORT
+    default = option.get("default")
+    return default if default in efforts else efforts[0]
+
+
+def t3_model_of(provider: dict) -> dict:
+    """The catalog model a t3 route proposes on the provider: gpt-6.1-sol when the provider lists it, else the first
+    model it lists. A provider that lists none gets gpt-6.1-sol, because T3 accepts any model of its catalog."""
+    models = provider.get("models")
+    listed = [each for each in models if isinstance(each, dict) and rules.is_text(each.get("id"))
+              ] if isinstance(models, list) else []
+    for each in listed:
+        if each["id"] == T3_CODEX_MODEL:
+            return each
+    return listed[0] if listed else {"id": T3_CODEX_MODEL}
+
+
+def t3_codex_route(catalog: object) -> dict | None:
+    """The route for the second tier under T3, or None when the catalog offers no Codex provider that can run a
+    child task. The catalog is the object T3's orchestrator_capabilities prints: a `providers` list whose entries
+    hold `providerInstanceId`, `driverKind`, `canRunChildTask` and `models`, each model with its `id` and its
+    `options`."""
+    providers = catalog.get("providers") if isinstance(catalog, dict) else None
+    if not isinstance(providers, list):
+        return None
+    for provider in providers:
+        if (isinstance(provider, dict) and provider.get("driverKind") == routes.CODEX_HARNESS
+                and provider.get("canRunChildTask") is True and rules.is_text(provider.get("providerInstanceId"))):
+            model = t3_model_of(provider)
+            return {"harness": routes.T3_HARNESS, "provider": provider["providerInstanceId"], "model": model["id"],
+                    "version": None, "effort": t3_effort_of(model)}
+    return None
+
+
+def proposed_routes(codex_found: bool, catalog: object) -> dict[str, dict]:
+    """The route of each tier. The second tier runs on t3 when the catalog offers a Codex provider that can run a
+    child task, else in codex when it is found, else on its native route. Every other tier runs on its native
+    route."""
+    proposed = routes.default_routes(codex_found)
+    on_t3 = t3_codex_route(catalog)
+    if on_t3 is not None:
+        proposed[routes.SECOND_TIER] = on_t3
+    return proposed
+
+
+def propose(home: Path, catalog: object) -> dict:
     found = {harness: shutil.which(harness) for harness in (routes.NATIVE_HARNESS, routes.CODEX_HARNESS)}
     accounts = {harness: billing_of(harness) for harness, path in found.items()
                 if harness == routes.NATIVE_HARNESS or path is not None}
@@ -71,7 +147,7 @@ def propose(home: Path) -> dict:
     return {
         "found": found,
         "accounts": accounts,
-        "routes": routes.default_routes(found[routes.CODEX_HARNESS] is not None),
+        "routes": proposed_routes(found[routes.CODEX_HARNESS] is not None, catalog),
         "budget": SUBSCRIPTION_BUDGET if claude_billing == SUBSCRIPTION else API_KEY_BUDGET,
         "reserves": {routes.NATIVE_HARNESS: SUBSCRIPTION_RESERVE} if claude_billing == SUBSCRIPTION else {},
         "lap_limit": rules.machine_lap_limit(home),
@@ -85,7 +161,11 @@ def check_route(tier: str, route: object) -> None:
     for field in ("model", "version", "effort"):
         if route.get(field) is not None and not rules.is_text(route[field]):
             raise SetupError(f"the {field} of the route of the tier {tier!r} must be text or null")
-    refusal = routes.codex_refusal(tier, {}) if routes.runs_on_codex(route) else None
+    if route.get("harness") == routes.T3_HARNESS:
+        for field in ("provider", "model", "effort"):
+            if not rules.is_text(route.get(field)):
+                raise SetupError(f"the t3 route of the tier {tier!r} needs a {field}")
+    refusal = routes.writing_refusal(tier, route.get("harness"), {})
     if refusal:
         raise SetupError(refusal)
 
@@ -123,6 +203,8 @@ def main(argv: list[str]) -> int:
     modes = parser.add_subparsers(dest="mode", required=True)
     proposing = modes.add_parser("propose", help="print the proposal and write nothing")
     proposing.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
+    proposing.add_argument("--t3-catalog", help="a file that holds the JSON that T3's orchestrator_capabilities "
+                                                "printed; pass it only under T3")
     writing = modes.add_parser("write", help="write the confirmed proposal, read as JSON on stdin")
     writing.add_argument("--confirmed", action="store_true", required=True,
                          help="the human confirmed the proposal")
@@ -132,7 +214,8 @@ def main(argv: list[str]) -> int:
     try:
         home = settings_reader.jidoka_home(args.jidoka_home)
         if args.mode == "propose":
-            print(json.dumps(propose(home), indent=2))
+            catalog = read_catalog(Path(args.t3_catalog)) if args.t3_catalog else None
+            print(json.dumps(propose(home, catalog), indent=2))
         else:
             try:
                 confirmed = json.loads(sys.stdin.read())

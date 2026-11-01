@@ -242,6 +242,11 @@ def of_epic(shown: dict) -> Rules:
     return Rules(settings, guidance)
 
 
+def names_codex_route(name: object) -> bool:
+    """Whether a route name is `codex` or starts `codex-`."""
+    return isinstance(name, str) and (name == routes.CODEX_HARNESS or name.startswith(f"{routes.CODEX_HARNESS}-"))
+
+
 def codex_route_problems(wanted: dict[str, object], held: dict[str, object]) -> list[str]:
     """The tiers that the routes and stage tiers, as the change would leave them, put on codex while a stage on
     them writes. A setting the change leaves out keeps the value the epic holds."""
@@ -249,8 +254,8 @@ def codex_route_problems(wanted: dict[str, object], held: dict[str, object]) -> 
     stage_tiers = wanted.get("stage_tiers", held.get("stage_tiers", {}))
     if not (isinstance(tier_routes, dict) and isinstance(stage_tiers, dict)):
         return []
-    refusals = (routes.codex_refusal(tier, stage_tiers) for tier, route in tier_routes.items()
-                if routes.runs_on_codex(route))
+    refusals = (routes.writing_refusal(tier, routes.CODEX_HARNESS, stage_tiers) for tier, route in tier_routes.items()
+                if names_codex_route(route))
     return [f"tier_routes: {refusal}" for refusal in refusals if refusal]
 
 

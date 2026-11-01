@@ -10,13 +10,23 @@ The setup script is
 where the skill folder is the directory that holds this SKILL.md. It reads
 and writes the machine settings in `~/.jidoka`, so it runs from any folder.
 
-1. **Look.** Run `setup.py propose`. It prints the harnesses it found on the
-   PATH, how each account bills, the proposed routes, the default budget,
-   the reserves and what the settings hold now. It writes nothing.
+1. **Look.** Under T3 (the `T3CODE_CLI_PATH` variable is set), call the
+   `orchestrator_capabilities` tool with no arguments and save what it
+   prints to a file in a scratch folder. Run `setup.py propose`, and under
+   T3 add `--t3-catalog <that file>`. Outside T3, pass no catalog. It prints
+   the harnesses it found on the PATH, how each account bills, the proposed
+   routes, the default budget, the reserves and what the settings hold now.
+   It writes nothing.
 2. **Show.** Tell the human, in plain words, what it found and what it
    proposes:
-   - a route for each tier. When `codex` is not on the PATH, the second
-     tier is proposed on native Opus, which is claude at its Opus model.
+   - a route for each tier. Under T3, when the catalog has a Codex
+     provider that can run a child task, the second tier is proposed on t3
+     Codex, on model gpt-6.1-sol at high effort when the catalog offers
+     them, else on a model and effort it does offer. A t3 route needs a
+     provider, a model and an effort, and no tier whose stages write may
+     take it, as none may take codex. Without a catalog, and when `codex` is not on the PATH, the
+     second tier is proposed on native Opus, which is claude at its Opus
+     model.
    - the default budget, in dollars at list price. It is lower for an
      account that bills by API key, where the dollars are real.
    - the reserve of the claude account, which is the share of its usage window the

@@ -2,7 +2,8 @@
 settings file that holds them.
 
 A route is a JSON object with `harness`, `model`, `version` and `effort`, kept under `routes` in
-<jidoka-home>/settings.json. Native means the host's own harness, `claude`. A tier's native route is the one setup
+<jidoka-home>/settings.json. A route on the harness `t3` also holds `provider`, the T3 provider instance that runs
+the child task. Native means the host's own harness, `claude`. A tier's native route is the one setup
 proposes for it when no other harness is on the machine, so a stage that falls back keeps the model its tier asked
 for. A tier with no row there falls back to the host's own model and effort, which null values stand for.
 
@@ -22,6 +23,7 @@ from typing import TypeVar
 
 NATIVE_HARNESS = "claude"
 CODEX_HARNESS = "codex"
+T3_HARNESS = "t3"
 SETTINGS_FILE = "settings.json"
 RERUN = "Run install.py from your jidoka checkout to record this machine's routes"
 SECOND_TIER = "second"
@@ -65,22 +67,22 @@ def writing_stages_on(tier: str, stage_tiers: dict[str, str]) -> list[str]:
     return stages
 
 
-def codex_refusal(tier: str, stage_tiers: dict[str, str]) -> str | None:
-    """Why a codex route cannot serve the tier, or None when it can. codex exec runs read-only review only, so a tier
-    takes it only while no stage that writes runs on the tier."""
+# The harnesses that run read-only stages only, each with the reason a stage that writes cannot run on it.
+READ_ONLY_HARNESSES: dict[str, str] = {
+    CODEX_HARNESS: "codex exec runs read-only review only",
+    T3_HARNESS: ("T3 starts a child task in the main checkout or in a checkout of its own, never in a lap's "
+                 "worktree, and the lap mod does not guard it"),
+}
+
+
+def writing_refusal(tier: str, harness: object, stage_tiers: dict[str, str]) -> str | None:
+    """Why a route on the harness cannot serve the tier because a stage that writes runs on it, or None when it can.
+    A harness that is not in READ_ONLY_HARNESSES serves any tier."""
+    reason = READ_ONLY_HARNESSES.get(harness) if isinstance(harness, str) else None
     writing = writing_stages_on(tier, stage_tiers)
-    if not writing:
+    if reason is None or not writing:
         return None
-    return (f"codex exec runs read-only review only, so the {tier} tier cannot run on {CODEX_HARNESS}: "
-            f"{', '.join(writing)} write on it")
-
-
-def runs_on_codex(route: object) -> bool:
-    """Whether a route is on codex: a route object by its harness, and a route name by its start, so `codex` and
-    `codex-<anything>` are on codex."""
-    if isinstance(route, dict):
-        return route.get("harness") == CODEX_HARNESS
-    return isinstance(route, str) and (route == CODEX_HARNESS or route.startswith(f"{CODEX_HARNESS}-"))
+    return f"{reason}, so the {tier} tier cannot run on {harness}: {', '.join(writing)} write on it"
 
 
 class RouteError(Exception):

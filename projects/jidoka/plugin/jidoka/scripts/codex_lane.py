@@ -26,11 +26,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import clock
@@ -41,33 +40,14 @@ import settings_reader
 import review
 import routes
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, read_bead
+from lane_report import REVIEW_STAGE, Lane, LaneError, prompt_of, record, write_report
 from lap_outcomes import DONE, FAILED
 from prices import Tokens
 
 CODEX = routes.CODEX_HARNESS
-REVIEW_STAGE = "review"
-LANE_TIER = routes.SECOND_TIER
 OUTPUT_NAME = "last-message.txt"
 STDERR_TAIL_LINES = 5
-FENCED_BLOCK = re.compile(r"```[A-Za-z]*\s*\n(.*?)```", re.DOTALL)
-CODE_REVIEW_SKILL = Path("skills") / "code-review" / "SKILL.md"
-
-
-class LaneError(Exception):
-    """A reason the lane's run failed, worded for the person who reads stderr."""
-
-
-@dataclass(frozen=True)
-class Lane:
-    """The Spec lane's action as the manager passes it: where it reads and writes, and what it reads."""
-    epic: str
-    worktree: Path
-    report: Path
-    base: str
-    head: str
-    files: list[str]
-    docs: list[str]
-    wall_seconds: int
+READ_ONLY_SANDBOX = "You work in a read-only sandbox, so change no file and write nothing."
 
 
 @dataclass(frozen=True)
@@ -78,28 +58,6 @@ class CodexRun:
     stdout: str
     stderr: str
     message: str
-
-
-def prompt_of(lane: Lane, epic: dict, plugin: Path) -> str:
-    docs = "\n".join(f"- {each}" for each in lane.docs) or "- none"
-    files = "\n".join(f"- {each}" for each in lane.files)
-    return "\n".join([
-        f"You are the Spec lane of the review of the epic {lane.epic}. The run is unattended: ask nothing. You work in "
-        "a read-only sandbox, so change no file and write nothing.",
-        "",
-        f"Read {plugin / CODE_REVIEW_SKILL} and run its unattended mode for the spec lane alone, over "
-        f"`git diff {lane.base} {lane.head}` limited to these files:",
-        files,
-        "",
-        "The house rules and the glossary are at these paths:",
-        docs,
-        "",
-        f"The epic, {epic.get('title') or lane.epic}:",
-        str(epic.get("description") or ""),
-        "",
-        "End your reply with a JSON list and nothing after it: one object for each finding, with the keys \"file\", "
-        f"\"line\", \"title\", \"note\", \"size\" ({', '.join(review.SIZES)}) and \"confidence\" "
-        f"({', '.join(review.CONFIDENCES)}). Write [] when you find nothing."])
 
 
 def codex_command(route: dict, lane: Lane, last_message: Path) -> list[str]:
@@ -120,7 +78,7 @@ def stop(process: subprocess.Popen) -> None:
         process.kill()
 
 
-def run_codex(command: list[str], prompt: str, lane: Lane, last_message: Path) -> CodexRun:
+def run_codex(command: list[str], prompt: str, lane: Lane, wall_seconds: int, last_message: Path) -> CodexRun:
     try:
         process = subprocess.Popen(command, cwd=lane.worktree, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
@@ -129,7 +87,7 @@ def run_codex(command: list[str], prompt: str, lane: Lane, last_message: Path) -
         raise LaneError(f"cannot run codex: {error}") from error
     code: int | None
     try:
-        stdout, stderr = process.communicate(prompt, timeout=lane.wall_seconds)
+        stdout, stderr = process.communicate(prompt, timeout=wall_seconds)
         code = process.returncode
     except subprocess.TimeoutExpired:
         stop(process)
@@ -159,25 +117,10 @@ def tokens_in(stdout: str) -> Tokens:
     return Tokens(fresh, output, cached, 0)
 
 
-def findings_text(message: str) -> str:
-    """The JSON list in codex's last message: the whole message, else its last fenced block, else the text from its
-    first bracket to its last."""
-    candidates = [message.strip(), *reversed([each.strip() for each in FENCED_BLOCK.findall(message)])]
-    if "[" in message and "]" in message:
-        candidates.append(message[message.index("["):message.rindex("]") + 1])
-    for each in candidates:
-        try:
-            if isinstance(json.loads(each), list):
-                return each
-        except ValueError:
-            continue
-    raise LaneError("codex's last message holds no JSON list of findings")
-
-
-def failure_of(ended: CodexRun, lane: Lane) -> str | None:
+def failure_of(ended: CodexRun, wall_seconds: int) -> str | None:
     """Why the run failed, or None when it ended well."""
     if ended.code is None:
-        return f"codex ran past its wall clock of {lane.wall_seconds} seconds and was stopped"
+        return f"codex ran past its wall clock of {wall_seconds} seconds and was stopped"
     if ended.code != 0:
         tail = " | ".join(ended.stderr.strip().splitlines()[-STDERR_TAIL_LINES:])
         return f"codex exited {ended.code}" + (f": {tail}" if tail else "")
@@ -186,50 +129,30 @@ def failure_of(ended: CodexRun, lane: Lane) -> str | None:
     return None
 
 
-def write_report(lane: Lane, message: str) -> int:
-    """Writes the report from the message and returns the number of findings; leaves no report when the review's
-    settle would refuse it."""
-    lane.report.parent.mkdir(parents=True, exist_ok=True)
-    lane.report.write_text(findings_text(message), encoding="utf-8")
-    try:
-        return len(review.lane_findings(lane.report, review.SPEC))
-    except review.ReviewError as error:
-        lane.report.unlink(missing_ok=True)
-        raise LaneError(f"codex's findings are not a usable report: {error}") from error
-
-
-def record(home: Path, main_tree: Path, lane: Lane, route: dict, tokens: Tokens, seconds: int, outcome: str) -> None:
-    model, effort = ledger.text_or_none(route.get("model")), ledger.text_or_none(route.get("effort"))
-    ran = ledger.Ran(tokens, CODEX, model, effort)
-    where = replace(ledger.Where.of_pass(REVIEW_STAGE), wall_seconds=seconds)
-    ledger.record_ran_or_say(home, main_tree, lane.epic, where, ledger.Worker(None, LANE_TIER, False), ran, outcome,
-                             clock.now())
-
-
-def run_lane(lane: Lane, home: Path, main_tree: Path) -> int:
+def run_lane(lane: Lane, wall_seconds: int, home: Path, main_tree: Path) -> int:
     """Runs the lane and records its row. Returns the number of findings; raises LaneError for a failed run."""
-    route = routes.recorded_route(LANE_TIER, home)
+    route = routes.recorded_route(routes.SECOND_TIER, home)
     plugin = Path(__file__).resolve().parent.parent
     started = clock.now()
     tokens = Tokens(0, 0, 0, 0)
     outcome = FAILED
     lane.report.unlink(missing_ok=True)
     try:
-        prompt = prompt_of(lane, read_bead(lane.epic, main_tree), plugin)
+        prompt = prompt_of(lane, read_bead(lane.epic, main_tree), plugin, READ_ONLY_SANDBOX, False)
         with tempfile.TemporaryDirectory(prefix="jidoka-codex-") as folder:
             last_message = Path(folder) / OUTPUT_NAME
-            ended = run_codex(codex_command(route, lane, last_message), prompt, lane, last_message)
+            ended = run_codex(codex_command(route, lane, last_message), prompt, lane, wall_seconds, last_message)
         tokens = tokens_in(ended.stdout)
-        failure = failure_of(ended, lane)
+        failure = failure_of(ended, wall_seconds)
         if failure is not None:
             raise LaneError(failure)
-        found = write_report(lane, ended.message)
+        found = write_report(lane.report, ended.message, "codex")
         outcome = DONE
         return found
     except CommandError as error:
         raise LaneError(str(error)) from error
     finally:
-        record(home, main_tree, lane, route, tokens, max(0, clock.now() - started), outcome)
+        record(home, main_tree, lane.epic, route, CODEX, tokens, max(0, clock.now() - started), outcome)
 
 
 def main(argv: list[str]) -> int:
@@ -250,8 +173,8 @@ def main(argv: list[str]) -> int:
         main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         home = settings_reader.jidoka_home(args.jidoka_home)
         lane = Lane(args.epic, Path(args.worktree), Path(args.report), args.base, args.head, args.file,
-                    args.doc or [], args.wall_seconds)
-        found = run_lane(lane, home, main_tree)
+                    args.doc or [])
+        found = run_lane(lane, args.wall_seconds, home, main_tree)
     except (LaneError, CommandError, routes.RouteError, settings_reader.SettingsError, OSError) as error:
         print(f"codex_lane: {error}", file=sys.stderr)
         return 1

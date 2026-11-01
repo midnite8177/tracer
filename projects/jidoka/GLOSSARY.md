@@ -589,11 +589,14 @@ _Avoid_: Class, level, size, model
 
 **Route**:
 How one machine runs a tier: a model and effort in the host's own
-harness, or in another harness. Each machine keeps its own routes, and a
-route that cannot run falls back to the host's harness. A route that fails
-reruns its stage once on the native route, the host's own harness at the
-model and effort the tier asks for; a second failure is the stage's own
-failure.
+harness, or in another harness. A t3 route is a child task that T3 runs on
+a provider, a model and an effort from its catalog, which setup reads under
+T3. A t3 route, like a codex route, may not serve a tier whose stages
+write: T3 starts a child in the main checkout or in a checkout of its own,
+never in a lap's worktree. Each machine keeps its own routes, and a route
+that cannot run falls back to the host's harness. A route that fails reruns
+its stage once on the native route, the host's own harness at the model and
+effort the tier asks for; a second failure is the stage's own failure.
 _Avoid_: Provider, backend, adapter
 
 **Machine settings**:

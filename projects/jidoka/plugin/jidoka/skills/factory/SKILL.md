@@ -19,6 +19,7 @@ The scripts, run from inside the repo:
 - bench: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/bench.py"`
 - route: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/route.py"`
 - codex lane: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/codex_lane.py"`
+- T3 lane: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_lane.py"`
 - repo settings: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py"`
 - watcher: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/watch.py"`
 - T3 waker: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_wake.py"`
@@ -118,6 +119,17 @@ the tier and the lane action's `head` as the mark, and start the lane's
 worker again on the printed route. A second tier whose route is already
 native has nothing to fall back to, and a rerun that fails is the lane's
 own failure.
+
+The second tier's route can also be t3, which names a provider, a model and
+an effort from T3's catalog. Its one stage is the same Spec lane, which the
+manager runs as a T3 child task with the T3 lane script, as the review
+paragraph of step 4 says. A host with no `delegate_task` tool cannot start
+the child: start the `spec` lane as an agent on the second tier's native
+route, with the prompt the other lanes get, before anything else runs, and
+write one line that says the second tier fell back to the native route. That
+is no failure, and `route fallback` is not called for it. A child that
+fails, or a refusal of the T3 lane script, is a failed route: run `route
+fallback` as for codex.
 
 ## Steps
 
@@ -456,6 +468,41 @@ own failure.
    lane's event line with `codex` for the model, and a second line when the
    lane reruns, with the printed route's model.
 
+   When the second tier's route has the harness `t3`, the `spec` lane is a T3
+   child task, and this session has to have the `delegate_task` tool for it;
+   without it, the lane falls back as the routes paragraph above says.
+   Otherwise:
+
+   1. Run `T3 lane start <epic-id> --worktree <worktree> --report <report>
+      --base <base> --head <head> --file <file> ... --doc <path> ...
+      --jidoka-home ...` with the same fields as the codex lane. It records
+      the route and the start and prints `delegate_task`, `reply`,
+      `wall_seconds` and `deadline`. Exit 1 is the route failing: run `route
+      fallback`.
+   2. Call `delegate_task` with the printed `delegate_task` object as its
+      arguments, changed in no part. The child reads the review worktree by
+      the absolute paths in its prompt and writes nothing; the worktree is
+      never its working folder. Keep the `taskId`, and read `task_status`
+      until the `workState` is `result_available` or the time passes the
+      printed `deadline`, which is in epoch seconds. Past the deadline, call
+      `task_cancel` with the `taskId` and go on to step 4 with no reply.
+   3. Save the child's last reply, verbatim, with the Write tool to the
+      printed `reply` path. That file is the one file the manager writes.
+      When the child failed, was cancelled or left no reply, save nothing
+      there.
+   4. Run `T3 lane finish --report <report> --jidoka-home ...`. The script
+      reads the epic, the route and the reply path from what `start`
+      recorded, writes the lane's report from the reply and records the
+      lane's ledger row with harness t3, the route's model and effort, the
+      wall time and the outcome, with no tokens. It exits 0 when the report
+      is written. Any other exit is the route failing, a run past the
+      deadline and a main checkout that changed while the child ran
+      included: run `route fallback` for it as above, and start the `spec`
+      lane as an agent on the printed route.
+
+   Write the lane's event line with `t3` for the model, and a second line
+   when the lane reruns, with the printed route's model.
+
    An action whose `action` is `fix` has no task: the review left findings to
    fix. Start one lap worker on the standard tier's route, with the first
    line `jidoka lap worktree: <worktree>`, the action's `worktree`. Its prompt
@@ -549,9 +596,9 @@ own failure.
    of the tidy ends with one `--worker <agent id> local` for each batch, and
    the report of the review with one `--worker` for each lane. The ledger prices
    each run from the tokens the lap mod summed under its agent id, and
-   writes it with no task. A `spec` lane that ran in codex has no agent id,
-   and its script wrote its row, so the review's report names no `--worker`
-   for it. A worker that reran on the native route after `route fallback` is
+   writes it with no task. A `spec` lane that ran in codex or as a T3 child
+   task has no agent id, and its script wrote its row, so the review's report
+   names no `--worker` for it. A worker that reran on the native route after `route fallback` is
    named with the tier it failed on and the word `native` after it, as
    `--worker <agent id> second native`, so that its row is priced as the
    native route's model, not as codex. A task report names it with
