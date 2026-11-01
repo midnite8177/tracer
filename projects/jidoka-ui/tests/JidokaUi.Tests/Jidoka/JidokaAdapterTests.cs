@@ -327,6 +327,99 @@ public sealed class JidokaAdapterTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadsTheFactoryStateAndTheNextStepOfEachEpicFromTheStateScript()
+    {
+        jidoka.Prints(
+            "factory_state.py --json",
+            """
+            {"epics": [
+              {"epic": "b-1", "title": "The site", "state": "running", "heartbeat_age_seconds": 12, "watcher": false,
+               "waiting_on": [],
+               "next_step": {"action": "none", "text": "Nothing to do. The factory is running.", "command": null,
+                             "run_after": null, "wakes_at": null, "wakes_on_answer": false}},
+              {"epic": "b-2", "title": "The shop", "state": "waiting-on-you", "heartbeat_age_seconds": 40, "watcher": true,
+               "waiting_on": [{"bead": "b-2.1", "kind": "question", "text": "Which plan?", "wakes": true}],
+               "next_step": {"action": "answer", "text": "Answer: Which plan?. Answering wakes the factory by itself.",
+                             "command": null, "run_after": null, "wakes_at": null, "wakes_on_answer": true}},
+              {"epic": "b-3", "title": "The blog", "state": "stopped", "heartbeat_age_seconds": null, "watcher": false,
+               "waiting_on": [],
+               "next_step": {"action": "restart", "text": "Run /jidoka:factory to start the manager again.",
+                             "command": "/jidoka:factory", "run_after": null, "wakes_at": null, "wakes_on_answer": false}}
+            ]}
+            """);
+
+        var read = await adapter.FactoryStatesAsync(epic.Project);
+
+        var states = Assert.IsType<Read<IReadOnlyList<EpicFactoryState>>.Given>(read).Value;
+        Assert.Equal(
+            [
+                ("b-1", FactoryState.Running, new NextStep("Nothing to do. The factory is running.", null)),
+                (
+                    "b-2",
+                    FactoryState.WaitingOnYou,
+                    new NextStep("Answer: Which plan?. Answering wakes the factory by itself.", null)),
+                (
+                    "b-3",
+                    FactoryState.Stopped,
+                    new NextStep("Run /jidoka:factory to start the manager again.", "/jidoka:factory")),
+            ],
+            states.Select(state => (state.Epic, state.State, state.NextStep)));
+        Assert.Empty(states[0].WaitingOn);
+        Assert.Equal(["b-2.1"], states[1].WaitingOn);
+        Assert.Empty(states[2].WaitingOn);
+        Assert.Equal(["factory_state.py --json"], jidoka.Invocations);
+        Assert.Equal([epic.Project.Value], jidoka.Directories);
+        Assert.Empty(writtenProjects);
+    }
+
+    [Fact]
+    public async Task ReadsAWaitingEpicFromTheStateScript()
+    {
+        jidoka.Prints(
+            "factory_state.py --json",
+            """
+            {"epics": [{"epic": "b-1", "title": "The site", "state": "waiting", "heartbeat_age_seconds": 3, "watcher": true,
+              "waiting_on": [],
+              "next_step": {"action": "wait", "text": "Nothing to do. The factory wakes by itself.", "command": null,
+                            "run_after": null, "wakes_at": 1700000000, "wakes_on_answer": false}}]}
+            """);
+
+        var read = await adapter.FactoryStatesAsync(epic.Project);
+
+        var waiting = Assert.Single(Assert.IsType<Read<IReadOnlyList<EpicFactoryState>>.Given>(read).Value);
+        Assert.Equal(
+            ("b-1", FactoryState.Waiting, new NextStep("Nothing to do. The factory wakes by itself.", null)),
+            (waiting.Epic, waiting.State, waiting.NextStep));
+    }
+
+    [Fact]
+    public async Task SaysWhyTheStateScriptGaveNoStatesWhenItCouldNotReadTheBeads()
+    {
+        jidoka.Fails("factory_state.py --json", "factory_state: bd could not read the beads");
+
+        var read = await adapter.FactoryStatesAsync(epic.Project);
+
+        Assert.Equal(
+            "factory_state: bd could not read the beads",
+            Assert.IsType<Read<IReadOnlyList<EpicFactoryState>>.Unread>(read).Reason);
+    }
+
+    [Fact]
+    public async Task SaysThatTheStateScriptAnsweredWithSomethingElseWhenItsOutputIsNotTheStates()
+    {
+        jidoka.Prints(
+            "factory_state.py --json",
+            """{"epics": [{"epic": "b-1", "title": "T", "state": "dancing", "next_step": {"text": "x", "command": null}}]}""");
+
+        var read = await adapter.FactoryStatesAsync(epic.Project);
+
+        Assert.Contains(
+            "not the factory states",
+            Assert.IsType<Read<IReadOnlyList<EpicFactoryState>>.Unread>(read).Reason,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SaysWhyTheRulesScriptRefusedAValue()
     {
         jidoka.Fails(

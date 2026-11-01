@@ -776,6 +776,21 @@ Every epic that jidoka's factory holds, from every project of the
 registry, in one list, each with the lap of every bead it holds.
 _Avoid_: Dashboard, status page, pipeline view
 
+**Factory state**:
+Whether anything drives a factory epic, as jidoka's state script
+(`factory_state.py --json`) works it out: running, waiting, waiting on you,
+or stopped. The factory view shows it at the top of each epic's section,
+with the epic's next step, the one thing the person can do, in the script's
+words. A step that ends with running a slash command shows the command,
+as `/jidoka:factory` for a stopped epic, and a link to the page of each bead
+that waits on the person. The app asks the script for each
+project that holds an epic, and again when that project changes and every
+30 seconds, because a host that closes or a heartbeat that goes stale
+changes no bead. It is not
+the epic's state in the task table's sense, which reads only the epic's
+labels and metadata. When the script gives no state, the section says why.
+_Avoid_: Health, status, drive state
+
 **Task table**:
 The table of the beads that one factory epic holds, which the factory view
 draws under each epic and the detail page of that epic draws as well. Each

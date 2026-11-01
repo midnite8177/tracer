@@ -2,10 +2,13 @@
 @using JidokaUi.Core.Beads
 @using JidokaUi.Core.Boards
 @using JidokaUi.Core.Factory
+@using JidokaUi.Core.Jidoka
 @using JidokaUi.Core.Projects
 @inject FactoryReader Reader
 @inject BacklogCache Backlogs
 @inject ProjectWatchers Watchers
+@inject JidokaAdapter Jidoka
+@inject TimeProvider Clock
 @implements IDisposable
 
 <PageTitle>Factory</PageTitle>
@@ -45,8 +48,9 @@ else
                 <h3 class="h5">
                     <a href="@BeadPageAddress.Of(new BeadAddress(project.Project, held.Epic.Id))">@held.Epic.Title</a>
                     <BeadId Id="@held.Epic.Id" Quiet="true" />
-                    <span class="factory-state pill-chip">@held.State.Words()</span>
                 </h3>
+
+                <FactoryDrive States="StatesOf(project.Project)" Project="project.Project" EpicId="@held.Epic.Id" />
 
                 @if (held.Tasks.Count == 0)
                 {
@@ -62,7 +66,17 @@ else
 }
 
 @code {
+    /// <summary>
+    /// How often the page asks for the factory states again. A host that closes, a watcher that
+    /// exits and a heartbeat that goes stale change no bead, so no change of the backlog tells the
+    /// page that an epic stopped driving.
+    /// </summary>
+    public static readonly TimeSpan StateRefresh = TimeSpan.FromSeconds(30);
+
     private FactoryView? view;
+    private readonly Dictionary<ProjectPath, Read<IReadOnlyList<EpicFactoryState>>> states = [];
+    private ITimer? refresh;
+    private bool refreshing;
 
     protected override async Task OnInitializedAsync()
     {
@@ -72,12 +86,39 @@ else
         {
             Watchers.Watch(project.Project);
         }
+
+        await Task.WhenAll(view.Projects.Select(ReadStatesAsync));
+        refresh = Clock.CreateTimer(_ => _ = InvokeAsync(RefreshStatesAsync), null, StateRefresh, StateRefresh);
     }
 
-    public void Dispose() => Backlogs.Changed -= OnBacklogChanged;
+    public void Dispose()
+    {
+        Backlogs.Changed -= OnBacklogChanged;
+        refresh?.Dispose();
+    }
 
-    // Reads the project that changed again. Every other project keeps the epics that this view
-    // already holds, so a write in one repository costs no run of bd in the others.
+    private async Task RefreshStatesAsync()
+    {
+        if (view is null || refreshing)
+        {
+            return;
+        }
+
+        refreshing = true;
+        try
+        {
+            await Task.WhenAll(view.Projects.Select(ReadStatesAsync));
+            StateHasChanged();
+        }
+        finally
+        {
+            refreshing = false;
+        }
+    }
+
+    private Read<IReadOnlyList<EpicFactoryState>>? StatesOf(ProjectPath project) =>
+        states.GetValueOrDefault(project);
+
     private void OnBacklogChanged(BacklogChange change) => _ = InvokeAsync(() => Reread(change.Project));
 
     private async Task Reread(ProjectPath project)
@@ -87,7 +128,20 @@ else
             return;
         }
 
-        view = view.With(await Reader.ReadAsync(project));
+        var read = await Reader.ReadAsync(project);
+        await ReadStatesAsync(read);
+        view = view.With(read);
         StateHasChanged();
+    }
+
+    private async Task ReadStatesAsync(FactoryProject read)
+    {
+        if (read.Epics.Count == 0)
+        {
+            states.Remove(read.Project);
+            return;
+        }
+
+        states[read.Project] = await Jidoka.FactoryStatesAsync(read.Project);
     }
 }

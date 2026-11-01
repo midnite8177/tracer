@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -13,7 +14,13 @@ import jidoka_fixture as fixture  # noqa: E402
 from test_stop import (HANDOFF, HUMAN, LAUNCHER, ONE_SEAM, OUT_OF_SCOPE, PLUGIN, SCHEDULER,  # noqa: E402
                        StopCase)
 
+sys.path.insert(0, str(PLUGIN / "scripts"))
+import processes  # noqa: E402
+import watcher_record  # noqa: E402
+
 WATCH = PLUGIN / "scripts" / "watch.py"
+SESSION = "manager-session"
+NOTHING_WAITED_FOR = watcher_record.WaitsFor(frozenset())
 EXIT_TIMEOUT_SECONDS = 60
 
 
@@ -44,28 +51,44 @@ class WatchCase(StopCase):
         (self.home / "slots.json").write_text(json.dumps({"slots": []}), encoding="utf-8")
 
     def start_watch(self) -> subprocess.Popen:
-        return self.launch(None)
+        return self.launch(None, None)
+
+    def start_watch_in_session(self, session: str) -> subprocess.Popen:
+        return self.launch(None, session)
 
     def start_watch_under_t3(self) -> subprocess.Popen:
-        return self.launch("/t3")
+        return self.launch("/t3", None)
 
-    def launch(self, t3_path: str | None) -> subprocess.Popen:
-        environment = {key: value for key, value in os.environ.items() if key != "T3CODE_CLI_PATH"}
+    def launch(self, t3_path: str | None, session: str | None) -> subprocess.Popen:
+        watcher = self.spawn(t3_path, session, fixture.path_with(self.bin))
+        self.wait_for_the_first_snapshot(watcher)
+        return watcher
+
+    def wait_for_the_first_snapshot(self, watcher: subprocess.Popen) -> None:
+        began = watcher.stderr.readline()
+        self.assertIn("watching", began, began)
+
+    def spawn(self, t3_path: str | None, session: str | None, path: str) -> subprocess.Popen:
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ("T3CODE_CLI_PATH", "JIDOKA_SESSION_ID")}
         if t3_path is not None:
             environment["T3CODE_CLI_PATH"] = t3_path
+        if session is not None:
+            environment["JIDOKA_SESSION_ID"] = session
         command = fixture.launch_command(LAUNCHER, [str(WATCH), self.epic, "--interval", "1"])
         watcher = subprocess.Popen(command, cwd=self.repo,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                                   env={**environment, "PATH": fixture.path_with(self.bin),
+                                   env={**environment, "PATH": path,
                                         "JIDOKA_HOME": str(self.home), "BEADS_ACTOR": HUMAN})
         self.addCleanup(fixture.let_bd_go_of, self.root)
         self.addCleanup(watcher.stdout.close)
         self.addCleanup(watcher.stderr.close)
         self.addCleanup(watcher.wait)
         self.addCleanup(fixture.end_process, watcher.pid)
-        began = watcher.stderr.readline()
-        self.assertIn("watching", began, began)
         return watcher
+
+    def is_watched(self) -> bool:
+        return watcher_record.live_watcher(self.home, self.epic) is not None
 
     def event_of(self, watcher: subprocess.Popen) -> dict:
         try:
@@ -124,6 +147,125 @@ class TheWatcherTests(WatchCase):
         time.sleep(3.5)
 
         self.assertIsNone(watcher.poll(), "the watcher ended with nothing changed")
+
+
+class TheWatcherRecordTests(WatchCase):
+    """A running watcher keeps a record in the jidoka home that says which epic it watches."""
+
+    def test_a_record_names_the_epic_its_process_its_session_and_what_it_waits_for(self):
+        [parked, *_] = self.tasks
+        self.bd("label", "add", parked, "human")
+        before = int(time.time())
+
+        watcher = self.start_watch_in_session(SESSION)
+
+        held = watcher_record.read_record(self.home, self.epic)
+        self.assertIsNotNone(held)
+        self.assertEqual((self.epic, watcher.pid, SESSION), (held.epic, held.pid, held.session))
+        self.assertLessEqual(before, held.time)
+        self.assertEqual(watcher_record.WaitsFor(frozenset([parked])), held.waits_for)
+
+    def test_the_record_exists_before_the_watcher_has_read_the_beads_and_lists_the_parked_beads_once_it_has(self):
+        [parked, *_] = self.tasks
+        self.bd("label", "add", parked, "human")
+        gate = self.root / "bd-may-answer"
+        slow = self.root / "slow-bin"
+        slow.mkdir()
+        fixture.write_executable(slow / "bd", "\n".join([
+            f"#!{sys.executable}",
+            "import os, subprocess, sys, time",
+            f"while not os.path.exists({str(gate)!r}):",
+            "    time.sleep(0.05)",
+            f"sys.exit(subprocess.call([{str(self.bin / 'bd')!r}, *sys.argv[1:]]))",
+            ""]))
+
+        watcher = self.spawn(None, None, f"{slow}{os.pathsep}{fixture.path_with(self.bin)}")
+        deadline = time.time() + EXIT_TIMEOUT_SECONDS
+        while not self.is_watched() and time.time() < deadline:
+            time.sleep(0.05)
+
+        self.assertTrue(self.is_watched(), "the watcher kept no record while it waited for the beads")
+        self.assertEqual(NOTHING_WAITED_FOR, watcher_record.read_record(self.home, self.epic).waits_for)
+        gate.write_text("", encoding="utf-8")
+        self.wait_for_the_first_snapshot(watcher)
+        self.assertEqual(watcher_record.WaitsFor(frozenset([parked])),
+                         watcher_record.read_record(self.home, self.epic).waits_for)
+
+    def test_a_record_names_no_session_when_the_watcher_got_none(self):
+        self.start_watch()
+
+        self.assertIsNone(watcher_record.read_record(self.home, self.epic).session)
+
+    def test_the_epic_reads_as_watched_while_the_watcher_runs(self):
+        self.assertFalse(self.is_watched())
+
+        self.start_watch()
+
+        self.assertTrue(self.is_watched())
+
+    def test_the_record_is_gone_when_the_watcher_exits_on_a_change(self):
+        [parked, *_] = self.tasks
+        self.bd("label", "add", parked, "human")
+        watcher = self.start_watch()
+
+        self.bd("label", "remove", parked, "human")
+        self.event_of(watcher)
+
+        self.assertIsNone(watcher_record.read_record(self.home, self.epic))
+        self.assertFalse(self.is_watched())
+
+    @unittest.skipIf(os.name == "nt", "Windows ends a process with no chance to clean up")
+    def test_the_record_is_gone_when_the_watcher_is_asked_to_stop(self):
+        watcher = self.start_watch()
+
+        os.kill(watcher.pid, signal.SIGTERM)
+        watcher.wait(timeout=EXIT_TIMEOUT_SECONDS)
+
+        self.assertIsNone(watcher_record.read_record(self.home, self.epic))
+
+    def test_the_record_is_gone_when_the_watcher_cannot_read_the_beads(self):
+        watcher = self.start_watch()
+        for fake in self.bin.iterdir():
+            fake.unlink()
+
+        _, err = watcher.communicate(timeout=EXIT_TIMEOUT_SECONDS)
+
+        self.assertEqual(1, watcher.returncode, err)
+        self.assertIsNone(watcher_record.read_record(self.home, self.epic))
+
+    def test_the_epic_reads_as_watched_by_nobody_once_the_watcher_is_killed(self):
+        watcher = self.start_watch()
+
+        fixture.end_process(watcher.pid)
+        watcher.wait(timeout=EXIT_TIMEOUT_SECONDS)
+
+        self.assertFalse(self.is_watched())
+
+    def test_a_record_whose_process_began_at_another_moment_reads_as_no_watcher(self):
+        watcher_record.write_record(self.home, watcher_record.WatcherRecord(
+            self.epic, os.getpid(), "Mon Jan  1 00:00:00 2001", SESSION, 1, NOTHING_WAITED_FOR))
+
+        self.assertFalse(self.is_watched())
+
+    def test_an_unreadable_record_reads_as_no_watcher(self):
+        path = watcher_record.record_path(self.home, self.epic)
+        path.parent.mkdir(parents=True)
+        path.write_text("{", encoding="utf-8")
+
+        self.assertFalse(self.is_watched())
+
+    def test_a_watcher_that_ends_leaves_the_record_of_another_process_alone(self):
+        [parked, *_] = self.tasks
+        self.bd("label", "add", parked, "human")
+        older = self.start_watch()
+        newer = watcher_record.WatcherRecord(self.epic, os.getpid(), processes.started_at(os.getpid()), None, 1,
+                                             NOTHING_WAITED_FOR)
+        watcher_record.write_record(self.home, newer)
+
+        self.bd("label", "remove", parked, "human")
+        self.event_of(older)
+
+        self.assertEqual(newer, watcher_record.read_record(self.home, self.epic))
 
 
 class TheWatcherBesideAnotherEpicTests(WatchCase):

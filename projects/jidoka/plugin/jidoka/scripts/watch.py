@@ -21,6 +21,11 @@ The watcher ends on no other ground, so a factory that waits for a human takes n
 happens. The manager then runs `scheduler.py carry-on`. The first line on stderr says the watch began, so a
 caller knows the snapshot is taken.
 
+While it runs, the watcher keeps a record of itself in the jidoka home (watcher_record.py). It writes the record
+before it reads the beads, listing no parked bead, and writes it again from the first snapshot before that line. It
+removes the record when it exits for any reason it can catch, a SIGTERM included.
+A watcher that is killed outright leaves the record, and a record whose process is gone counts as no watcher.
+
 Exit codes:
   0  a change was found.
   1  it could not read the beads, with the reason on stderr.
@@ -31,6 +36,8 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
+import signal
 import sys
 import time
 from collections.abc import Callable
@@ -39,10 +46,13 @@ from pathlib import Path
 
 import caps
 import clock
+import heartbeat
 import pause
+import processes
 import settings_reader
 import rules
 import slots
+import watcher_record
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, is_labeled_for_human, metadata_of
 from epic_reader import CLOSED, Epic, EpicReadError, by_priority, read_epic, shown_epic
 from lap_record import area_of, open_lap
@@ -152,6 +162,27 @@ def watch(epic: str, read: Callable[[], Snapshot], interval_seconds: int, ends_o
         after = read()
 
 
+def recording_the_first_read(read: Callable[[], Snapshot], begin: Callable[[Snapshot], None]
+                             ) -> Callable[[], Snapshot]:
+    """A read that hands the first snapshot to `begin` before it returns it, so that the record of the watch is
+    written from the snapshot the watch starts from and before the watch says it began."""
+    begun = False
+
+    def read_and_begin() -> Snapshot:
+        nonlocal begun
+        snapshot = read()
+        if not begun:
+            begun = True
+            begin(snapshot)
+        return snapshot
+    return read_and_begin
+
+
+def end_on_termination() -> None:
+    """Makes a SIGTERM end the watcher as an exit, so that the record is removed on the way out."""
+    signal.signal(signal.SIGTERM, lambda _signal, _frame: sys.exit(128 + signal.SIGTERM))
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="watch.py", description="Wait until the epic changes in a way the "
                                                                    "factory can act on.")
@@ -163,13 +194,30 @@ def main(argv: list[str]) -> int:
     if args.interval < 1:
         parser.error("--interval needs a whole number of seconds from 1 up")
     home = settings_reader.jidoka_home(args.jidoka_home)
+    pid = os.getpid()
+
+    started = processes.started_at(pid)
+    session = heartbeat.session_of_environment()
+    began = clock.now()
+
+    def record(waits_for: watcher_record.WaitsFor) -> None:
+        watcher_record.write_record(home, watcher_record.WatcherRecord(args.epic, pid, started, session, began,
+                                                                       waits_for))
+
+    def begin(snapshot: Snapshot) -> None:
+        record(watcher_record.WaitsFor(snapshot.parked))
+
+    end_on_termination()
     try:
+        record(watcher_record.WaitsFor(frozenset()))
         main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        change = watch(args.epic, lambda: snapshot_of(args.epic, main_tree, home, clock.now()), args.interval,
-                       CHANGE_EVENTS, lambda: False, REAL_PACING)
+        read = recording_the_first_read(lambda: snapshot_of(args.epic, main_tree, home, clock.now()), begin)
+        change = watch(args.epic, read, args.interval, CHANGE_EVENTS, lambda: False, REAL_PACING)
     except (EpicReadError, CommandError, settings_reader.SettingsError, rules.RulesError, OSError) as error:
         print(f"watch: {error}", file=sys.stderr)
         return 1
+    finally:
+        watcher_record.remove_record(home, args.epic, pid)
     print(json.dumps({"epic": args.epic, "event": change.event, "bead": change.bead}))
     return 0
 

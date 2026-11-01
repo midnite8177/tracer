@@ -20,6 +20,7 @@ public sealed class JidokaAdapter
 
     private const string GateScript = "gate.py";
     private const string RulesScript = "rules.py";
+    private const string FactoryStateScript = "factory_state.py";
     private const string AbandonedMessage =
         "The script has not answered. The app cannot stop it, so it may still finish.";
 
@@ -65,6 +66,13 @@ public sealed class JidokaAdapter
     /// </summary>
     public Task<Read<GateItems>> GateItemsAsync(BeadAddress epic) =>
         ReadAsync(epic.Project, GateScript, ["items", epic.Id], ParsedGateItems);
+
+    /// <summary>
+    /// Reads the factory state and the next step of every epic that the factory holds in a project, as
+    /// the state script prints them. The script writes nothing for this read.
+    /// </summary>
+    public Task<Read<IReadOnlyList<EpicFactoryState>>> FactoryStatesAsync(ProjectPath project) =>
+        ReadAsync(project, FactoryStateScript, ["--json"], ParsedFactoryStates);
 
     private async Task<Read<T>> ReadAsync<T>(
         ProjectPath project, string script, IReadOnlyList<string> arguments, Func<string, Read<T>> parse)
@@ -198,6 +206,36 @@ public sealed class JidokaAdapter
         catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
         {
             return new Read<GateItems>.Unread("The gate script answered with something that is not the items of the gate.");
+        }
+    }
+
+    private static Read<IReadOnlyList<EpicFactoryState>> ParsedFactoryStates(string printed)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(printed);
+            var states = new List<EpicFactoryState>();
+            foreach (var each in document.RootElement.GetProperty("epics").EnumerateArray())
+            {
+                var state = FactoryStates.Named(TextOf(each, "state"))
+                    ?? throw new FormatException("The state script printed a state that it does not define.");
+                var step = each.GetProperty("next_step");
+                var command = step.GetProperty("command");
+                states.Add(new EpicFactoryState(
+                    TextOf(each, "epic"),
+                    state,
+                    new NextStep(
+                        TextOf(step, "text"),
+                        command.ValueKind == JsonValueKind.String ? command.GetString() : null),
+                    [.. each.GetProperty("waiting_on").EnumerateArray().Select(waiting => TextOf(waiting, "bead"))]));
+            }
+
+            return new Read<IReadOnlyList<EpicFactoryState>>.Given(states);
+        }
+        catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            return new Read<IReadOnlyList<EpicFactoryState>>.Unread(
+                "The state script answered with something that is not the factory states.");
         }
     }
 

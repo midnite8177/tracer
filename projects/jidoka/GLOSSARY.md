@@ -546,6 +546,11 @@ or room frees for a ready task of the epic, because another running epic
 freed a slot or an area or stopped reserving a slot, or because room was
 already free when the watch began. The manager then goes on. After a failed
 turn, the lap mod wakes a host that sits idle with a timer and a prompt.
+While it runs it keeps a **watcher record** in the jidoka home, with the
+epic, its process, the session that started it, the time and what it waits
+for, and removes it when it exits. A record whose process is gone counts as
+no watcher, so an epic with no live process behind its record is watched by
+nobody.
 _Avoid_: Poller, daemon, listener
 
 **Status script**:
@@ -554,6 +559,19 @@ factory holds and each task's lap, stage, tries and time against its wall
 clock, with the age of the epic's heartbeat, and the epic and task that hold
 each of the machine's slots. It reads and changes nothing.
 _Avoid_: Dashboard, monitor
+
+**Factory state**:
+The one state of an epic the factory holds, with the one next step the human
+can act on. It is running, when a manager works it; waiting, when a live
+watcher waits and the factory carries on by itself; waiting on you, when the
+epic carries the human label, or a task does while a manager's heartbeat is
+fresh and a live watcher waits, for a question, the acceptance gate or a
+budget park; or stopped, when no manager runs it. It follows from the
+epic's heartbeat, its watcher record and the human label. Answering wakes the
+factory only when a live watcher's record lists the bead that was answered;
+otherwise the human runs `/jidoka:factory` after the answer. The factory state
+script prints it.
+_Avoid_: Status (that is the status script's table), health, mode
 
 **Manager**:
 The agent in the host that works an epic through its passes. It starts the

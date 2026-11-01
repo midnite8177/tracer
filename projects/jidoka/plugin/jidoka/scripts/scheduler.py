@@ -6,8 +6,9 @@ lap is open while its task is not closed and its metadata holds a `lap.stage` ot
 module is the command line and the choice of the next moves. How a stage settles lives in the module of that stage,
 which this text names where a mode hands over to it.
 
-`next <epic>` is the call a manager makes when it starts, so it resumes the epic. It refuses, writing nothing, when
-the epic's heartbeat is fresh, because a manager already runs it. Each call of a manager that succeeds claims the
+`next <epic>` is the call a manager makes when it starts, so it resumes the epic. When the epic's heartbeat is
+fresh it waits the seconds until that beat would be stale, then refuses, writing nothing, only if the heartbeat was
+renewed meanwhile, because a manager already runs the epic. Each call of a manager that succeeds claims the
 epic with a fresh heartbeat that records the session in $JIDOKA_SESSION_ID, as heartbeat.py describes. It takes
 every open lap at a worker stage for one an earlier session left with no worker, unless the human's brake holds it.
 Git wins where it disagrees with the record. A lap whose branch git shows merged into the epic branch closes its
@@ -177,6 +178,7 @@ from pathlib import Path
 import app_check
 import caps
 import clock
+import factory_state
 import gate_guard
 import heartbeat
 import holdouts
@@ -305,15 +307,29 @@ def action_of(lap: Lap, answer: dict | None, made_to_pass: list[str]) -> dict:
             "app_check": spec_check.from_stored(lap.app_findings) or None}
 
 
-def refuse_second_manager(epic: str, home: Path) -> None:
-    """Refuses a manager on an epic whose heartbeat is fresh, because a manager already runs it."""
-    now = clock.now()
-    seconds = heartbeat.fresh_age_seconds(home, epic, now)
+def wait_out_a_fresh_heartbeat(epic: str, session: str | None, home: Path, the_clock: clock.Clock) -> None:
+    """Takes the epic back at once when its heartbeat records the caller's session; otherwise waits out a fresh
+    heartbeat and refuses only when it is still fresh afterwards.
+
+    The host of the session that claimed the epic renews the heartbeat whether or not a manager still runs, so the
+    caller's own session is not another manager. For any other session, a heartbeat that nobody renews is stale once
+    the wait is over, and one that is still fresh afterwards was renewed by the host of a live manager.
+    """
+    seconds = heartbeat.fresh_age_seconds(home, epic, the_clock.now())
+    if seconds is None:
+        return
+    if session is not None and heartbeat.beat_session(home, epic) == session:
+        print(f"scheduler: {epic}'s heartbeat is {seconds} seconds old and records this session, so this takes the "
+              "epic back without waiting", file=sys.stderr)
+        return
+    wait = factory_state.seconds_until_stale(seconds)
+    print(f"scheduler: {epic}'s heartbeat is {seconds} seconds old and is fresh for {heartbeat.FRESH_SECONDS}, so "
+          f"this waits {wait} seconds to see whether its manager is still alive", file=sys.stderr)
+    the_clock.sleep(wait)
+    seconds = heartbeat.fresh_age_seconds(home, epic, the_clock.now())
     if seconds is not None:
-        wait = heartbeat.FRESH_SECONDS - seconds + 1
-        raise SchedulerError(f"{epic} already has a manager: its heartbeat is {seconds} seconds old, and a heartbeat "
-                             f"is fresh for {heartbeat.FRESH_SECONDS}. If that manager is gone, run this again in "
-                             f"{wait} seconds. Nothing was written")
+        raise SchedulerError(f"{epic} already has a manager: its heartbeat was renewed while this waited, and is "
+                             f"{seconds} seconds old now. Nothing was written")
 
 
 def close_merged_lap(lap: Lap, sha: str, epic_branch: str, epic: str, main_tree: Path) -> None:
@@ -327,7 +343,7 @@ def close_merged_lap(lap: Lap, sha: str, epic_branch: str, epic: str, main_tree:
     caps.note_merge(epic, main_tree)
 
 
-def resume_laps(epic: Epic, home: Path, main_tree: Path) -> set[str]:
+def resume_laps(epic: Epic, now: int, home: Path, main_tree: Path) -> set[str]:
     """Brings a stopped factory's records and machine in line with git; returns the tasks whose laps it ended
     interrupted.
 
@@ -336,7 +352,7 @@ def resume_laps(epic: Epic, home: Path, main_tree: Path) -> set[str]:
     task, and any other ends interrupted, after its orphan workers stop and a rebase it left half done is
     abandoned, so the task is ready for a new lap on its worktree and branch.
     """
-    cleared = resume.clear_dead_merge_lock(home, clock.now())
+    cleared = resume.clear_dead_merge_lock(home, now)
     if cleared is not None:
         print(f"scheduler: {cleared}", file=sys.stderr)
     resume.prune_worktrees(main_tree)
@@ -418,17 +434,19 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
     task makes pass first, so metadata that cannot be read stops the call before a lap opens that would get no worker.
 
     When restarting, no worker of this manager is running, so every open lap at a worker stage was left by an
-    earlier session. The call refuses when the epic's heartbeat is fresh, resumes the factory as resume_laps
-    describes, and opens a new lap for each task whose lap it ended.
+    earlier session. The call takes the epic back at once when its heartbeat records this session, and otherwise
+    waits out a fresh heartbeat and refuses when it was renewed meanwhile, as wait_out_a_fresh_heartbeat says. It
+    then resumes the factory as resume_laps describes, and opens a new lap for each task whose lap it ended.
     """
+    the_clock = clock.from_environment()
     settings = settings_reader.read_settings(home, main_tree)
     epic = checked_epic(bead, settings, main_tree)
     resumed: set[str] = set()
     if restarting:
-        refuse_second_manager(epic.id, home)
-        resumed = resume_laps(epic, home, main_tree)
+        wait_out_a_fresh_heartbeat(epic.id, heartbeat.session_of_environment(), home, the_clock)
+        resumed = resume_laps(epic, the_clock.now(), home, main_tree)
         epic = checked_epic(bead, settings, main_tree)
-    now = clock.now()
+    now = the_clock.now()
     reading = reserves.read(home, now, epic.shown)
     if reserves.sync_pause(epic.id, epic.shown, reading, now, main_tree):
         epic = checked_epic(bead, settings, main_tree)
@@ -446,7 +464,7 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
         made_to_pass = {str(task["id"]): specs.specs_of(task) for task in tasks}
     except specs.SpecsError as error:
         raise SchedulerError(str(error)) from error
-    heartbeat.claim(home, epic.id, clock.now())
+    heartbeat.claim(home, epic.id, the_clock.now())
     planned = lap_opening.open_laps(epic, holds, resumed, limit, now, home, main_tree)
     metadata = {str(task["id"]): metadata_of(task) for task in tasks}
     return {"epic": epic.id, "branch": epic.branch, "lap_limit": limit.epic,

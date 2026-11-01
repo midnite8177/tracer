@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -26,6 +27,8 @@ HUMAN = "Pat Human"
 LAP_LIMIT = 2
 STALE_SECONDS = 600
 FRESH_SECONDS = 5
+FRESH_FOR_SECONDS = 90
+ALMOST_STALE_SECONDS = 89
 MANAGER_SESSION = "session-of-the-manager"
 OTHER_SESSION = "session-of-an-advisor"
 LEAVES_A_SLEEPER_AND_EXITS = ("import subprocess, sys; "
@@ -118,6 +121,21 @@ class ResumeCase(unittest.TestCase):
 
     def beat_time(self) -> int:
         return json.loads(self.beat_file().read_text(encoding="utf-8"))["time"]
+
+    def keep_beating(self, session: str) -> None:
+        """A live manager's host: the heartbeat is rewritten every fraction of a second, each time as old as it
+        would be a second or two before it goes stale, so that a wait the scheduler makes ends on a fresh beat
+        whenever it starts."""
+        stop = threading.Event()
+        self.addCleanup(stop.set)
+
+        def beat() -> None:
+            while not stop.is_set():
+                self.write_beat(ALMOST_STALE_SECONDS, session)
+                stop.wait(0.1)
+
+        self.write_beat(ALMOST_STALE_SECONDS, session)
+        threading.Thread(target=beat, daemon=True).start()
 
     def start_a_manager(self) -> dict[str, dict]:
         return {action["task"]: action for action in self.next_printed()["actions"]}
@@ -318,8 +336,8 @@ class OrphanWorkerTests(ResumeCase):
 
 
 class SecondManagerTests(ResumeCase):
-    def test_a_manager_is_refused_while_the_epics_heartbeat_is_fresh_and_nothing_is_written(self):
-        self.write_beat(FRESH_SECONDS, MANAGER_SESSION)
+    def test_a_manager_is_refused_while_the_epics_heartbeat_is_renewed_during_its_wait_and_nothing_is_written(self):
+        self.keep_beating(OTHER_SESSION)
 
         done = self.next_run()
 
@@ -327,6 +345,28 @@ class SecondManagerTests(ResumeCase):
         self.assertIn(f"{self.epic} already has a manager", done.stderr)
         for task in self.tasks:
             self.assertNotIn("lap.stage", self.metadata(task))
+
+    def test_a_manager_that_starts_while_the_heartbeat_is_fresh_waits_until_it_is_stale_and_then_starts(self):
+        now = int(time.time())
+        self.write_beat(40, OTHER_SESSION)
+
+        done = self.script_with(MANAGER_SESSION, {"JIDOKA_NOW": str(now)}, SCHEDULER, "next", self.epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn(f"waits {FRESH_FOR_SECONDS - 40 + 1} seconds", done.stderr)
+        self.assertEqual(LAP_LIMIT, len(json.loads(done.stdout)["actions"]))
+        self.assertEqual(now + FRESH_FOR_SECONDS - 40 + 1, self.beat_time())
+
+    def test_a_manager_that_starts_in_the_session_the_heartbeat_records_takes_the_epic_back_without_waiting(self):
+        now = int(time.time())
+        self.write_beat(40, MANAGER_SESSION)
+
+        done = self.script_with(MANAGER_SESSION, {"JIDOKA_NOW": str(now)}, SCHEDULER, "next", self.epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("waits", done.stderr)
+        self.assertEqual(LAP_LIMIT, len(json.loads(done.stdout)["actions"]))
+        self.assertEqual(now, self.beat_time())
 
     def test_a_manager_starts_when_the_heartbeat_is_stale(self):
         self.write_beat(STALE_SECONDS, MANAGER_SESSION)
@@ -352,7 +392,7 @@ class SecondManagerTests(ResumeCase):
         self.next_printed()
 
         self.assertGreaterEqual(self.beat_time(), int(time.time()) - 60)
-        self.assertEqual(1, self.next_run().returncode)
+        self.assertEqual(MANAGER_SESSION, json.loads(self.beat_file().read_text(encoding="utf-8"))["session"])
 
     def test_a_managers_later_call_claims_the_epic_again_after_the_heartbeat_went_stale(self):
         self.next_printed()
@@ -420,7 +460,7 @@ class SecondManagerTests(ResumeCase):
 
     def test_a_manager_of_another_session_is_refused_while_the_heartbeat_is_fresh_though_that_session_beat(self):
         self.next_printed()
-        self.write_beat(80, MANAGER_SESSION)
+        self.keep_beating(MANAGER_SESSION)
         self.beat_as(OTHER_SESSION)
 
         soon = self.script_with(OTHER_SESSION, {}, SCHEDULER, "next", self.epic)

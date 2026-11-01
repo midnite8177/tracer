@@ -1,0 +1,49 @@
+@*
+    What drives one factory epic, from jidoka's state script: whether it runs, waits, waits on the
+    person or has stopped, and the one next step for the person. The step shows the slash command
+    that it ends with running, and links each bead that waits on the person. The script says why
+    when it gave no state, and the page draws nothing for an epic that the script did not list.
+*@
+
+@using JidokaUi.Core.Beads
+@using JidokaUi.Core.Boards
+@using JidokaUi.Core.Jidoka
+@using JidokaUi.Core.Projects
+
+@if (States is Read<IReadOnlyList<EpicFactoryState>>.Unread unread)
+{
+    <div class="factory-drive">
+        <p class="factory-drive-unread text-danger">@unread.Reason</p>
+    </div>
+}
+else if (States is Read<IReadOnlyList<EpicFactoryState>>.Given { Value: var given }
+    && given.FirstOrDefault(state => string.Equals(state.Epic, EpicId, StringComparison.Ordinal)) is { } held)
+{
+    <div class="factory-drive">
+        <span class="factory-drive-state pill-chip">@held.State.Words()</span>
+        <span class="factory-drive-next">@held.NextStep.Text</span>
+        @foreach (var waiting in held.WaitingOn)
+        {
+            <a class="factory-drive-waiting" href="@BeadPageAddress.Of(new BeadAddress(Project, waiting))">@waiting</a>
+        }
+        @if (held.NextStep.Command is { } command)
+        {
+            <code class="factory-drive-command machine-text">@command</code>
+        }
+    </div>
+}
+
+@code {
+    /// <summary>What the state script gave for the project of the epic, or null before it was asked.</summary>
+    [Parameter]
+    public Read<IReadOnlyList<EpicFactoryState>>? States { get; set; }
+
+    /// <summary>The project that holds the epic, which the links to the waiting beads name.</summary>
+    [Parameter]
+    [EditorRequired]
+    public required ProjectPath Project { get; set; }
+
+    [Parameter]
+    [EditorRequired]
+    public required string EpicId { get; set; }
+}

@@ -10,7 +10,8 @@ The manager runs the scheduler, starts the workers it calls for, and
 reports how each one ended. That is all it does. It never runs git, never
 runs a `bd` command that changes anything, never edits a file, and never
 retries, reorders, skips or parks a lap by itself. When a script refuses,
-show its message and stop; do not work around it.
+show its message and stop, with the closing line below; do not work around
+it.
 
 The scripts, run from inside the repo:
 
@@ -24,6 +25,7 @@ The scripts, run from inside the repo:
 - repo settings: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py"`
 - watcher: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/watch.py"`
 - T3 waker: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_wake.py"`
+- factory state: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/factory_state.py"`
 - jidoka-ui: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/ui.py"`
 
 The skill folder is the directory that holds this SKILL.md. Write every
@@ -59,8 +61,22 @@ echo of a script's output. The events and their lines:
 - the factory paused: `<epic-id> paused: <cause>, retrying in <minutes> minutes`
 - nothing can run yet: `<epic-id>: waiting`
 - nothing left to run: `<epic-id>: nothing left to run`
+- the closing line: the epic's next step, as below
 
-A refusal is not an event. Show the script's message verbatim and stop.
+A refusal is not an event. Show the script's message verbatim, then write the
+closing line and stop.
+
+### The closing line
+
+Every report ends with the epic's next step, so the human never has to guess
+whether to run `/jidoka:factory`. Each time you stop, and each time you start
+the watcher and wait, run `factory state --jidoka-home ...` as the last
+command and write, as the last line, the `next:` line under `<epic-id>`
+exactly as the script printed it, without the `next:` label. The script
+prints a section for each epic in the factory; take your epic's. Where a step
+below says to stop, the closing line comes first. Two cases have none: a
+refusal from `factory check`, which comes before the epic matters, and a
+`factory state` that refuses, whose stderr you show.
 
 ## Stages and tiers
 
@@ -168,9 +184,13 @@ the printed route, native Sonnet, with the prompt of a native batch.
    first time the actions hold a `review`.
 3. **Next.** Run `scheduler next <epic-id> --jidoka-home ...`. Exit 1 means
    it refused and wrote nothing; stderr lists every reason. Show it and
-   stop. A refusal because the epic already has a manager means its
-   heartbeat is fresh: show it and stop. Under T3 (the `T3CODE_CLI_PATH`
-   variable is set), after exit 0 call the `t3_thread_configuration` tool
+   stop. When the epic's heartbeat is fresh and was claimed by another
+   session, the script waits on its own until the heartbeat goes stale and
+   then goes on; do not run it again yourself. A heartbeat that this
+   session claimed is taken back at once. A refusal because the epic
+   already has a manager means its heartbeat was renewed during that wait:
+   show it and stop. Under T3 (the `T3CODE_CLI_PATH` variable is set),
+   after exit 0 call the `t3_thread_configuration` tool
    with no arguments and run `T3 waker record <epic-id> --thread <threadId>
    --jidoka-home ...`, so that T3 can wake this host after it releases it;
    write no event line for it, and go on when the tool or the script fails.
@@ -795,7 +815,8 @@ the printed route, native Sonnet, with the prompt of a native batch.
    or blocked tasks, or its ready tasks wait on a slot or an area that
    another running epic holds. Write `<epic-id>: waiting`, then start the
    watcher in the background (`run_in_background: true`) with
-   `watcher <epic-id> --jidoka-home ...` and wait. It exits when a task is
+   `watcher <epic-id> --jidoka-home ...`, write the closing line, which
+   reads the watcher's record, and wait. The watcher exits when a task is
    unparked, a task is added, a task merges, the pause is over, or another
    epic frees a slot or an area for a ready task (`room-freed`), and prints
    which. Write nothing more while it waits. Under T3, let the host be
@@ -810,10 +831,11 @@ the printed route, native Sonnet, with the prompt of a native batch.
 ## When the human tells the host to stop
 
 When the human tells you to stop at once, stop every worker of yours that
-still runs, then run `scheduler stop <epic-id> --jidoka-home ...` and
-nothing else: it ends each running lap interrupted, which counts no
+still runs, then run `scheduler stop <epic-id> --jidoka-home ...` and no
+other scheduler call: it ends each running lap interrupted, which counts no
 cutoff, no try and no cap, and sends the one notification that the
-factory stopped with work left. Write `<epic-id>: stopped` and stop. The
+factory stopped with work left. Write `<epic-id>: stopped`, then the closing
+line, which gives `/jidoka:factory`, and stop. The
 next session opens with a line naming the stopped epic and the command that
 resumes it, `/jidoka:factory <epic-id>`, and that run of `scheduler next`
 gives each interrupted task a new lap on the work it left.
