@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
 """Runs an app's acceptance specs on a checkout and prints pass or fail for each.
 
-`run_specs.py <app> --checkout <folder> [SPEC ...]` finds the app in the repo settings of the checkout's repo and
-runs its specs in the checkout, so a lap can run them on its own worktree, red before it builds and green before it
-merges. The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
+Each kind of run is a subcommand, and each takes --checkout <folder>, the checkout the specs run in, and
+--jidoka-home, else $JIDOKA_HOME, else ~/.jidoka, for the home. A lap runs them on its own worktree, red before it
+builds and green before it merges.
 
-A SPEC is the name of one spec, in the words the human approved. Each one runs alone: the app's spec_command
+`run_specs.py all <app> --checkout <folder>` finds the app in the repo settings of the checkout's repo and runs its
+spec_command once for all of the app's specs. The script cannot list them, so it prints one line for the run, named
+"all specs".
+
+`run_specs.py named <app> --checkout <folder> SPEC [SPEC ...]` runs each named spec alone: the app's spec_command
 followed by its spec_target, with the target's one <...> placeholder replaced by the name, quoted for the shell. A
-name given twice runs once, and the specs print in the order given. With no SPEC, the app's spec_command runs once
-for all of the app's specs. The script cannot list them, so it prints one line for the run, named "all specs".
+SPEC is the name of one spec, in the words the human approved. A name given twice runs once, and the specs print in
+the order given.
 
 A line is `pass <name>` or `fail <name>`, on stdout. The output of each run that failed goes to stderr after the
 run. A run that executed no specs fails, because a name that selects nothing would otherwise pass. The script
 reads that from the output the way runner_summary.py does, and judges output in no known shape by its exit code.
 
-`run_specs.py --checkout <folder> --record red|green --task <task>` runs the specs the task makes pass, which
-specs.py records, on the app that specs.py records beside them, and records the run on the task as spec_runs.py
-describes. It takes no app and no SPEC, so the red and the green run of a task are on the same app, whichever app the
-task's targeted tests belong to. A red run is a build
-worker's, made before it writes code: `--expect "<spec>=<the failure you expect>"` gives the failure expected of each
-spec, a spec that fails without one records nothing, a spec that passes is recorded as already passing, and a task
-that holds a red run takes no second one. A green run needs a checkout with no uncommitted change to a tracked file,
-and records the checkout's head.
+`run_specs.py red|green --checkout <folder> --task <task>` runs the specs the task makes pass, which specs.py
+records, on the app that specs.py records beside them, and records the run on the task as spec_runs.py describes. It
+takes no app and no SPEC, so the red and the green run of a task are on the same app, whichever app the task's
+targeted tests belong to. A red run is a build worker's, made before it writes code: `--expect "<spec>=<the failure
+you expect>"` gives the failure expected of each spec, a spec that fails without one records nothing, a spec that
+passes is recorded as already passing, and a task that holds a red run takes no second one. A green run takes no
+--expect, needs a checkout with no uncommitted change to a tracked file, and records the checkout's head.
 
 Exit codes:
   0  every run passed, or a red run was recorded.
@@ -39,18 +42,19 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import runner_summary
 import settings_reader
 import spec_commands
 import spec_runs
 import specs
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError, read_bead, run, run_test_command
+from commands import COMMAND_TIMEOUT_SECONDS, CommandError, read_bead, run, run_finished
 from spec_runs import GREEN_KEY, RED_KEY, RecordedRun, SpecResult
 
 SPECS_FAILED_EXIT_CODE = 3
 ALL_SPECS = "all specs"
 RED = "red"
 GREEN = "green"
+ALL = "all"
+NAMED = "named"
 RECORD_KEYS = {RED: RED_KEY, GREEN: GREEN_KEY}
 
 
@@ -83,23 +87,24 @@ class Recording:
 
 
 def run_command(name: str, command: str, checkout: Path) -> SpecRun:
-    done = run_test_command(command, checkout)
-    output = f"{done.stdout}{done.stderr}"
-    finished = runner_summary.Finished(done.returncode, output)
+    finished = run_finished(command, checkout)
     tally = finished.tally
     if tally is not None and tally.executed == 0:
-        return SpecRun(name, False, f"{output}\nThe command ran no specs: {command}\n")
-    return SpecRun(name, finished.passed, output)
+        return SpecRun(name, False, f"{finished.output}\nThe command ran no specs: {command}\n")
+    return SpecRun(name, finished.passed, finished.output)
 
 
-def runs_of(app: settings_reader.App, given: list[str], checkout: Path) -> list[SpecRun]:
-    command = spec_commands.command_for_all(app)
+def run_all(app: settings_reader.App, checkout: Path) -> list[SpecRun]:
+    """One run of the app's spec command for all of its specs, named "all specs"."""
+    return [run_command(ALL_SPECS, spec_commands.command_for_all(app), checkout)]
+
+
+def run_named(app: settings_reader.App, given: list[str], checkout: Path) -> list[SpecRun]:
+    """One run for each named spec, in the order given, a name given twice running once."""
     try:
         names = specs.named_specs(given)
     except specs.SpecsError as error:
         raise RunSpecsError(str(error)) from error
-    if not names:
-        return [run_command(ALL_SPECS, command, checkout)]
     commands = [(name, spec_commands.command_for_one(app, name)) for name in names]
     return [run_command(name, one, checkout) for name, one in commands]
 
@@ -173,7 +178,7 @@ def runs_to_record(settings: settings_reader.Settings, mode: str, task: str, exp
     """Runs the specs the task makes pass in the checkout, on the app the task records for them, and returns the runs
     with the recording they await. The caller can show the runs before `record` refuses them."""
     plan = plan_recording(mode, task, expect, checkout, main_tree)
-    return plan, runs_of(settings.app_named(plan.app), plan.names, checkout)
+    return plan, run_named(settings.app_named(plan.app), plan.names, checkout)
 
 
 def recorded_runs(settings: settings_reader.Settings, mode: str, task: str, expect: list[str], checkout: Path,
@@ -192,42 +197,95 @@ def print_runs(runs: list[SpecRun]) -> None:
             print(finished.output, end="" if finished.output.endswith("\n") else "\n", file=sys.stderr)
 
 
+def exit_code_of(runs: list[SpecRun]) -> int:
+    return 0 if all(each.passed for each in runs) else SPECS_FAILED_EXIT_CODE
+
+
+def red_subcommand(args: argparse.Namespace, settings: settings_reader.Settings, checkout: Path,
+                   main_tree: Path) -> int:
+    """Runs the task's specs before the build and records the run. A red run exits 0 whether its specs failed or not."""
+    plan, runs = runs_to_record(settings, RED, args.task, args.expect, checkout, main_tree)
+    print_runs(runs)
+    record(plan, runs, main_tree)
+    return 0
+
+
+def green_subcommand(args: argparse.Namespace, settings: settings_reader.Settings, checkout: Path,
+                     main_tree: Path) -> int:
+    plan, runs = runs_to_record(settings, GREEN, args.task, [], checkout, main_tree)
+    print_runs(runs)
+    record(plan, runs, main_tree)
+    return exit_code_of(runs)
+
+
+def all_subcommand(args: argparse.Namespace, settings: settings_reader.Settings, checkout: Path,
+                   main_tree: Path) -> int:
+    runs = run_all(settings.app_named(args.app), checkout)
+    print_runs(runs)
+    return exit_code_of(runs)
+
+
+def named_subcommand(args: argparse.Namespace, settings: settings_reader.Settings, checkout: Path,
+                     main_tree: Path) -> int:
+    runs = run_named(settings.app_named(args.app), args.specs, checkout)
+    print_runs(runs)
+    return exit_code_of(runs)
+
+
+def parser_of() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
+    """The parser, and the parser of each subcommand by name. Each kind of run is a subcommand, so its help and every
+    refusal of its arguments name the run."""
+    parser = argparse.ArgumentParser(prog="run_specs.py", description="Run acceptance specs on a checkout.")
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument("--checkout", required=True, help="the folder the specs run in")
+    shared.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
+    subcommands = parser.add_subparsers(dest="subcommand", required=True, metavar="{red,green,all,named}")
+
+    red = subcommands.add_parser(RED, parents=[shared], help="run the specs a task makes pass before the build and "
+                                                             "record the run on the task",
+                                 description="Run the specs the task makes pass, on the app the task records for "
+                                             "them, and record the run on the task. A task takes one red run.")
+    red.add_argument("--task", required=True, help="the task whose specs run")
+    red.add_argument("--expect", action="append", default=[], metavar="SPEC=FAILURE",
+                     help="the failure expected of a spec; a failing spec with none records nothing")
+    red.set_defaults(subcommand_run=red_subcommand)
+
+    green = subcommands.add_parser(GREEN, parents=[shared], help="run the specs a task makes pass on a clean "
+                                                                 "checkout and record the run on the task",
+                                   description="Run the specs the task makes pass, on the app the task records for "
+                                               "them, in a checkout with no uncommitted change to a tracked file, "
+                                               "and record the run on the task.")
+    green.add_argument("--task", required=True, help="the task whose specs run")
+    green.set_defaults(subcommand_run=green_subcommand)
+
+    every = subcommands.add_parser(ALL, parents=[shared], help="run the spec command of an app once for every spec",
+                                   description="Run the app's spec command once for all of its specs and print one "
+                                               "line, named 'all specs'.")
+    every.add_argument("app", help="the app whose specs run")
+    every.set_defaults(subcommand_run=all_subcommand)
+
+    named = subcommands.add_parser(NAMED, parents=[shared], help="run each named spec of an app alone",
+                                   description="Run each named spec alone, in the order given, and print a line for "
+                                               "each.")
+    named.add_argument("app", help="the app whose specs run")
+    named.add_argument("specs", nargs="+", metavar="SPEC", help="the name of a spec, in the words the human approved")
+    named.set_defaults(subcommand_run=named_subcommand)
+    return parser, {RED: red, GREEN: green, ALL: every, NAMED: named}
+
+
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="run_specs.py", description="Run an app's acceptance specs on a checkout "
-                                                                     "and print pass or fail for each.")
-    parser.add_argument("app", nargs="?", help="the app whose specs run; a recorded run takes none")
-    parser.add_argument("--checkout", required=True, help="the folder the specs run in")
-    parser.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
-    parser.add_argument("--record", choices=[RED, GREEN], help="run the task's specs and record the run on the task")
-    parser.add_argument("--task", help="the task whose specs a recorded run runs")
-    parser.add_argument("--expect", action="append", default=[], metavar="SPEC=FAILURE",
-                        help="the failure expected of a spec in a red run")
-    parser.add_argument("specs", nargs="*", metavar="SPEC", help="a spec to run by name; none runs all of them")
-    args = parser.parse_args(argv)
-    if args.record is None and (args.task is not None or args.expect):
-        parser.error("--task and --expect belong to a recorded run, with --record")
-    if args.record is not None and (args.task is None or args.specs or args.app is not None):
-        parser.error("--record takes --task, no app and no SPEC, because it runs the specs the task makes pass on the "
-                     "app the task records for them")
-    if args.record is None and args.app is None:
-        parser.error("the app is required")
-    if args.expect and args.record != RED:
-        parser.error("--expect belongs to a red run")
+    parser, subcommands = parser_of()
+    args, extra = parser.parse_known_args(argv)
+    if extra:
+        subcommands[args.subcommand].error(f"unrecognized arguments: {' '.join(extra)}")
 
     checkout = Path(args.checkout).resolve()
     try:
         settings, main_tree = settings_of(settings_reader.jidoka_home(args.jidoka_home), checkout)
-        if args.record is None:
-            runs = runs_of(settings.app_named(args.app), args.specs, checkout)
-            print_runs(runs)
-        else:
-            plan, runs = runs_to_record(settings, args.record, args.task, args.expect, checkout, main_tree)
-            print_runs(runs)
-            record(plan, runs, main_tree)
+        return args.subcommand_run(args, settings, checkout, main_tree)
     except (spec_commands.SpecCommandError, settings_reader.SettingsError, CommandError, OSError) as error:
         print(f"run_specs: {error}", file=sys.stderr)
         return 1
-    return 0 if args.record == RED or all(finished.passed for finished in runs) else SPECS_FAILED_EXIT_CODE
 
 
 if __name__ == "__main__":

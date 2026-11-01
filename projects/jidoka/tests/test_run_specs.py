@@ -21,8 +21,6 @@ PAYS = "A shopper pays by card and the till prints a receipt"
 QUOTED = "A shopper can't pay twice"
 REFUNDS = "A shopper refunds a card payment"
 
-# A stand-in for an app's acceptance runner. It reads results.json, a map of spec name to whether it passes, runs
-# the spec named after --spec or all of them, and prints a line like the test runners the factory knows.
 RUNNER = '''import json
 import sys
 from pathlib import Path
@@ -80,8 +78,9 @@ class RunSpecsTests(unittest.TestCase):
         return {**os.environ, "JIDOKA_HOME": str(self.home), **fixture.home_variables(self.home)}
 
     def run_specs_in(self, checkout: Path, app_name: str, *specs: str) -> subprocess.CompletedProcess:
-        return fixture.run_launcher(LAUNCHER, [str(RUN_SPECS), app_name, "--checkout", str(checkout), *specs], None,
-                                    self.env(), self.root, RUN_TIMEOUT_SECONDS)
+        subcommand = "named" if specs else "all"
+        return fixture.run_launcher(LAUNCHER, [str(RUN_SPECS), subcommand, app_name, "--checkout", str(checkout),
+                                               *specs], None, self.env(), self.root, RUN_TIMEOUT_SECONDS)
 
     def run_specs(self, app_name: str, *specs: str) -> subprocess.CompletedProcess:
         return self.run_specs_in(self.repo, app_name, *specs)
@@ -178,7 +177,7 @@ class RunSpecsTests(unittest.TestCase):
     def test_refuses_a_repo_with_no_settings_and_says_to_onboard_it(self):
         other = self.root / "other"
         fixture.init_repo(other)
-        done = fixture.run_launcher(LAUNCHER, [str(RUN_SPECS), "shop", "--checkout", str(other), ADDS], None,
+        done = fixture.run_launcher(LAUNCHER, [str(RUN_SPECS), "named", "shop", "--checkout", str(other), ADDS], None,
                                     self.env(), self.root, RUN_TIMEOUT_SECONDS)
 
         self.assertEqual(1, done.returncode)
@@ -191,6 +190,20 @@ class RunSpecsTests(unittest.TestCase):
 
         self.assertEqual(1, done.returncode)
         self.assertIn("needs exactly one <...> placeholder", done.stderr)
+
+    def test_a_named_run_needs_a_spec_name_and_the_refusal_names_the_named_subcommand(self):
+        done = fixture.run_launcher(LAUNCHER, [str(RUN_SPECS), "named", "shop", "--checkout", str(self.repo)], None,
+                                    self.env(), self.root, RUN_TIMEOUT_SECONDS)
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("run_specs.py named: error", done.stderr)
+
+    def test_a_run_of_all_specs_takes_no_spec_name_and_the_refusal_names_the_all_subcommand(self):
+        done = fixture.run_launcher(LAUNCHER, [str(RUN_SPECS), "all", "shop", "--checkout", str(self.repo), ADDS],
+                                    None, self.env(), self.root, RUN_TIMEOUT_SECONDS)
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("run_specs.py all: error", done.stderr)
 
     def test_refuses_a_checkout_that_is_not_a_folder(self):
         done = self.run_specs_in(self.root / "missing", "shop", ADDS)

@@ -73,7 +73,7 @@ def parsed(shown: dict, key: str) -> RecordedRun | None:
     except (ValueError, KeyError, TypeError):
         pass
     raise SpecRunsError(f"{key} of {shown.get('id')} is not a run of the task's specs. Run the specs again with "
-                        f"run_specs.py --record")
+                        f"run_specs.py red or run_specs.py green")
 
 
 def red_run_of(shown: dict) -> RecordedRun | None:

@@ -82,15 +82,15 @@ class SpecRunsCase(SchedulerCase):
         [action] = self.next_printed(epic)["actions"]
         return OpenLap(epic, task, branch, Path(action["worktree"])), action
 
-    def run_specs(self, lap: OpenLap, *flags: str) -> subprocess.CompletedProcess:
-        return self.launch(RUN_SPECS, "--checkout", str(lap.worktree), *flags)
+    def run_specs(self, lap: OpenLap, subcommand: str, *flags: str) -> subprocess.CompletedProcess:
+        return self.launch(RUN_SPECS, subcommand, "--checkout", str(lap.worktree), *flags)
 
     def red_run(self, lap: OpenLap, *expected: str) -> subprocess.CompletedProcess:
-        return self.run_specs(lap, "--record", "red", "--task", lap.task,
+        return self.run_specs(lap, "red", "--task", lap.task,
                               *(argument for each in expected for argument in ("--expect", each)))
 
     def green_run(self, lap: OpenLap) -> subprocess.CompletedProcess:
-        return self.run_specs(lap, "--record", "green", "--task", lap.task)
+        return self.run_specs(lap, "green", "--task", lap.task)
 
     def record_tests(self, task: str, base: str, result: str) -> None:
         fixture.run([self.bd, "update", task, "--set-metadata", "tests.command=make test -k test_card",
@@ -174,31 +174,49 @@ class RedRunTests(SpecRunsCase):
         self.assertEqual("", done.stdout)
         self.assertIn("does not start with the name of one of the task's specs", done.stderr)
 
-    def test_a_recorded_run_takes_no_spec_name_because_it_runs_the_specs_of_the_task(self):
+    def test_a_red_run_needs_a_task_and_the_refusal_names_the_red_subcommand(self):
         lap, _ = self.open_lap_making_pass(PAYS)
 
-        done = self.run_specs(lap, "--record", "red", "--task", lap.task, PAYS)
+        done = self.run_specs(lap, "red")
 
         self.assertEqual(2, done.returncode)
+        self.assertIn("run_specs.py red: error", done.stderr)
+        self.assertIn("--task", done.stderr)
 
-    def test_a_task_flag_without_a_record_is_a_usage_error(self):
+    def test_a_green_run_refuses_expect_and_the_refusal_names_the_green_subcommand(self):
         lap, _ = self.open_lap_making_pass(PAYS)
 
-        self.assertEqual(2, self.run_specs(lap, "--task", lap.task, PAYS).returncode)
+        done = self.run_specs(lap, "green", "--task", lap.task, "--expect", f"{PAYS}=no receipt")
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("run_specs.py green: error", done.stderr)
+        self.assertIn("--expect", done.stderr)
 
     def test_a_recorded_run_takes_no_app_because_the_task_records_the_app_of_its_specs(self):
         lap, _ = self.open_lap_making_pass(PAYS)
 
-        done = self.launch(RUN_SPECS, "shop", "--checkout", str(lap.worktree), "--record", "red", "--task", lap.task)
+        done = self.launch(RUN_SPECS, "red", "shop", "--checkout", str(lap.worktree), "--task", lap.task)
 
         self.assertEqual(2, done.returncode)
-        self.assertIn("no app", done.stderr)
+        self.assertIn("run_specs.py red: error", done.stderr)
         self.assertNotIn("acceptance.red", self.metadata(lap.task))
 
-    def test_a_plain_run_needs_an_app(self):
+    def test_a_run_of_all_specs_needs_an_app(self):
         lap, _ = self.open_lap_making_pass(PAYS)
 
-        self.assertEqual(2, self.launch(RUN_SPECS, "--checkout", str(lap.worktree)).returncode)
+        done = self.run_specs(lap, "all")
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("run_specs.py all: error", done.stderr)
+
+    def test_a_run_without_a_subcommand_is_a_usage_error_that_lists_the_subcommands(self):
+        lap, _ = self.open_lap_making_pass(PAYS)
+
+        done = self.launch(RUN_SPECS, "--checkout", str(lap.worktree))
+
+        self.assertEqual(2, done.returncode)
+        for subcommand in ("red", "green", "all", "named"):
+            self.assertIn(subcommand, done.stderr)
 
     def test_a_task_whose_specs_record_no_app_has_no_red_run(self):
         lap, _ = self.open_lap_making_pass(PAYS)

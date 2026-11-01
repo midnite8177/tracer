@@ -194,7 +194,7 @@ own failure.
    - when the action's `specs` is not empty, the task makes those acceptance
      specs pass. Give the worker the names and the action's `specs_command`,
      and tell it to run the specs red before it writes any code, with
-     `<specs_command> --checkout <worktree> --record red --task <task>`,
+     `<specs_command> red --checkout <worktree> --task <task>`,
      which names no app because the task records the app its specs belong to,
      and, for each spec that fails, `--expect "<spec>=<the failure it
      expects>"`. A failing spec with no `--expect` records nothing, so the
