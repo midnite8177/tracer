@@ -47,6 +47,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path, PureWindowsPath
@@ -76,6 +77,8 @@ UI_WEB_PROJECT = Path("src") / "JidokaUi.Web" / "JidokaUi.Web.csproj"
 UI_APP = "JidokaUi.Web.dll"
 UI_PORT = 5099
 DEFAULT_UI_URL = f"http://localhost:{UI_PORT}"
+RENAME_ATTEMPTS = 10
+RENAME_PAUSE_SECONDS = 0.5
 
 
 class InstallerError(Exception):
@@ -320,6 +323,24 @@ def building_beside(target: Path) -> Path:
     return Path(tempfile.mkdtemp(prefix=f".{target.name}-", dir=target.parent))
 
 
+def renamed_into_place(built: Path, target: Path, rename: Callable[[Path, Path], object],
+                       pause: Callable[[float], object]) -> None:
+    """Renames built to target, and tries a refused rename again.
+
+    Windows refuses to rename a folder while another process, such as a virus scanner or the search indexer, holds
+    a file in it open. Such a process lets go of a new file after a short time.
+    """
+    for attempt in range(1, RENAME_ATTEMPTS + 1):
+        try:
+            rename(built, target)
+            return
+        except PermissionError as err:
+            if attempt == RENAME_ATTEMPTS:
+                raise InstallerError(f"{built} could not be renamed to {target} after {RENAME_ATTEMPTS} tries: {err}. "
+                                     "Another process holds a file in it open. Run install.py again") from err
+            pause(RENAME_PAUSE_SECONDS)
+
+
 def built_in_place(target: Path, fill: Callable[[Path], Path], appeared: str) -> None:
     """Builds target beside itself and renames it into place, so target is never half written.
 
@@ -332,7 +353,7 @@ def built_in_place(target: Path, fill: Callable[[Path], Path], appeared: str) ->
         built.chmod(0o755)
         if target.exists():
             raise InstallerError(appeared)
-        built.rename(target)
+        renamed_into_place(built, target, Path.rename, time.sleep)
     finally:
         shutil.rmtree(building, ignore_errors=True)
 

@@ -934,6 +934,50 @@ class DirtyPluginFolderTests(InstallerTestCase):
         self.assertFalse(self.home.exists())
 
 
+class RefusingRename:
+    """A rename that raises PermissionError for its first refusals calls, then renames, and records each pause."""
+    def __init__(self, refusals: int):
+        self.refusals = refusals
+        self.calls = 0
+        self.pauses: list[float] = []
+
+    def rename(self, source: Path, target: Path) -> None:
+        self.calls += 1
+        if self.calls <= self.refusals:
+            raise PermissionError(5, "Access is denied")
+        source.rename(target)
+
+    def pause(self, seconds: float) -> None:
+        self.pauses.append(seconds)
+
+
+class RenameIntoPlaceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.built = Path(self.tmp.name) / ".0.1.51-built"
+        self.built.mkdir()
+        self.target = Path(self.tmp.name) / "0.1.51"
+
+    def test_a_rename_that_windows_refuses_a_few_times_is_tried_again_until_it_succeeds(self):
+        rename = RefusingRename(3)
+
+        install.renamed_into_place(self.built, self.target, rename.rename, rename.pause)
+
+        self.assertTrue(self.target.is_dir())
+        self.assertEqual([install.RENAME_PAUSE_SECONDS] * 3, rename.pauses)
+
+    def test_a_rename_that_stays_refused_stops_after_its_last_try_and_says_to_run_the_installer_again(self):
+        rename = RefusingRename(install.RENAME_ATTEMPTS)
+
+        with self.assertRaises(install.InstallerError) as raised:
+            install.renamed_into_place(self.built, self.target, rename.rename, rename.pause)
+
+        self.assertEqual(install.RENAME_ATTEMPTS, rename.calls)
+        self.assertIn("Run install.py again", str(raised.exception))
+        self.assertFalse(self.target.exists())
+
+
 class StealthWorkspaceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
