@@ -452,13 +452,14 @@ def install_into_claude(claude: str, config_dir: Path, snapshot: Path) -> None:
 
 
 def codex_marketplace_source(codex: str, env: dict[str, str]) -> str | None:
-    """The source Codex has for the jidoka marketplace, or None when Codex has no marketplace by that name."""
+    """The folder Codex has for the jidoka marketplace, its `root`, or None when Codex has no marketplace by that
+    name."""
     listed = run_tool(codex, ["plugin", "marketplace", "list", "--json"], env)
     try:
         marketplaces = json.loads(listed)["marketplaces"]
         for marketplace in marketplaces:
             if marketplace["name"] == MARKETPLACE:
-                return marketplace["marketplaceSource"]["source"]
+                return marketplace["root"]
     except (ValueError, KeyError, TypeError) as err:
         raise InstallerError("`codex plugin marketplace list --json` printed a list the installer cannot read: "
                              + listed.strip()) from err

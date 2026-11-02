@@ -733,7 +733,7 @@ def write_codex(path: Path, log: Path, state: Path, fail_on: str) -> None:
         "    del marketplaces[argv[3]]",
         "elif argv[:4] == ['plugin', 'marketplace', 'list', '--json']:",
         "    print(json.dumps({'marketplaces': [",
-        "        {'name': name, 'root': source, 'marketplaceSource': {'sourceType': 'local', 'source': source}}",
+        "        {'name': name, 'root': source}",
         "        for name, source in marketplaces.items()]}))",
         "elif argv[:2] == ['plugin', 'add']:",
         "    marketplace = argv[2].partition('@')[2]",

@@ -70,7 +70,7 @@ class InstallerTestCase(unittest.TestCase):
         codex = fixture.executable_file(self.bin / "codex", fixture.WINDOWS)
         listed = subprocess.run([str(codex), "plugin", "marketplace", "list", "--json"],
                                 capture_output=True, text=True, encoding="utf-8", check=True)
-        return {entry["name"]: entry["marketplaceSource"]["source"] for entry in json.loads(listed.stdout)["marketplaces"]}
+        return {entry["name"]: entry["root"] for entry in json.loads(listed.stdout)["marketplaces"]}
 
     def settings(self) -> dict:
         return json.loads((self.home / "settings.json").read_text(encoding="utf-8"))
