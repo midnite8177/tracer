@@ -18,8 +18,13 @@ public sealed class FakeJidoka : IJidokaProcess
     private readonly Dictionary<string, Action> changes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCompletionSource<BdResult>> held = new(StringComparer.Ordinal);
 
+    private int running;
+    private int mostAtOnce;
+
     /// <summary>The command lines that the code under test ran, in order.</summary>
     public List<string> Invocations { get; } = [];
+
+    public int MostRunsAtOnce => Volatile.Read(ref mostAtOnce);
 
     /// <summary>The program of each run, in order.</summary>
     public List<string> Programs { get; } = [];
@@ -29,6 +34,9 @@ public sealed class FakeJidoka : IJidokaProcess
 
     /// <summary>The home that each run named, in order.</summary>
     public List<string> Homes { get; } = [];
+
+    /// <summary>The token of each run, in order, which the code under test cancels to stop that run.</summary>
+    public List<CancellationToken> Stops { get; } = [];
 
     /// <summary>Scripts a run that exits with success and prints this.</summary>
     public FakeJidoka Prints(string commandLine, string standardOutput) =>
@@ -71,7 +79,8 @@ public sealed class FakeJidoka : IJidokaProcess
         return this;
     }
 
-    public Task<BdResult> RunAsync(string program, string workingDirectory, IReadOnlyList<string> arguments)
+    public Task<BdResult> RunAsync(
+        string program, string workingDirectory, IReadOnlyList<string> arguments, CancellationToken stop)
     {
         var home = arguments.Where(argument => argument.StartsWith(HomeFlag, StringComparison.Ordinal)).ToList();
         var rest = arguments.Where(argument => !argument.StartsWith(HomeFlag, StringComparison.Ordinal)).ToList();
@@ -80,6 +89,25 @@ public sealed class FakeJidoka : IJidokaProcess
         Programs.Add(program);
         Directories.Add(workingDirectory);
         Homes.AddRange(home.Select(flag => flag[HomeFlag.Length..]));
+        Stops.Add(stop);
+        InterlockedMax(ref mostAtOnce, Interlocked.Increment(ref running));
+        return DropsFromTheCountAsItEnds(Answer(commandLine));
+    }
+
+    private async Task<BdResult> DropsFromTheCountAsItEnds(Task<BdResult> run)
+    {
+        try
+        {
+            return await run;
+        }
+        finally
+        {
+            Interlocked.Decrement(ref running);
+        }
+    }
+
+    private Task<BdResult> Answer(string commandLine)
+    {
         if (held.TryGetValue(commandLine, out var holding))
         {
             return holding.Task;
@@ -94,5 +122,20 @@ public sealed class FakeJidoka : IJidokaProcess
             scripted.TryGetValue(commandLine, out var answer)
                 ? answer
                 : new BdResult(1, string.Empty, $"unscripted run: {commandLine}"));
+    }
+
+    private static void InterlockedMax(ref int most, int candidate)
+    {
+        var seen = Volatile.Read(ref most);
+        while (candidate > seen)
+        {
+            var before = Interlocked.CompareExchange(ref most, candidate, seen);
+            if (before == seen)
+            {
+                return;
+            }
+
+            seen = before;
+        }
     }
 }

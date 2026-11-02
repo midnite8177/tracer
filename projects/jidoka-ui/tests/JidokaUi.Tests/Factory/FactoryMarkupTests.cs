@@ -16,6 +16,7 @@ namespace JidokaUi.Tests.Factory;
 public sealed class FactoryMarkupTests : BunitContext
 {
     private const string ListCommand = "list --all --limit 0 --json";
+    private const string StateCommand = "factory_state.py --json";
 
     private const string TheEpicAndItsTasks =
         """
@@ -209,6 +210,27 @@ public sealed class FactoryMarkupTests : BunitContext
     }
 
     [Fact]
+    public void RunsOneStateReadOfAProjectAtATimeAndFoldsTheChangesThatComeDuringItIntoOneReadAfter()
+    {
+        var view = TheViewWhereTheSecondProjectHoldsThreeEpics();
+        projects.Jidoka.Holds(StateCommand);
+
+        projects.Backlogs.Invalidate(projects.Second);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+        projects.Backlogs.InvalidateFromWatch(projects.Second);
+        projects.Clock.Advance(FactoryPage.StateRefresh);
+
+        view.WaitForAssertion(() => Assert.Equal(2, StateReads()));
+        Assert.Single(view.FindAll(".factory-drive-command"));
+        projects.Jidoka.Prints(StateCommand, TheStates(TheStoppedEpicRuns));
+        projects.Jidoka.Answers(StateCommand, TheStates(TheStoppedEpicIsStopped));
+
+        view.WaitForAssertion(() => Assert.Empty(view.FindAll(".factory-drive-command")));
+        Assert.Equal(3, StateReads());
+        Assert.Equal(1, projects.Jidoka.MostRunsAtOnce);
+    }
+
+    [Fact]
     public void LinksEachBeadThatWaitsOnThePersonToItsPageInTheProjectThatHoldsIt()
     {
         var view = TheViewWhereTheSecondProjectHoldsThreeEpics();
@@ -275,6 +297,8 @@ public sealed class FactoryMarkupTests : BunitContext
 
         return Render<FactoryPage>();
     }
+
+    private int StateReads() => projects.Jidoka.Invocations.Count(run => run == StateCommand);
 
     private static (string Task, string Lap, string Stage, string Tries) RowOf(AngleSharp.Dom.IElement row) =>
         (

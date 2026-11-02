@@ -21,8 +21,9 @@ public sealed class JidokaAdapter
     private const string GateScript = "gate.py";
     private const string RulesScript = "rules.py";
     private const string FactoryStateScript = "factory_state.py";
-    private const string AbandonedMessage =
-        "The script has not answered. The app cannot stop it, so it may still finish.";
+    private const string AbandonedWriteMessage =
+        "The script has not answered. The app does not stop a script that writes, so it may still finish.";
+    private const string StoppedReadMessage = "The script did not answer in time, so the app stopped it.";
 
     private readonly IJidokaProcess process;
     private readonly BdAdapter bd;
@@ -78,13 +79,13 @@ public sealed class JidokaAdapter
         ProjectPath project, string script, IReadOnlyList<string> arguments, Func<string, Read<T>> parse)
         where T : notnull
     {
-        var ran = await RunAsync(project, script, arguments, WaitLimit);
+        var ran = await RunAsync(project, script, arguments, WaitLimit, GivingUp.StopsTheScript);
         switch (ran)
         {
             case Ran.NotStarted notStarted:
                 return new Read<T>.Unread(notStarted.Reason);
             case Ran.Abandoned:
-                return new Read<T>.Unread(AbandonedMessage);
+                return new Read<T>.Unread(StoppedReadMessage);
             case Ran.Finished { Result.Succeeded: false } failed:
                 return new Read<T>.Unread(Said(failed.Result));
             case Ran.Finished finished:
@@ -108,13 +109,13 @@ public sealed class JidokaAdapter
     private async Task<JidokaWriteOutcome> WriteAsync(
         ProjectPath project, string script, IReadOnlyList<string> arguments, TimeSpan wait)
     {
-        var ran = await RunAsync(project, script, arguments, wait);
+        var ran = await RunAsync(project, script, arguments, wait, GivingUp.LeavesTheScriptRunning);
         switch (ran)
         {
             case Ran.NotStarted notStarted:
                 return new JidokaWriteOutcome.Failed(notStarted.Reason);
             case Ran.Abandoned:
-                return new JidokaWriteOutcome.Abandoned(AbandonedMessage);
+                return new JidokaWriteOutcome.Abandoned(AbandonedWriteMessage);
             case Ran.Finished { Result: var result }:
                 if (JidokaExit.MayHaveWritten(result.ExitCode))
                 {
@@ -130,7 +131,7 @@ public sealed class JidokaAdapter
     }
 
     private async Task<Ran> RunAsync(
-        ProjectPath project, string script, IReadOnlyList<string> arguments, TimeSpan wait)
+        ProjectPath project, string script, IReadOnlyList<string> arguments, TimeSpan wait, GivingUp givingUp)
     {
         var found = JidokaInstall.Find(home);
         if (found is not Read<JidokaInstall>.Given { Value: var install })
@@ -138,12 +139,20 @@ public sealed class JidokaAdapter
             return new Ran.NotStarted(found is Read<JidokaInstall>.Unread { Reason: var reason } ? reason : string.Empty);
         }
 
+        using var stop = new CancellationTokenSource();
         var run = process.RunAsync(
             install.Python,
             project.Value,
-            [install.PathOf(script), .. arguments, $"--jidoka-home={home.Root}"]);
+            [install.PathOf(script), .. arguments, $"--jidoka-home={home.Root}"],
+            givingUp == GivingUp.StopsTheScript ? stop.Token : CancellationToken.None);
         var winner = await Task.WhenAny(run, Task.Delay(wait, clock));
-        return winner == run ? new Ran.Finished(await run) : new Ran.Abandoned();
+        if (winner == run)
+        {
+            return new Ran.Finished(await run);
+        }
+
+        await stop.CancelAsync();
+        return new Ran.Abandoned();
     }
 
     private static string Said(BdResult result)
@@ -240,6 +249,17 @@ public sealed class JidokaAdapter
     }
 
     private static string TextOf(JsonElement element, string name) => element.GetProperty(name).GetString() ?? string.Empty;
+
+    /// <summary>
+    /// What the app does with a script that outran its wait. A read is stopped, because a run left
+    /// going keeps calling bd. A write is left to finish, because a script stopped midway could leave
+    /// an epic half written.
+    /// </summary>
+    private enum GivingUp
+    {
+        StopsTheScript,
+        LeavesTheScriptRunning,
+    }
 
     private abstract record Ran
     {

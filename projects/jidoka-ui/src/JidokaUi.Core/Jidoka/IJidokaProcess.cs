@@ -8,5 +8,7 @@ namespace JidokaUi.Core.Jidoka;
 /// </summary>
 public interface IJidokaProcess
 {
-    Task<BdResult> RunAsync(string program, string workingDirectory, IReadOnlyList<string> arguments);
+    /// <param name="stop">Kills the program and every process that it started, when cancelled.</param>
+    Task<BdResult> RunAsync(
+        string program, string workingDirectory, IReadOnlyList<string> arguments, CancellationToken stop);
 }

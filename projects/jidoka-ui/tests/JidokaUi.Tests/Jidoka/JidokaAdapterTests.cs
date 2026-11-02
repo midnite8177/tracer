@@ -169,6 +169,23 @@ public sealed class JidokaAdapterTests : IDisposable
         Assert.False(outcome.Wrote);
         Assert.True(outcome.GaveUp);
         Assert.Contains("may still finish", outcome.Message, StringComparison.Ordinal);
+        Assert.False(jidoka.Stops.Single().IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task StopsTheStateScriptWhenItOutrunsTheWaitLimitAndSaysItStoppedIt()
+    {
+        jidoka.Holds("factory_state.py --json");
+
+        var reading = adapter.FactoryStatesAsync(epic.Project);
+        Assert.False(jidoka.Stops.Single().IsCancellationRequested);
+        clock.Advance(JidokaAdapter.WaitLimit);
+        var read = await reading;
+
+        Assert.True(jidoka.Stops.Single().IsCancellationRequested);
+        var reason = Assert.IsType<Read<IReadOnlyList<EpicFactoryState>>.Unread>(read).Reason;
+        Assert.Contains("stopped it", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("may still finish", reason, StringComparison.Ordinal);
     }
 
     [Fact]

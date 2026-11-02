@@ -786,7 +786,9 @@ as `/jidoka:factory` for a stopped epic, and a link to the page of each bead
 that waits on the person. The app asks the script for each
 project that holds an epic, and again when that project changes and every
 30 seconds, because a host that closes or a heartbeat that goes stale
-changes no bead. It is not
+changes no bead. One run at a time reads the states of a project, and
+the changes that come in while it runs make one more run after it,
+however many there were. It is not
 the epic's state in the task table's sense, which reads only the epic's
 labels and metadata. When the script gives no state, the section says why.
 _Avoid_: Health, status, drive state
@@ -983,7 +985,10 @@ The one layer that starts jidoka's scripts. A metadata key that jidoka
 owns, such as the gate's decision or an epic's factory rules, has one
 writer, jidoka's script, so the app changes it only through this layer
 and never through `bd` directly. A comment, a label or a close stays a
-plain `bd` write. See
+plain `bd` write. The app stops a script that reads and outruns its
+wait, with every process it started, because a run left going keeps
+calling `bd`. It lets a script that writes finish, because one stopped
+midway could leave an epic half written. See
 [ADR 0018](docs/adr/0018-jidokas-keys-are-written-only-through-jidokas-scripts.md).
 _Avoid_: Python bridge, script runner, jidoka client
 

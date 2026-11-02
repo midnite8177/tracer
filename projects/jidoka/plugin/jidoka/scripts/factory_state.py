@@ -2,8 +2,10 @@
 """Prints each epic the factory holds with its one factory state and the one next step the human can act on.
 
 Run it from inside any checkout of the repo. It needs no host: it reads the beads through bd, the heartbeat
-(heartbeat.py) and the watcher record (watcher_record.py) in the jidoka home, and changes nothing. For each open epic
-with the `factory` label it works out one of four states:
+(heartbeat.py) and the watcher record (watcher_record.py) in the jidoka home, and changes nothing. One bd list gives
+every epic and task with the labels and metadata that the states read, so the number of bd calls does not grow with
+the epics. Only a bead that carries the human label costs one more call, for its comments. For each open epic with the
+`factory` label it works out one of four states:
   running         the heartbeat is fresh and no watcher waits: a manager works the epic. Nothing to do.
   waiting         the heartbeat is fresh, a live watcher waits, and no bead waits on the human: the factory carries
                   on by itself at the end of its pause, on a new task, on a merged task or on room that frees.
@@ -57,10 +59,10 @@ import pause
 import park
 import settings_reader
 import watcher_record
-from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError, NotAWholeNumber, is_labeled_for_human,
-                      labels_of)
-from epic_reader import EpicReadError, read_epic
-from epics import EpicsError, at_the_gate, epics_of, is_closed
+from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError, NotAWholeNumber, bd_list,
+                      is_labeled_for_human, labels_of, parent_of)
+from epic_reader import EPIC_TYPE
+from epics import at_the_gate, is_closed
 from lap_outcomes import SchedulerError
 
 class State(Enum):
@@ -232,9 +234,9 @@ def step_for_a_waiting_epic(shown: dict, now: int) -> NextStep:
                          f"pause ends, and sooner {sooner}.", held_pause.until)
 
 
-def state_of_epic(shown: dict, home: Path, main_tree: Path, now: int) -> EpicState:
+def state_of_epic(shown: dict, tasks: list[dict], home: Path, main_tree: Path, now: int) -> EpicState:
+    """The state of the epic, from the epic and its open tasks as bd lists them."""
     epic = str(shown["id"])
-    tasks = read_epic(shown, main_tree).open_task_beads
     fresh_age = heartbeat.fresh_age_seconds(home, epic, now)
     record = watcher_record.live_watcher(home, epic)
     listed = record.waits_for.parked if record is not None else frozenset()
@@ -255,8 +257,14 @@ def state_of_epic(shown: dict, home: Path, main_tree: Path, now: int) -> EpicSta
 
 
 def states(home: Path, main_tree: Path, now: int) -> list[EpicState]:
-    return [state_of_epic(shown, home, main_tree, now) for shown in epics_of(main_tree)
-            if FACTORY_LABEL in labels_of(shown) and not is_closed(shown)]
+    listed = [item for item in bd_list(["--all", "--limit", "0"], main_tree) if item.get("id") and not is_closed(item)]
+    held = sorted((item for item in listed if item.get("issue_type") == EPIC_TYPE and FACTORY_LABEL in labels_of(item)),
+                  key=lambda epic: str(epic["id"]))
+    open_tasks: dict[str, list[dict]] = {}
+    for item in listed:
+        if item.get("issue_type") != EPIC_TYPE:
+            open_tasks.setdefault(parent_of(item), []).append(item)
+    return [state_of_epic(epic, open_tasks.get(str(epic["id"]), []), home, main_tree, now) for epic in held]
 
 
 def lines_of(held: list[EpicState]) -> str:
@@ -282,7 +290,7 @@ def main(argv: list[str]) -> int:
     try:
         main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
         held = states(settings_reader.jidoka_home(args.jidoka_home), main_tree, clock.now())
-    except (EpicsError, EpicReadError, SchedulerError, NotAWholeNumber, CommandError,
+    except (SchedulerError, NotAWholeNumber, CommandError,
             settings_reader.SettingsError, OSError) as error:
         print(f"factory_state: {error}", file=sys.stderr)
         return 1

@@ -20,7 +20,16 @@ public sealed class BdProcess : IBdProcess
         this.programName = programName;
     }
 
-    public async Task<BdResult> RunAsync(string workingDirectory, IReadOnlyList<string> arguments)
+    public Task<BdResult> RunAsync(string workingDirectory, IReadOnlyList<string> arguments) =>
+        RunAsync(workingDirectory, arguments, CancellationToken.None);
+
+    /// <summary>
+    /// Runs the program as <see cref="RunAsync(string, IReadOnlyList{string})"/> does, and kills it
+    /// together with every process that it started when <paramref name="stop"/> is cancelled. A
+    /// script that calls bd leaves those calls running if only the script dies.
+    /// </summary>
+    public async Task<BdResult> RunAsync(
+        string workingDirectory, IReadOnlyList<string> arguments, CancellationToken stop)
     {
         var start = new ProcessStartInfo(programName)
         {
@@ -43,6 +52,8 @@ public sealed class BdProcess : IBdProcess
                 return new BdResult(-1, string.Empty, $"{programName} did not start, and the system gave no process to wait for.");
             }
 
+            using var killing = stop.Register(() => KillTree(bd));
+
             // The reads start before the wait, because a program that fills a pipe buffer blocks
             // until something drains it, and a wait that comes first never does.
             var standardOutput = bd.StandardOutput.ReadToEndAsync();
@@ -57,6 +68,18 @@ public sealed class BdProcess : IBdProcess
         catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
         {
             return new BdResult(-1, string.Empty, $"{programName} did not start. {exception.Message}");
+        }
+    }
+
+    private static void KillTree(Process running)
+    {
+        try
+        {
+            running.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // The process exited before the kill reached it.
         }
     }
 }

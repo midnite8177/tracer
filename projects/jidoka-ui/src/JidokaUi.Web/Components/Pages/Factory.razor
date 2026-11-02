@@ -76,7 +76,8 @@ else
     private FactoryView? view;
     private readonly Dictionary<ProjectPath, Read<IReadOnlyList<EpicFactoryState>>> states = [];
     private ITimer? refresh;
-    private bool refreshing;
+    private readonly HashSet<ProjectPath> readingStates = [];
+    private readonly Dictionary<ProjectPath, FactoryProject> statesToReadNext = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -87,7 +88,7 @@ else
             Watchers.Watch(project.Project);
         }
 
-        await Task.WhenAll(view.Projects.Select(ReadStatesAsync));
+        await Task.WhenAll(view.Projects.Select(ReadStatesOneRunAtATimeAsync));
         refresh = Clock.CreateTimer(_ => _ = InvokeAsync(RefreshStatesAsync), null, StateRefresh, StateRefresh);
     }
 
@@ -99,21 +100,13 @@ else
 
     private async Task RefreshStatesAsync()
     {
-        if (view is null || refreshing)
+        if (view is null)
         {
             return;
         }
 
-        refreshing = true;
-        try
-        {
-            await Task.WhenAll(view.Projects.Select(ReadStatesAsync));
-            StateHasChanged();
-        }
-        finally
-        {
-            refreshing = false;
-        }
+        await Task.WhenAll(view.Projects.Select(ReadStatesOneRunAtATimeAsync));
+        StateHasChanged();
     }
 
     private Read<IReadOnlyList<EpicFactoryState>>? StatesOf(ProjectPath project) =>
@@ -129,12 +122,36 @@ else
         }
 
         var read = await Reader.ReadAsync(project);
-        await ReadStatesAsync(read);
         view = view.With(read);
+        StateHasChanged();
+        await ReadStatesOneRunAtATimeAsync(read);
         StateHasChanged();
     }
 
-    private async Task ReadStatesAsync(FactoryProject read)
+    private async Task ReadStatesOneRunAtATimeAsync(FactoryProject read)
+    {
+        if (!readingStates.Add(read.Project))
+        {
+            statesToReadNext[read.Project] = read;
+            return;
+        }
+
+        try
+        {
+            var next = read;
+            do
+            {
+                await ReadStatesOnceAsync(next);
+            }
+            while (statesToReadNext.Remove(read.Project, out next));
+        }
+        finally
+        {
+            readingStates.Remove(read.Project);
+        }
+    }
+
+    private async Task ReadStatesOnceAsync(FactoryProject read)
     {
         if (read.Epics.Count == 0)
         {

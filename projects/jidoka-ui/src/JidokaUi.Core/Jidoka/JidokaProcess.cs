@@ -9,6 +9,7 @@ namespace JidokaUi.Core.Jidoka;
 /// </summary>
 public sealed class JidokaProcess : IJidokaProcess
 {
-    public Task<BdResult> RunAsync(string program, string workingDirectory, IReadOnlyList<string> arguments) =>
-        new BdProcess(program).RunAsync(workingDirectory, arguments);
+    public Task<BdResult> RunAsync(
+        string program, string workingDirectory, IReadOnlyList<string> arguments, CancellationToken stop) =>
+        new BdProcess(program).RunAsync(workingDirectory, arguments, stop);
 }

@@ -323,6 +323,20 @@ class PrintedFormTests(FactoryStateCase):
 
         self.assertEqual(before, self.bd("show", epic, "--json"))
 
+    def test_it_lists_the_beads_once_and_shows_none_however_many_epics_the_factory_holds(self):
+        epics = [self.new_epic(f"Epic {number}", "factory") for number in range(3)]
+        tasks = [self.new_task(epic, f"Task of {epic}") for epic in epics]
+        self.park_on_question(tasks[1])
+        self.new_epic("Not handed off")
+        before = len(fixture.fake_beads_calls(self.repo))
+
+        shown = self.states()
+        made = fixture.fake_beads_calls(self.repo)[before:]
+
+        self.assertEqual(epics, [item["epic"] for item in shown])
+        self.assertEqual([tasks[1]], [waiting["bead"] for item in shown for waiting in item["waiting_on"]])
+        self.assertEqual([["list", "--all", "--limit", "0", "--json"], ["comments", tasks[1], "--json"]], made)
+
     def test_it_exits_with_a_reason_outside_a_repo(self):
         outside = self.root / "elsewhere"
         outside.mkdir()
