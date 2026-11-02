@@ -24,6 +24,8 @@ from typing import TypeVar
 NATIVE_HARNESS = "claude"
 CODEX_HARNESS = "codex"
 T3_HARNESS = "t3"
+CODEX_PROGRAM = "codex"
+HARNESS_PROGRAMS = {CODEX_HARNESS: CODEX_PROGRAM}
 SETTINGS_FILE = "settings.json"
 RERUN = "Run install.py from your jidoka checkout to record this machine's routes"
 SECOND_TIER = "second"
@@ -109,6 +111,13 @@ class RouteError(Exception):
 
 def native_route_of(tier: str) -> dict:
     return dict(NATIVE_ROUTES.get(tier, HOST_OWN_ROUTE))
+
+
+def missing_program(route: dict, which: Callable[[str], str | None]) -> str | None:
+    """The program that the route's harness starts and that `which` cannot find, or None. The host runs its own
+    harness and T3 runs the child task of a t3 route, so only a codex route starts a program of its own."""
+    program = HARNESS_PROGRAMS.get(str(route.get("harness")))
+    return program if program is not None and which(program) is None else None
 
 
 def default_routes(codex_found: bool) -> dict[str, dict]:

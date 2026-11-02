@@ -13,20 +13,24 @@ retries, reorders, skips or parks a lap by itself. When a script refuses,
 show its message and stop, with the closing line below; do not work around
 it.
 
-The scripts, run from inside the repo:
+The scripts, run from inside the repo. A call below starts with the
+script's file name, which stands for the command line this list gives
+it, and goes on with the call's own arguments. Each script's entry says
+whether its first argument is a subcommand; a script with no subcommand
+takes none, so do not put a word in front of its first argument.
 
-- factory: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/factory.py"`
-- scheduler: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/scheduler.py"`
-- bench: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/bench.py"`
-- route: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/route.py"`
-- codex lane: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/codex_lane.py"`
-- T3 lane: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_lane.py"`
-- T3 tidy: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_tidy.py"`
-- repo settings: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py"`
-- watcher: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/watch.py"`
-- T3 waker: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_wake.py"`
-- factory state: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/factory_state.py"`
-- jidoka-ui: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/ui.py"`
+- `factory.py`, the subcommand `check`: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/factory.py"`
+- `scheduler.py`, a subcommand, such as `next` or `report`, then the epic id: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/scheduler.py"`
+- `bench.py`, the subcommand `route`, then the tier: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/bench.py"`
+- `route.py`, the subcommand `fallback`, then the bead: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/route.py"`
+- `codex_lane.py`, no subcommand: the epic id comes first: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/codex_lane.py"`
+- `t3_lane.py`, the subcommand `start` or `finish`: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_lane.py"`
+- `t3_tidy.py`, the subcommand `start` or `finish`: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_tidy.py"`
+- `repo_settings.py`, the subcommand `show`: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/repo_settings.py"`
+- `watch.py`, no subcommand: the epic id comes first: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/watch.py"`
+- `t3_wake.py`, the subcommand `record`, then the epic id: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_wake.py"`
+- `factory_state.py`, no subcommand: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/factory_state.py"`
+- `ui.py`, the subcommand `start`: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/ui.py"`
 
 The skill folder is the directory that holds this SKILL.md. Write every
 path as one absolute path with the `../..` resolved, so the launcher is
@@ -70,13 +74,13 @@ closing line and stop.
 
 Every report ends with the epic's next step, so the human never has to guess
 whether to run `/jidoka:factory`. Each time you stop, and each time you start
-the watcher and wait, run `factory state --jidoka-home ...` as the last
+the watcher and wait, run `factory_state.py --jidoka-home ...` as the last
 command and write, as the last line, the `next:` line under `<epic-id>`
 exactly as the script printed it, without the `next:` label. The script
 prints a section for each epic in the factory; take your epic's. Where a step
 below says to stop, the closing line comes first. Two cases have none: a
-refusal from `factory check`, which comes before the epic matters, and a
-`factory state` that refuses, whose stderr you show.
+refusal from `factory.py check`, which comes before the epic matters, and a
+`factory_state.py` that refuses, whose stderr you show.
 
 ## Stages and tiers
 
@@ -103,22 +107,25 @@ The merge stage runs only when newer work on the epic branch conflicts with
 a lap or breaks its tests; the scheduler calls it, never the manager. A
 build action's `track` says which tier its build runs on.
 
-Run `bench route <tier>` once for each tier you use. It prints the route
+Run `bench.py route <tier>` once for each tier you use. It prints the route
 as JSON with `harness`, `model`, `version` and `effort`. When the harness
 is the host's own (`claude` in Claude Code), start each worker on that tier
 with that `model` and `effort`. A `model` or `effort` that is null means
 the harness default; leave it out when you start the worker. For any other
 harness, start the worker on it when this session has a tool that starts
 one there, such as a `codex` tool. A route whose harness this session has
-no tool to start cannot run, so it falls back to the host's before any
-worker starts: start the worker with the host's own model and effort, and
-say in one line which tier fell back. That is no failure, and `route
-fallback` is not called for it. When the script refuses, show its message,
+no tool to start cannot run, and neither can a route whose JSON holds
+`missing`, which names a program the PATH lacks, such as the `codex` that
+the codex lane script runs. Such a route falls back to the host's before
+any worker starts: start the worker with the host's own model and effort,
+and say in one line which tier fell back, with the `missing` text when
+there is one. That is no failure, and `route.py fallback` is not called
+for it. When the script refuses, show its message,
 which says to run the installer, and stop.
 
 When a worker you started on a route that is not the host's own fails before it did
 the stage's work, because its harness could not start or errored, run
-`route fallback <bead> <stage> <tier> --run <mark> --jidoka-home ...`. The
+`route.py fallback <bead> <stage> <tier> --run <mark> --jidoka-home ...`. The
 bead is the lap's task, or the epic for a stage of a pass, and the mark is
 the lap's number or the pass's number. When it prints `"rerun": true`,
 start the stage's worker again, once, on the printed route, with the same
@@ -130,7 +137,7 @@ is no try.
 The second tier's route can be codex. Its one stage is the review's Spec
 lane, and the manager runs that lane with the codex lane script instead of
 an agent, as the review paragraph of step 4 says. A failed codex lane is
-a failure of a route that is not the host's own: run `route fallback` for
+a failure of a route that is not the host's own: run `route.py fallback` for
 it as above, with the epic as the bead, `review` as the stage, `second` as
 the tier and the lane action's `head` as the mark, and start the lane's
 worker again on the printed route. A second tier whose route is already
@@ -144,8 +151,8 @@ paragraph of step 4 says. A host with no `delegate_task` tool cannot start
 the child: start the `spec` lane as an agent on the second tier's native
 route, with the prompt the other lanes get, before anything else runs, and
 write one line that says the second tier fell back to the native route. That
-is no failure, and `route fallback` is not called for it. A child that
-fails, or a refusal of the T3 lane script, is a failed route: run `route
+is no failure, and `route.py fallback` is not called for it. A child that
+fails, or a refusal of the T3 lane script, is a failed route: run `route.py
 fallback` as for codex.
 
 The local tier's route can be t3 OpenCode: its harness is `t3` and its
@@ -155,8 +162,8 @@ script, as the tidy paragraph of step 4 says. A host with no `delegate_task`
 tool cannot start the child: start each batch as an agent on the local
 tier's native route, before anything else runs, and write one line that
 says the local tier fell back to the native route. That is no failure, and
-`route fallback` is not called for it. A batch whose child fails, or a
-refusal of the T3 tidy script, is a failed route: run `route fallback` for
+`route.py fallback` is not called for it. A batch whose child fails, or a
+refusal of the T3 tidy script, is a failed route: run `route.py fallback` for
 it with the epic as the bead, `tidy` as the stage, `local` as the tier and
 `<head>-batch-<batch>` as the mark, with the action's `head` and `batch`,
 so that each batch falls back once. A child that asks for an approval is such
@@ -165,11 +172,11 @@ the printed route, native Sonnet, with the prompt of a native batch.
 
 ## Steps
 
-1. **Check.** Run `factory check`. Exit 1 means this session cannot run
+1. **Check.** Run `factory.py check`. Exit 1 means this session cannot run
    lap workers under the lap mod. Its message names the config dir that
    lacks jidoka, or says to start a new session. Show it verbatim and
    stop. Exit 0 prints one line; show it. Then run
-   `jidoka-ui start --jidoka-home ... --wait 60`. It starts jidoka-ui when
+   `ui.py start --jidoka-home ... --wait 60`. It starts jidoka-ui when
    its address does not answer, so the human can answer questions from the
    board and the phone, and returns once the address answers. It prints one
    JSON object whose `state` is `answering`, `started`, `not installed` or
@@ -177,12 +184,12 @@ the printed route, native Sonnet, with the prompt of a native batch.
    `started` with its `address`, and the other two as down with the first
    line of its `why`. Exit 1 is no refusal: the factory runs without
    jidoka-ui, so go on.
-2. **Route and settings.** Run `bench route standard --jidoka-home ...`,
-   then `bench route deep --jidoka-home ...`, then `repo settings show`. Keep each app's `name`, `test` and
-   `test_target` for the workers' prompts. Run `bench route light` too the
-   first time an action's `track` is `full`, and `bench route second` the
+2. **Route and settings.** Run `bench.py route standard --jidoka-home ...`,
+   then `bench.py route deep --jidoka-home ...`, then `repo_settings.py show`. Keep each app's `name`, `test` and
+   `test_target` for the workers' prompts. Run `bench.py route light` too the
+   first time an action's `track` is `full`, and `bench.py route second` the
    first time the actions hold a `review`.
-3. **Next.** Run `scheduler next <epic-id> --jidoka-home ...`. Exit 1 means
+3. **Next.** Run `scheduler.py next <epic-id> --jidoka-home ...`. Exit 1 means
    it refused and wrote nothing; stderr lists every reason. Show it and
    stop. When the epic's heartbeat is fresh and was claimed by another
    session, the script waits on its own until the heartbeat goes stale and
@@ -191,7 +198,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
    already has a manager means its heartbeat was renewed during that wait:
    show it and stop. Under T3 (the `T3CODE_CLI_PATH` variable is set),
    after exit 0 call the `t3_thread_configuration` tool
-   with no arguments and run `T3 waker record <epic-id> --thread <threadId>
+   with no arguments and run `t3_wake.py record <epic-id> --thread <threadId>
    --jidoka-home ...`, so that T3 can wake this host after it releases it;
    write no event line for it, and go on when the tool or the script fails.
    Exit 0 prints JSON with `epic`,
@@ -407,7 +414,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
    denies the rest. Its prompt
    holds the action's `epic` (the top-level `epic`), `task`, `worktree`, `slot` and
    `report`, each app's `name`, `build`, `run` and `way_in` from
-   `repo settings show`, the repo settings' `slot_use`, the absolute path
+   `repo_settings.py show`, the repo settings' `slot_use`, the absolute path
    of the holdouts script, `<plugin folder>/scripts/holdouts.py`, to run through
    the launcher as `holdouts.py read <epic> --task <task>`, and the absolute
    path of the app process script, `<plugin folder>/scripts/app_process.py`,
@@ -439,7 +446,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
    batch is a few of the epic's files, its own `files`, numbered by its
    `batch`. Each also holds `base`, the commit where the epic branch left
    main, so that a worker can see the epic's change to its `files`. Run
-   `bench route local` once. When its harness is `t3` and its `driver` is
+   `bench.py route local` once. When its harness is `t3` and its `driver` is
    `opencode`, run every batch as the T3 tidy paragraph below says. Otherwise
    start one lap worker for each batch, side by side, all on that route; a
    route whose harness this session has no tool to start falls back to native
@@ -477,12 +484,12 @@ the printed route, native Sonnet, with the prompt of a native batch.
    by side:
 
    1. Save the batch action, the JSON object the scheduler printed, with the
-      Write tool to `<scratch>/action.json`. Run `T3 tidy start --action
+      Write tool to `<scratch>/action.json`. Run `t3_tidy.py start --action
       <scratch>/action.json --doc <path> ... --jidoka-home ...`, with one
       `--doc` for the glossary and for each file of the house rules. It
       records the route and the start, and prints `delegate_task`, whose task
       holds the batch's diff and its files by absolute path, `reply`,
-      `wall_seconds` and `deadline`. Exit 1 is the route failing: run `route
+      `wall_seconds` and `deadline`. Exit 1 is the route failing: run `route.py
       fallback`.
    2. Call `delegate_task` with the printed `delegate_task` object as its
       arguments, changed in no part. It is a wait: the call returns when the
@@ -499,7 +506,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
       printed `reply` path. That file and the action file are the only
       files the manager writes. When the child failed, asked for an
       approval, was cancelled or left no reply, save nothing there.
-   4. Run `T3 tidy finish --scratch <scratch> --jidoka-home ...`, with
+   4. Run `t3_tidy.py finish --scratch <scratch> --jidoka-home ...`, with
       `--asked-for-approval` when step 2 cancelled the child for asking. The script
       records the batch's ledger row with harness t3, the route's model and
       effort, the wall time and the outcome, with no tokens; a run past the
@@ -508,7 +515,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
       the child ended `{"outcome": "done"}`. Any other exit is the route
       failing, a run past the deadline and a main checkout that changed
       while the child ran included. The script has put the batch's files
-      back as they were: run `route fallback` for it as the routes paragraph
+      back as they were: run `route.py fallback` for it as the routes paragraph
       says, and start the batch again as an agent on the printed route.
 
    An epic on the local-model trial (its rule `local_trial`) tidies twice in
@@ -536,7 +543,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
    first review. Start one lap worker for each, side by side. The `comments` and
    `standards` lanes run on the standard tier's route, the `design` lane on the
    deep tier's route, and the `spec` lane on the second tier's route, from
-   `bench route second`. Each worker has the first line
+   `bench.py route second`. Each worker has the first line
    `jidoka lap worktree: <worktree>`, the action's
    `worktree`, which the lanes share. Each prompt holds the paths of the
    glossary and the house rules, the epic as `bd show` printed it with its
@@ -555,7 +562,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
    on <base>..<head>` for each.
 
    When the second tier's route has the harness `codex`, the `spec` lane is
-   no agent. Run `codex lane <epic-id> --worktree <worktree> --report
+   no agent. Run `codex_lane.py <epic-id> --worktree <worktree> --report
    <report> --base <base> --head <head> --file <file> ... --doc <path> ...
    --jidoka-home ...` in the background (`run_in_background: true`), with the
    action's own `epic`, `worktree`, `report`, `base` and `head`, one `--file`
@@ -565,7 +572,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
    lane's report from codex's last message, and records the lane's ledger row
    with harness codex and codex's tokens. It exits 0 when the report is
    written. Any other exit, a usage limit included, is the route failing:
-   run `route fallback` for it as above, and start the `spec` lane as an
+   run `route.py fallback` for it as above, and start the `spec` lane as an
    agent on the printed route, with the prompt the other lanes get. Write the
    lane's event line with `codex` for the model, and a second line when the
    lane reruns, with the printed route's model.
@@ -575,11 +582,11 @@ the printed route, native Sonnet, with the prompt of a native batch.
    without it, the lane falls back as the routes paragraph above says.
    Otherwise:
 
-   1. Run `T3 lane start <epic-id> --worktree <worktree> --report <report>
+   1. Run `t3_lane.py start <epic-id> --worktree <worktree> --report <report>
       --base <base> --head <head> --file <file> ... --doc <path> ...
       --jidoka-home ...` with the same fields as the codex lane. It records
       the route and the start and prints `delegate_task`, `reply`,
-      `wall_seconds` and `deadline`. Exit 1 is the route failing: run `route
+      `wall_seconds` and `deadline`. Exit 1 is the route failing: run `route.py
       fallback`.
    2. Call `delegate_task` with the printed `delegate_task` object as its
       arguments, changed in no part. The child reads the review worktree by
@@ -592,14 +599,14 @@ the printed route, native Sonnet, with the prompt of a native batch.
       printed `reply` path. That file is the one file the manager writes.
       When the child failed, was cancelled or left no reply, save nothing
       there.
-   4. Run `T3 lane finish --report <report> --jidoka-home ...`. The script
+   4. Run `t3_lane.py finish --report <report> --jidoka-home ...`. The script
       reads the epic, the route and the reply path from what `start`
       recorded, writes the lane's report from the reply and records the
       lane's ledger row with harness t3, the route's model and effort, the
       wall time and the outcome, with no tokens. It exits 0 when the report
       is written. Any other exit is the route failing, a run past the
       deadline and a main checkout that changed while the child ran
-      included: run `route fallback` for it as above, and start the `spec`
+      included: run `route.py fallback` for it as above, and start the `spec`
       lane as an agent on the printed route.
 
    Write the lane's event line with `t3` for the model, and a second line
@@ -651,7 +658,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
    denies the rest. Its prompt
    holds the action's `epic`, `worktree`
    and `report`, each app's `name`, `build`, `run` and `way_in` from
-   `repo settings show`, the absolute path of the holdouts script,
+   `repo_settings.py show`, the absolute path of the holdouts script,
    `<plugin folder>/scripts/holdouts.py`, to run through the launcher, and the
    absolute path of the app process script,
    `<plugin folder>/scripts/app_process.py`, which starts and stops an app
@@ -660,7 +667,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
    event line `<epic-id> holdouts started: <holdouts> holdouts on <head>`.
 5. **Report.** Wait for the workers' notifications, and do nothing in
    between. Report each worker as it ends, one report at a time, with
-   `scheduler report <epic-id> <task> <outcome> --jidoka-home ...`. Every
+   `scheduler.py report <epic-id> <task> <outcome> --jidoka-home ...`. Every
    task report also ends with `--agent <agent id> --tier <tier>`: the agent
    id the Agent tool printed when it started the worker, and the tier whose
    route you started it on. The ledger prices the run from the tokens the
@@ -701,30 +708,30 @@ the printed route, native Sonnet, with the prompt of a native batch.
    writes it with no task. A `spec` lane that ran in codex or as a T3 child
    task has no agent id, and its script wrote its row, so the review's report
    names no `--worker` for it; a tidy batch that ran as a T3 child task is
-   the same, and the tidy's report names no `--worker` for it. A worker that reran on the native route after `route fallback` is
+   the same, and the tidy's report names no `--worker` for it. A worker that reran on the native route after `route.py fallback` is
    named with the tier it failed on and the word `native` after it, as
    `--worker <agent id> second native`, so that its row is priced as the
    native route's model, not as codex. A task report names it with
    `--route native` beside `--tier`.
 
    A test cleanup worker's reply that ends with `{"outcome": "done"}` is
-   reported with `scheduler report-cleanup <epic-id> --jidoka-home ...`, which
+   reported with `scheduler.py report-cleanup <epic-id> --jidoka-home ...`, which
    prints the same JSON as `next`, with the validation that follows. Write
    `<epic-id> test-cleanup ended: done`. Exit 1 means the report was refused;
-   show stderr and stop, and the next `scheduler next` starts the worker again.
+   show stderr and stop, and the next `scheduler.py next` starts the worker again.
    A worker that fails or is cut off is reported with
-   `scheduler report-cleanup <epic-id> --ended failed --worker <agent id> <tier>`
+   `scheduler.py report-cleanup <epic-id> --ended failed --worker <agent id> <tier>`
    (`--ended cut-off` when it was cut off), which prices the run and settles
    nothing. Write `<epic-id> test-cleanup ended: failed` and stop.
 
    Wait for every tidy batch worker you started. When each ended with
    `{"outcome": "done"}`, report them once, together, with
-   `scheduler report-tidy <epic-id> --jidoka-home ...`, which prints the
+   `scheduler.py report-tidy <epic-id> --jidoka-home ...`, which prints the
    same JSON as `next`, with the review that follows. Write
    `<epic-id> tidy ended: done`. Exit 1 means the report was refused; show
-   stderr and stop, and the next `scheduler next` starts the batches again.
+   stderr and stop, and the next `scheduler.py next` starts the batches again.
    When any batch worker fails or is cut off, report every batch worker you
-   started with `scheduler report-tidy <epic-id> --ended failed`
+   started with `scheduler.py report-tidy <epic-id> --ended failed`
    (`--ended cut-off` when a batch worker was cut off) and one
    `--worker <agent id> local <ending>` for each, where `<ending>` is
    `done`, `failed` or `cut-off`, as that worker ended. The call prices each
@@ -733,26 +740,26 @@ the printed route, native Sonnet, with the prompt of a native batch.
 
    Wait for every review lane worker you started. When each ended with
    `{"outcome": "done"}`, report them once, together, with
-   `scheduler report-review <epic-id> --jidoka-home ...`, which prints the
+   `scheduler.py report-review <epic-id> --jidoka-home ...`, which prints the
    same JSON as `next`: a `fix` action, or the validation that follows. The
    review files its large findings as open tasks outside the epic, which no
    lap of the epic takes. Write `<epic-id> review ended: done`.
    Exit 1 means the report was refused; show stderr and stop, and the next
-   `scheduler next` starts the lanes again. When any lane fails or is cut off,
+   `scheduler.py next` starts the lanes again. When any lane fails or is cut off,
    report every lane you started with
-   `scheduler report-review <epic-id> --ended failed` (`--ended cut-off` when
+   `scheduler.py report-review <epic-id> --ended failed` (`--ended cut-off` when
    a lane was cut off) and one `--worker <agent id> <tier> <ending>` for each,
    where `<ending>` is `done`, `failed` or `cut-off`, as that lane ended. The
    call prices each run with its own ending and settles nothing. Write
    `<epic-id> review ended: failed` and stop.
 
    A fix worker's reply that ends with `{"outcome": "done"}` is reported with
-   `scheduler report-fix <epic-id> --jidoka-home ...`, which prints the same
+   `scheduler.py report-fix <epic-id> --jidoka-home ...`, which prints the same
    JSON as `next`, with the validation that follows. Write
    `<epic-id> fix ended: done`. Exit 1 means the report was refused; show
-   stderr and stop, and the next `scheduler next` starts the worker again.
+   stderr and stop, and the next `scheduler.py next` starts the worker again.
    A worker that fails or is cut off is reported with
-   `scheduler report-fix <epic-id> --ended failed --worker <agent id> <tier>`
+   `scheduler.py report-fix <epic-id> --ended failed --worker <agent id> <tier>`
    (`--ended cut-off` when it was cut off), which prices the run and settles
    nothing. Write `<epic-id> fix ended: failed` and stop.
 
@@ -761,13 +768,13 @@ the printed route, native Sonnet, with the prompt of a native batch.
    sends the epic-parked notification. Go to step 6 as for any parked epic.
 
    A validation worker's reply that ends with `{"outcome": "done"}` is
-   reported with `scheduler report-holdouts <epic-id> --jidoka-home ...`,
+   reported with `scheduler.py report-holdouts <epic-id> --jidoka-home ...`,
    which prints the same JSON as `next`: every holdout green puts the epic at
    the acceptance gate, and a red one files tasks whose laps are in
    `actions`. Write `<epic-id> holdouts ended: <validation.result>`. Exit 1
    means the report was refused; show stderr and stop, and the next
-   `scheduler next` starts the worker again. A validation worker that fails
-   or is cut off is reported with `scheduler report-holdouts <epic-id>
+   `scheduler.py next` starts the worker again. A validation worker that fails
+   or is cut off is reported with `scheduler.py report-holdouts <epic-id>
    --ended failed --why "<why>"` (the why cleaned as above; none when it
    gave none) or `--ended cut-off`, which counts the run and prices it, so it
    also ends with `--worker <agent id> <tier>`: the third parks
@@ -775,11 +782,11 @@ the printed route, native Sonnet, with the prompt of a native batch.
    failed` and go on with the JSON it prints.
 
    A validation merge worker's reply that ends with `{"outcome": "done"}` is
-   reported with `scheduler report-merge <epic-id> --jidoka-home ...`, which
+   reported with `scheduler.py report-merge <epic-id> --jidoka-home ...`, which
    prints the same JSON as `next`: a merge that is finished lets validation
    run on it in the same call, and its `validation` says how it ended. Write
    `<epic-id> merge ended: done`. A worker that fails is reported with
-   `scheduler report-merge <epic-id> --ended failed --why "<why>"` (the why
+   `scheduler.py report-merge <epic-id> --ended failed --why "<why>"` (the why
    cleaned as above; none when it gave none), and one that was cut off with
    `--ended cut-off`; both also end with `--worker <agent id> <tier>`. A
    failed worker, and a done whose worktree holds no finished merge, is a
@@ -815,14 +822,14 @@ the printed route, native Sonnet, with the prompt of a native batch.
    or blocked tasks, or its ready tasks wait on a slot or an area that
    another running epic holds. Write `<epic-id>: waiting`, then start the
    watcher in the background (`run_in_background: true`) with
-   `watcher <epic-id> --jidoka-home ...`, write the closing line, which
+   `watch.py <epic-id> --jidoka-home ...`, write the closing line, which
    reads the watcher's record, and wait. The watcher exits when a task is
    unparked, a task is added, a task merges, the pause is over, or another
    epic frees a slot or an area for a ready task (`room-freed`), and prints
    which. Write nothing more while it waits. Under T3, let the host be
    released: the T3 waker wakes the thread when a task is unparked, a task
    is added, the pause is over or another epic frees room. On any event run
-   `scheduler carry-on <epic-id> --jidoka-home ...`, which opens what fits,
+   `scheduler.py carry-on <epic-id> --jidoka-home ...`, which opens what fits,
    with no restart, and go on from step 4. A prompt that starts with
    `jidoka: the last turn ended on an API error` wakes you the same way: run
    what it says. When `watch` is false, write `<epic-id>: nothing left to
@@ -831,11 +838,11 @@ the printed route, native Sonnet, with the prompt of a native batch.
 ## When the human tells the host to stop
 
 When the human tells you to stop at once, stop every worker of yours that
-still runs, then run `scheduler stop <epic-id> --jidoka-home ...` and no
+still runs, then run `scheduler.py stop <epic-id> --jidoka-home ...` and no
 other scheduler call: it ends each running lap interrupted, which counts no
 cutoff, no try and no cap, and sends the one notification that the
 factory stopped with work left. Write `<epic-id>: stopped`, then the closing
 line, which gives `/jidoka:factory`, and stop. The
 next session opens with a line naming the stopped epic and the command that
-resumes it, `/jidoka:factory <epic-id>`, and that run of `scheduler next`
+resumes it, `/jidoka:factory <epic-id>`, and that run of `scheduler.py next`
 gives each interrupted task a new lap on the work it left.

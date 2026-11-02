@@ -107,7 +107,7 @@ class TheSessionEndHookTests(WakeCase):
         [line] = self.wait_for_send()
 
         self.assertTrue(line.startswith(f"thread send {THREAD} "), line)
-        self.assertIn(f"scheduler carry-on {self.epic}", line)
+        self.assertIn(f"scheduler.py carry-on {self.epic}", line)
 
     def test_a_session_with_no_recorded_thread_starts_no_waker(self):
         done = self.end_session(SESSION, T3_RELEASE)
@@ -292,7 +292,7 @@ class TheWakerTests(unittest.TestCase):
         self.assertEqual("new-task", event)
         [(thread, prompt)] = epic.sent
         self.assertEqual(THREAD, thread)
-        self.assertIn("scheduler carry-on epic-1", prompt)
+        self.assertIn("scheduler.py carry-on epic-1", prompt)
 
     def test_an_unpark_sends_the_carry_on_prompt(self):
         parked = dataclasses.replace(QUIET, parked=frozenset({"t-1"}))
@@ -312,7 +312,7 @@ class TheWakerTests(unittest.TestCase):
 
         self.assertEqual("room-freed", epic.wait_and_send(1000))
         [(_, prompt)] = epic.sent
-        self.assertIn("scheduler carry-on epic-1", prompt)
+        self.assertIn("scheduler.py carry-on epic-1", prompt)
 
     def test_room_that_was_already_free_when_the_wait_began_sends_the_carry_on_prompt_at_once(self):
         epic = FakeEpic([(dataclasses.replace(QUIET, openable=("t-1",)), True)])

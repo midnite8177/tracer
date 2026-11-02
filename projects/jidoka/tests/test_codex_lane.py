@@ -263,5 +263,25 @@ class AFailedCodexRunExitsOneAndLeavesNoReportTests(CodexLaneCase):
         self.assertFalse(Path(action["report"]).exists())
 
 
+class AWordInFrontOfTheEpicIdIsAUsageErrorTests(CodexLaneCase):
+    def test_a_word_in_front_of_the_epic_id_is_refused_as_a_subcommand_the_script_does_not_have(self):
+        done = self.launch(CODEX_LANE, "lane", "e-1", "--worktree", str(self.repo), "--report",
+                           str(self.root / SPEC_REPORT_NAME), "--base", "a", "--head", "b", "--file", "a.py")
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("codex_lane.py has no subcommand: its first argument is the epic id", done.stderr)
+        self.assertIn("It took 'lane' as the epic id and has no place for 'e-1'", done.stderr)
+        self.assertFalse(self.calls_file.exists())
+
+    def test_an_option_the_script_does_not_know_is_still_named_as_unrecognized(self):
+        done = self.launch(CODEX_LANE, "e-1", "--worktree", str(self.repo), "--report",
+                           str(self.root / SPEC_REPORT_NAME), "--base", "a", "--head", "b", "--file", "a.py",
+                           "--verbose")
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("unrecognized arguments: --verbose", done.stderr)
+        self.assertFalse(self.calls_file.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

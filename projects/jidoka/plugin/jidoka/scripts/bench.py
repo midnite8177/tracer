@@ -28,7 +28,9 @@ worktree, the branch, their commits and the bench metadata for the next
 start.
 
 `route <tier>` prints the tier's route from <jidoka-home>/settings.json as
-one JSON object. The home is --jidoka-home, else $JIDOKA_HOME, else
+one JSON object. When the route's harness starts a program that is not on
+the PATH, as codex for a codex route, the object also holds `missing`, which
+names that program and says the route cannot run here. The home is --jidoka-home, else $JIDOKA_HOME, else
 ~/.jidoka.
 
 Exit codes:
@@ -41,11 +43,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import private_docs
+import routes
 import settings_reader
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, MAIN_REF, WORKTREE_FOLDER, CommandError,
                       env_as_git_user, head_of, labels_of, metadata_of, parent_of, read_bead, run, worktree_list)
@@ -199,11 +203,14 @@ def route(tier: str, home: Path) -> dict:
         settings = json.loads(path.read_text(encoding="utf-8"))
     except ValueError as error:
         raise BenchError(f"{path} is not valid JSON: {error}") from error
-    routes = settings.get("routes") if isinstance(settings, dict) else None
-    found = routes.get(tier) if isinstance(routes, dict) else None
+    recorded = settings.get("routes") if isinstance(settings, dict) else None
+    found = recorded.get(tier) if isinstance(recorded, dict) else None
     if not isinstance(found, dict) or not found.get("harness"):
         raise BenchError(f"{path} holds no route for the tier {tier!r}. {rerun}")
-    return found
+    program = routes.missing_program(found, shutil.which)
+    if program is None:
+        return found
+    return {**found, "missing": f"{program} is not on the PATH, so the {tier} route cannot run here"}
 
 
 def main(argv: list[str]) -> int:

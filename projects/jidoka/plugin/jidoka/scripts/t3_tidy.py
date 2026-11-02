@@ -30,7 +30,7 @@ them, so the rerun starts from the same files. Its row is `cut off` for a run pa
 other failure. T3's auto-accept-edits mode holds a shell command for an approval, which the lap mod that ADR 0005 relies
 on cannot answer for a T3 child; ending the batch at the request keeps the approval from holding the batch's slot until
 the wall clock runs out. The script retries nothing. The failed run is a failed route, which
-the manager passes to `route fallback`, with the batch as part of the mark so that each batch falls back once.
+the manager passes to `route.py fallback`, with the batch as part of the mark so that each batch falls back once.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 

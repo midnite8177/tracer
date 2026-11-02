@@ -22,7 +22,7 @@ T3 starts the child in the main checkout or in a checkout of its own, and the la
 run when the main checkout differs from what `start` saw. Any failure exits 1 and leaves no report: a run past the
 stage's wall clock, a missing or empty reply, a reply that holds no usable list of findings, a main checkout that
 changed, a `start` that never ran, and a route the settings cannot give. The script retries nothing. The failed run is
-a failed route, which the manager passes to `route fallback`.
+a failed route, which the manager passes to `route.py fallback`.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 

@@ -61,7 +61,7 @@ class CodexRun:
 
 
 def codex_command(route: dict, lane: Lane, last_message: Path) -> list[str]:
-    command = ["codex", "exec", "--sandbox", "read-only", "--cd", str(lane.worktree), "--json",
+    command = [routes.CODEX_PROGRAM, "exec", "--sandbox", "read-only", "--cd", str(lane.worktree), "--json",
                "--output-last-message", str(last_message)]
     if route.get("model"):
         command += ["--model", str(route["model"])]
@@ -167,7 +167,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--wall-seconds", type=int, default=lap_record.wall_clock_seconds(REVIEW_STAGE),
                         help="the wall clock of the stage, after which codex is stopped")
     parser.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
-    args = parser.parse_args(argv)
+    args, extra = parser.parse_known_args(argv)
+    if extra and not extra[0].startswith("-"):
+        parser.error(f"codex_lane.py has no subcommand: its first argument is the epic id. It took {args.epic!r} as "
+                     f"the epic id and has no place for {extra[0]!r}")
+    if extra:
+        parser.error(f"unrecognized arguments: {' '.join(extra)}")
 
     try:
         main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)

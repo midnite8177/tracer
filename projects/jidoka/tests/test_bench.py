@@ -414,6 +414,40 @@ class BenchRouteTests(BenchCase):
         self.assertIn("settings.json does not exist", done.stderr)
         self.assertIn("install.py", done.stderr)
 
+    def route_on_path(self, tier: str, home: Path, path: Path) -> subprocess.CompletedProcess:
+        env = {**self.caller_env(), "PATH": str(path)}
+        return fixture.run_launcher_on_path(LAUNCHER, [str(BENCH), "route", tier, "--jidoka-home", str(home)], None,
+                                            env, self.repo, RUN_TIMEOUT_SECONDS)
+
+    def home_with_codex_route(self, name: str) -> tuple[Path, dict]:
+        second = {"harness": "codex", "model": None, "version": None, "effort": None}
+        home = self.root / name
+        home.mkdir(exist_ok=True)
+        (home / "settings.json").write_text(json.dumps({"routes": {"second": second}}), encoding="utf-8")
+        return home, second
+
+    def test_route_says_a_codex_route_cannot_run_when_codex_is_not_on_the_path(self):
+        home, second = self.home_with_codex_route("home-codex-missing")
+        empty = self.root / "bin-without-codex"
+        empty.mkdir(exist_ok=True)
+
+        done = self.route_on_path("second", home, empty)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({**second, "missing": "codex is not on the PATH, so the second route cannot run here"},
+                         json.loads(done.stdout))
+
+    def test_route_prints_a_codex_route_as_recorded_when_codex_is_on_the_path(self):
+        home, second = self.home_with_codex_route("home-codex-found")
+        codex_bin = self.root / "bin-with-codex"
+        codex_bin.mkdir(exist_ok=True)
+        fixture.write_executable(codex_bin / "codex", f"#!{sys.executable}\nprint('codex')\n")
+
+        done = self.route_on_path("second", home, codex_bin)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(second, json.loads(done.stdout))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -161,7 +161,7 @@ def is_held(epic: str, main_tree: Path) -> bool:
 
 
 def carry_on_prompt(epic: str, event: str, home: Path) -> str:
-    return (f"jidoka: {event} on {epic}. Run `scheduler carry-on {epic} --jidoka-home {home}` and go on from "
+    return (f"jidoka: {event} on {epic}. Run `scheduler.py carry-on {epic} --jidoka-home {home}` and go on from "
             "step 4 of the factory skill.")
 
 
