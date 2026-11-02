@@ -7,6 +7,7 @@ function engineThatPrints(answers: { exitCode: number; stdout: string }[]): { $:
   let asked = 0
   const $ = {
     plugin: { root: '/plugin' },
+    env: { get: () => Promise.resolve(undefined) },
     process: { run: () => Promise.resolve(answers[asked++] ?? { exitCode: 1, stdout: '' }) },
   } as unknown as EngineInterface
   return { $, asked: () => asked }

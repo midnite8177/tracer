@@ -83,8 +83,22 @@ function isBeneath(path: string, place: string): boolean {
 let hostEnv: Record<string, string> = {}
 
 function withEnv(on: On, env: Record<string, string>): void {
+  answeringEnv(on)
   hostEnv = env
-  mock.env(on, env)
+}
+
+const answering = new WeakSet<On>()
+
+/**
+ * Answers `$.env.get` from `hostEnv`. The engine takes one `env.get` hook for
+ * a test, so the hook goes on once whichever helpers the test calls, and the
+ * test starts with an empty environment.
+ */
+function answeringEnv(on: On): void {
+  if (answering.has(on)) return
+  answering.add(on)
+  hostEnv = {}
+  on('env.get', (_, e) => ({ value: hostEnv[e.name] }))
 }
 
 /** What `repo_settings.py home` prints: `JIDOKA_HOME`, else `.jidoka` in `HOME` or `USERPROFILE`; nothing when none is set. */
@@ -99,6 +113,7 @@ function homeThatTheScriptPrints(): string | undefined {
 function engineWith(on: On,commands: unknown[] | undefined, world: World): Launched {
   const launched: Launched = { pluginRoot: '', asked: [] }
   const { places } = world
+  answeringEnv(on)
   on('fs.stat', (_, e) => {
     const named = literal(e.path)
     const path = world.caseSensitive ? named : named.toLowerCase()
@@ -1081,6 +1096,7 @@ test("a host permission prompt calls the notify script from the host's folder an
   const calls: Call[] = []
   on('session.cwd', () => ({ value: HOST_FOLDER }))
   on('session.id', () => ({ value: 'session-1' }))
+  answeringEnv(on)
   on('process.run', (_, e) => {
     calls.push({ argv: e.argv, cwd: e.init?.cwd })
     return { value: RAN }
@@ -1108,6 +1124,7 @@ test("the heartbeat script runs from the host's folder every minute after the se
   on('session.start', () => ({ cwd: HOST_FOLDER }))
   on('session.cwd', () => ({ value: HOST_FOLDER }))
   on('session.id', () => ({ value: 'session-1' }))
+  answeringEnv(on)
   on('process.run', (_, e) => {
     calls.push({ argv: e.argv, cwd: e.init?.cwd })
     return { value: RAN }
@@ -1136,6 +1153,7 @@ test('no beat runs for a session whose id cannot be read', async ($, on) => {
   on('session.id', () => {
     throw new Error('no session id')
   })
+  answeringEnv(on)
   on('process.run', () => {
     runs++
     return { value: RAN }
@@ -1153,6 +1171,7 @@ test('a second session start does not double the heartbeat', async ($, on) => {
   on('session.start', () => ({ cwd: HOST_FOLDER }))
   on('session.cwd', () => ({ value: HOST_FOLDER }))
   on('session.id', () => ({ value: 'session-1' }))
+  answeringEnv(on)
   on('process.run', () => {
     runs++
     return { value: RAN }
@@ -1171,6 +1190,7 @@ test('the heartbeat keeps beating after a beat whose script cannot run', async (
   on('session.start', () => ({ cwd: HOST_FOLDER }))
   on('session.cwd', () => ({ value: HOST_FOLDER }))
   on('session.id', () => ({ value: 'session-1' }))
+  answeringEnv(on)
   on('process.run', () => {
     attempts++
     throw new Error('no such launcher')
@@ -1184,6 +1204,7 @@ test('the heartbeat keeps beating after a beat whose script cannot run', async (
 
 test('a host permission prompt reaches the host even when the notify script cannot run', async ($, on) => {
   on('session.cwd', () => ({ value: HOST_FOLDER }))
+  answeringEnv(on)
   on('process.run', () => {
     throw new Error('no such launcher')
   })
@@ -1204,6 +1225,7 @@ function hostWithWake(on: On, printed: (failures: number) => typeof RAN): { aske
   const world = { asked: [] as string[][], submitted: [] as string[] }
   on('session.cwd', () => ({ value: HOST_FOLDER }))
   on('session.id', () => ({ value: 'session-1' }))
+  answeringEnv(on)
   on('process.run', (_, e) => {
     world.asked.push(e.argv)
     return { value: printed(Number(e.argv[4])) }
@@ -1271,6 +1293,7 @@ test('a failed turn where no epic runs wakes nobody', async ($, on) => {
 
 test('a failed turn still reaches the host when the wake script cannot run', async ($, on) => {
   on('session.cwd', () => ({ value: HOST_FOLDER }))
+  answeringEnv(on)
   on('process.run', () => {
     throw new Error('no such launcher')
   })
@@ -1504,6 +1527,7 @@ function managerHost(on: On, run: (argv: string[], cwd: string | undefined) => v
   on('session.cwd', () => ({ value: HOST_FOLDER }))
   on('session.id', () => ({ value: 'session-1' }))
   on('classic.Stop', () => ({}))
+  answeringEnv(on)
   on('process.run', (_, e) => {
     run(e.argv, e.init?.cwd)
     return { value: RAN }

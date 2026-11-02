@@ -4,7 +4,7 @@ import { changesFolder, deletedPaths, isDelete } from './delete_paths.js'
 import { areListed, entriesOf, splitIntoSimpleCommands } from './list_matcher.js'
 import { isAbsolute, isReallyBeneath, isReallyInside, resolved, withDrive } from './path_placement.js'
 import { simpleCommands } from './shell_words.js'
-import { jidokaScriptsIn, runScript, scriptPlace } from './run_script.js'
+import { forgetLauncherShell, jidokaScriptsIn, runScript, scriptPlace } from './run_script.js'
 import { endFailedTurns, startHeartbeat, wakeAfterFailure } from './timers.js'
 import { forgetJidokaHome, recordRequest, recordUsage, tallyRequestStep, tallyWorkerStep } from './token_usage.js'
 
@@ -290,6 +290,7 @@ export const register: Register = on => {
 
   on('session.end', async (_, e, next) => {
     forgetJidokaHome()
+    forgetLauncherShell()
     return next(e)
   })
 
