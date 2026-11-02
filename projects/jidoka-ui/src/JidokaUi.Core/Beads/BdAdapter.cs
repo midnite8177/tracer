@@ -10,10 +10,22 @@ public sealed class BdAdapter
 {
     /// <summary>
     /// How long a read or a write waits for bd before the app gives up on it. The app cannot stop
-    /// bd itself, so a run that outran this is not claimed to have been stopped.
+    /// bd itself, so a run that outran this is not claimed to have been stopped, and it keeps its
+    /// place among <see cref="RunsAtOnce"/> until its process ends.
     /// </summary>
     public static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// The most bd processes that the adapter has running at once. Each one opens the database of
+    /// its project, and many together slow one another and every other program that calls bd. A run
+    /// holds its place until its process ends, also after the app stopped waiting for its answer,
+    /// so a call past the limit queues until a process ends. The adapter owns every bd invocation
+    /// of the app, so the limit holds across every project. It does not count the bd calls that the
+    /// scripts of jidoka make.
+    /// </summary>
+    public const int RunsAtOnce = 3;
+
+    private readonly SemaphoreSlim places = new(RunsAtOnce, RunsAtOnce);
     private readonly IBdProcess process;
     private readonly TimeProvider clock;
     private readonly ConcurrentDictionary<ProjectPath, Lazy<Task<BdCapabilities>>> probed = new();
@@ -116,11 +128,29 @@ public sealed class BdAdapter
         return result is null ? BdOutcome.Abandoned(AbandonedReadMessage) : OutcomeOf(arguments, result);
     }
 
+    // Waits for a place first and starts the clock after, so the time in the queue never counts
+    // against the wait limit. A run that the app gave up on keeps its place until its process ends,
+    // because the app cannot stop that process and a freed place would let another start beside it.
     private async Task<BdResult?> RunOrGiveUpAsync(string workingDirectory, IReadOnlyList<string> arguments)
     {
-        var run = process.RunAsync(workingDirectory, arguments);
+        await places.WaitAsync();
+        var run = RunAndFreeThePlaceAsync(workingDirectory, arguments);
         var winner = await Task.WhenAny(run, Task.Delay(WaitLimit, clock));
         return winner == run ? await run : null;
+    }
+
+    private async Task<BdResult> RunAndFreeThePlaceAsync(
+        string workingDirectory,
+        IReadOnlyList<string> arguments)
+    {
+        try
+        {
+            return await process.RunAsync(workingDirectory, arguments);
+        }
+        finally
+        {
+            places.Release();
+        }
     }
 
     private const string AbandonedReadMessage =

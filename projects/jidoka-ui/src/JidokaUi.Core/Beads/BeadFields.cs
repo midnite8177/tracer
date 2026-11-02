@@ -39,6 +39,9 @@ public static class BeadFields
     /// <summary>The names that a version of bd can give the id of a bead.</summary>
     public static IReadOnlyList<string> IdNames => Candidates("id");
 
+    /// <summary>The names that a version of bd can give the date until which a bead is deferred.</summary>
+    public static IReadOnlyList<string> DeferredUntilNames => Candidates("deferred-until");
+
     /// <summary>
     /// The fields of one comment that the UI reads. bd keeps the comments of a bead behind its own
     /// command, so no bead in a list ever carries them.
@@ -99,6 +102,12 @@ public static class BeadFields
     /// a bead that has comments to learn the names from.
     /// </summary>
     public static IReadOnlyList<string> CommentCountNames { get; } = ["comment_count", "comments_count"];
+
+    /// <summary>
+    /// The names that a version of bd can give the count of beads that a bead waits on, closed or
+    /// not. A list prints the count and never the edges themselves.
+    /// </summary>
+    public static IReadOnlyList<string> DependencyCountNames { get; } = ["dependency_count"];
 
     /// <summary>Resolves each field to the name that these beads use, or to an empty string.</summary>
     public static IReadOnlyDictionary<string, string> ResolveFrom(IReadOnlyList<BeadRecord> sample) =>

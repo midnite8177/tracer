@@ -314,8 +314,10 @@ board; any other bead in it gathers under the Unparented row.
 _Avoid_: Orphan, top-level, loose
 
 **Backlog**:
-Every bead of one project, together with what `bd` says is ready and what
-is blocked. A board is one view of a backlog.
+Every bead of one project, together with which of them are ready and what
+blocks the rest. A board is one view of a backlog. The ready set comes from
+`bd`, or the reader derives it from the list when the list states that no
+unfinished bead waits.
 _Avoid_: Dataset, snapshot, model
 
 **Backlog facts**:
@@ -977,7 +979,10 @@ _Avoid_: Result, outcome, maybe, optional
 
 **bd adapter**:
 The one layer that owns every `bd` invocation. Besides the jidoka adapter,
-no other code starts a process.
+no other code starts a process. It runs only a few `bd` processes at once
+across all projects and queues the rest. A run that the app stopped waiting
+on keeps its place until its process ends. The `bd` calls of jidoka's scripts
+are not counted.
 _Avoid_: Client, wrapper, gateway
 
 **jidoka adapter**:
