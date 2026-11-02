@@ -208,6 +208,8 @@ class Play:
         self.ready("list the ready beads")
         self.blocked("list the blocked beads")
         self.primed("prime a session")
+        self.call("pack the store", "claude", "gc", "--skip-decay", "--force")
+        self.listed_beads(self.repo, "list every bead after packing the store", "--all", "--limit", "0")
         parked = self.create("create an epic with a label", "parked", "--title", "Park the till", "--type=epic",
                              "--labels", "human")
         self.create("create a task under an epic that carries a label", "inheriting", "--title", "Count the till",
@@ -347,6 +349,12 @@ class FakeBdContractTests(unittest.TestCase):
     def test_prime_prints_text_and_succeeds(self):
         self.assert_same("prime a session")
         self.assertEqual(Call(0, {"printed text": True}), self.fake.calls["prime a session"])
+
+    def test_a_gc_that_skips_decay_succeeds_and_keeps_every_bead(self):
+        self.assert_same("pack the store")
+        self.assert_same("list every bead after packing the store")
+        self.assertEqual(self.real.calls["list every bead"].printed,
+                         self.real.calls["list every bead after packing the store"].printed)
 
     def test_show_of_a_bead_that_does_not_exist_fails(self):
         self.assertNotEqual(0, self.real.calls["show a bead that does not exist"].returncode)
@@ -488,6 +496,13 @@ class FakeBdRefusalTests(unittest.TestCase):
 
         self.assertEqual(1, done.returncode)
         self.assertIn("--label", done.stderr)
+
+    def test_a_gc_without_skip_decay_fails_and_keeps_every_bead(self):
+        done = self.bd("gc", "--force")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("--skip-decay", done.stderr)
+        self.assertEqual(0, self.bd("show", self.task, "--json").returncode)
 
     def test_show_without_json_fails(self):
         done = self.bd("show", self.task)

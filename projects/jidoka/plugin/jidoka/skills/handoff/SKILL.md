@@ -83,7 +83,10 @@ The skill folder is the directory that holds this SKILL.md. Pass
    writes the handoff page (`page` in its output) with the table and the
    rules, posts the table on the epic with a link to the page, sets the
    preset's rules with one comment for each, and adds the `factory` label
-   last. Give the human the page's path. Exit 1
+   last. Then it packs the repo's beads store, keeping every bead; `store`
+   in its output holds `packed`, and `why` when the pack failed, which
+   leaves the handoff done. Give the human the page's path, and when
+   `packed` is false, `why`. Exit 1
    after writing has begun leaves the epic without the label; show the
    message, and run the same command again once the cause is fixed. The
    rerun reuses the epic branch and posts no second table.

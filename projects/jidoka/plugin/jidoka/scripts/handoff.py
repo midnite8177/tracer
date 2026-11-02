@@ -40,9 +40,12 @@ it writes anything to a bead, handoff_page.py writes the page,
 epic's factory rules, preset included. A rerun replaces the page, and a page
 that cannot be written refuses the handoff. With --preset, rules.py's
 write sets the preset's factory rules just before the label, one comment for
-each setting that changes. It prints the epic, the
-branch, the commit the branch is at, the page's path and the tasks as one JSON object. It
-starts nothing.
+each setting that changes. Once the epic carries the label, pack_store.py
+packs the repo's beads store, keeping every bead and every commit; a pack
+that fails leaves the handoff done. It prints the epic, the branch, the
+commit the branch is at, the page's path, `store`, which holds `packed` and
+either the store's size in bytes `before` and `after` the pack or `why` it
+failed, and the tasks as one JSON object. It starts nothing.
 
 The checks, each refusal saying what to do, all reported at once:
   the epic or one of its tasks waits on an open bead outside the epic;
@@ -76,6 +79,7 @@ from pathlib import Path
 import handoff_page
 import holdouts
 import lap_record
+import pack_store
 import settings_reader
 import rules
 import specs
@@ -352,10 +356,18 @@ def take(bead: str, given_areas: list[str], given_tracks: list[str], preset: str
         rules.write_preset(epic.id, preset, repo_limit, main_tree)
     run(["bd", "label", "add", epic.id, FACTORY_LABEL], main_tree, env)
     return {"epic": epic.id, "branch": branch, "start": branch_head(branch, main_tree),
-            "page": str(page),
+            "page": str(page), "store": packed_store(main_tree),
             "tasks": [{"id": row.task, "title": row.title, "track": row.track, "why": row.why, "area": row.area,
                        "holdouts": row.holdouts, "specs": list(row.specs), "status": row.state}
                       for row in content.rows]}
+
+
+def packed_store(main_tree: Path) -> dict:
+    """A pack that fails costs only bd's speed, so it is reported and never undoes the handoff."""
+    try:
+        return {"packed": True, **pack_store.pack_store(main_tree).fields()}
+    except CommandError as error:
+        return {"packed": False, "why": str(error)}
 
 
 def main(argv: list[str]) -> int:

@@ -1,0 +1,5 @@
+interface:
+  display_name: "GC"
+  short_description: "Pack the beads store so bd calls open it faster"
+policy:
+  allow_implicit_invocation: false

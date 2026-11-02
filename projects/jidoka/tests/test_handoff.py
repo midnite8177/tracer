@@ -190,6 +190,44 @@ class HandoffTakesAnEpicTests(HandoffCase):
         self.assertEqual(1, len(self.comments(epic)))
 
 
+class HandoffPacksTheStoreTests(HandoffCase):
+    def test_take_packs_the_beads_store_keeping_every_bead_once_the_epic_carries_the_factory_label(self):
+        epic, _ = self.new_epic()
+        task = self.new_task_under(epic)
+
+        done = self.handoff("take", epic, "--area", f"{task}=till")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({"packed": True, "before": 0, "after": 0}, json.loads(done.stdout)["store"])
+        calls = fixture.fake_beads_calls(self.repo)
+        labeled = calls.index(["label", "add", epic, "factory"])
+        self.assertEqual([["gc", "--skip-decay", "--force"]], [call for call in calls[labeled:] if call[0] == "gc"])
+
+    def test_a_pack_that_fails_leaves_the_epic_handed_off_and_says_why(self):
+        epic, _ = self.new_epic()
+        task = self.new_task_under(epic)
+        refusing = self.root / "refusing-gc"
+        refusing.mkdir()
+        fixture.write_executable(refusing / "bd", "\n".join([
+            f"#!{sys.executable}",
+            "import subprocess, sys",
+            "if sys.argv[1:2] == ['gc']:",
+            "    print('the store is locked', file=sys.stderr)",
+            "    sys.exit(1)",
+            f"sys.exit(subprocess.call([{self.bd!r}, *sys.argv[1:]]))",
+            ""]))
+        env = {**self.caller_env(self.home), "PATH": fixture.path_with(refusing)}
+
+        done = fixture.run_launcher(LAUNCHER, [str(HANDOFF), "take", epic, "--area", f"{task}=till"], None, env,
+                                    self.repo, RUN_TIMEOUT_SECONDS)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("factory", self.shown(epic).get("labels", []))
+        store = json.loads(done.stdout)["store"]
+        self.assertFalse(store["packed"])
+        self.assertIn("the store is locked", store["why"])
+
+
 class HandoffPresetTests(HandoffCase):
     def rule_metadata(self, epic: str) -> dict:
         return {key: value for key, value in (self.shown(epic).get("metadata") or {}).items()

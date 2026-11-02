@@ -5,7 +5,7 @@ second or more, and a scheduler test makes a couple of dozen calls. This
 fake answers in the time Python takes to start.
 
 It speaks only the calls that scheduler.py, handoff.py, holdouts.py,
-spec_cases.py, spec_approval.py, targeted_tests.py, merge_gate.py, bench.py, land.py, notify.py, resume.py and the issues and
+spec_cases.py, spec_approval.py, targeted_tests.py, merge_gate.py, bench.py, land.py, notify.py, resume.py, pack_store.py and the issues and
 context skills' scripts make, and the ones their tests make to set up and
 read beads:
   show <id>... --json
@@ -23,6 +23,7 @@ read beads:
   comments <id> --json
   close <id> --reason <text>
   dep add <id> --blocked-by <id>
+  gc --skip-decay --force
   prime
 A flag takes its value as --flag=value or as --flag value, as bd's does.
 Any other subcommand, flag or form of list exits 1 naming it on stderr, so
@@ -45,7 +46,8 @@ the beads not yet closed that it waits on. A claim sets the assignee to the acto
 in_progress, and fails when another actor is the assignee. The actor, who
 also writes each comment, is BEADS_ACTOR, or else the repo's git user.name.
 list prints each bead's own fields, metadata included, and a dependency_count of the beads it blocks on, closed or
-not; it prints no dependencies, which only show prints. prime prints a fixed text in place of bd's workflow notes. A list without
+not; it prints no dependencies, which only show prints. prime prints a fixed text in place of bd's workflow notes. gc packs nothing and changes no bead; it
+refuses a call without --skip-decay, the flag that keeps bd from deleting old closed beads. A list without
 --limit 0 prints every match, where bd stops at 50; no test makes that many.
 
 The store is <repo>/.beads/fake-bd.json, found from the working folder
@@ -83,6 +85,7 @@ PARENT_CHILD = "parent-child"
 DISCOVERED_FROM = "discovered-from"
 CLOSED = "closed"
 PRIME_TEXT = "# Beads Workflow Context\n\nThe fake bd stands in for bd prime here.\n"
+GC_TEXT = "GC complete"
 
 
 class Refused(Exception):
@@ -319,6 +322,14 @@ def prime(flags: Flags) -> bool:
     return True
 
 
+def gc(flags: Flags) -> bool:
+    need_positionals("gc", flags, 0)
+    if not {"--skip-decay", "--force"} <= flags.switches:
+        raise Refused("the fake bd answers gc only with --skip-decay and --force")
+    print(GC_TEXT)
+    return True
+
+
 def create(store: dict, flags: Flags) -> bool:
     need_json("create", flags)
     need_positionals("create", flags, 0)
@@ -481,6 +492,8 @@ def answer_from(store: dict, path: Path, command: str, args: list[str], cwd: Pat
         return comments(store, parse(command, args, set(), {"--json"}))
     if command == "prime":
         return prime(parse(command, args, set(), set()))
+    if command == "gc":
+        return gc(parse(command, args, set(), {"--skip-decay", "--force"}))
     writes = {
         "create": lambda: create(store, parse(command, args, {"--title", "--type", "--parent", "--labels",
                                                               "--priority", "--description", "--deps"},
