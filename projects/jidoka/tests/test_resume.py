@@ -541,3 +541,29 @@ class SessionStartTests(ResumeCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BeatReadsTests(ResumeCase):
+    """What a beat reads from bd, in a repo that holds more epics than the one the factory runs."""
+
+    def setUp(self):
+        super().setUp()
+        self.create("Print receipts", "--type=epic")
+        closed = self.create("Weigh produce", "--type=epic")
+        self.bd("close", closed)
+        self.next_printed()
+
+    def calls_of_a_beat(self, session: str) -> list[list[str]]:
+        before = len(fixture.fake_beads_calls(self.repo))
+        done = self.beat_as(session)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return fixture.fake_beads_calls(self.repo)[before:]
+
+    def test_a_beat_from_a_session_that_manages_no_epic_makes_no_bd_call(self):
+        self.assertEqual([], self.calls_of_a_beat(OTHER_SESSION))
+
+    def test_a_beat_from_the_managers_session_reads_only_the_epic_it_manages(self):
+        calls = self.calls_of_a_beat(MANAGER_SESSION)
+
+        self.assertEqual([["show", self.epic, "--json"]], calls)
+        self.assertGreaterEqual(self.beat_time(), int(time.time()) - FRESH_SECONDS)

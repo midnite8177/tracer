@@ -34,7 +34,7 @@ from pathlib import Path
 import clock
 import epics
 import settings_reader
-from commands import COMMAND_TIMEOUT_SECONDS, CommandError
+from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show
 from epic_reader import EpicReadError
 
 HEARTBEAT_FOLDER = "heartbeat"
@@ -122,10 +122,30 @@ def claim(home: Path, epic: str, now: int) -> None:
     write_beat(home, epic, now, session)
 
 
+def claimed_by(home: Path, session: str) -> list[str]:
+    """The ids of the epics, in any repo of the machine, whose heartbeat records this session, fresh or stale."""
+    folder = home / HEARTBEAT_FOLDER
+    if not folder.is_dir():
+        return []
+    return sorted(path.stem for path in folder.glob("*.json") if beat_session(home, path.stem) == session)
+
+
+def runs_here(epic: str, main_tree: Path) -> bool:
+    """True when the factory runs the epic in this repo. An epic of another repo of the machine is one bd cannot
+    show here, so it does not run here."""
+    try:
+        shown = bd_show(epic, main_tree)
+    except CommandError:
+        return False
+    return shown is not None and epics.is_running(shown)
+
+
 def managed_by(home: Path, main_tree: Path, session: str) -> list[str]:
     """The ids of the epics the factory runs whose heartbeat records this session, fresh or stale; the epics a
-    manager of this session claimed, and so the only epics that a failed turn of this session concerns."""
-    return [epic for epic in epics.running_epics(main_tree) if beat_session(home, epic) == session]
+    manager of this session claimed, and so the only epics that a failed turn of this session concerns. The
+    heartbeat files come first, so a session that claimed nothing reads nothing from bd, and a session that claimed
+    an epic reads only that epic, however many epics the repo has held."""
+    return [epic for epic in claimed_by(home, session) if runs_here(epic, main_tree)]
 
 
 def beat(home: Path, main_tree: Path, session: str) -> list[str]:

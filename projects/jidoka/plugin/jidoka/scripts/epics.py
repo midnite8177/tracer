@@ -72,9 +72,10 @@ def state_of(shown: dict) -> State:
 
 
 def epics_of(main_tree: Path) -> list[dict]:
-    """Every epic of the repo as bd shows it, by id."""
+    """Every epic of the repo that is not closed, as bd shows it, by id. The list says which epics are closed, so a
+    closed one, of which a repo gathers more with every epic it lands, costs no bd show."""
     ids = sorted(str(item["id"]) for item in bd_list(["--all", "--limit", "0"], main_tree)
-                 if item.get("id") and item.get("issue_type") == EPIC_TYPE)
+                 if item.get("id") and item.get("issue_type") == EPIC_TYPE and item.get("status") != CLOSED)
     return [read_bead(epic, main_tree) for epic in ids]
 
 
