@@ -50,7 +50,10 @@ else
                     <BeadId Id="@held.Epic.Id" Quiet="true" />
                 </h3>
 
-                <FactoryDrive States="StatesOf(project.Project)" Project="project.Project" EpicId="@held.Epic.Id" />
+                <FactoryDrive States="StatesOf(project.Project)"
+                              Project="project.Project"
+                              EpicId="@held.Epic.Id"
+                              OnStopped="() => ReadStatesOneRunAtATimeAsync(project)" />
 
                 @if (held.Tasks.Count == 0)
                 {

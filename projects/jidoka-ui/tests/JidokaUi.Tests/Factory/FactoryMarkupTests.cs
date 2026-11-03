@@ -245,6 +245,96 @@ public sealed class FactoryMarkupTests : BunitContext
             .SelectMany(section => section.QuerySelectorAll("a.factory-drive-waiting")));
     }
 
+    [Fact]
+    public void OffersToStopEachEpicThatIsNotStopped()
+    {
+        var view = TheViewWhereTheSecondProjectHoldsThreeEpics();
+
+        Assert.Equal(
+            ["Asking epic", "Running epic"],
+            view.FindAll("section.factory-epic")
+                .Where(section => section.QuerySelector("button.factory-drive-stop") is not null)
+                .Select(section => section.QuerySelector("h3 a")?.TextContent)
+                .Order());
+    }
+
+    [Fact]
+    public void StopsTheFactoryOnAnEpicOnlyAfterThePersonConfirms()
+    {
+        var view = TheViewWhereTheSecondProjectHoldsThreeEpics();
+        projects.Jidoka.Prints("scheduler.py stop r", """{"epic": "r", "interrupted": []}""");
+
+        PressStopOn(view, "Running epic");
+
+        Assert.DoesNotContain("scheduler.py stop r", projects.Jidoka.Invocations);
+        view.Find("button.factory-drive-stop-confirm").Click();
+        view.WaitForAssertion(() => Assert.Contains("scheduler.py stop r", projects.Jidoka.Invocations));
+    }
+
+    [Fact]
+    public void TakesBackTheStopWhenThePersonSaysNeverMind()
+    {
+        var view = TheViewWhereTheSecondProjectHoldsThreeEpics();
+
+        PressStopOn(view, "Running epic");
+        view.Find("button.factory-drive-stop-cancel").Click();
+
+        Assert.Empty(view.FindAll("button.factory-drive-stop-confirm"));
+        Assert.DoesNotContain(projects.Jidoka.Invocations, run => run.StartsWith("scheduler.py", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ReadsTheStatesAgainAfterAStopAndShowsTheEpicStopped()
+    {
+        var view = TheViewWhereTheSecondProjectHoldsThreeEpics();
+        projects.Jidoka
+            .Prints("scheduler.py stop r", """{"epic": "r", "interrupted": []}""")
+            .After("scheduler.py stop r", () => projects.Jidoka.Prints(StateCommand, TheStatesWithTheRunningEpicStopped));
+
+        PressStopOn(view, "Running epic");
+        view.Find("button.factory-drive-stop-confirm").Click();
+
+        view.WaitForAssertion(() => Assert.Equal(
+            "stopped",
+            SectionOf(view, "Running epic").QuerySelector(".factory-drive-state")?.TextContent));
+        Assert.Null(SectionOf(view, "Running epic").QuerySelector("button.factory-drive-stop"));
+    }
+
+    [Fact]
+    public void SaysWhatTheSchedulerSaidWhenItRefusesTheStop()
+    {
+        var view = TheViewWhereTheSecondProjectHoldsThreeEpics();
+        projects.Jidoka.Fails("scheduler.py stop r", "scheduler: r is not an epic the factory holds");
+
+        PressStopOn(view, "Running epic");
+        view.Find("button.factory-drive-stop-confirm").Click();
+
+        view.WaitForAssertion(() => Assert.Contains(
+            "r is not an epic the factory holds",
+            SectionOf(view, "Running epic").TextContent,
+            StringComparison.Ordinal));
+    }
+
+    private static void PressStopOn(IRenderedComponent<FactoryPage> view, string title)
+    {
+        var stop = SectionOf(view, title).QuerySelector("button.factory-drive-stop");
+        Assert.NotNull(stop);
+        stop.Click();
+    }
+
+    private static AngleSharp.Dom.IElement SectionOf(IRenderedComponent<FactoryPage> view, string title) =>
+        view.FindAll("section.factory-epic").Single(section => section.QuerySelector("h3 a")?.TextContent == title);
+
+    private const string TheStatesWithTheRunningEpicStopped =
+        """
+        {"epics": [
+          {"epic": "r", "title": "Running epic", "state": "stopped", "heartbeat_age_seconds": null, "watcher": false,
+           "waiting_on": [],
+           "next_step": {"action": "restart", "text": "Run /jidoka:factory to start the manager again.",
+                         "command": "/jidoka:factory", "run_after": null, "wakes_at": null, "wakes_on_answer": false}}
+        ]}
+        """;
+
     private const string ThreeEpics =
         """
         [

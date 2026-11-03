@@ -194,7 +194,8 @@ the printed route, native Sonnet, with the prompt of a native batch.
    stop. When the epic's heartbeat is fresh and was claimed by another
    session, the script waits on its own until the heartbeat goes stale and
    then goes on; do not run it again yourself. A heartbeat that this
-   session claimed is taken back at once. A refusal because the epic
+   session claimed is taken back at once, and so is one that a T3 waker
+   beats: the script ends the waker. A refusal because the epic
    already has a manager means its heartbeat was renewed during that wait:
    show it and stop. Under T3 (the `T3CODE_CLI_PATH` variable is set),
    after exit 0 call the `t3_thread_configuration` tool

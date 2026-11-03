@@ -50,6 +50,19 @@ public sealed class JidokaAdapterTests : IDisposable
     }
 
     [Fact]
+    public async Task StopsTheFactoryOnAnEpicByRunningTheSchedulersStopInTheProjectOfTheEpic()
+    {
+        jidoka.Prints("scheduler.py stop b-1", """{"epic": "b-1", "interrupted": []}""");
+
+        var outcome = await adapter.StopFactoryAsync(epic);
+
+        Assert.True(outcome.Wrote);
+        Assert.Equal(["scheduler.py stop b-1"], jidoka.Invocations);
+        Assert.Equal([epic.Project.Value], jidoka.Directories);
+        Assert.Equal(new[] { epic.Project }, writtenProjects);
+    }
+
+    [Fact]
     public async Task JoinsAMergeMessageToItsFlagSoThatAMessageLeadingWithADashStaysText()
     {
         jidoka.Prints("gate.py merge b-1 --message=-fix the site", "4f2a9c1");

@@ -8,7 +8,8 @@ which this text names where a mode hands over to it.
 
 `next <epic>` is the call a manager makes when it starts, so it resumes the epic. When the epic's heartbeat is
 fresh it waits the seconds until that beat would be stale, then refuses, writing nothing, only if the heartbeat was
-renewed meanwhile, because a manager already runs the epic. Each call of a manager that succeeds claims the
+renewed meanwhile, because a manager already runs the epic. A heartbeat that the T3 waker beats has no manager behind
+it, so the call ends the waker and takes the epic at once. Each call of a manager that succeeds claims the
 epic with a fresh heartbeat that records the session in $JIDOKA_SESSION_ID, as heartbeat.py describes. It takes
 every open lap at a worker stage for one an earlier session left with no worker, unless the human's brake holds it.
 Git wins where it disagrees with the record. A lap whose branch git shows merged into the epic branch closes its
@@ -25,7 +26,9 @@ the epic interrupted. The task is open with no assignee, `lap.stage` is interrup
 so, and its worktree and branch are kept. A stop is no cutoff, no try and no park, so it changes no count and leaves
 the brake as it was, and the interrupted task is ready again with a new lap. Then it sends the factory-stopped
 notification through notify.py, which sends nothing when the epic has no open task left, and prints the host's line
-for it on stderr. It leaves the epic's heartbeat stale, so that no beat from a host still open shows a manager. It
+for it on stderr. It ends the epic's T3 waker, so that no released thread is woken, and leaves the epic's heartbeat
+stale, so that no beat from a host still open shows a manager. Any terminal can run it, and jidoka-ui does, for an
+epic whose host is gone. It
 prints `{"epic", "interrupted"}`, the ids of the tasks whose laps it ended. A notification that cannot be sent is a
 line on stderr and no failure.
 
@@ -203,6 +206,7 @@ import resume
 import rules
 import spec_check
 import specs
+import t3_wake
 from bench import BenchError
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError,
                       NotAWholeNumber, env_as_factory, keeping_reads, labels_of, metadata_of,
@@ -308,13 +312,19 @@ def action_of(lap: Lap, answer: dict | None, made_to_pass: list[str]) -> dict:
 
 
 def wait_out_a_fresh_heartbeat(epic: str, session: str | None, home: Path, the_clock: clock.Clock) -> None:
-    """Takes the epic back at once when its heartbeat records the caller's session; otherwise waits out a fresh
-    heartbeat and refuses only when it is still fresh afterwards.
+    """Takes the epic at once when a waker beats its heartbeat, ending the waker, and takes it back at once when its
+    heartbeat records the caller's session; otherwise waits out a fresh heartbeat and refuses only when it is still
+    fresh afterwards.
 
     The host of the session that claimed the epic renews the heartbeat whether or not a manager still runs, so the
     caller's own session is not another manager. For any other session, a heartbeat that nobody renews is stale once
     the wait is over, and one that is still fresh afterwards was renewed by the host of a live manager.
     """
+    ended = t3_wake.end_waker(home, epic)
+    if ended is not None:
+        print(f"scheduler: ended the waker of {epic}, process {ended}. It beat the heartbeat for a host that T3 "
+              "released, so no manager runs the epic and this takes it without waiting", file=sys.stderr)
+        return
     seconds = heartbeat.fresh_age_seconds(home, epic, the_clock.now())
     if seconds is None:
         return
@@ -676,11 +686,13 @@ def report_stage(mode: str, bead: str, ended: str | None, why: str | None, worke
 
 
 def stop(bead: str, home: Path, main_tree: Path) -> dict:
-    """Ends every open lap of the epic interrupted, then announces the stop."""
+    """Ends every open lap of the epic interrupted and the epic's waker, then announces the stop."""
     epic = epic_of(bead, main_tree, RERUN)
     held = [lap for lap in map(open_lap, epic.open_task_beads) if lap is not None]
     for lap in held:
         interrupt_for_stop(lap, main_tree)
+    t3_wake.end_waker(home, epic.id)
+    t3_wake.forget(home, epic.id)
     heartbeat.mark_stopped(home, epic.id, clock.now())
     notify.announce(notify.FACTORY_STOPPED, epic.id, home, main_tree, SCRIPT)
     return {"epic": epic.id, "interrupted": [lap.task for lap in sorted(held, key=lambda lap: lap.slot)]}

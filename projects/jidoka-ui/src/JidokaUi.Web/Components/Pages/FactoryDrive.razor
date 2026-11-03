@@ -3,12 +3,15 @@
     person or has stopped, and the one next step for the person. The step shows the slash command
     that it ends with running, and links each bead that waits on the person. The script says why
     when it gave no state, and the page draws nothing for an epic that the script did not list.
+    An epic that is not stopped offers Stop, which asks once more and then runs the scheduler's
+    stop, because a host that is gone or that nobody watches can leave the factory holding the epic.
 *@
 
 @using JidokaUi.Core.Beads
 @using JidokaUi.Core.Boards
 @using JidokaUi.Core.Jidoka
 @using JidokaUi.Core.Projects
+@inherits JidokaWriteAware
 
 @if (States is Read<IReadOnlyList<EpicFactoryState>>.Unread unread)
 {
@@ -30,6 +33,32 @@ else if (States is Read<IReadOnlyList<EpicFactoryState>>.Given { Value: var give
         {
             <code class="factory-drive-command machine-text">@command</code>
         }
+        @if (held.State != FactoryState.Stopped)
+        {
+            @if (confirming)
+            {
+                <span class="factory-drive-stop-ask">
+                    Stop the factory on this epic? Its running laps end interrupted, and
+                    <code class="machine-text">/jidoka:factory</code> starts it again.
+                </span>
+                <button type="button"
+                        class="btn btn-sm btn-danger factory-drive-stop-confirm"
+                        disabled="@Writing"
+                        aria-busy="@AriaBusy"
+                        @onclick="StopAsync">Stop it</button>
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary factory-drive-stop-cancel"
+                        @onclick="() => confirming = false">Never mind</button>
+            }
+            else
+            {
+                <button type="button"
+                        class="btn btn-sm btn-outline-danger factory-drive-stop"
+                        disabled="@Writing"
+                        @onclick="() => confirming = true">Stop</button>
+            }
+        }
+        <BeadWriteFeedback Message="@WriteMessage" Wrote="Wrote" Writing="Writing" />
     </div>
 }
 
@@ -46,4 +75,27 @@ else if (States is Read<IReadOnlyList<EpicFactoryState>>.Given { Value: var give
     [Parameter]
     [EditorRequired]
     public required string EpicId { get; set; }
+
+    /// <summary>Runs after the scheduler stopped the epic, so that the page reads the states again.</summary>
+    [Parameter]
+    public EventCallback OnStopped { get; set; }
+
+    private const string StoppedMessage = "The factory stopped on this epic. Run /jidoka:factory to start it again.";
+
+    private bool confirming;
+
+    private async Task StopAsync()
+    {
+        if (await WriteAsync(() => Jidoka.StopFactoryAsync(new BeadAddress(Project, EpicId)), _ => StoppedMessage)
+            is not { } outcome)
+        {
+            return;
+        }
+
+        confirming = false;
+        if (!outcome.GaveUp)
+        {
+            await OnStopped.InvokeAsync();
+        }
+    }
 }

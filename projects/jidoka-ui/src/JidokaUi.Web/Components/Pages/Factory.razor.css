@@ -13,6 +13,9 @@
 }
 
 ::deep .factory-drive-command,
-::deep .factory-drive-waiting {
+::deep .factory-drive-waiting,
+::deep .factory-drive-stop,
+::deep .factory-drive-stop-ask,
+::deep .factory-drive-stop-cancel {
     margin-left: var(--jidoka-space-2);
 }

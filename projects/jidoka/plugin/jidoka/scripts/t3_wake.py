@@ -11,7 +11,8 @@ the one the heartbeat names, so the next release matches the heartbeat again.
 T3 ends an idle host with the session end reason `other` (releases_host); /clear, a resume and a logout end a
 session for another reason and start no waker. At most one waker runs for an epic: its pid is kept in
 <jidoka-home>/t3-thread/<epic>.waker, and a session end while that process runs starts nothing. `forget` deletes
-the record and that file, as landing or dropping the epic does.
+the record and that file, as landing or dropping the epic does. `end_waker` ends a running waker and deletes them
+too, as a stop does and as a manager that takes the epic does.
 
   t3_wake.py record <epic> --thread <id> --jidoka-home <folder>
       Writes <jidoka-home>/t3-thread/<epic>.json: `epic` and `thread`.
@@ -121,17 +122,31 @@ def forget(home: Path, epic: str) -> None:
         path.unlink(missing_ok=True)
 
 
-def waker_is_running(home: Path, epic: str) -> bool:
-    """True while the process that the epic's waker file names runs. A process of that pid that began at another
-    moment is not the waker."""
+def running_waker(home: Path, epic: str) -> int | None:
+    """The pid of the process that the epic's waker file names while it runs, else None. A process of that pid that
+    began at another moment is not the waker."""
     held = read_json(waker_path(home, epic))
     if held is None:
-        return False
+        return None
     try:
         pid, began = int(held["pid"]), held["started"]
     except (KeyError, ValueError, TypeError):
-        return False
-    return processes.is_alive(pid) and (began is None or processes.started_at(pid) == began)
+        return None
+    return pid if processes.is_alive(pid) and (began is None or processes.started_at(pid) == began) else None
+
+
+def end_waker(home: Path, epic: str) -> int | None:
+    """Ends the epic's running waker and deletes its file and the thread record, returning the pid it ended. When no
+    waker runs it changes nothing and returns None, since the record then names the thread of a live manager. A waker beats for a host that T3 released, so a manager that takes the epic, or a stop, ends
+    it: it would beat a heartbeat no manager renews and wake a thread that no longer manages the epic."""
+    with file_lock.exclusive(lock_path(home, epic)):
+        ended = running_waker(home, epic)
+        if ended is None:
+            return None
+        processes.end_process(ended)
+        for path in (record_path(home, epic), waker_path(home, epic)):
+            path.unlink(missing_ok=True)
+    return ended
 
 
 def write_waker(home: Path, epic: str, pid: int) -> None:
@@ -220,7 +235,7 @@ def start_wakers(home: Path, session: str, folder: Path) -> None:
         if interval:
             command += ["--interval", interval]
         with file_lock.exclusive(lock_path(home, epic)):
-            if waker_is_running(home, epic):
+            if running_waker(home, epic) is not None:
                 continue
             waker = subprocess.Popen(command, cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                      stderr=subprocess.DEVNULL, **processes.detached_options())

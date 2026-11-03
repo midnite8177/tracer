@@ -222,6 +222,35 @@ class TheWakerHeartbeatTests(WakeCase):
         self.assertEqual(SESSION, later["session"])
 
 
+
+class TheWakerEndsWhenTheHumanTakesTheEpicBackTests(WakeCase):
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(self.kill_wakers)
+        self.record(THREAD)
+        self.end_session(SESSION, T3_RELEASE)
+        self.assert_nothing_sent_for(SETTLE_SECONDS)
+
+    def test_a_stop_ends_the_waker_so_a_new_task_wakes_no_thread_and_the_heartbeat_goes_stale(self):
+        done = self.script_in_session(SCHEDULER, "session-2", "stop", self.epic)
+        self.assertEqual(0, done.returncode, done.stderr)
+
+        self.create("Read the card 9", "--type=task", "--parent", self.epic)
+
+        self.assert_nothing_sent_for(4)
+        self.assertIsNone(heartbeat.fresh_age_seconds(self.home, self.epic, int(time.time())))
+        self.assertIsNone(t3_wake.read_record(self.home, self.epic))
+
+    def test_a_manager_in_a_new_session_ends_the_waker_and_takes_the_epic_without_waiting(self):
+        began = time.monotonic()
+        self.claim_the_epic("session-2")
+
+        self.assertLess(time.monotonic() - began, 30)
+        self.assertEqual("session-2", heartbeat.beat_session(self.home, self.epic))
+        self.assertIsNone(t3_wake.read_record(self.home, self.epic))
+        self.create("Read the card 9", "--type=task", "--parent", self.epic)
+        self.assert_nothing_sent_for(4)
+
 TASKS = frozenset({"t-1", "t-2"})
 QUIET = watch.Snapshot(parked=frozenset(), tasks=TASKS, open_tasks=TASKS, paused_until=None, openable=())
 

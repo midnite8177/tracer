@@ -793,6 +793,9 @@ the changes that come in while it runs make one more run after it,
 however many there were. It is not
 the epic's state in the task table's sense, which reads only the epic's
 labels and metadata. When the script gives no state, the section says why.
+An epic that is not stopped offers Stop, which asks once more and then runs
+jidoka's scheduler stop, for an epic whose host is gone or that nobody
+watches; the section then reads the states again.
 _Avoid_: Health, status, drive state
 
 **Task table**:

@@ -101,7 +101,8 @@ _Avoid_: Held, throttled, sleeping
 **Stopped**:
 No manager running for an epic the factory has taken, because the host is
 gone or the human stopped it. Only the human starts it again, and the laps
-it was running end interrupted.
+it was running end interrupted. The human stops an epic from its host, or
+from jidoka-ui when the host is gone; either way the epic's waker ends too.
 _Avoid_: Crashed, dead, down, halted
 
 **Dropped**:
@@ -537,7 +538,10 @@ epic's beads like the watcher does, beats the epic's heartbeat while it
 waits, and at the first unpark, new task, end of a pause or room freed by
 another running epic sends the thread the prompt that makes the manager run
 `scheduler carry-on`. At most one waker runs for an epic, and landing or
-dropping the epic deletes its thread record and waker file.
+dropping the epic deletes its thread record and waker file. A stop ends the
+waker, and so does a manager that starts on the epic in another session: a
+running waker means no manager runs, so that manager takes the epic at once
+instead of waiting out the heartbeat.
 _Avoid_: Daemon, resumer
 
 **Watcher**:

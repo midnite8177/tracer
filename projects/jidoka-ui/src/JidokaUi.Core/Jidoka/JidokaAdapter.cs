@@ -21,6 +21,7 @@ public sealed class JidokaAdapter
     private const string GateScript = "gate.py";
     private const string RulesScript = "rules.py";
     private const string FactoryStateScript = "factory_state.py";
+    private const string SchedulerScript = "scheduler.py";
     private const string AbandonedWriteMessage =
         "The script has not answered. The app does not stop a script that writes, so it may still finish.";
     private const string StoppedReadMessage = "The script did not answer in time, so the app stopped it.";
@@ -74,6 +75,14 @@ public sealed class JidokaAdapter
     /// </summary>
     public Task<Read<IReadOnlyList<EpicFactoryState>>> FactoryStatesAsync(ProjectPath project) =>
         ReadAsync(project, FactoryStateScript, ["--json"], ParsedFactoryStates);
+
+    /// <summary>
+    /// Stops the factory on an epic, by running the scheduler's stop in the project of the epic: it
+    /// ends each open lap interrupted and the epic's waker, and leaves the heartbeat stale, so that a
+    /// new manager takes the epic at once. It is how the person stops an epic whose host is gone.
+    /// </summary>
+    public Task<JidokaWriteOutcome> StopFactoryAsync(BeadAddress epic) =>
+        WriteAsync(epic.Project, SchedulerScript, ["stop", epic.Id], WaitLimit);
 
     private async Task<Read<T>> ReadAsync<T>(
         ProjectPath project, string script, IReadOnlyList<string> arguments, Func<string, Read<T>> parse)
