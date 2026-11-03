@@ -11,6 +11,7 @@ sys.path.insert(0, str(HERE))
 import jidoka_fixture as fixture  # noqa: E402
 import test_review  # noqa: E402
 import test_scheduler  # noqa: E402
+import test_tidy  # noqa: E402
 import test_validation  # noqa: E402
 
 LAP_LISTS = test_scheduler.PLUGIN / "scripts" / "lap_lists.py"
@@ -24,6 +25,11 @@ MERGE_GRANT = [
     {"command": "git rebase --abort", "then": "nothing"},
     {"command": "git -c core.editor=true rebase --continue", "then": "nothing"},
     {"command": "git add", "then": "paths"},
+    {"command": "git status", "then": "words", "refusing": ["--output"]},
+    {"command": "git diff", "then": "words", "refusing": ["--output"]},
+    {"command": "git log", "then": "words", "refusing": ["--output"]},
+]
+LOOKS = [
     {"command": "git status", "then": "words", "refusing": ["--output"]},
     {"command": "git diff", "then": "words", "refusing": ["--output"]},
     {"command": "git log", "then": "words", "refusing": ["--output"]},
@@ -233,7 +239,7 @@ class PassWorktreeListsTests(test_review.ReviewCase):
         done = lap_lists("lap", worktree, self.caller_env(self.home_with_settings()))
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(["make test", "make build", "make fmt", "make lint"], json.loads(done.stdout))
+        self.assertEqual(["make test", "make build", *LOOKS, "make fmt", "make lint"], json.loads(done.stdout))
         self.assertEqual("", done.stderr)
 
     def test_a_pass_worktree_whose_epic_bd_refuses_still_gets_the_repo_settings_commands_and_the_built_in_list(self):
@@ -245,9 +251,24 @@ class PassWorktreeListsTests(test_review.ReviewCase):
         done = lap_lists("lap", worktree, env)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(["make test", "make build", "make fmt"], json.loads(done.stdout))
+        self.assertEqual(["make test", "make build", *LOOKS, "make fmt"], json.loads(done.stdout))
         self.assertIn("the epic's commands", done.stderr)
         self.assertIn(f"Error fetching {epic}", done.stderr)
+
+
+class TidyWorktreeListsTests(test_tidy.TidyCase):
+    """The lap list in the tidy worktree, which the workers of an epic's tidy batches share."""
+
+    def test_a_tidy_worker_may_look_at_the_epics_change_with_git_but_never_write_a_file_with_output(self):
+        epic, printed = self.finish_epic_whose_task_built({"till.txt": "the till\n"})
+        action = self.tidy_action_of(printed)
+
+        done = lap_lists("lap", Path(action["worktree"]), self.caller_env(self.home))
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        listed = json.loads(done.stdout)
+        for look in LOOKS:
+            self.assertIn(look, listed)
 
 
 class ValidationWorktreeListsTests(test_validation.ValidationCase):

@@ -219,7 +219,9 @@ _Avoid_: Polish, comment pass, prose cleanup
 
 **Tidy batch**:
 A slice of the tidy's files, a few of them and of a bounded size, that one
-tidy worker reads whole and edits. The batches of one tidy share its
+tidy worker reads whole and edits. A batch of one file can go over the
+size bound; its worker reads only the parts around the epic's change, which
+it finds with `git diff` from the epic's base. The batches of one tidy share its
 worktree and its head, and no file is in two of them.
 _Avoid_: Lane (that is the review's), chunk, shard
 

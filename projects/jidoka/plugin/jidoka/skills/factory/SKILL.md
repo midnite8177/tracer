@@ -465,7 +465,11 @@ the printed route, native Sonnet, with the prompt of a native batch.
    `<skill folder>/../no-comments/SKILL.md` and follow its Unattended
    section, then read `<skill folder>/../unslop/SKILL.md` and follow its
    Unattended section, over its action's `files`, and no other file, reading
-   every one of them. It files no bead: it lists the work it finds outside
+   every one of them. It runs `git diff <base> <head> -- <file>` with the
+   action's `base` and `head` to see what the epic changed. A file over
+   40,000 bytes is too big for one Read, so for such a file it reads only
+   the lines around the epic's hunks, with the Read tool's `offset` and
+   `limit`. It files no bead: it lists the work it finds outside
    those files in `discovered.json` in its action's `scratch` folder, a JSON
    list of objects with `title`, `description` and `placement`, where
    `placement` is `epic` when acceptance would reject the epic without the

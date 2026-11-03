@@ -13,7 +13,9 @@ JSON list. The kind is the lap mod's kind of worker:
          `extra_commands` of the epic that holds the task. A pass's test
          cleanup, tidy, review or fix worker runs in a folder under the
          main checkout's .worktrees named for its stage and its epic. There
-         the epic is the one the folder names, and there is no merge grant.
+         the epic is the one the folder names, and there is no merge grant;
+         the list holds the looks instead, after the repo settings' commands,
+         so the worker can read the epic's change from its base.
          The validation worktree is the exception, as below.
          Any other folder names no epic.
   check  a validation or app check worker. Its list holds each app's `build`,
@@ -29,10 +31,10 @@ A text entry allows its words with any words after them. An object entry is
 `{"command", "then"}`, which allows its words with nothing after them when
 `then` is `nothing`, with only paths after them when it is `paths`, and with
 any words but the long options in its `refusing` list, or an abbreviation of
-one, when it is `words`. The merge worker's grants are `git rebase <epic
+one, when it is `words`. The looks are `git status`, `git diff` and `git log`
+without `--output`. The merge worker's grants are `git rebase <epic
 branch>`, `git rebase --abort` and `git -c core.editor=true rebase
---continue` whole, `git add` of paths, and `git status`, `git diff` and
-`git log` without `--output`. The merge worker of a validation works in the
+--continue` whole, `git add` of paths, and the looks. The merge worker of a validation works in the
 validation worktree, a folder named for its epic, and only while the epic
 records that its validation owes a merge worker (`validation.merge`). Its
 grants are `git merge main`, `git merge --abort` and `git -c core.editor=true
@@ -105,12 +107,17 @@ def check_commands(settings: settings_reader.Settings) -> list[str]:
             if command is not None]
 
 
+def looks() -> list[Grant]:
+    """`git status`, `git diff` and `git log` with any words but `--output`, which writes a file."""
+    return [RefusingGrant(command=command, then="words", refusing=LOOKS_REFUSING)
+            for command in ["git status", "git diff", "git log"]]
+
+
 def grants(whole: list[str]) -> list[Grant]:
     """The commands a merge worker may run whole, then `git add` of paths, then the looks at the conflicts."""
-    looks = ["git status", "git diff", "git log"]
     return [*(Grant(command=command, then="nothing") for command in whole),
             Grant(command="git add", then="paths"),
-            *(RefusingGrant(command=command, then="words", refusing=LOOKS_REFUSING) for command in looks)]
+            *looks()]
 
 
 def merge_grant(epic_branch: str) -> list[Grant]:
@@ -194,11 +201,16 @@ def repo_part(home: Path, main_tree: Path) -> list[str]:
     return [*test_commands(settings), *settings.worker_commands]
 
 
+def pass_looks(worktree: Path, main_tree: Path) -> list[Grant]:
+    """The looks for a worker of a pass, which reads the epic's change from its base; none in any other folder."""
+    return looks() if pass_epic(worktree, main_tree) else []
+
+
 def lap_list(worktree: Path, home: Path, main_tree: Path) -> list[str | Grant]:
     repo = part_or("the repo settings' commands", [], lambda: repo_part(home, main_tree))
     built_in = part_or("the built-in list", [], lambda: settings_reader.built_in_commands(home))
     epic = part_or("the epic's commands", NO_EPIC_PART, lambda: epic_part(worktree, main_tree))
-    return [*repo, *epic.granted, *built_in, *epic.extra]
+    return [*repo, *pass_looks(worktree, main_tree), *epic.granted, *built_in, *epic.extra]
 
 
 def check_list(settings: settings_reader.Settings) -> list[str]:
