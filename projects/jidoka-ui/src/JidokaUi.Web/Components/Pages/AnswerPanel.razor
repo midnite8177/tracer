@@ -1,8 +1,10 @@
 @*
-    The question that jidoka asked on a bead, drawn from the options in the metadata of
-    that bead. A press on an option answers. It comments the option on the bead, and then
-    takes the human label off, because the label coming off is what gives the task its
-    next lap. The panel reads no page of jidoka, so it works for a bead that has none.
+    The question that jidoka asked on a bead, drawn from the metadata of that bead: the
+    sentence that asks it, the call a permission question is about, and the options with
+    what happens next if the human picks each one. A press on an option answers. It
+    comments the option on the bead, and then takes the human label off, because the
+    label coming off is what gives the task its next lap. The panel reads no page of
+    jidoka, so it works for a bead that has none.
 *@
 
 @using JidokaUi.Core.Beads
@@ -18,7 +20,18 @@
     }
     else
     {
-        <p class="answer-title">A question waits on you</p>
+        <p class="answer-title">@(Question.Sentence ?? "A question waits on you")</p>
+    }
+
+    @if (Question.Denied is { } denied)
+    {
+        <div class="answer-denied">
+            <p class="answer-denied-call">The worker was refused this command: <code>@denied.Call</code></p>
+            @if (denied.Reason is { } reason)
+            {
+                <p class="answer-denied-reason">The worker's reason for running it: @reason</p>
+            }
+        </div>
     }
 
     @if (Probed && Refusal.Length > 0)
@@ -43,6 +56,10 @@
                 {
                     <span class="answer-recommended-mark pill-chip">Recommended</span>
                 }
+                @if (option.Next is { } next)
+                {
+                    <p class="answer-next">@next</p>
+                }
             </li>
         }
     </ul>
@@ -61,7 +78,7 @@
     [EditorRequired]
     public required BeadAddress Address { get; set; }
 
-    /// <summary>The options and the recommendation that the bead carries.</summary>
+    /// <summary>The question that the bead carries, with its options and the recommendation.</summary>
     [Parameter]
     [EditorRequired]
     public required BeadQuestion Question { get; set; }

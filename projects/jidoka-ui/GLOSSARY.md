@@ -762,9 +762,14 @@ _Avoid_: Stale, expired, answered, disabled
 
 **Answer panel**:
 The control the app draws for a question that jidoka asked on a bead, from
-the options and the recommendation that the bead carries in its metadata.
-It stands only while the bead carries the human label, because the metadata
-keeps the question after the answer. A press on an option answers: the app
+what the bead carries in its metadata. Its heading is the sentence that asks
+the question. On a permission question it shows the denied call and the
+worker's reason for running it above the options. Under each option it
+shows what happens next if the human picks that option. A bead parked
+before jidoka wrote the sentence and the next steps shows the general
+heading and its bare options, and they answer the same way. It stands only
+while the bead carries the human label, because the metadata keeps the
+question after the answer. A press on an option answers: the app
 comments the option on the bead through `bd`, then takes the human label
 off, and it posts the comment once even when the label comes off on a
 second press. The panel reads no jidoka page, so it works for a bead that

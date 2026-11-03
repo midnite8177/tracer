@@ -37,8 +37,11 @@ public sealed record RecordedEvent(string Name, string BeadId, string Fingerprin
 /// </summary>
 public static class JidokaMetadata
 {
+    private const string SentenceKey = "question.sentence";
     private const string OptionsKey = "question.options";
     private const string RecommendedKey = "question.recommended";
+    private const string CallKey = "question.call";
+    private const string ReasonKey = "question.reason";
     private const string LapNumberKey = "lap.number";
     private const string LapStageKey = "lap.stage";
     private const string MergeStage = "merge";
@@ -65,7 +68,11 @@ public static class JidokaMetadata
         var options = OptionsIn(written);
         return options.Count == 0
             ? null
-            : new BeadQuestion(options, bead.Metadata.GetValueOrDefault(RecommendedKey, string.Empty));
+            : new BeadQuestion(
+                TextOrNull(Entry(bead, SentenceKey)),
+                options,
+                bead.Metadata.GetValueOrDefault(RecommendedKey, string.Empty),
+                DeniedCallOn(bead));
     }
 
     /// <summary>The lap that jidoka's scheduler recorded on this task.</summary>
@@ -131,6 +138,13 @@ public static class JidokaMetadata
     private static string Entry(Bead bead, string key) =>
         bead.Metadata.TryGetValue(key, out var value) ? value : string.Empty;
 
+    private static DeniedCall? DeniedCallOn(Bead bead) =>
+        TextOrNull(Entry(bead, CallKey)) is { } call
+            ? new DeniedCall(call, TextOrNull(Entry(bead, ReasonKey)))
+            : null;
+
+    private static string? TextOrNull(string text) => string.IsNullOrWhiteSpace(text) ? null : text;
+
     private static IReadOnlyList<QuestionOption> OptionsIn(string written)
     {
         using var document = ParseAs(written, JsonValueKind.Array);
@@ -152,7 +166,10 @@ public static class JidokaMetadata
         int? confidence = element.TryGetProperty("confidence", out var sure) && sure.TryGetInt32(out var percent)
             ? percent
             : null;
-        return new QuestionOption(name.GetString() ?? string.Empty, confidence);
+        var next = element.TryGetProperty("next", out var step) && step.ValueKind == JsonValueKind.String
+            ? TextOrNull(step.GetString() ?? string.Empty)
+            : null;
+        return new QuestionOption(name.GetString() ?? string.Empty, confidence, next);
     }
 
     private static JsonDocument? ParseAs(string text, JsonValueKind kind)

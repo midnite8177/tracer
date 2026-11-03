@@ -10,7 +10,7 @@ namespace JidokaUi.Tests.Boards;
 
 /// <summary>
 /// The answer panel as a browser draws it, on the detail page and in the needs-you view: the
-/// options of a question with its recommendation, and the two writes that an answer makes. The
+/// question with its options and its recommendation, and the two writes that an answer makes. The
 /// beads here carry no jidoka page, because the panel reads the metadata of the bead alone.
 /// </summary>
 public sealed class AnswerPanelMarkupTests : BunitContext
@@ -28,6 +28,19 @@ public sealed class AnswerPanelMarkupTests : BunitContext
 
     private static readonly string TheParkedBead =
         $$"""{"id": "b-7", "title": "Pick a hosting plan", "issue_type": "task", "priority": 2, "status": "open", "labels": ["human"], {{TheMetadata}} }""";
+
+    private const string ThePermissionMetadata =
+        """
+        "metadata": {"question.reason": "The tidy stage runs the linter before the merge.", "lap.stage": "parked",
+                     "question.sentence": "May lap workers run make lint?",
+                     "question.options": "[{\"name\":\"epic\",\"confidence\":60,\"next\":\"The worker starts again and runs the call.\"},{\"name\":\"none\",\"confidence\":5,\"next\":\"The worker starts again and the call is still refused.\"}]",
+                     "question.recommended": "epic",
+                     "question.call": "cd packages/till && make lint --fix",
+                     "question.pattern": "make lint"}
+        """;
+
+    private static readonly string ThePermissionBead =
+        $$"""{"id": "b-7", "title": "Pick a hosting plan", "issue_type": "task", "priority": 2, "status": "open", "labels": ["human"], {{ThePermissionMetadata}} }""";
 
     private const string TheAnsweredBead =
         """{"id": "b-7", "title": "Pick a hosting plan", "issue_type": "task", "priority": 2, "status": "open", "labels": []}""";
@@ -48,6 +61,63 @@ public sealed class AnswerPanelMarkupTests : BunitContext
         Assert.Equal(
             ["80%", "20%"],
             page.FindAll(".answer-panel .answer-confidence").Select(sure => sure.TextContent));
+    }
+
+    [Fact]
+    public void HeadsThePanelWithTheSentenceThatAsksTheQuestion()
+    {
+        projects.Bd.DeclaresEveryWrite();
+        var page = TheDetailPageOf(ThePermissionBead);
+
+        Assert.Equal("May lap workers run make lint?", page.Find(".answer-panel .answer-title").TextContent);
+    }
+
+    [Fact]
+    public void ShowsTheDeniedCallOfAPermissionQuestionWithTheReasonTheWorkerGaveForIt()
+    {
+        projects.Bd.DeclaresEveryWrite();
+        var page = TheDetailPageOf(ThePermissionBead);
+
+        Assert.Equal("cd packages/till && make lint --fix", page.Find(".answer-panel .answer-denied-call code").TextContent);
+        Assert.Contains(
+            "The tidy stage runs the linter before the merge.",
+            page.Find(".answer-panel .answer-denied-reason").TextContent,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ShowsTheDeniedCallAloneWhenTheWorkerGaveNoReasonForIt()
+    {
+        projects.Bd.DeclaresEveryWrite();
+        var page = TheDetailPageOf(ThePermissionBead.Replace(
+            "\"question.reason\": \"The tidy stage runs the linter before the merge.\", ",
+            string.Empty,
+            StringComparison.Ordinal));
+
+        Assert.Single(page.FindAll(".answer-panel .answer-denied-call"));
+        Assert.Empty(page.FindAll(".answer-panel .answer-denied-reason"));
+    }
+
+    [Fact]
+    public void ShowsUnderEachOptionWhatHappensNextIfTheHumanPicksIt()
+    {
+        projects.Bd.DeclaresEveryWrite();
+        var page = TheDetailPageOf(ThePermissionBead);
+
+        Assert.Equal(
+            ["The worker starts again and runs the call.", "The worker starts again and the call is still refused."],
+            page.FindAll(".answer-panel .answer-option .answer-next").Select(next => next.TextContent));
+        Assert.Equal(["epic", "none"], page.FindAll(".answer-panel .answer-press").Select(press => press.TextContent));
+    }
+
+    [Fact]
+    public void KeepsTheGeneralHeadingAndShowsTheBareOptionsOfAQuestionParkedWithoutASentenceOrNextSteps()
+    {
+        var page = TheDetailPageOfTheParkedBead();
+
+        Assert.Equal("A question waits on you", page.Find(".answer-panel .answer-title").TextContent);
+        Assert.Empty(page.FindAll(".answer-panel .answer-next"));
+        Assert.Empty(page.FindAll(".answer-panel .answer-denied"));
     }
 
     [Fact]

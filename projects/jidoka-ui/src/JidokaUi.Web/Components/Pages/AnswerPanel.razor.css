@@ -19,6 +19,21 @@
     gap: var(--jidoka-space-2);
 }
 
+.answer-denied {
+    margin-bottom: var(--jidoka-space-2);
+}
+
+.answer-denied p {
+    margin: 0;
+}
+
+.answer-next {
+    color: var(--jidoka-fg-muted);
+    flex: 1 1 100%;
+    font-size: var(--jidoka-text-small);
+    margin: 0;
+}
+
 .answer-confidence {
     color: var(--jidoka-fg-muted);
     font-size: var(--jidoka-text-small);

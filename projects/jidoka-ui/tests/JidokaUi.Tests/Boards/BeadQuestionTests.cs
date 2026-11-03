@@ -17,7 +17,7 @@ public sealed class BeadQuestionTests
             """));
 
         Assert.Equal(
-            [new QuestionOption("Use the cheap plan", 80), new QuestionOption("Keep the dear plan", 20)],
+            [new QuestionOption("Use the cheap plan", 80, null), new QuestionOption("Keep the dear plan", 20, null)],
             question.Options);
         Assert.Equal("Use the cheap plan", question.Recommended);
     }
@@ -30,8 +30,21 @@ public sealed class BeadQuestionTests
             """);
 
         Assert.Equal(
-            [new QuestionOption("Approve", null), new QuestionOption("Ask back", 0)],
+            [new QuestionOption("Approve", null, null), new QuestionOption("Ask back", 0, null)],
             question?.Options);
+    }
+
+    [Fact]
+    public void ReadsWhatHappensNextIfTheHumanPicksEachOption()
+    {
+        var question = QuestionOn("""
+            "metadata": {"question.options": [{"name": "Approve", "next": "The factory builds the epic."},
+                                              {"name": "Ask back", "next": "The specs go back to planning."}]}
+            """);
+
+        Assert.Equal(
+            ["The factory builds the epic.", "The specs go back to planning."],
+            question?.Options.Select(option => option.Next));
     }
 
     [Fact]
@@ -65,6 +78,61 @@ public sealed class BeadQuestionTests
             """));
 
         Assert.DoesNotContain(question.Options, question.Recommends);
+    }
+
+    [Fact]
+    public void ReadsTheSentenceThatAsksTheQuestion()
+    {
+        var question = QuestionOn($$"""
+            "metadata": {"question.sentence": "Which hosting plan do we buy?", "question.options": "{{TheOptions}}"}
+            """);
+
+        Assert.Equal("Which hosting plan do we buy?", question?.Sentence);
+    }
+
+    [Fact]
+    public void GivesNoSentenceToAQuestionWhoseMetadataKeepsNone()
+    {
+        var question = Assert.IsType<BeadQuestion>(QuestionOn($$"""
+            "metadata": {"question.options": "{{TheOptions}}"}
+            """));
+
+        Assert.Null(question.Sentence);
+    }
+
+    [Fact]
+    public void ReadsTheDeniedCallOfAPermissionQuestionWithTheReasonTheWorkerGaveForIt()
+    {
+        var question = QuestionOn($$"""
+            "metadata": {"question.options": "{{TheOptions}}", "question.call": "cd packages/till && make lint --fix",
+                         "question.pattern": "make lint", "question.reason": "The tidy stage needs the linter."}
+            """);
+
+        Assert.Equal(
+            new DeniedCall("cd packages/till && make lint --fix", "The tidy stage needs the linter."),
+            question?.Denied);
+    }
+
+    [Fact]
+    public void ReadsADeniedCallWithNoReasonWhenTheWorkerGaveNone()
+    {
+        var question = QuestionOn($$"""
+            "metadata": {"question.options": "{{TheOptions}}", "question.call": "make lint", "question.pattern": "make lint"}
+            """);
+
+        Assert.Equal(new DeniedCall("make lint", null), question?.Denied);
+    }
+
+    [Theory]
+    [InlineData("\"question.call\": \"\", \"question.pattern\": \"\",")]
+    [InlineData("")]
+    public void GivesNoDeniedCallToAQuestionThatIsNoPermissionQuestion(string call)
+    {
+        var question = Assert.IsType<BeadQuestion>(QuestionOn($$"""
+            "metadata": { {{call}} "question.options": "{{TheOptions}}"}
+            """));
+
+        Assert.Null(question.Denied);
     }
 
     [Fact]
