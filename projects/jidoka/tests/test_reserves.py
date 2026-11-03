@@ -430,6 +430,7 @@ class AReserveQuestionAnsweredBeforeTheGateTests(ReservesCase, test_gate.GateCas
         self.assertIn("human", self.labels(epic))
         self.assertNotIn("question.options", metadata)
         self.assertNotIn("question.recommended", metadata)
+        self.assertNotIn("question.sentence", metadata)
 
 
 if __name__ == "__main__":

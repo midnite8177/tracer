@@ -5,8 +5,10 @@
 writes, except that each case also carries `code`, the code of the spec that would be written for it. It refuses a
 proposal that spec_cases.py would refuse and a case with no code. It writes the proposal's page
 (spec_approval_page.py) in the jidoka home, then comments on the epic with the proposal in plain text and the page's
-link, puts the `human` label on the epic and sets its metadata `question.options` to the two answers, `Approve` and
-`Ask back`, with no recommendation. The proposal comment is posted as jidoka. jidoka-ui serves the page beside the
+link, and puts the `human` label on the epic. It sets the epic's metadata `question.sentence` to the question, "Do these
+<n> acceptance specs say what <the epic's title> must do?", and `question.options` to the two answers, `Approve` and
+`Ask back`, each with its `next`, what happens next if the human picks it, and with no confidence and no
+recommendation. The proposal comment is posted as jidoka. jidoka-ui serves the page beside the
 epic and draws its answer panel from that metadata, so a press on an answer comments it on the epic and takes the label
 off. It prints `{"epic", "page"}`. A page that cannot be written refuses the post before any bead changes. Posting
 again replaces the page and asks again.
@@ -40,6 +42,8 @@ from spec_approval_page import ProposedCase
 
 PROPOSAL_PREFIX = "Spec approval: "
 APPROVE, ASK_BACK = "Approve", "Ask back"
+APPROVE_NEXT = "The specs go on the epic's spec task, and the factory writes them as the epic's tests."
+ASK_BACK_NEXT = "You say what to change, and a new proposal comes back for you to approve."
 
 
 class SpecApprovalError(Exception):
@@ -77,10 +81,18 @@ def comment_of(epic: str, proposed: list[ProposedCase], interface: list[spec_cas
             "the answer.")
 
 
+def sentence_of(count: int, name: str) -> str:
+    """The question the proposal asks, in one sentence, of the specs it holds and the epic named."""
+    if count == 1:
+        return f"Does this acceptance spec say what {name} must do?"
+    return f"Do these {count} acceptance specs say what {name} must do?"
+
+
 def post(epic: str, raw: str, home: Path, main_tree: Path) -> dict:
     proposed, interface = proposal_of(raw)
     shown = shown_epic(epic, main_tree)
-    title = f"Approve the acceptance specs of {shown.get('title') or epic}"
+    name = shown.get("title") or epic
+    title = f"Approve the acceptance specs of {name}"
     try:
         page = spec_approval_page.write(spec_approval_page.SpecApprovalPage(epic, title, tuple(proposed),
                                                                            tuple(interface)), home, main_tree)
@@ -88,9 +100,10 @@ def post(epic: str, raw: str, home: Path, main_tree: Path) -> dict:
         raise SpecApprovalError(f"the spec approval page could not be written: {error}") from error
     env = env_as_factory()
     run(["bd", "comment", epic, comment_of(epic, proposed, interface, page)], main_tree, env)
-    options = park.options_json_of([(APPROVE, None), (ASK_BACK, None)])
-    run(["bd", "update", epic, f"--add-label={HUMAN_LABEL}", *set_metadata((park.OPTIONS_KEY, options)),
-         *unset_metadata(park.RECOMMENDED_KEY)], main_tree, env)
+    answers = [(APPROVE, None, APPROVE_NEXT), (ASK_BACK, None, ASK_BACK_NEXT)]
+    metadata = {park.SENTENCE_KEY: sentence_of(len(proposed), name), park.OPTIONS_KEY: park.options_json_of(answers)}
+    run(["bd", "update", epic, f"--add-label={HUMAN_LABEL}", *set_metadata(*metadata.items()),
+         *unset_metadata(*park.question_keys_unset_by(metadata))], main_tree, env)
     return {"epic": epic, "page": str(page)}
 
 

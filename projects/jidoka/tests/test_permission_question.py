@@ -171,7 +171,53 @@ class PermissionQuestionTests(PermissionCase):
             self.assertTrue(line.startswith(f"- {change} ({percent}%)."), line)
             self.assertIn(f"Answer word: {name}.", line)
             self.assertIn("The worker starts again", line)
-            self.assertIn(f"`{CALL}`", line)
+            self.assertIn("the call", line)
+            self.assertNotIn(CALL, line)
+
+    def test_the_comment_names_the_refused_call_once(self):
+        _, task = self.asked()
+
+        [question] = [comment for comment in self.comments(task) if str(comment["text"]).startswith("Question: ")]
+
+        self.assertEqual(1, str(question["text"]).count(CALL))
+
+    def test_the_metadata_holds_the_question_sentence_and_what_happens_next_for_each_answer(self):
+        _, task = self.asked()
+
+        metadata = self.shown(task)["metadata"]
+
+        self.assertEqual("May lap workers run make lint?", metadata["question.sentence"])
+        self.assertEqual([
+            {"name": "epic", "confidence": 50,
+             "next": "The worker starts again and runs the call. Workers on other groups of tasks are still refused "
+                     "make lint."},
+            {"name": "repo", "confidence": 30,
+             "next": "The worker starts again and runs the call, and so does every later worker in this repo, "
+                     "whatever its group of tasks."},
+            {"name": "built-in", "confidence": 5,
+             "next": "The worker starts again and runs the call, and so does every later worker in every repo on "
+                     "this machine."},
+            {"name": "none", "confidence": 15,
+             "next": "The worker starts again with every permission as it was, so the call is still refused. It "
+                     "reads your comment and carries on without it."}], json.loads(metadata["question.options"]))
+
+    def test_the_metadata_holds_the_workers_reason_for_the_refused_call_in_its_own_words(self):
+        _, task = self.new_task()
+
+        done = self.ask(task, why=["Lint fixes the import order.", "The build fails without it."])
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("Lint fixes the import order. The build fails without it.",
+                         self.shown(task)["metadata"]["question.reason"])
+
+    def test_a_permission_question_without_a_why_leaves_no_reason_from_an_earlier_question(self):
+        _, task = self.new_task()
+        self.ask(task, why=["Lint fixes the import order."])
+
+        done = self.ask(task)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("question.reason", self.shown(task)["metadata"])
 
     def test_the_change_and_the_next_step_of_each_option_need_no_jidoka_vocabulary(self):
         _, task = self.asked()
@@ -342,8 +388,11 @@ class PermissionSituationTests(PermissionCase):
         done = self.ask(task)
 
         self.assertEqual(0, done.returncode, done.stderr)
+        html = unescape(next((self.home / "pages").rglob("*.html")).read_text(encoding="utf-8"))
         self.assertIn("The worker tried to run `cd packages/till && make lint --fix`. Workers may not run make lint, "
-                      "so the task stopped.", self.question_text(task))
+                      "so the task stopped.", html)
+        self.assertIn("The worker tried to run make lint. Workers may not run make lint, so the task stopped.",
+                      self.question_text(task))
 
 
 class PermissionAnswerTests(PermissionCase):

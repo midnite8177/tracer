@@ -21,10 +21,10 @@ class PermissionWordingCase(unittest.TestCase):
     def test_a_delete_outside_the_worktree_names_the_paths_it_tried_to_delete(self):
         self.assertEqual("The worker tried to delete ../shared/cache build with rm. "
                          "Workers may delete only inside their worktree, so the task stopped.",
-                         pq.situation_of(pq.Denied(REMOVE, pq.OUTSIDE_WORKTREE)))
+                         pq.situation_on_page(pq.Denied(REMOVE, pq.OUTSIDE_WORKTREE)))
 
     def test_the_diagram_shows_the_task_the_call_the_denial_and_the_park(self):
-        steps = pq.steps_of_denial("shop-1", pq.Denied(LINT, pq.OFF_LISTS))
+        steps = pq.steps_on_page("shop-1", pq.Denied(LINT, pq.OFF_LISTS))
         self.assertEqual(["The worker was building shop-1",
                           "It made the call cd packages/till && make lint --fix",
                           "The call was denied, because workers may not run make lint",

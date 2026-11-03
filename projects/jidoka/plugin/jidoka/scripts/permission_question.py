@@ -6,7 +6,9 @@ particular to the permission question: the Denial it is about and what makes a
 report's call, pattern and cause a denial, the four answers (the three lists
 and `none`), the sentence, situation line, diagram steps and option cards that
 jidoka writes from the denial in words that need no jidoka vocabulary, and the
-reading of the answer that puts the pattern on a list. The wording is plain
+reading of the answer that puts the pattern on a list. The page names the
+denied call wherever it tells of it; the comment names it once, in its denial
+paragraph, and calls it "the call" everywhere else. The wording is plain
 functions of a denial, with no repo and no bd. Only `allow` writes, and it
 writes through rules.py and repo_settings.py.
 """
@@ -58,11 +60,13 @@ class Denied:
 @dataclass(frozen=True)
 class PermissionOption:
     """The option of a permission question that chooses one list. Its name is the answer word the human types.
-    `change` is the change the list makes, and `reason` is the worker's reasoning for its pick, held by the
-    recommended option and None on any other."""
+    `next_step` is what happens next in the comment's words, `page_next_step` the same naming the call, `change` is the
+    change the list makes, and `reason` is the worker's reasoning for its pick, held by the recommended option and None
+    on any other."""
     name: str
     confidence: int
     next_step: str
+    page_next_step: str
     change: str
     reason: str | None
 
@@ -73,7 +77,8 @@ class PermissionOption:
 
     def card(self, recommended: bool) -> question_page.Card:
         """The option as a card of the question's page."""
-        return question_page.Card(self.change, self.name, self.confidence, self.next_step, self.reason, recommended)
+        return question_page.Card(self.change, self.name, self.confidence, self.page_next_step, self.reason,
+                                  recommended)
 
 
 def pattern_start(wanted: list[str], spoken: list[str]) -> int | None:
@@ -137,29 +142,51 @@ def targets_of(denial: Denial) -> list[str]:
     return targets
 
 
-def situation_of(denied: Denied) -> str:
+def situation(denied: Denied, attempt_without_paths: str) -> str:
     """What the worker tried and the rule that stopped it, so the task stopped, in plain words."""
     targets = targets_of(denied.denial) if denied.cause in DELETE_CAUSES else []
-    attempt = (f"delete {' '.join(targets)} with {denied.denial.pattern}" if targets
-               else f"run `{denied.denial.call}`")
+    attempt = f"delete {' '.join(targets)} with {denied.denial.pattern}" if targets else attempt_without_paths
     rule = rule_of(denied)
     return f"The worker tried to {attempt}. {rule[0].upper()}{rule[1:]}, so the task stopped."
 
 
-def steps_of_denial(task: str, denied: Denied) -> tuple[str, ...]:
-    """The task, the call the worker made, the denial and the park, as the steps of a diagram."""
+def situation_on_page(denied: Denied) -> str:
+    return situation(denied, f"run `{denied.denial.call}`")
+
+
+def situation_in_comment(denied: Denied) -> str:
+    """The situation line of the comment, which tells the call by its pattern."""
+    return situation(denied, f"run {denied.denial.pattern}")
+
+
+def denial_steps(task: str, denied: Denied, call_step: str) -> tuple[str, ...]:
     return (f"The worker was building {task}",
-            f"It made the call {denied.denial.call}",
+            call_step,
             f"The call was denied, because {rule_of(denied)}",
             "The task is parked and waits for your answer")
+
+
+def steps_on_page(task: str, denied: Denied) -> tuple[str, ...]:
+    return denial_steps(task, denied, f"It made the call {denied.denial.call}")
+
+
+def steps_in_comment(task: str, denied: Denied) -> tuple[str, ...]:
+    """The steps of the diagram as the comment's Why chain, which tells the call by its pattern."""
+    return denial_steps(task, denied, f"It made a call that runs {denied.denial.pattern}")
 
 
 def permission_option(name: str, confidence: int, denial: Denial, reason: str | None) -> PermissionOption:
     """The option with the change its list makes and what the worker does next with the denied call, both written
     here from the denial; the worker's own `next` is dropped, for it cannot know what the list does. `reason` is the
     worker's reasoning, kept on the option only when it is the recommended one."""
-    pattern, call = denial.pattern, f"`{denial.call}`"
-    changes = {
+    change, page_next_step = changes_of(denial.pattern, f"`{denial.call}`")[name]
+    _, next_step = changes_of(denial.pattern, "the call")[name]
+    return PermissionOption(name, confidence, next_step, page_next_step, change, reason)
+
+
+def changes_of(pattern: str, call: str) -> dict[str, tuple[str, str]]:
+    """The change each answer makes, and what the worker does next with the call, which `call` words."""
+    return {
         EPIC_LIST: (f"Only the workers on this group of tasks may run {pattern}",
                     f"The worker starts again and runs {call}. Workers on other groups of tasks are still refused "
                     f"{pattern}."),
@@ -173,8 +200,6 @@ def permission_option(name: str, confidence: int, denial: Denial, reason: str | 
                   f"The worker starts again with every permission as it was, so {call} is still refused. It reads "
                   "your comment and carries on without it."),
     }
-    change, next_step = changes[name]
-    return PermissionOption(name, confidence, next_step, change, reason)
 
 
 def denial_paragraph(denial: Denial) -> str:

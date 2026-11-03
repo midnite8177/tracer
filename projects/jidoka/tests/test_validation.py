@@ -658,7 +658,7 @@ class ValidationMergeConflictTests(ValidationCase):
         self.assertEqual(0, self.merge_tries(epic))
 
     def test_two_failed_merge_worker_tries_park_the_epic_with_the_human_label_and_a_question(self):
-        epic, _, printed = self.conflicting_epic()
+        epic, branch, printed = self.conflicting_epic()
         [action] = self.merge_actions(printed)
         self.report_merge_printed(epic, "--ended", "failed", "--why", "first")
 
@@ -673,6 +673,9 @@ class ValidationMergeConflictTests(ValidationCase):
         options = json.loads(shown["metadata"]["question.options"])
         self.assertGreaterEqual(len(options), 2)
         self.assertIn(shown["metadata"]["question.recommended"], [option["name"] for option in options])
+        self.assertEqual(f"Should you merge main into {branch} by hand, or should the merge worker try again?",
+                         shown["metadata"]["question.sentence"])
+        self.assertTrue(all(option["next"] for option in options), options)
         self.assertFalse(Path(action["worktree"]).exists())
         self.assertEqual([], self.validation_runs_of(epic))
 

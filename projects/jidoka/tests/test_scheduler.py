@@ -1319,8 +1319,8 @@ class QuestionTests(SchedulerCase):
         metadata = self.metadata(lap.task)
         self.assertEqual(("parked", 0, "round receipts too"),
                          (metadata["lap.stage"], metadata["lap.tries"], metadata["question.recommended"]))
-        self.assertEqual([{"name": option["name"], "confidence": option["confidence"]} for option in self.OPTIONS],
-                         json.loads(metadata["question.options"]))
+        self.assertEqual(self.OPTIONS, json.loads(metadata["question.options"]))
+        self.assertEqual(self.QUESTION, metadata["question.sentence"])
         self.assertEqual("half built\n", (lap.worktree / "card.txt").read_text(encoding="utf-8"))
         self.assertIn(f"lap/{lap.task}", git(self.repo, "branch", "--list"))
         self.assertFalse((lap.worktree / ".scratch" / "question.json").exists())
@@ -1567,6 +1567,7 @@ class QuestionTests(SchedulerCase):
         self.assertEqual(("parked", ["human"]), (metadata["lap.stage"], self.shown(lap.task).get("labels")))
         self.assertNotIn("question.options", metadata)
         self.assertNotIn("question.recommended", metadata)
+        self.assertNotIn("question.sentence", metadata)
 
     def test_a_lap_opened_after_three_failed_build_tries_is_lap_two_in_the_parked_laps_worktree_and_branch(self):
         lap = self.open_one_lap()

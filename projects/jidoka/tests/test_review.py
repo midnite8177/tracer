@@ -415,6 +415,7 @@ class PassCapTests(ReviewCase):
             self.assertRegex(line, r"^- .+ \(\d+%\): .+\.$")
         metadata = self.metadata(epic)
         self.assertEqual("Run another pass", metadata["question.recommended"])
+        self.assertEqual(f"Should {epic} run a pass past the pass cap?", metadata["question.sentence"])
         self.assertEqual(["Run another pass", "Land what the epic holds"],
                          [option["name"] for option in json.loads(metadata["question.options"])])
 

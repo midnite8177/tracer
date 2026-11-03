@@ -23,9 +23,11 @@ Two keys are optional, and the page and the comment show them when present:
 Posting the question writes its page (question_page.py) in the jidoka home,
 then comments on the task with the question, what was found, the optional
 words, every option with its confidence, the recommendation and the page's
-link, and sets the task's metadata `question.options` to the options as JSON
-and `question.recommended` to the recommended name. The comment holds the
-whole question without the page. The report file is removed once posted.
+link. It sets the task's metadata `question.sentence` to the question,
+`question.options` to the options as JSON, each with its `name`, `confidence`
+and `next`, and `question.recommended` to the recommended name. The comment
+holds the whole question without the page. The report file is removed once
+posted.
 
 The human answers by taking the `human` label off. answer_of gives the answer
 to the lap that follows: the comments posted since the question, or the
@@ -49,8 +51,11 @@ permission_question.py writes everything else of a permission question from
 the denial, so the report needs no `question`, and reads which list the
 answer names. The worker's `shown` and its options' `next` are dropped. Its
 `why` is its reasoning for its pick, which goes on the recommended option's
-card. The task's metadata gets `question.call` and `question.pattern`, both
-empty after any other question. The scheduler adds the pattern to the list
+card, and its steps joined by spaces go in the metadata `question.reason`.
+The task's metadata gets `question.call` and `question.pattern`, both empty after
+any other question. Every park that sets no `question.reason` unsets it, as
+every park that sets no `question.sentence`, `question.options` or
+`question.recommended` unsets those. The scheduler adds the pattern to the list
 the answer names when it opens the lap that follows the answer, and `answer`
 does the same from a command line.
 
@@ -93,8 +98,10 @@ PARK_PREFIXES = (QUESTION_PREFIX, PARKED_PREFIX, BLOCKED_PREFIX)
 COMMENT = "comment"
 RECOMMENDATION = "recommendation"
 QUESTION_REPORT = "question.json"
+SENTENCE_KEY = "question.sentence"
 OPTIONS_KEY = "question.options"
 RECOMMENDED_KEY = "question.recommended"
+REASON_KEY = "question.reason"
 CALL_KEY = "question.call"
 PATTERN_KEY = "question.pattern"
 SHOWN_LABEL = "What the app shows"
@@ -155,17 +162,22 @@ class Question:
     """The question in one sentence, what a worker found, the options it offers and the name of the one it recommends.
 
     `shown` is what the app shows, or what happened on a permission question, and `shown_label` names which; it is
-    None when there is none. `why` is the steps that explain it, empty when there are none. A permission question
-    also holds the denial it is about.
+    None when there is none. `why` is the steps that explain it, empty when there are none. `page_shown` and
+    `page_why` are the same on the page, which names a denied call where the comment tells it by its pattern. A
+    permission question also holds the denial it is about, and `reason`, the worker's reason for the call in its own words, which is None
+    on any other question and when the worker gave none.
     """
     question: str
     found: str
     shown_label: str
     shown: str | None
     why: tuple[str, ...]
+    page_shown: str | None
+    page_why: tuple[str, ...]
     options: tuple[AnyOption, ...]
     recommended: str
-    denial: permission_question.Denial | None
+    denied: permission_question.Denied | None
+    reason: str | None
 
     @property
     def recommendation(self) -> AnyOption:
@@ -174,7 +186,7 @@ class Question:
 
 def plain_question(sentence: str, found: str, options: tuple[Option, ...], recommended: str) -> Question:
     """A question that has no `shown`, no steps and no denial, as an epic asks."""
-    return Question(sentence, found, SHOWN_LABEL, None, (), options, recommended, None)
+    return Question(sentence, found, SHOWN_LABEL, None, (), None, (), options, recommended, None, None)
 
 
 def text_of(value: object, what: str) -> str:
@@ -256,8 +268,8 @@ def ordinary_question(report: Report) -> Question:
             raise QuestionError(f"next of the option {option.name} is missing; every option must say what "
                                 "happens next if the human picks it")
         options.append(Option(option.name, option.confidence, option.next_step))
-    return Question(report.question, report.found, SHOWN_LABEL, report.shown, report.why, tuple(options),
-                    report.recommended, None)
+    return Question(report.question, report.found, SHOWN_LABEL, report.shown, report.why, report.shown, report.why,
+                    tuple(options), report.recommended, None, None)
 
 
 def asked_permission(report: Report, denied: permission_question.Denied, task: str) -> Question:
@@ -268,8 +280,9 @@ def asked_permission(report: Report, denied: permission_question.Denied, task: s
                                                           reason if option.name == report.recommended else None)
                     for option in report.options)
     return Question(permission_question.sentence_of(denied.denial), report.found,
-                    permission_question.SITUATION_LABEL, permission_question.situation_of(denied),
-                    permission_question.steps_of_denial(task, denied), options, report.recommended, denied.denial)
+                    permission_question.SITUATION_LABEL, permission_question.situation_in_comment(denied),
+                    permission_question.steps_in_comment(task, denied), permission_question.situation_on_page(denied),
+                    permission_question.steps_on_page(task, denied), options, report.recommended, denied, reason)
 
 
 def read_question(scratch: Path, task: str) -> Question:
@@ -281,7 +294,7 @@ def read_question(scratch: Path, task: str) -> Question:
 
 def question_comment(question: Question, page: Path, closing: str) -> str:
     """The whole question in plain text, ending with the closing sentence; the page adds pictures and no fact."""
-    denial = permission_question.denial_paragraph(question.denial) if question.denial is not None else ""
+    denial = permission_question.denial_paragraph(question.denied.denial) if question.denied is not None else ""
     shown = f"{question.shown_label}: {question.shown}\n\n" if question.shown is not None else ""
     why = f"Why: {' -> '.join(question.why)}\n\n" if question.why else ""
     options = "\n".join(option.line() for option in question.options)
@@ -365,8 +378,8 @@ def answer_of(task: str, recommended: str, main_tree: Path) -> Answer | None:
 
 
 def park(task: str, tries: int, comment: str, metadata: list[tuple[str, str]], main_tree: Path) -> None:
-    """Comments on the task and ends its lap parked, under the actor jidoka. The options and the recommendation of an
-    earlier question come off, so the task does not show that question again."""
+    """Comments on the task and ends its lap parked, under the actor jidoka. The metadata of an earlier question comes
+    off, so the task does not show that question again."""
     env = env_as_factory()
     run(["bd", "comment", task, comment], main_tree, env)
     run(["bd", "update", task, f"--add-label={HUMAN_LABEL}", *lap_record.resting_with_tries(lap_record.PARKED, tries),
@@ -374,28 +387,37 @@ def park(task: str, tries: int, comment: str, metadata: list[tuple[str, str]], m
 
 
 def question_keys_unset_by(metadata: dict[str, str]) -> list[str]:
-    """The question keys, options and recommendation, that a park setting `metadata` removes. A key the park sets
-    itself stays."""
-    return [key for key in (OPTIONS_KEY, RECOMMENDED_KEY) if key not in metadata]
+    """The question keys, sentence, options, recommendation and reason, that a park setting `metadata` removes. A key
+    the park sets itself stays."""
+    return [key for key in (SENTENCE_KEY, OPTIONS_KEY, RECOMMENDED_KEY, REASON_KEY) if key not in metadata]
 
 
-def options_json_of(named: list[tuple[str, int | None]]) -> str:
-    """The JSON that the `question.options` metadata of a bead holds for options given as a name and a confidence,
-    which an answer with no confidence leaves out."""
-    return json.dumps([{"name": name} if confidence is None else {"name": name, "confidence": confidence}
-                       for name, confidence in named])
+def options_json_of(named: list[tuple[str, int | None, str]]) -> str:
+    """The JSON that the `question.options` metadata of a bead holds for options given as a name, a confidence and
+    what happens next; an answer with no confidence leaves it out."""
+    return json.dumps([{"name": name, "next": next_step} if confidence is None
+                       else {"name": name, "confidence": confidence, "next": next_step}
+                       for name, confidence, next_step in named])
 
 
 def options_json(options: tuple[AnyOption, ...]) -> str:
     """The options of a question as the JSON that the `question.options` metadata of a bead holds."""
-    return options_json_of([(option.name, option.confidence) for option in options])
+    return options_json_of([(option.name, option.confidence, option.next_step) for option in options])
+
+
+def question_metadata(question: Question) -> dict[str, str]:
+    """The metadata a bead parked on the question holds: its sentence, its options, its recommendation and, on a
+    permission question, the worker's reason."""
+    metadata = {SENTENCE_KEY: question.question, OPTIONS_KEY: options_json(question.options),
+                RECOMMENDED_KEY: question.recommended}
+    return metadata if question.reason is None else {**metadata, REASON_KEY: question.reason}
 
 
 def write_page(task: str, question: Question, home: Path, main_tree: Path) -> Path:
     """Writes the question's page; raises QuestionError when the file cannot be written."""
     cards = tuple(option.card(option.name == question.recommended) for option in question.options)
-    page = question_page.QuestionPage(task, question.question, question.found, question.shown_label, question.shown,
-                                      question.why, cards)
+    page = question_page.QuestionPage(task, question.question, question.found, question.shown_label,
+                                      question.page_shown, question.page_why, cards)
     try:
         return question_page.write(page, home, main_tree)
     except OSError as error:
@@ -416,14 +438,14 @@ class AskingLap:
 def post_question(bead: str, question: Question, closing: str, extra: list[tuple[str, str]], resting: list[str],
                   home: Path, main_tree: Path) -> None:
     """Writes the question's page, comments the whole question on the bead with the closing sentence, and sets the
-    options and the recommendation in its metadata beside `extra`. The bead gets the human label and `resting`, the
-    arguments that put it at rest. Raises QuestionError when the page cannot be written."""
+    question's metadata beside `extra`. The bead gets the human label and `resting`, the arguments that put it at
+    rest. Raises QuestionError when the page cannot be written."""
     page = write_page(bead, question, home, main_tree)
     env = env_as_factory()
     run(["bd", "comment", bead, question_comment(question, page, closing)], main_tree, env)
-    run(["bd", "update", bead, f"--add-label={HUMAN_LABEL}", *resting,
-         *set_metadata((OPTIONS_KEY, options_json(question.options)), (RECOMMENDED_KEY, question.recommended), *extra)],
-        main_tree, env)
+    metadata = {**question_metadata(question), **dict(extra)}
+    run(["bd", "update", bead, f"--add-label={HUMAN_LABEL}", *resting, *set_metadata(*metadata.items()),
+         *unset_metadata(*question_keys_unset_by(metadata))], main_tree, env)
 
 
 def park_epic_on_question(epic: str, question: Question, metadata: dict[str, str], home: Path,
@@ -437,7 +459,7 @@ def park_on_question(lap: AskingLap, home: Path, main_tree: Path) -> None:
     """Writes the lap's question page, posts its question report on the task and parks the task; raises
     QuestionError for a bad report or a page that cannot be written."""
     question = read_question(lap.scratch, lap.task)
-    denial = question.denial or permission_question.Denial("", "")
+    denial = question.denied.denial if question.denied is not None else permission_question.Denial("", "")
     closing = (f"The worktree {lap.worktree} and the branch {lap.branch} keep the work. Take the {HUMAN_LABEL} label "
                "off to give the task a new lap.")
     post_question(lap.task, question, closing, [(CALL_KEY, denial.call), (PATTERN_KEY, denial.pattern)],

@@ -128,9 +128,30 @@ class SpecApprovalBeadTests(SpecApprovalCase):
         shown = self.shown(self.epic)
 
         self.assertIn("human", shown["labels"])
-        self.assertEqual([{"name": "Approve"}, {"name": "Ask back"}],
-                         json.loads(shown["metadata"]["question.options"]))
+        self.assertEqual(["Approve", "Ask back"],
+                         [option["name"] for option in json.loads(shown["metadata"]["question.options"])])
         self.assertNotIn("question.recommended", shown["metadata"])
+
+    def test_the_metadata_holds_the_question_and_what_happens_next_for_each_answer(self):
+        self.posted()
+
+        metadata = self.shown(self.epic)["metadata"]
+
+        self.assertEqual("Do these 2 acceptance specs say what Take card payments must do?",
+                         metadata["question.sentence"])
+        self.assertEqual([{"name": "Approve",
+                           "next": "The specs go on the epic's spec task, and the factory writes them as the epic's "
+                                   "tests."},
+                          {"name": "Ask back",
+                           "next": "You say what to change, and a new proposal comes back for you to approve."}],
+                         json.loads(metadata["question.options"]))
+        self.assertNotIn("question.reason", metadata)
+
+    def test_a_proposal_of_one_spec_asks_about_that_one_spec(self):
+        self.posted({"cases": CASES[:1], "interface": []})
+
+        self.assertEqual("Does this acceptance spec say what Take card payments must do?",
+                         self.shown(self.epic)["metadata"]["question.sentence"])
 
     def test_the_comment_holds_the_cases_the_code_and_the_interface_table_in_plain_text_and_links_the_page(self):
         printed = self.posted()

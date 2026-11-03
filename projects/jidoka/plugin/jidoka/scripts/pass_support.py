@@ -190,8 +190,8 @@ def epic_files(branch_head: str, settings: Settings, main_tree: Path) -> list[st
 
 def park_epic(epic: str, comment: str, metadata: dict[str, str], main_tree: Path) -> None:
     """Parks the epic on the human: the comment says why, the metadata is set, and the human label goes on last, so a
-    labeled epic always has its comment. The options and the recommendation of an earlier question come off, so the
-    epic does not show that question again."""
+    labeled epic always has its comment. The metadata of an earlier question that `metadata` does not set comes off,
+    so the epic does not show that question again."""
     env = env_as_factory()
     run(["bd", "comment", epic, comment], main_tree, env)
     run(["bd", "update", epic, *set_metadata(*metadata.items()),

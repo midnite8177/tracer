@@ -19,7 +19,6 @@ gives the worker a new set of tries. A cutoff is no try. A merge that validates 
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,7 +43,6 @@ STAGE = "validation-merge"
 SCRIPT = "scheduler"
 MERGE_BY_HAND = "Merge main by hand"
 RUN_AGAIN = "Run the merge worker again"
-OPTIONS = [{"name": MERGE_BY_HAND, "confidence": 60}, {"name": RUN_AGAIN, "confidence": 40}]
 
 
 class MergeError(PassError):
@@ -232,23 +230,36 @@ def waiting_on(epic: str, shown: dict, main_tree: Path) -> Waiting:
     return Waiting(branch, head, worktree)
 
 
-def question_text(epic: str, waiting: Waiting, tries: int, files: list[str], why: str) -> str:
+def sentence_of(branch: str) -> str:
+    """The question the merge worker's cap asks, in one sentence."""
+    return f"Should you merge {MAIN_BRANCH} into {branch} by hand, or should the merge worker try again?"
+
+
+def options_of(branch: str) -> tuple[park.Option, ...]:
+    """The two ways on from the merge worker's cap, each with what happens next."""
+    return (park.Option(MERGE_BY_HAND, 60, f"Merge {MAIN_BRANCH} into {branch} yourself, then take the human label off "
+                                           "the epic, and validation runs on the merged branch."),
+            park.Option(RUN_AGAIN, 40, "Taking the label off without a merge gives the merge worker "
+                                       f"{caps.MERGE_TRY_CAP} new tries."))
+
+
+def question_text(epic: str, waiting: Waiting, tries: int, files: list[str], why: str,
+                  options: tuple[park.Option, ...]) -> str:
     conflicts = f" It conflicts in {', '.join(files)}." if files else ""
     return "\n".join([
         f"{park.QUESTION_PREFIX}the merge worker failed {tries} of {caps.MERGE_TRY_CAP} tries to merge {MAIN_BRANCH} "
         f"into {waiting.branch}, so validation of {epic} ran no tests and the epic is parked.{conflicts}", "",
         f"The last try failed because {why}.", "",
-        *(f"- {each['name']} ({each['confidence']}%)" for each in OPTIONS), "",
-        f"Recommended: {MERGE_BY_HAND}. Merge {MAIN_BRANCH} into {waiting.branch} yourself, then take the human label "
-        "off the epic, and validation runs on the merged branch. Taking the label off without a merge gives the merge "
-        f"worker {caps.MERGE_TRY_CAP} new tries."])
+        *(f"- {option.name} ({option.confidence}%)" for option in options), "",
+        f"Recommended: {MERGE_BY_HAND}. {' '.join(option.next_step for option in options)}"])
 
 
 def park_at_the_cap(epic: str, waiting: Waiting, tries: int, why: str, main_tree: Path) -> None:
     files = conflicting_files(waiting.worktree, waiting.head)
-    park_epic(epic, question_text(epic, waiting, tries, files, why),
-              {TRIES_KEY: str(NONE_YET), park.OPTIONS_KEY: json.dumps(OPTIONS), park.RECOMMENDED_KEY: MERGE_BY_HAND},
-              main_tree)
+    options = options_of(waiting.branch)
+    park_epic(epic, question_text(epic, waiting, tries, files, why, options),
+              {TRIES_KEY: str(NONE_YET), park.SENTENCE_KEY: sentence_of(waiting.branch),
+               park.OPTIONS_KEY: park.options_json(options), park.RECOMMENDED_KEY: MERGE_BY_HAND}, main_tree)
     remove_worktree(waiting.worktree, main_tree)
 
 

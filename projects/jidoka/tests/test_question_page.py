@@ -187,6 +187,31 @@ class QuestionCommentTests(QuestionPageCase):
         self.assertEqual(2, self.page_of(task).read_text(encoding="utf-8").count('<article class="option'))
 
 
+class QuestionMetadataTests(QuestionPageCase):
+    def test_the_metadata_holds_the_question_sentence_and_what_happens_next_for_each_option(self):
+        task = self.asked_plain()
+
+        metadata = self.shown(task)["metadata"]
+
+        self.assertEqual(QUESTION, metadata["question.sentence"])
+        self.assertEqual([{"name": "round receipts too", "confidence": 60,
+                           "next": "The receipt prints 4.95 and the test pins it."},
+                          {"name": "print exact cents", "confidence": 35,
+                           "next": "The till screen shows the exact cents."}], json.loads(metadata["question.options"]))
+        self.assertEqual("round receipts too", metadata["question.recommended"])
+
+    def test_a_question_after_a_permission_question_leaves_no_reason_for_the_refused_call(self):
+        _, task = self.new_task()
+        self.ask(task, why=["Lint fixes the import order."])
+
+        done = self.ask_plain(task, why=WHY)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        metadata = self.shown(task)["metadata"]
+        self.assertEqual(QUESTION, metadata["question.sentence"])
+        self.assertNotIn("question.reason", metadata)
+
+
 class QuestionPageRefusalTests(QuestionPageCase):
     def test_an_option_without_a_next_is_refused_and_posts_nothing(self):
         _, task = self.new_task()
