@@ -27,19 +27,31 @@ public sealed class JidokaPages
 
     /// <summary>The kinds of page that sit beside this bead, in the order of <see cref="JidokaPageKind"/>.</summary>
     public IReadOnlyList<JidokaPageKind> KindsBeside(BeadAddress bead) =>
-        [.. Enum.GetValues<JidokaPageKind>().Where(kind => PathOf(kind, bead) is { } path && File.Exists(path))];
+        [.. Enum.GetValues<JidokaPageKind>().Where(kind => NameOf(kind, bead, Extension) is { } path && File.Exists(path))];
 
     /// <summary>The page of this kind beside this bead, or null when there is none or it cannot be read.</summary>
-    public JidokaPage? Read(JidokaPageKind kind, BeadAddress bead)
+    public JidokaPage? Read(JidokaPageKind kind, BeadAddress bead) =>
+        ReadTextOrNull(NameOf(kind, bead, Extension)) is { } html ? new JidokaPage(kind, bead, html) : null;
+
+    /// <summary>
+    /// The commit message that the gate script saved beside the gate page of this epic, as the file holds
+    /// it, or null when none is saved or the file cannot be read.
+    /// </summary>
+    public string? SavedGateMessage(BeadAddress epic) =>
+        ReadTextOrNull(NameOf(JidokaPageKind.Gate, epic, "-message.txt"));
+
+    // A file that is missing is an IOException too, so one catch covers a file that is not there and
+    // one that cannot be read.
+    private static string? ReadTextOrNull(string? path)
     {
-        if (PathOf(kind, bead) is not { } path)
+        if (path is null)
         {
             return null;
         }
 
         try
         {
-            return new JidokaPage(kind, bead, File.ReadAllText(path));
+            return File.ReadAllText(path);
         }
         catch (IOException)
         {
@@ -51,16 +63,14 @@ public sealed class JidokaPages
         }
     }
 
-    // A bead id is part of a file name, so an id that holds a separator or climbs out of the folder
-    // names no page.
-    private string? PathOf(JidokaPageKind kind, BeadAddress bead)
+    private string? NameOf(JidokaPageKind kind, BeadAddress bead, string ending)
     {
         if (!IsAFileName(bead.Id))
         {
             return null;
         }
 
-        return Path.Combine(home.PagesFolder, bead.Project.DirectoryName, $"{kind.Word()}-{bead.Id}{Extension}");
+        return Path.Combine(home.PagesFolder, bead.Project.DirectoryName, $"{kind.Word()}-{bead.Id}{ending}");
     }
 
     private static bool IsAFileName(string id) =>

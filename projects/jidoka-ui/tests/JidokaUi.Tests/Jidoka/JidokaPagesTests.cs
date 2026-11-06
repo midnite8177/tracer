@@ -44,6 +44,29 @@ public sealed class JidokaPagesTests : IDisposable
     }
 
     [Fact]
+    public void ReadsTheCommitMessageSavedBesideTheGatePageAsItIsWritten()
+    {
+        APageNamed("gate-b-7-message.txt", "Add the site\n\nIt serves the shop.");
+
+        Assert.Equal("Add the site\n\nIt serves the shop.", pages.SavedGateMessage(new BeadAddress(project, "b-7")));
+    }
+
+    [Fact]
+    public void ReadsNoCommitMessageWhenNoneIsSaved()
+    {
+        Assert.Null(pages.SavedGateMessage(new BeadAddress(project, "b-7")));
+    }
+
+    [Fact]
+    public void ReadsNoCommitMessageForAnIdThatIsNotAFileName()
+    {
+        APageNamed("gate-.-message.txt", "Out of reach");
+
+        Assert.Null(pages.SavedGateMessage(new BeadAddress(project, ".")));
+        Assert.Null(pages.SavedGateMessage(new BeadAddress(project, "a/b")));
+    }
+
+    [Fact]
     public void ListsTheKindsOfPageThatSitBesideTheBead()
     {
         APageNamed("question-b-7.html", "<p>Q</p>");

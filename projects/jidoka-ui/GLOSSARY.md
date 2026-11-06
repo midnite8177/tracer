@@ -880,7 +880,9 @@ _Avoid_: Settings panel, config editor
 The box on the detail page of an epic that waits at the acceptance gate. It
 holds the gate's decisions as buttons: Merge, which takes the commit message
 that lands the epic on main, and Drop, which asks once before it closes the
-epic without landing it. Each press runs jidoka's gate script through the
+epic without landing it. The commit message box starts with the message that
+`/jidoka:accept` saved beside the gate page, which the app reads from jidoka's
+home, line breaks kept; it starts empty when none is saved. Each press runs jidoka's gate script through the
 jidoka adapter, and the script's refusal comes back in its own words. The
 epic stops waiting once a decision lands, so the box leaves the detail page
 with the epic's gate state. The box also fills the decide-panel slot of the

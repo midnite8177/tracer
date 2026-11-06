@@ -96,6 +96,13 @@ public sealed class TwoProjects : IDisposable
         File.WriteAllText(Path.Combine(folder, $"{kind.Word()}-{id}.html"), html);
     }
 
+    /// <summary>Writes the commit message saved beside the gate page of an epic of the second project, as the gate script would.</summary>
+    public void SavesAGateMessage(string id, string message)
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(JidokaHome, "pages", Second.DirectoryName)).FullName;
+        File.WriteAllText(Path.Combine(folder, $"gate-{id}-message.txt"), message);
+    }
+
     /// <summary>The clock that a working mark and a re-read mark read, which a test moves by hand.</summary>
     public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
 

@@ -210,6 +210,40 @@ public sealed class ServedPageMarkupTests : BunitContext
     }
 
     [Fact]
+    public void StartsTheMergeBoxWithTheCommitMessageThatIsSavedBesideTheGatePage()
+    {
+        projects.SavesAGateMessage("b-7", "Add the site");
+
+        var page = TheGatePageOf(TheEpicAtTheGate);
+
+        Assert.Equal("Add the site", page.Find("#gate-message").GetAttribute("value"));
+        Assert.False(page.Find(".gate-merge").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void KeepsTheLineBreaksOfTheSavedCommitMessageInTheMergeBox()
+    {
+        projects.SavesAGateMessage("b-7", "Add the site\n\nIt serves the shop from one page.");
+        projects.Jidoka.Prints("gate.py merge b-7 --message=Add the site\n\nIt serves the shop from one page.", "4f2a9c1");
+        var page = TheGatePageOf(TheEpicAtTheGate);
+
+        page.Find(".gate-merge").Click();
+
+        page.WaitForAssertion(() => Assert.Contains(
+            "gate.py merge b-7 --message=Add the site\n\nIt serves the shop from one page.",
+            projects.Jidoka.Invocations));
+    }
+
+    [Fact]
+    public void StartsTheMergeBoxEmptyWhenNoCommitMessageIsSaved()
+    {
+        var page = TheGatePageOf(TheEpicAtTheGate);
+
+        Assert.Equal(string.Empty, page.Find("#gate-message").GetAttribute("value"));
+        Assert.True(page.Find(".gate-merge").HasAttribute("disabled"));
+    }
+
+    [Fact]
     public void DrawsNoSendBackButtonAnywhereOnTheGatePage()
     {
         var page = TheGatePageOf(TheEpicAtTheGate);
