@@ -60,13 +60,13 @@ class CodexRun:
     message: str
 
 
-def codex_command(route: dict, lane: Lane, last_message: Path) -> list[str]:
+def codex_command(route: routes.Route, lane: Lane, last_message: Path) -> list[str]:
     command = [routes.CODEX_PROGRAM, "exec", "--sandbox", "read-only", "--cd", str(lane.worktree), "--json",
                "--output-last-message", str(last_message)]
-    if route.get("model"):
-        command += ["--model", str(route["model"])]
-    if route.get("effort"):
-        command += ["-c", f"model_reasoning_effort={json.dumps(str(route['effort']))}"]
+    if route.model:
+        command += ["--model", route.model]
+    if route.effort:
+        command += ["-c", f"model_reasoning_effort={json.dumps(route.effort)}"]
     return [*command, "-"]
 
 

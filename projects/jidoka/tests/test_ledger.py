@@ -141,6 +141,20 @@ class TheLedgerPricesEveryWorkerRunTests(LedgerCase):
         [row] = self.listed(lap.epic)["rows"]
         self.assertEqual(("second", "codex", OPUS), (row["tier"], row["harness"], row["model"]))
 
+    def test_a_recorded_t3_route_without_a_model_names_no_harness_and_the_run_is_priced_from_its_tokens(self):
+        lap = self.open_one_lap()
+        self.leave_tokens("agent-1", tokens(OPUS, 0, 1_000_000, 0, 0))
+        original = (self.home / "settings.json").read_text(encoding="utf-8")
+        t3 = {"harness": "t3", "provider": "codex-home", "model": None, "version": None, "effort": "high"}
+        (self.home / "settings.json").write_text(json.dumps({"routes": {**ROUTES["routes"], "second": t3}}),
+                                                 encoding="utf-8")
+        self.addCleanup((self.home / "settings.json").write_text, original, encoding="utf-8")
+
+        self.report_at(lap, "failed", 5, "--agent", "agent-1", "--tier", "second", "--why", "red")
+
+        [row] = self.listed(lap.epic)["rows"]
+        self.assertEqual((None, OPUS, None), (row["harness"], row["model"], row["effort"]))
+
     def test_a_route_other_than_native_is_refused_and_writes_no_row(self):
         lap = self.open_one_lap()
 

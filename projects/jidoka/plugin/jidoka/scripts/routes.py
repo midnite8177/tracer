@@ -3,7 +3,9 @@ settings file that holds them.
 
 A route is a JSON object with `harness`, `model`, `version` and `effort`, kept under `routes` in
 <jidoka-home>/settings.json. A route on the harness `t3` also holds `provider`, the T3 provider instance that runs
-the child task. Native means the host's own harness, `claude`. A tier's native route is the one setup
+the child task, and may hold `driver`. `Route` parses and checks one, including the fields that a harness requires, so
+that every script meets the same error for a recorded route that is incomplete. Native means the host's own
+harness, `claude`. A tier's native route is the one setup
 proposes for it when no other harness is on the machine, so a stage that falls back keeps the model its tier asked
 for. A tier with no row there falls back to the host's own model and effort, which null values stand for.
 
@@ -18,12 +20,15 @@ import os
 import sys
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
 
 NATIVE_HARNESS = "claude"
 CODEX_HARNESS = "codex"
 T3_HARNESS = "t3"
+T3_REQUIRED_FIELDS = ("provider", "model", "effort")
+OPENCODE_DRIVER = "opencode"
 CODEX_PROGRAM = "codex"
 HARNESS_PROGRAMS = {CODEX_HARNESS: CODEX_PROGRAM}
 SETTINGS_FILE = "settings.json"
@@ -31,6 +36,61 @@ RERUN = "Run install.py from your jidoka checkout to record this machine's route
 SECOND_TIER = "second"
 
 T = TypeVar("T")
+
+
+class RouteError(Exception):
+    """Settings that cannot answer a question about a route, worded for the person who reads stderr."""
+
+
+def is_text(value: object) -> bool:
+    return isinstance(value, str) and value.strip() != ""
+
+
+def text_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+@dataclass(frozen=True)
+class Route:
+    """How one tier runs: the harness, and the model, version and effort on it, where a null stands for the harness's
+    own default. A t3 route also names the `provider` that runs the child task, and may name the `driver` kind of that
+    provider. The fields that a harness requires are checked where the route is parsed, so that no script holds half
+    a route."""
+    harness: str
+    model: str | None
+    version: str | None
+    effort: str | None
+    provider: str | None
+    driver: str | None
+
+    @staticmethod
+    def parse(tier: str, recorded: object) -> Route:
+        """The route that the JSON object holds for the tier, or a RouteError that says what it lacks."""
+        if not isinstance(recorded, dict) or not is_text(recorded.get("harness")):
+            raise RouteError(f"the route of the tier {tier!r} needs a harness")
+        for field in ("model", "version", "effort"):
+            if recorded.get(field) is not None and not is_text(recorded[field]):
+                raise RouteError(f"the {field} of the route of the tier {tier!r} must be text or null")
+        if recorded["harness"] == T3_HARNESS:
+            for field in T3_REQUIRED_FIELDS:
+                if not is_text(recorded.get(field)):
+                    raise RouteError(f"the t3 route of the tier {tier!r} needs a {field}")
+        return Route(recorded["harness"], text_or_none(recorded.get("model")), text_or_none(recorded.get("version")),
+                     text_or_none(recorded.get("effort")), text_or_none(recorded.get("provider")),
+                     text_or_none(recorded.get("driver")))
+
+    @property
+    def is_opencode(self) -> bool:
+        """Whether this is a t3 route whose provider is an OpenCode one, which `driver` names with the driver kind of
+        T3's catalog."""
+        return self.harness == T3_HARNESS and self.driver == OPENCODE_DRIVER
+
+    def as_dict(self) -> dict:
+        """The JSON object of the settings: the four fields every route holds, and `provider` and `driver` when the
+        route names them."""
+        named = {"provider": self.provider, "driver": self.driver}
+        return {"harness": self.harness, "model": self.model, "version": self.version, "effort": self.effort,
+                **{field: value for field, value in named.items() if value is not None}}
 
 
 def native(model: str | None, version: str | None, effort: str | None) -> dict:
@@ -84,15 +144,7 @@ def writing_refusal(tier: str, harness: object, stage_tiers: dict[str, str]) -> 
     return f"{reason}, so the {tier} tier cannot run on {harness}: {', '.join(writing)} write on it"
 
 
-OPENCODE_DRIVER = "opencode"
 OPENCODE_STAGE = "tidy"
-
-
-def is_opencode_route(route: object) -> bool:
-    """Whether the route is a t3 route whose provider is an OpenCode one, which `driver` names with the driver kind
-    of T3's catalog."""
-    return (isinstance(route, dict) and route.get("harness") == T3_HARNESS
-            and route.get("driver") == OPENCODE_DRIVER)
 
 
 def opencode_refusal(tier: str) -> str | None:
@@ -103,10 +155,6 @@ def opencode_refusal(tier: str) -> str | None:
         return None
     on_it = f"{', '.join(writing)} write on it" if writing else f"the {OPENCODE_STAGE} does not run on it"
     return f"a t3 OpenCode route runs the {OPENCODE_STAGE} alone, so the {tier} tier cannot run on it: {on_it}"
-
-
-class RouteError(Exception):
-    """Settings that cannot answer a question about a route, worded for the person who reads stderr."""
 
 
 def native_route_of(tier: str) -> dict:
@@ -147,8 +195,9 @@ def settings_in(home: Path) -> dict:
     return settings
 
 
-def recorded_route(tier: str, home: Path) -> dict:
-    """The route the machine records for the tier; a home without settings, or without that tier, is an error."""
+def recorded_route(tier: str, home: Path) -> Route:
+    """The route the machine records for the tier; a home without settings, without that tier, or with a route that
+    lacks a field its harness requires, is an error."""
     path = settings_path(home)
     if not path.is_file():
         raise RouteError(f"{path} does not exist. {RERUN}")
@@ -156,7 +205,7 @@ def recorded_route(tier: str, home: Path) -> dict:
     found = recorded.get(tier) if isinstance(recorded, dict) else None
     if not isinstance(found, dict) or not found.get("harness"):
         raise RouteError(f"{path} holds no route for the tier {tier!r}. {RERUN}")
-    return found
+    return Route.parse(tier, found)
 
 
 def machine_default(home: Path, key: str, noun: str, valid: Callable[[object], T | None]) -> T | None:

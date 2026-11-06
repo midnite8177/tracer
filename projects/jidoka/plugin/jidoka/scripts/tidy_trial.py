@@ -73,7 +73,7 @@ class TrialTidy:
 class HandedOut:
     """What the first call that handed a tidy out recorded: the second it did, and the route the tidy runs on."""
     started: int
-    route: dict
+    route: routes.Route | None
 
 
 def ref_of(epic: str) -> str:
@@ -116,11 +116,26 @@ def started_file(scratch: Path) -> Path:
     return scratch / STARTED_FILE
 
 
-def note_start(scratch: Path, route: dict) -> None:
-    """Records the second the tidy was first handed out and the route it runs on, unless an earlier call did."""
+def note_start(scratch: Path, route: routes.Route | None) -> None:
+    """Records the second the tidy was first handed out and the route it runs on, unless an earlier call did. A tidy
+    with no complete route records an empty object."""
     path = started_file(scratch)
     if not path.is_file():
-        path.write_text(json.dumps({"started": clock.now(), "route": route}), encoding="utf-8")
+        recorded = route.as_dict() if route is not None else {}
+        path.write_text(json.dumps({"started": clock.now(), "route": recorded}), encoding="utf-8")
+
+
+def route_ran_on(which: str, home: Path) -> routes.Route | None:
+    """The route of the trial tidy as the ledger reads it, or None when the settings give no complete route."""
+    return ledger.route_of(home, TIER, which == NATIVE)
+
+
+def route_recorded(recorded: dict) -> routes.Route | None:
+    """The route that `note_start` recorded, or None when it recorded none."""
+    try:
+        return routes.Route.parse(TIER, recorded)
+    except routes.RouteError:
+        return None
 
 
 def handed_out(scratch: Path, which: str, home: Path) -> HandedOut:
@@ -129,10 +144,10 @@ def handed_out(scratch: Path, which: str, home: Path) -> HandedOut:
     try:
         recorded = json.loads(started_file(scratch).read_text(encoding="utf-8"))
         if isinstance(recorded["started"], int) and isinstance(recorded["route"], dict):
-            return HandedOut(recorded["started"], recorded["route"])
+            return HandedOut(recorded["started"], route_recorded(recorded["route"]))
     except (OSError, ValueError, KeyError, TypeError):
         pass
-    return HandedOut(clock.now(), ledger.route_of(home, TIER, which == NATIVE))
+    return HandedOut(clock.now(), route_ran_on(which, home))
 
 
 def to_run(epic: str, shown: dict, branch: str, settings: Settings, home: Path,
@@ -144,15 +159,15 @@ def to_run(epic: str, shown: dict, branch: str, settings: Settings, home: Path,
     stage = tidy.LOCAL_STAGE if which == LOCAL else tidy.STAGE
     owed = tidy.to_run_as(stage, route_named(which), epic, shown, branch, settings, home, main_tree)
     if owed is not None:
-        note_start(owed.stage.scratch, ledger.route_of(home, TIER, which == NATIVE))
+        note_start(owed.stage.scratch, route_ran_on(which, home))
     return owed
 
 
 def tidy_ran(route: str, handed: HandedOut, base: str, settled: Committed, batches: tuple[TrialBatch, ...]
              ) -> TrialTidy:
     seconds = max(0, clock.now() - handed.started)
-    return TrialTidy(route, ledger.text_or_none(handed.route.get("harness")),
-                     ledger.text_or_none(handed.route.get("model")), ledger.text_or_none(handed.route.get("effort")),
+    ran = handed.route
+    return TrialTidy(route, ran.harness if ran else None, ran.model if ran else None, ran.effort if ran else None,
                      seconds, base, settled.head, tuple(settled.changed), batches)
 
 

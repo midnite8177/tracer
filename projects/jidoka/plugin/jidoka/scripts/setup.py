@@ -97,7 +97,7 @@ def t3_effort_of(model: dict) -> str:
     else the first it offers. A model that lists no efforts gets high, because T3 accepts any model of its catalog."""
     option = effort_option(model)
     values = option.get("values")
-    efforts = [each for each in values if rules.is_text(each)] if isinstance(values, list) else []
+    efforts = [each for each in values if routes.is_text(each)] if isinstance(values, list) else []
     if not efforts or T3_CODEX_EFFORT in efforts:
         return T3_CODEX_EFFORT
     default = option.get("default")
@@ -108,7 +108,7 @@ def t3_model_of(provider: dict) -> dict:
     """The catalog model a t3 route proposes on the provider: gpt-6.1-sol when the provider lists it, else the first
     model it lists. A provider that lists none gets gpt-6.1-sol, because T3 accepts any model of its catalog."""
     models = provider.get("models")
-    listed = [each for each in models if isinstance(each, dict) and rules.is_text(each.get("id"))
+    listed = [each for each in models if isinstance(each, dict) and routes.is_text(each.get("id"))
               ] if isinstance(models, list) else []
     for each in listed:
         if each["id"] == T3_CODEX_MODEL:
@@ -126,7 +126,7 @@ def t3_codex_route(catalog: object) -> dict | None:
         return None
     for provider in providers:
         if (isinstance(provider, dict) and provider.get("driverKind") == routes.CODEX_HARNESS
-                and provider.get("canRunChildTask") is True and rules.is_text(provider.get("providerInstanceId"))):
+                and provider.get("canRunChildTask") is True and routes.is_text(provider.get("providerInstanceId"))):
             model = t3_model_of(provider)
             return {"harness": routes.T3_HARNESS, "provider": provider["providerInstanceId"], "model": model["id"],
                     "version": None, "effort": t3_effort_of(model)}
@@ -161,18 +161,10 @@ def propose(home: Path, catalog: object) -> dict:
     }
 
 
-def check_route(tier: str, route: object) -> None:
-    if not isinstance(route, dict) or not rules.is_text(route.get("harness")):
-        raise SetupError(f"the route of the tier {tier!r} needs a harness")
-    for field in ("model", "version", "effort"):
-        if route.get(field) is not None and not rules.is_text(route[field]):
-            raise SetupError(f"the {field} of the route of the tier {tier!r} must be text or null")
-    if route.get("harness") == routes.T3_HARNESS:
-        for field in ("provider", "model", "effort"):
-            if not rules.is_text(route.get(field)):
-                raise SetupError(f"the t3 route of the tier {tier!r} needs a {field}")
-    refusal = (routes.opencode_refusal(tier) if routes.is_opencode_route(route)
-               else routes.writing_refusal(tier, route.get("harness"), {}))
+def check_route(tier: str, recorded: object) -> None:
+    route = routes.Route.parse(tier, recorded)
+    refusal = (routes.opencode_refusal(tier) if route.is_opencode
+               else routes.writing_refusal(tier, route.harness, {}))
     if refusal:
         raise SetupError(refusal)
 

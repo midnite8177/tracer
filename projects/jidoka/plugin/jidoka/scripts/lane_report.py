@@ -70,12 +70,11 @@ def prompt_of(lane: Lane, epic: dict, plugin: Path, no_writes: str, outside_work
         f"({', '.join(review.CONFIDENCES)}). Write [] when you find nothing."])
 
 
-def record(home: Path, main_tree: Path, epic: str, route: dict, harness: str, tokens: Tokens, seconds: int,
+def record(home: Path, main_tree: Path, epic: str, route: routes.Route, harness: str, tokens: Tokens, seconds: int,
            outcome: str) -> None:
     """Writes the one ledger row of a lane's run on the epic: stage `review`, the second tier, the harness, the
     route's model and effort, the tokens the worker used and the wall time."""
-    model, effort = ledger.text_or_none(route.get("model")), ledger.text_or_none(route.get("effort"))
-    ran = ledger.Ran(tokens, harness, model, effort)
+    ran = ledger.Ran(tokens, harness, route.model, route.effort)
     where = replace(ledger.Where.of_pass(REVIEW_STAGE), wall_seconds=seconds)
     ledger.record_ran_or_say(home, main_tree, epic, where, ledger.Worker(None, LANE_TIER, False), ran, outcome,
                              clock.now())

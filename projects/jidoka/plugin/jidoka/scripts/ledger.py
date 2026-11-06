@@ -196,21 +196,18 @@ def tokens_of(home: Path, agent: str | None) -> Used:
                        count_of(written.get("cache_creation_input_tokens"))))
 
 
-def route_of(home: Path, tier: str | None, on_native: bool) -> dict:
+def route_of(home: Path, tier: str | None, on_native: bool) -> routes.Route | None:
     """The route the worker ran on: the tier's native route when it fell back to it, else the tier's route from the
-    machine settings, or an empty one when the settings cannot give it. A run is priced whatever the settings hold."""
+    machine settings, or None when the settings cannot give a complete one. A run is priced whatever the settings
+    hold."""
     if not tier:
-        return {}
-    if on_native:
-        return routes.native_route_of(tier)
+        return None
     try:
+        if on_native:
+            return routes.Route.parse(tier, routes.native_route_of(tier))
         return routes.recorded_route(tier, home)
     except (routes.RouteError, OSError):
-        return {}
-
-
-def text_or_none(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
+        return None
 
 
 def write(home: Path, row: Row) -> None:
@@ -265,8 +262,9 @@ def ran_by(home: Path, worker: Worker) -> Ran:
     """The run of the worker. The model is the one its steps ran on, else the route's of its tier."""
     used = tokens_of(home, worker.agent)
     route = route_of(home, worker.tier, worker.on_native)
-    return Ran(used.tokens, text_or_none(route.get("harness")), used.model or text_or_none(route.get("model")),
-               text_or_none(route.get("effort")))
+    if route is None:
+        return Ran(used.tokens, None, used.model, None)
+    return Ran(used.tokens, route.harness, used.model or route.model, route.effort)
 
 
 def append(home: Path, main_tree: Path, epic: str, row: Row) -> float:

@@ -16,9 +16,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
-import install  # noqa: E402
-import jidoka_fixture as fixture  # noqa: E402
-import links  # noqa: E402
+import install
+import jidoka_fixture as fixture
+import links
 
 
 def older_python() -> str | None:
@@ -471,6 +471,19 @@ class RecordedSettingsTests(InstallerTestCase):
         self.assertEqual(confirmed, routes["second"])
         self.assertEqual({"harness": "claude", "model": "haiku", "version": "5.5", "effort": "medium"},
                          routes["light"])
+
+    def test_a_recorded_t3_route_without_a_model_is_refused_and_the_settings_stay_as_they_were(self):
+        self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
+        kept = self.settings()
+        kept["routes"]["second"] = {"harness": "t3", "provider": "codex", "model": None, "version": None,
+                                    "effort": "high"}
+        (self.home / "settings.json").write_text(json.dumps(kept), encoding="utf-8")
+
+        done = self.install(fixture.WITHOUT_CODEX, [self.config_b], "")
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn("the t3 route of the tier 'second' needs a model", done.stderr)
+        self.assertEqual(kept, self.settings())
 
     def test_the_settings_hold_the_checkout_the_installer_ran_from_as_the_source_repo(self):
         done = self.install(fixture.WITHOUT_CODEX, [self.config_a], "")
@@ -935,7 +948,7 @@ class DirtyPluginFolderTests(InstallerTestCase):
 
 
 class RefusingRename:
-    """A rename that raises PermissionError for its first refusals calls, then renames, and records each pause."""
+    """A rename that raises PermissionError for its first `refusals` calls, then renames, and records each pause."""
     def __init__(self, refusals: int):
         self.refusals = refusals
         self.calls = 0

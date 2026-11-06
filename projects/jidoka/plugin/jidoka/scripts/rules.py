@@ -98,12 +98,8 @@ def is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def is_text(value: object) -> bool:
-    return isinstance(value, str) and value.strip() != ""
-
-
 def is_map_of(value: object, valid: Callable[[object], bool]) -> bool:
-    return isinstance(value, dict) and all(is_text(name) and valid(item) for name, item in value.items())
+    return isinstance(value, dict) and all(routes.is_text(name) and valid(item) for name, item in value.items())
 
 
 def is_dollars(value: object) -> bool:
@@ -122,10 +118,10 @@ SETTINGS: dict[str, tuple[Callable[[object], bool], str]] = {
                     "an object of stage names to whole minutes above zero"),
     "passes": (is_positive_whole, "a whole number above zero"),
     "discovered_bugs_into_epic": (lambda value: isinstance(value, bool), "true or false"),
-    EXTRA_COMMANDS: (lambda value: isinstance(value, list) and all(map(is_text, value)),
+    EXTRA_COMMANDS: (lambda value: isinstance(value, list) and all(map(routes.is_text, value)),
                        "a list of commands"),
-    "tier_routes": (lambda value: is_map_of(value, is_text), "an object of tier names to route names"),
-    "stage_tiers": (lambda value: is_map_of(value, is_text), "an object of stage names to tier names"),
+    "tier_routes": (lambda value: is_map_of(value, routes.is_text), "an object of tier names to route names"),
+    "stage_tiers": (lambda value: is_map_of(value, routes.is_text), "an object of stage names to tier names"),
     "budget": (is_dollars, "a number of dollars above zero"),
     "reserves": (lambda value: is_map_of(value, is_share),
                  "an object of account names to a share above 0 and below 1"),

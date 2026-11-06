@@ -34,7 +34,7 @@ KEY_PREFIX = "route.native."
 
 def fallback(bead: str, stage: str, tier: str, mark: str, home: Path, main_tree: Path) -> dict:
     failed = routes.recorded_route(tier, home)
-    if failed["harness"] == routes.NATIVE_HARNESS:
+    if failed.harness == routes.NATIVE_HARNESS:
         return {"rerun": False, "why": f"the {tier} route already runs on {routes.NATIVE_HARNESS}, so there is "
                                        "no native route to fall back to"}
     shown = bd_show(bead, main_tree)
@@ -47,7 +47,7 @@ def fallback(bead: str, stage: str, tier: str, mark: str, home: Path, main_tree:
     native = routes.native_route_of(tier)
     env = env_as_factory()
     run(["bd", "comment", bead, f"{stage} reruns on {routes.NATIVE_HARNESS}: the {tier} route on "
-                               f"{failed['harness']} failed"], main_tree, env)
+                               f"{failed.harness} failed"], main_tree, env)
     run(["bd", "update", bead, *set_metadata((key, mark))], main_tree, env)
     return {"rerun": True, "route": native}
 

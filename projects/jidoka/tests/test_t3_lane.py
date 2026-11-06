@@ -130,6 +130,18 @@ class TheSpecLaneStartsAsAT3ChildTaskTests(T3LaneCase):
         self.assertEqual(1, done.returncode)
         self.assertIn("effort", done.stderr)
 
+    def test_a_t3_route_without_a_model_refuses_to_start(self):
+        epic, printed = self.finish_epic_at_the_review()
+        action = self.spec_action_of(printed)
+        self.second_tier_settings({**T3_ROUTE, "model": None})
+        try:
+            done = self.start_lane(epic, action)
+        finally:
+            self.second_tier_settings(T3_ROUTE)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("the t3 route of the tier 'second' needs a model", done.stderr)
+
 
 class TheReportIsWrittenFromTheChildsLastReplyTests(T3LaneCase):
     def test_the_report_is_written_from_the_reply_and_the_reviews_settle_accepts_it(self):

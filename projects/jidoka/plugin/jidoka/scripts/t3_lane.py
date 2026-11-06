@@ -42,19 +42,17 @@ import clock
 import lap_record
 import review
 import routes
-import rules
 import settings_reader
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, read_bead
 from lane_report import REVIEW_STAGE, Lane, LaneError, prompt_of, record, write_report
 from lap_outcomes import DONE, FAILED
 from prices import Tokens
-from t3_child import CHILD, ChildError, check_child_run, record_start, started_state
+from t3_child import CHILD, ChildError, ChildStart, check_child_run, record_start, started_state
 
 T3 = routes.T3_HARNESS
 STATE_NAME = "t3-spec-start.json"
 REPLY_NAME = "t3-spec-reply.txt"
 READ_ONLY = "You only read. Change no file, create no file, and run no command that writes."
-ROUTE_FIELDS = ("provider", "model", "effort")
 
 
 def state_path(report: Path) -> Path:
@@ -65,22 +63,19 @@ def reply_path(report: Path) -> Path:
     return report.with_name(REPLY_NAME)
 
 
-def t3_route(home: Path) -> dict:
+def t3_route(home: Path) -> routes.Route:
     route = routes.recorded_route(routes.SECOND_TIER, home)
-    if route.get("harness") != T3:
-        raise LaneError(f"the {routes.SECOND_TIER} tier's route is on {route.get('harness')}, not on {T3}")
-    missing = [field for field in ROUTE_FIELDS if not rules.is_text(route.get(field))]
-    if missing:
-        raise LaneError(f"the {routes.SECOND_TIER} tier's {T3} route lacks a {' and a '.join(missing)}")
+    if route.harness != T3:
+        raise LaneError(f"the {routes.SECOND_TIER} tier's route is on {route.harness}, not on {T3}")
     return route
 
 
-def delegate_task_of(prompt: str, route: dict) -> dict:
+def delegate_task_of(prompt: str, route: routes.Route) -> dict:
     """The arguments of T3's `delegate_task` call for the child: a review in the shared checkout, run in the
     background, with no runtime mode so that the child keeps its default."""
     return {"task": prompt, "role": "review", "isolation": "shared", "mode": "async",
-            "target": {"providerInstanceId": route["provider"], "model": route["model"],
-                       "options": {"effort": route["effort"]}}}
+            "target": {"providerInstanceId": route.provider, "model": route.model,
+                       "options": {"effort": route.effort}}}
 
 
 def start(lane: Lane, wall_seconds: int, home: Path, main_tree: Path) -> dict:
@@ -88,8 +83,8 @@ def start(lane: Lane, wall_seconds: int, home: Path, main_tree: Path) -> dict:
     plugin = Path(__file__).resolve().parent.parent
     prompt = prompt_of(lane, read_bead(lane.epic, main_tree), plugin, READ_ONLY, True)
     lane.report.unlink(missing_ok=True)
-    return record_start(state_path(lane.report), reply_path(lane.report), lane.epic, route, wall_seconds, main_tree,
-                        {}, delegate_task_of(prompt, route))
+    child = ChildStart(state_path(lane.report), reply_path(lane.report), lane.epic, route, wall_seconds)
+    return record_start(child, main_tree, {}, delegate_task_of(prompt, route))
 
 
 def finish(report: Path, home: Path, main_tree: Path) -> int:
@@ -99,6 +94,7 @@ def finish(report: Path, home: Path, main_tree: Path) -> int:
         state = started_state(state_path(report), {}, "lane")
     except ChildError as error:
         raise LaneError(str(error)) from error
+    route = routes.Route.parse(routes.SECOND_TIER, state["route"])
     seconds = max(0, clock.now() - state["started"])
     outcome = FAILED
     report.unlink(missing_ok=True)
@@ -110,7 +106,7 @@ def finish(report: Path, home: Path, main_tree: Path) -> int:
     except (CommandError, ChildError) as error:
         raise LaneError(str(error)) from error
     finally:
-        record(home, main_tree, state["epic"], state["route"], T3, Tokens(0, 0, 0, 0), seconds, outcome)
+        record(home, main_tree, state["epic"], route, T3, Tokens(0, 0, 0, 0), seconds, outcome)
         state_path(report).unlink(missing_ok=True)
 
 

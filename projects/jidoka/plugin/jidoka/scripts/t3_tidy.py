@@ -51,13 +51,12 @@ import clock
 import ledger
 import lap_record
 import routes
-import rules
 import settings_reader
 import tidy
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, run
 from lap_outcomes import CUT_OFF, DONE, FAILED
 from prices import Tokens
-from t3_child import CHILD, ChildError, WallClockExceeded, check_child_run, record_start, started_state
+from t3_child import CHILD, ChildError, ChildStart, WallClockExceeded, check_child_run, record_start, started_state
 
 T3 = routes.T3_HARNESS
 TIER = "local"
@@ -65,7 +64,6 @@ RUNTIME_MODE = "auto-accept-edits"
 STATE_NAME = "t3-tidy-start.json"
 REPLY_NAME = "t3-tidy-reply.txt"
 RESULT_NAME = "t3-tidy-result.json"
-ROUTE_FIELDS = ("provider", "model", "effort")
 OWN_START_FIELDS = {"worktree": str, "head": str, "files": list}
 NO_COMMENTS_SKILL = Path("skills") / "no-comments" / "SKILL.md"
 UNSLOP_SKILL = Path("skills") / "unslop" / "SKILL.md"
@@ -100,7 +98,7 @@ class TidyBatch:
 
     @staticmethod
     def of_action(action: object) -> TidyBatch:
-        if not (isinstance(action, dict) and all(rules.is_text(action.get(key)) for key in (
+        if not (isinstance(action, dict) and all(routes.is_text(action.get(key)) for key in (
                 "epic", "worktree", "scratch", "base", "head")) and isinstance(action.get("batch"), int)
                 and isinstance(action.get("files"), list) and action["files"]
                 and all(isinstance(each, str) for each in action["files"])):
@@ -121,13 +119,10 @@ def batch_outcome(scratch: Path) -> str | None:
     return outcome if isinstance(outcome, str) else None
 
 
-def opencode_route(home: Path) -> dict:
+def opencode_route(home: Path) -> routes.Route:
     route = routes.recorded_route(TIER, home)
-    if not routes.is_opencode_route(route):
+    if not route.is_opencode:
         raise TidyChildError(f"the {TIER} tier's route is not a {T3} {routes.OPENCODE_DRIVER} route")
-    missing = [field for field in ROUTE_FIELDS if not rules.is_text(route.get(field))]
-    if missing:
-        raise TidyChildError(f"the {TIER} tier's {T3} route lacks a {' and a '.join(missing)}")
     return route
 
 
@@ -167,7 +162,7 @@ def prompt_of(batch: TidyBatch, docs: list[str], diff: str, plugin: Path) -> str
         "nothing after it."])
 
 
-def delegate_task_of(prompt: str, route: dict, wall_seconds: int) -> dict:
+def delegate_task_of(prompt: str, route: routes.Route, wall_seconds: int) -> dict:
     """The arguments of T3's `delegate_task` call for the child: an implementation task in the shared checkout, waited
     on for the stage's wall clock, on the OpenCode provider. T3 takes only `variant` as an OpenCode option, so the
     route's effort is the variant and no agent is named. The auto-accept-edits runtime mode lets the child's edits
@@ -176,8 +171,8 @@ def delegate_task_of(prompt: str, route: dict, wall_seconds: int) -> dict:
     T3 child, so ADR 0005 does not reach it by that route."""
     return {"task": prompt, "role": "implementation", "isolation": "shared", "mode": "wait",
             "timeoutMs": wall_seconds * 1000, "runtimeMode": RUNTIME_MODE,
-            "target": {"providerInstanceId": route["provider"], "driverKind": routes.OPENCODE_DRIVER,
-                       "model": route["model"], "options": {"variant": route["effort"]}}}
+            "target": {"providerInstanceId": route.provider, "driverKind": routes.OPENCODE_DRIVER,
+                       "model": route.model, "options": {"variant": route.effort}}}
 
 
 def start(batch: TidyBatch, docs: list[str], wall_seconds: int, home: Path, main_tree: Path) -> dict:
@@ -187,8 +182,8 @@ def start(batch: TidyBatch, docs: list[str], wall_seconds: int, home: Path, main
     prompt = prompt_of(batch, docs, diff, plugin)
     result_path(batch.scratch).unlink(missing_ok=True)
     own_fields = {"batch": batch.number, "worktree": str(batch.worktree), "head": batch.head, "files": batch.files}
-    return record_start(state_path(batch.scratch), reply_path(batch.scratch), batch.epic, route, wall_seconds,
-                        main_tree, own_fields, delegate_task_of(prompt, route, wall_seconds))
+    child = ChildStart(state_path(batch.scratch), reply_path(batch.scratch), batch.epic, route, wall_seconds)
+    return record_start(child, main_tree, own_fields, delegate_task_of(prompt, route, wall_seconds))
 
 
 def ending_of(reply: str) -> dict:
@@ -216,21 +211,20 @@ def restore_files(state: dict) -> None:
         print(f"t3_tidy: the batch's files were not put back: {error}", file=sys.stderr)
 
 
-def record(home: Path, main_tree: Path, state: dict, seconds: int, outcome: str) -> None:
-    route = state["route"]
-    ran = ledger.Ran(Tokens(0, 0, 0, 0), T3, ledger.text_or_none(route.get("model")),
-                     ledger.text_or_none(route.get("effort")))
+def record(home: Path, main_tree: Path, state: dict, route: routes.Route, seconds: int, outcome: str) -> None:
+    ran = ledger.Ran(Tokens(0, 0, 0, 0), T3, route.model, route.effort)
     where = replace(ledger.Where.of_pass(tidy.STAGE.name), wall_seconds=seconds)
     ledger.record_ran_or_say(home, main_tree, state["epic"], where, ledger.Worker(None, TIER, False), ran, outcome,
                              clock.now())
 
 
-def settle_up(scratch: Path, state: dict, home: Path, main_tree: Path, seconds: int, outcome: str) -> None:
+def settle_up(scratch: Path, state: dict, route: routes.Route, home: Path, main_tree: Path, seconds: int,
+              outcome: str) -> None:
     """What every run leaves, whatever its outcome: a failed run's files put back, the one ledger row, the result file
     and no start record. A failure of the restore never keeps the row from being written."""
     if outcome != DONE:
         restore_files(state)
-    record(home, main_tree, state, seconds, outcome)
+    record(home, main_tree, state, route, seconds, outcome)
     result_path(scratch).write_text(json.dumps({"outcome": outcome}), encoding="utf-8")
     state_path(scratch).unlink(missing_ok=True)
 
@@ -241,6 +235,7 @@ def finish(scratch: Path, home: Path, main_tree: Path, asked_for_approval: bool)
         state = started_state(state_path(scratch), OWN_START_FIELDS, "batch")
     except ChildError as error:
         raise TidyChildError(str(error)) from error
+    route = routes.Route.parse(TIER, state["route"])
     seconds = max(0, clock.now() - state["started"])
     outcome = FAILED
     try:
@@ -257,7 +252,7 @@ def finish(scratch: Path, home: Path, main_tree: Path, asked_for_approval: bool)
     except (CommandError, ChildError) as error:
         raise TidyChildError(str(error)) from error
     finally:
-        settle_up(scratch, state, home, main_tree, seconds, outcome)
+        settle_up(scratch, state, route, home, main_tree, seconds, outcome)
 
 
 def batch_of_file(path: Path) -> TidyBatch:

@@ -49,13 +49,13 @@ import tarfile
 import tempfile
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
 PLUGIN_FOLDER = Path(__file__).resolve().parent / "plugin"
 sys.path.append(str(PLUGIN_FOLDER / "jidoka" / "scripts"))
-# A bytecode file written into the plugin folder would make the installer refuse that folder as uncommitted.
 DONT_WRITE_BYTECODE_BEFORE_IMPORTS = sys.dont_write_bytecode
+# A bytecode file written into the plugin folder would make the installer refuse that folder as uncommitted.
 sys.dont_write_bytecode = True
 import commands  # noqa: E402
 import links  # noqa: E402
@@ -86,17 +86,8 @@ class InstallerError(Exception):
 
 
 @dataclass(frozen=True)
-class Route:
-    """How one tier runs. A null model, version and effort mean the harness's own default."""
-    harness: str
-    model: str | None
-    version: str | None
-    effort: str | None
-
-
-@dataclass(frozen=True)
 class Terminal:
-    """The person at the keyboard: `ask` shows what they type, `ask_secret` hides it."""
+    """The person at the keyboard. `ask` shows what they type, `ask_secret` hides it."""
     ask: Callable[[str], str]
     ask_secret: Callable[[str], str]
 
@@ -115,7 +106,7 @@ class OwnedSettings:
     keep."""
     python: str
     config_dirs: list[Path]
-    routes: dict[str, Route]
+    routes: dict[str, machine_routes.Route]
     source_repo: Path
     ui: dict | None
 
@@ -196,8 +187,20 @@ def locate_tools(which: Callable[[str], str | None]) -> Tools:
     return Tools(git, claude, which("codex"), which("dotnet"))
 
 
-def default_routes(codex_present: bool) -> dict[str, Route]:
-    return {tier: Route(**route) for tier, route in machine_routes.default_routes(codex_present).items()}
+def default_routes(codex_present: bool) -> dict[str, machine_routes.Route]:
+    return {tier: machine_routes.Route.parse(tier, route)
+            for tier, route in machine_routes.default_routes(codex_present).items()}
+
+
+def refuse_incomplete_routes(previous: dict) -> None:
+    """Refuses the routes that an earlier run or setup recorded, which this run keeps, when one lacks a field that its
+    harness requires."""
+    earlier = previous.get("routes")
+    try:
+        for tier, route in (earlier.items() if isinstance(earlier, dict) else []):
+            machine_routes.Route.parse(tier, route)
+    except machine_routes.RouteError as err:
+        raise InstallerError(f"the recorded routes cannot be kept: {err}") from err
 
 
 def git_run(git: str, folder: Path, args: list[str]) -> subprocess.CompletedProcess:
@@ -264,7 +267,7 @@ def record(home: Path, owned: OwnedSettings, previous: dict) -> None:
     settings = {
         "python": owned.python,
         "config_dirs": [str(path) for path in owned.config_dirs],
-        "routes": {**{tier: asdict(route) for tier, route in owned.routes.items()},
+        "routes": {**{tier: route.as_dict() for tier, route in owned.routes.items()},
                    **(earlier_routes if isinstance(earlier_routes, dict) else {})},
         "source_repo": str(owned.source_repo),
         **({"ui": owned.ui} if owned.ui is not None else {}),
@@ -548,6 +551,7 @@ def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[in
     version = read_version(PLUGIN_FOLDER)
     source_repo = main_worktree(tools.git, PLUGIN_FOLDER.parent)
     previous = load_settings(jidoka_home)
+    refuse_incomplete_routes(previous)
     snapshot = ensure_snapshot(tools.git, PLUGIN_FOLDER, jidoka_home, version)
     ui = publish_ui(tools.git, tools.dotnet, checkout_root(tools.git, PLUGIN_FOLDER), jidoka_home, previous)
     unnamed = unnamed_config_dirs(previous, config_dirs)
