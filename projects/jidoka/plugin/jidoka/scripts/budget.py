@@ -16,7 +16,7 @@ from pathlib import Path
 
 import park
 import prices
-import routes
+import machine_settings
 import rules
 from commands import metadata_of
 from epics import state_of
@@ -51,7 +51,7 @@ def dollars_in(value: object) -> float | None:
 
 def machine_budget(home: Path) -> float | None:
     """The default budget in the machine settings; settings that cannot be read give none, and a line on stderr."""
-    return routes.machine_default(home, BUDGET_KEY, "budget", dollars_in)
+    return machine_settings.machine_default(home, BUDGET_KEY, "budget", dollars_in)
 
 
 def budget_of(shown: dict, home: Path) -> float | None:

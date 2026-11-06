@@ -28,6 +28,29 @@ public sealed class HeartbeatsTests : IDisposable
         Assert.Equal(stale, TheHeartbeats().BeatOf("a", Now)?.IsStale);
     }
 
+    [Fact]
+    public void CallsAHeartbeatThatRecordsAStopStaleHoweverYoungItIs()
+    {
+        Write("a", WithStopped(Now.AddSeconds(-42), "true"));
+
+        var beat = TheHeartbeats().BeatOf("a", Now);
+
+        Assert.Equal(true, beat?.IsStale);
+        Assert.Equal(TimeSpan.FromSeconds(42), beat?.Age);
+    }
+
+    [Theory]
+    [InlineData("false")]
+    [InlineData("null")]
+    [InlineData("\"yes\"")]
+    [InlineData("1")]
+    public void ReadsAStoppedFieldThatIsNotTrueAsNoStop(string stopped)
+    {
+        Write("a", WithStopped(Now.AddSeconds(-42), stopped));
+
+        Assert.Equal(false, TheHeartbeats().BeatOf("a", Now)?.IsStale);
+    }
+
     [Theory]
     [InlineData("not json")]
     [InlineData("[]")]
@@ -59,6 +82,9 @@ public sealed class HeartbeatsTests : IDisposable
 
     private static string Beat(DateTimeOffset time, int freshSeconds) =>
         $$"""{"epic": "a", "time": {{time.ToUnixTimeSeconds()}}, "session": "s1", "fresh_seconds": {{freshSeconds}}}""";
+
+    private static string WithStopped(DateTimeOffset time, string stopped) =>
+        $$"""{"epic": "a", "time": {{time.ToUnixTimeSeconds()}}, "session": null, "fresh_seconds": 90, "stopped": {{stopped}}}""";
 
     private Heartbeats TheHeartbeats() => new(new JidokaHome(home.Path));
 

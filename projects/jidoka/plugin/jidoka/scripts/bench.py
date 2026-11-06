@@ -195,22 +195,14 @@ def release(bead: str, main_tree: Path) -> None:
 
 
 def route(tier: str, home: Path) -> dict:
-    path = home / "settings.json"
-    rerun = "Run install.py from your jidoka checkout to record this machine's routes"
-    if not path.is_file():
-        raise BenchError(f"{path} does not exist. {rerun}")
     try:
-        settings = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError as error:
-        raise BenchError(f"{path} is not valid JSON: {error}") from error
-    recorded = settings.get("routes") if isinstance(settings, dict) else None
-    found = recorded.get(tier) if isinstance(recorded, dict) else None
-    if not isinstance(found, dict) or not found.get("harness"):
-        raise BenchError(f"{path} holds no route for the tier {tier!r}. {rerun}")
-    program = routes.missing_program(found, shutil.which)
+        recorded = routes.recorded_route(tier, home)
+    except routes.RouteError as error:
+        raise BenchError(str(error)) from error
+    program = routes.missing_program(recorded.harness, shutil.which)
     if program is None:
-        return found
-    return {**found, "missing": f"{program} is not on the PATH, so the {tier} route cannot run here"}
+        return recorded.as_dict()
+    return {**recorded.as_dict(), "missing": f"{program} is not on the PATH, so the {tier} route cannot run here"}
 
 
 def main(argv: list[str]) -> int:

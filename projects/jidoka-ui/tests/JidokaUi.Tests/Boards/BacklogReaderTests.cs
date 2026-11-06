@@ -120,7 +120,24 @@ public sealed class BacklogReaderTests
     }
 
     [Fact]
-    public async Task ReportsTheProblemWhenBdCannotListTheBeads()
+    public async Task ReportsAGiveUpWhenBdDoesNotListTheBeadsInTime()
+    {
+        var bd = new FakeBd().Holds(ListCommand);
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var reader = new BacklogReader(new BdAdapter(bd, clock));
+
+        var reading = reader.ReadAsync(Project);
+        clock.Advance(BdAdapter.WaitLimit);
+        var outcome = await reading;
+
+        var abandoned = Assert.IsType<BacklogOutcome.Abandoned>(outcome);
+        Assert.Contains("The app stopped it", abandoned.Reason, StringComparison.Ordinal);
+        Assert.False(outcome.Answered);
+        Assert.True(outcome.GaveUp);
+    }
+
+    [Fact]
+    public async Task ReportsAFailureAndNoGiveUpWhenBdFailsToListTheBeads()
     {
         var bd = new FakeBd()
             .Fails(ListCommand, "unknown flag: --all")
@@ -128,8 +145,9 @@ public sealed class BacklogReaderTests
 
         var outcome = await ReaderOver(bd).ReadAsync(Project);
 
-        Assert.False(outcome.Answered);
-        Assert.Contains("no beads database found", outcome.Message);
+        var failed = Assert.IsType<BacklogOutcome.Failed>(outcome);
+        Assert.Contains("no beads database found", failed.Reason);
+        Assert.False(outcome.GaveUp);
     }
 
     [Fact]

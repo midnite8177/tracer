@@ -414,6 +414,30 @@ class BenchRouteTests(BenchCase):
         self.assertIn("settings.json does not exist", done.stderr)
         self.assertIn("install.py", done.stderr)
 
+    def test_route_refuses_a_t3_route_that_lacks_a_model(self):
+        home = self.root / "home-t3-without-model"
+        home.mkdir(exist_ok=True)
+        t3 = {"harness": "t3", "provider": "codex", "effort": "high"}
+        (home / "settings.json").write_text(json.dumps({"routes": {"deep": t3}}), encoding="utf-8")
+
+        done = self.bench(self.caller_env(), "route", "deep", "--jidoka-home", str(home))
+
+        self.assertEqual(1, done.returncode)
+        self.assertEqual("", done.stdout)
+        self.assertIn("needs a model", done.stderr)
+
+    def test_route_prints_a_t3_route_with_its_provider_and_driver(self):
+        home = self.root / "home-t3-complete"
+        home.mkdir(exist_ok=True)
+        t3 = {"harness": "t3", "model": "gpt-5", "version": None, "effort": "high", "provider": "codex",
+              "driver": "opencode"}
+        (home / "settings.json").write_text(json.dumps({"routes": {"local": t3}}), encoding="utf-8")
+
+        done = self.bench(self.caller_env(), "route", "local", "--jidoka-home", str(home))
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(t3, json.loads(done.stdout))
+
     def route_on_path(self, tier: str, home: Path, path: Path) -> subprocess.CompletedProcess:
         env = {**self.caller_env(), "PATH": str(path)}
         return fixture.run_launcher_on_path(LAUNCHER, [str(BENCH), "route", tier, "--jidoka-home", str(home)], None,

@@ -154,6 +154,25 @@ public sealed class FactoryWatchTests : IDisposable
     }
 
     [Fact]
+    public async Task WarnsOnceWhenTheManagerOfARunningEpicStopsWhileItsLastBeatIsYoung()
+    {
+        Lists(atHome, RunningEpic());
+        var lastBeat = clock.GetUtcNow();
+        BeatsNow("a", 90);
+        await watch.CheckAsync();
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Stops("a", lastBeat, 90);
+        await watch.CheckAsync();
+        clock.Advance(TimeSpan.FromSeconds(30));
+        await watch.CheckAsync();
+
+        var warning = Assert.Single(raised);
+        Assert.Equal("Heartbeat stale: The parser", warning.Title);
+        Assert.Equal("The last beat was 30 seconds ago. The host that runs this epic may have stopped.", warning.Body);
+    }
+
+    [Fact]
     public async Task WarnsWhenTheHeartbeatIsOlderThanTheLimitItsFileNamesWhateverThatLimitIs()
     {
         Lists(atHome, RunningEpic());
@@ -274,6 +293,13 @@ public sealed class FactoryWatchTests : IDisposable
             {"epic": "{{epic}}", "time": {{clock.GetUtcNow().ToUnixTimeSeconds()}}, "session": null, "fresh_seconds": {{freshSeconds}}}
             """);
     }
+
+    private void Stops(string epic, DateTimeOffset lastBeat, int freshSeconds) =>
+        File.WriteAllText(
+            Path.Combine(directory.Path, "jidoka-home", "heartbeat", $"{epic}.json"),
+            $$"""
+            {"epic": "{{epic}}", "time": {{lastBeat.ToUnixTimeSeconds()}}, "session": null, "fresh_seconds": {{freshSeconds}}, "stopped": true}
+            """);
 
     private static string Entry(string fingerprint, string title, string text) =>
         $$"""{"fingerprint": "{{fingerprint}}", "title": "{{title}}", "text": "{{text}}"}""";

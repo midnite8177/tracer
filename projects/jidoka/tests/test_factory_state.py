@@ -234,9 +234,45 @@ class ManagedEpicTests(FactoryStateCase):
         self.assertIn(f"Run {RESTART}", shown["next_step"]["text"])
 
     def stop_in_session(self, session: str, epic: str) -> subprocess.CompletedProcess:
-        return fixture.run_launcher(test_status.LAUNCHER, [str(test_status.HEARTBEAT), "stop", epic], None,
+        return self.stop_in_session_from(session, epic, self.repo)
+
+    def stop_in_session_from(self, session: str, epic: str, folder: Path) -> subprocess.CompletedProcess:
+        return fixture.run_launcher(test_status.LAUNCHER, [str(FACTORY_STATE), "--json", "--stopping", epic], None,
                                     {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
-                                     "JIDOKA_SESSION_ID": session}, self.repo, test_status.RUN_TIMEOUT_SECONDS)
+                                     "JIDOKA_SESSION_ID": session}, folder, test_status.RUN_TIMEOUT_SECONDS)
+
+    def held_beat(self, epic: str) -> dict:
+        return json.loads(self.beat_file(epic).read_text(encoding="utf-8"))
+
+    def test_the_closing_line_of_a_manager_that_stops_already_reads_stopped(self):
+        stopped = self.stop_in_session(test_status.MANAGER_SESSION, self.epic)
+
+        self.assertEqual(0, stopped.returncode, stopped.stderr)
+        shown = json.loads(stopped.stdout)["epics"][0]
+        self.assertEqual("stopped", shown["state"])
+        self.assertEqual(RESTART, shown["next_step"]["command"])
+
+    def test_a_stop_is_recorded_though_the_states_cannot_be_read(self):
+        outside = self.root / "elsewhere"
+        outside.mkdir()
+
+        stopped = self.stop_in_session_from(test_status.MANAGER_SESSION, self.epic, outside)
+
+        self.assertEqual(1, stopped.returncode)
+        self.assertEqual("stopped", self.state_of(self.epic)["state"])
+
+    def test_a_stopped_field_that_is_not_true_records_no_stop(self):
+        held = self.held_beat(self.epic)
+        self.beat_file(self.epic).write_text(json.dumps({**held, "stopped": "yes"}), encoding="utf-8")
+
+        self.assertEqual("running", self.state_of(self.epic)["state"])
+
+    def test_the_call_that_names_no_stop_changes_no_heartbeat(self):
+        before = self.beat_file(self.epic).read_text(encoding="utf-8")
+
+        self.states()
+
+        self.assertEqual(before, self.beat_file(self.epic).read_text(encoding="utf-8"))
 
     def test_a_manager_that_stops_leaves_the_epic_stopped_while_its_host_keeps_beating(self):
         stopped = self.stop_in_session(test_status.MANAGER_SESSION, self.epic)

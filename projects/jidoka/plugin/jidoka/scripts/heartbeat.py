@@ -3,7 +3,8 @@
 
 The scheduler writes <jidoka-home>/heartbeat/<epic>.json on each call of a manager, a JSON object with `epic`,
 `time`, the second of the beat since the epoch, `session`, the id of the session the manager runs in (null
-when the call did not know it), and `fresh_seconds`, how old the beat may be and still count as fresh. The call
+when the call did not know it), `fresh_seconds`, how old the beat may be and still count as fresh, and `stopped`,
+true when the epic's manager stopped. The call
 that records a session claims the epic. `heartbeat.py beat --session <id>` is what the lap
 mod runs once a minute from the host's folder, naming its own session. It renews the heartbeat of each epic the
 factory runs (an open epic with the `factory` label that is neither parked nor at the gate) whose heartbeat is
@@ -12,14 +13,14 @@ advisor or a stopped factory, renews nothing, so a heartbeat whose manager is go
 handed off and has no manager has no heartbeat, so a manager that starts on it a minute later is not taken for a
 second manager. The age of the file is how long the host has gone
 without beating, so a factory stopped under an epic shows as a heartbeat that stops getting younger. A heartbeat
-is fresh while it is no older than FRESH_SECONDS, a beat and a half, and a manager that starts on an epic
-whose heartbeat is fresh is a second manager. A beat never brings a stale heartbeat back to fresh; a stop
-leaves it stale when it ends the laps, and the next call of a manager claims the epic again.
+is fresh while it records no stop and is no older than FRESH_SECONDS, a beat and a half, and a manager that starts
+on an epic whose heartbeat is fresh is a second manager. A beat never brings a stale heartbeat back to fresh; only
+the next call of a manager claims the epic again, which also clears a stop.
 
-A manager that stops for any other reason, such as a refused report or a worker that failed, runs
-`heartbeat.py stop <epic>` first, so that the heartbeat records the stop and the factory state reads the epic as
-stopped while the host stays open. It reads the session from $JIDOKA_SESSION_ID and marks only a heartbeat that
-records that session, so a refused second manager stops nobody's heartbeat and an epic with none gets none.
+A stopped heartbeat keeps `time`, the second of the last beat, and names no session, so that a host still open and a
+waker renew nothing. `scheduler.py stop` writes it for any epic, from any terminal. `factory_state.py --stopping
+<epic>`, the closing line of every other stop of a manager, writes it only when the heartbeat records the session in
+$JIDOKA_SESSION_ID, so a refused second manager stops nobody's heartbeat and an epic with none gets none.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
@@ -34,10 +35,12 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import clock
 import epics
+import home_files
 import settings_reader
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show
 from epic_reader import EpicReadError
@@ -51,40 +54,68 @@ def heartbeat_path(home: Path, epic: str) -> Path:
     return home / HEARTBEAT_FOLDER / f"{epic}.json"
 
 
+@dataclass(frozen=True)
+class Heartbeat:
+    """What the heartbeat file of an epic holds: `time`, the second of the last beat, `session`, the id of the session
+    that claimed the epic or None, and whether the epic's manager `stopped`."""
+    time: int
+    session: str | None
+    stopped: bool
+
+    def age_seconds(self, now: int) -> int:
+        return max(0, now - self.time)
+
+    def is_fresh(self, now: int) -> bool:
+        """True while the heartbeat records no stop and is no older than FRESH_SECONDS."""
+        return not self.stopped and self.age_seconds(now) <= FRESH_SECONDS
+
+
+def write_heartbeat(home: Path, epic: str, heartbeat: Heartbeat) -> None:
+    """Writes the heartbeat whole, so that a reader never finds half of it, even when several writers meet."""
+    held = {"epic": epic, "time": heartbeat.time, "session": heartbeat.session, "fresh_seconds": FRESH_SECONDS,
+            "stopped": heartbeat.stopped}
+    home_files.write_in_home(home / HEARTBEAT_FOLDER, f"{epic}.json", json.dumps(held))
+
+
 def write_beat(home: Path, epic: str, now: int, session: str | None) -> None:
-    """Writes the beat through a temporary file, so a reader never finds half of it."""
-    path = heartbeat_path(home, epic)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    scratch = path.with_suffix(".json.tmp")
-    beat = {"epic": epic, "time": now, "session": session, "fresh_seconds": FRESH_SECONDS}
-    scratch.write_text(json.dumps(beat), encoding="utf-8")
-    os.replace(scratch, path)
+    write_heartbeat(home, epic, Heartbeat(now, session, False))
+
+
+def read_heartbeat(home: Path, epic: str) -> Heartbeat | None:
+    """The epic's heartbeat as one read of its file, or None when it has no readable heartbeat. A file with no
+    `stopped` field records no stop, and a `session` that is not text names none."""
+    try:
+        held = json.loads(heartbeat_path(home, epic).read_text(encoding="utf-8"))
+        last_beat = int(held["time"])
+        session = held.get("session")
+        stopped = held.get("stopped") is True
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    return Heartbeat(last_beat, session if isinstance(session, str) else None, stopped)
 
 
 def beat_age_seconds(home: Path, epic: str, now: int) -> int | None:
     """Seconds since the epic's last beat, or None when it has no readable heartbeat."""
-    try:
-        held = json.loads(heartbeat_path(home, epic).read_text(encoding="utf-8"))
-        return max(0, now - int(held["time"]))
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
+    held = read_heartbeat(home, epic)
+    return None if held is None else held.age_seconds(now)
 
 
 def beat_session(home: Path, epic: str) -> str | None:
     """The id of the session that claimed the epic, or None when the heartbeat records none or cannot be read."""
-    try:
-        held = json.loads(heartbeat_path(home, epic).read_text(encoding="utf-8"))
-        session = held["session"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    return session if isinstance(session, str) else None
+    held = read_heartbeat(home, epic)
+    return None if held is None else held.session
 
 
 def fresh_age_seconds(home: Path, epic: str, now: int) -> int | None:
     """Seconds since the epic's last beat when that is no older than FRESH_SECONDS, and None when the heartbeat is
-    stale or unreadable."""
-    seconds = beat_age_seconds(home, epic, now)
-    return seconds if seconds is not None and seconds <= FRESH_SECONDS else None
+    stale, stopped or unreadable."""
+    held = read_heartbeat(home, epic)
+    return held.age_seconds(now) if held is not None and held.is_fresh(now) else None
+
+
+def seconds_until_stale(age_seconds: int) -> int:
+    """How many seconds from now a heartbeat of this age is stale: the one past the last second it counts as fresh."""
+    return FRESH_SECONDS - age_seconds + 1
 
 
 def is_fresh(home: Path, epic: str, now: int) -> bool:
@@ -100,16 +131,18 @@ def fresh_epics(home: Path, now: int) -> list[str]:
 
 
 def mark_stopped(home: Path, epic: str, now: int) -> None:
-    """Leaves the epic's heartbeat stale at once, as a stop does, so that a host that is still open does not beat it
-    back to fresh."""
-    write_beat(home, epic, now - FRESH_SECONDS - 1, None)
+    """Records that no manager runs the epic, so its heartbeat counts as stale whatever its age. The session goes, so
+    that a host still open and a waker renew nothing, and `time` stays the second of the last beat; an epic with no
+    readable beat has no such second, and gets `now`."""
+    held = read_heartbeat(home, epic)
+    write_heartbeat(home, epic, Heartbeat(now if held is None else min(held.time, now), None, True))
 
 
 def stop(home: Path, epic: str, now: int, session: str | None) -> None:
-    """Marks the epic's heartbeat stopped when the session claimed it, as a manager does on each stop that runs no
-    `scheduler.py stop`. A session that did not claim the epic, such as a second manager that was refused, leaves the
-    heartbeat of the manager that did, and an epic no manager claimed keeps no heartbeat, so a stop writes none for
-    it."""
+    """Marks the epic's heartbeat stopped when the session claimed it, as the closing line of a manager's stop does. A
+    session that did not claim the epic, such as a second manager that was refused, leaves the heartbeat of the manager
+    that did, and an epic no manager claimed keeps no heartbeat, so a stop writes none for it. A heartbeat already
+    stopped names no session, so it stays as it is."""
     if session is not None and beat_session(home, epic) == session:
         mark_stopped(home, epic, now)
 
@@ -182,18 +215,11 @@ def main(argv: list[str]) -> int:
     beating = modes.add_parser("beat", help="renew the heartbeat of each epic the factory runs for this session")
     beating.add_argument("--session", required=True, help="the id of the session that beats")
     beating.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
-    stopping = modes.add_parser("stop", help="mark the heartbeat of an epic stopped when this session claimed it, "
-                                             "as a manager does when it stops")
-    stopping.add_argument("epic", help="the id of the epic whose manager stops")
-    stopping.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
     try:
         home = settings_reader.jidoka_home(args.jidoka_home)
-        if args.mode == "stop":
-            stop(home, args.epic, clock.now(), session_of_environment())
-        else:
-            main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-            beat(home, main_tree, args.session)
+        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+        beat(home, main_tree, args.session)
     except (epics.EpicsError, EpicReadError, CommandError, settings_reader.SettingsError, OSError) as error:
         print(f"heartbeat: {error}", file=sys.stderr)
         return 1

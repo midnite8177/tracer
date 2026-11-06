@@ -47,7 +47,7 @@ from pathlib import Path
 import clock
 import prices
 import settings_reader
-import routes
+import home_files
 from prices import Price, Tokens
 
 CACHE_FILE = "prices.json"
@@ -243,7 +243,7 @@ def write_cache(home: Path, cache: Cache) -> None:
     """Replaces the cache whole, so that a lookup running beside this one never reads half of it."""
     written = {"fetched_at": cache.fetched_at,
                "prices": {model: asdict(price) for model, price in cache.prices.items()}}
-    routes.write_in_home(home, CACHE_FILE, json.dumps(written, indent=2) + "\n")
+    home_files.write_in_home(home, CACHE_FILE, json.dumps(written, indent=2) + "\n")
 
 
 def when(second: int) -> str:

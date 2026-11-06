@@ -49,7 +49,7 @@ def fallback(bead: str, stage: str, tier: str, mark: str, home: Path, main_tree:
     run(["bd", "comment", bead, f"{stage} reruns on {routes.NATIVE_HARNESS}: the {tier} route on "
                                f"{failed.harness} failed"], main_tree, env)
     run(["bd", "update", bead, *set_metadata((key, mark))], main_tree, env)
-    return {"rerun": True, "route": native}
+    return {"rerun": True, "route": native.as_dict()}
 
 
 def main(argv: list[str]) -> int:

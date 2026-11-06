@@ -9,16 +9,17 @@ namespace JidokaUi.Core.Notifications;
 /// </summary>
 /// <param name="Age">How long ago the manager last beat.</param>
 /// <param name="FreshLimit">How old a beat may be and still count as fresh, as jidoka wrote it.</param>
-public sealed record Heartbeat(TimeSpan Age, TimeSpan FreshLimit)
+/// <param name="Stopped">True when the file records that the manager stopped.</param>
+public sealed record Heartbeat(TimeSpan Age, TimeSpan FreshLimit, bool Stopped)
 {
-    /// <summary>True when the beat is older than jidoka lets a fresh one be.</summary>
-    public bool IsStale => Age > FreshLimit;
+    /// <summary>True when the manager stopped, or the beat is older than jidoka lets a fresh one be.</summary>
+    public bool IsStale => Stopped || Age > FreshLimit;
 }
 
 /// <summary>
 /// jidoka's heartbeat files, which the app reads and never writes. The manager of each epic that
-/// the factory runs keeps one fresh, so a heartbeat that stops getting younger shows a stopped
-/// factory.
+/// the factory runs keeps one fresh, so a heartbeat that stops getting younger or records a stop
+/// shows a stopped factory.
 /// </summary>
 public sealed class Heartbeats
 {
@@ -43,7 +44,8 @@ public sealed class Heartbeats
 
         try
         {
-            using var file = JsonDocument.Parse(File.ReadAllText(Path.Combine(home.HeartbeatFolder, $"{epicId}.json")));
+            var path = Path.Combine(home.HeartbeatFolder, $"{epicId}.json");
+            using var file = JsonDocument.Parse(File.ReadAllText(path));
             if (file.RootElement.ValueKind != JsonValueKind.Object
                 || !WholeNumber(file.RootElement, "time", out var seconds)
                 || !WholeNumber(file.RootElement, "fresh_seconds", out var fresh)
@@ -52,13 +54,20 @@ public sealed class Heartbeats
                 return null;
             }
 
-            return new Heartbeat(now - DateTimeOffset.FromUnixTimeSeconds(seconds), TimeSpan.FromSeconds(fresh));
+            return new Heartbeat(
+                now - DateTimeOffset.FromUnixTimeSeconds(seconds),
+                TimeSpan.FromSeconds(fresh),
+                StoppedIn(file.RootElement));
         }
-        catch (Exception unreadable) when (unreadable is IOException or UnauthorizedAccessException or JsonException or ArgumentOutOfRangeException)
+        catch (Exception unreadable) when (unreadable is
+            IOException or UnauthorizedAccessException or JsonException or ArgumentOutOfRangeException)
         {
             return null;
         }
     }
+
+    private static bool StoppedIn(JsonElement root) =>
+        root.TryGetProperty("stopped", out var field) && field.ValueKind == JsonValueKind.True;
 
     private static bool WholeNumber(JsonElement root, string name, out long value)
     {

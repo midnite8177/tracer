@@ -59,6 +59,7 @@ DONT_WRITE_BYTECODE_BEFORE_IMPORTS = sys.dont_write_bytecode
 sys.dont_write_bytecode = True
 import commands  # noqa: E402
 import links  # noqa: E402
+import machine_settings  # noqa: E402
 import routes as machine_routes  # noqa: E402
 
 sys.dont_write_bytecode = DONT_WRITE_BYTECODE_BEFORE_IMPORTS
@@ -187,11 +188,6 @@ def locate_tools(which: Callable[[str], str | None]) -> Tools:
     return Tools(git, claude, which("codex"), which("dotnet"))
 
 
-def default_routes(codex_present: bool) -> dict[str, machine_routes.Route]:
-    return {tier: machine_routes.Route.parse(tier, route)
-            for tier, route in machine_routes.default_routes(codex_present).items()}
-
-
 def refuse_incomplete_routes(previous: dict) -> None:
     """Refuses the routes that an earlier run or setup recorded, which this run keeps, when one lacks a field that its
     harness requires."""
@@ -247,16 +243,10 @@ def read_version(plugin_folder: Path) -> str:
 
 
 def load_settings(home: Path) -> dict:
-    path = home / machine_routes.SETTINGS_FILE
-    if not path.is_file():
-        return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError as err:
-        raise InstallerError(f"{path} is not valid JSON: {err}") from err
-    if not isinstance(data, dict):
-        raise InstallerError(f"{path} does not hold a JSON object")
-    return data
+        return machine_settings.settings_in(home)
+    except machine_settings.MachineSettingsError as err:
+        raise InstallerError(str(err)) from err
 
 
 def record(home: Path, owned: OwnedSettings, previous: dict) -> None:
@@ -273,8 +263,7 @@ def record(home: Path, owned: OwnedSettings, previous: dict) -> None:
         **({"ui": owned.ui} if owned.ui is not None else {}),
         **kept,
     }
-    (home / machine_routes.SETTINGS_FILE).write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
-                                        encoding="utf-8", newline="\n")
+    machine_settings.write_settings(home, settings)
 
 
 def run_tool(executable: str, args: list[str], env: dict[str, str]) -> str:
@@ -556,7 +545,7 @@ def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[in
     ui = publish_ui(tools.git, tools.dotnet, checkout_root(tools.git, PLUGIN_FOLDER), jidoka_home, previous)
     unnamed = unnamed_config_dirs(previous, config_dirs)
     record(jidoka_home,
-           OwnedSettings(python, config_dirs, default_routes(tools.codex is not None), source_repo, ui.record),
+           OwnedSettings(python, config_dirs, machine_routes.default_routes(tools.codex is not None), source_repo, ui.record),
            previous)
     print(f"Recorded {python} and {len(config_dirs)} config dir(s) in {jidoka_home}")
     print(ui.line)

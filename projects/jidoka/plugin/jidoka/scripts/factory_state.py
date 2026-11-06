@@ -2,7 +2,10 @@
 """Prints each epic the factory holds with its one factory state and the one next step the human can act on.
 
 Run it from inside any checkout of the repo. It needs no host: it reads the beads through bd, the heartbeat
-(heartbeat.py) and the watcher record (watcher_record.py) in the jidoka home, and changes nothing. One bd list gives
+(heartbeat.py) and the watcher record (watcher_record.py) in the jidoka home. It changes nothing, with one exception:
+`--stopping <epic>`, which a manager's closing line passes each time it stops, first records the stop in the epic's
+heartbeat when that heartbeat records the session in $JIDOKA_SESSION_ID, as heartbeat.stop says, so the states it
+prints read the epic as stopped though the host stays open. One bd list gives
 every epic and task with the labels and metadata that the states read, so the number of bd calls does not grow with
 the epics. Only a bead that carries the human label costs one more call, for its comments. For each open epic with the
 `factory` label it works out one of four states:
@@ -12,8 +15,8 @@ the epics. Only a bead that carries the human label costs one more call, for its
   waiting-on-you  the epic carries the human label, as at the acceptance gate or after a question or a budget park,
                   or the heartbeat is fresh, a live watcher waits and a task carries it. Whether the factory goes on
                   by itself when the human answers is in the next step.
-  stopped         the heartbeat is stale or missing and the epic waits on no label of its own: no manager runs it,
-                  and only the human starts it again.
+  stopped         the heartbeat is stale, records a stop or is missing, and the epic waits on no label of its own: no
+                  manager runs it, and only the human starts it again.
 `waiting_on` lists each bead of the epic that carries the human label, the epic first and then its open tasks by id,
 with `kind` and `text`, the reason it was put there:
   acceptance-gate  the epic waits at the acceptance gate.
@@ -157,11 +160,6 @@ class EpicState:
     next_step: NextStep
 
 
-def seconds_until_stale(age_seconds: int) -> int:
-    """How many seconds from now a heartbeat of this age is stale: the one past the last second it counts as fresh."""
-    return heartbeat.FRESH_SECONDS - age_seconds + 1
-
-
 def clock_time(seconds: int) -> str:
     return time.strftime(CLOCK_FORMAT, time.localtime(seconds))
 
@@ -215,7 +213,7 @@ def step_for_you(epic: str, held: tuple[Waiting, ...], fresh_age: int | None, no
         return NextStep.answer(f"{requests}.", wakes)
     if wakes:
         return NextStep.answer(f"{requests}. Answering wakes the factory by itself.", True)
-    run_after = None if fresh_age is None else now + seconds_until_stale(fresh_age)
+    run_after = None if fresh_age is None else now + heartbeat.seconds_until_stale(fresh_age)
     after = "" if run_after is None else f" after {clock_time(run_after)}"
     return NextStep.answer_then_run(f"{requests}, then run {RESTART_COMMAND}{after}.", run_after)
 
@@ -285,11 +283,16 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="factory_state.py", description="Print each epic's factory state and the "
                                                                            "next step.")
     parser.add_argument("--json", action="store_true", help="print JSON instead of lines for a person")
+    parser.add_argument("--stopping", metavar="EPIC", help="the epic whose manager stops with this call: record the "
+                                                           "stop in its heartbeat when this session claimed it")
     parser.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
     try:
+        home = settings_reader.jidoka_home(args.jidoka_home)
+        if args.stopping is not None:
+            heartbeat.stop(home, args.stopping, clock.now(), heartbeat.session_of_environment())
         main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        held = states(settings_reader.jidoka_home(args.jidoka_home), main_tree, clock.now())
+        held = states(home, main_tree, clock.now())
     except (SchedulerError, NotAWholeNumber, CommandError,
             settings_reader.SettingsError, OSError) as error:
         print(f"factory_state: {error}", file=sys.stderr)

@@ -38,7 +38,6 @@ import json
 import sys
 from pathlib import Path
 
-import clock
 import lap_record
 import review
 import routes
@@ -47,7 +46,7 @@ from commands import COMMAND_TIMEOUT_SECONDS, CommandError, read_bead
 from lane_report import REVIEW_STAGE, Lane, LaneError, prompt_of, record, write_report
 from lap_outcomes import DONE, FAILED
 from prices import Tokens
-from t3_child import CHILD, ChildError, ChildStart, check_child_run, record_start, started_state
+from t3_child import CHILD, ChildError, ChildStart, NoOwnFields, check_child_run, record_start, started_state
 
 T3 = routes.T3_HARNESS
 STATE_NAME = "t3-spec-start.json"
@@ -84,18 +83,17 @@ def start(lane: Lane, wall_seconds: int, home: Path, main_tree: Path) -> dict:
     prompt = prompt_of(lane, read_bead(lane.epic, main_tree), plugin, READ_ONLY, True)
     lane.report.unlink(missing_ok=True)
     child = ChildStart(state_path(lane.report), reply_path(lane.report), lane.epic, route, wall_seconds)
-    return record_start(child, main_tree, {}, delegate_task_of(prompt, route))
+    return record_start(child, main_tree, NoOwnFields(), delegate_task_of(prompt, route))
 
 
 def finish(report: Path, home: Path, main_tree: Path) -> int:
     """Writes the report from the reply and records the row. Returns the number of findings; raises LaneError for a
     failed run."""
     try:
-        state = started_state(state_path(report), {}, "lane")
+        state = started_state(state_path(report), NoOwnFields.of, "lane")
     except ChildError as error:
         raise LaneError(str(error)) from error
-    route = routes.Route.parse(routes.SECOND_TIER, state["route"])
-    seconds = max(0, clock.now() - state["started"])
+    seconds = state.elapsed()
     outcome = FAILED
     report.unlink(missing_ok=True)
     try:
@@ -106,7 +104,7 @@ def finish(report: Path, home: Path, main_tree: Path) -> int:
     except (CommandError, ChildError) as error:
         raise LaneError(str(error)) from error
     finally:
-        record(home, main_tree, state["epic"], route, T3, Tokens(0, 0, 0, 0), seconds, outcome)
+        record(home, main_tree, state.epic, state.route, T3, Tokens(0, 0, 0, 0), seconds, outcome)
         state_path(report).unlink(missing_ok=True)
 
 

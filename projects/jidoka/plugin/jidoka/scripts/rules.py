@@ -68,8 +68,10 @@ from pathlib import Path
 from typing import Callable
 
 import lap_record
+import machine_settings
 import settings_reader
 import routes
+import texts
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_git_user, metadata_of, parent_of, run
 from epic_reader import NotAnEpic, shown_epic
 from settings_reader import is_positive_whole
@@ -99,7 +101,7 @@ def is_number(value: object) -> bool:
 
 
 def is_map_of(value: object, valid: Callable[[object], bool]) -> bool:
-    return isinstance(value, dict) and all(routes.is_text(name) and valid(item) for name, item in value.items())
+    return isinstance(value, dict) and all(texts.is_text(name) and valid(item) for name, item in value.items())
 
 
 def is_dollars(value: object) -> bool:
@@ -118,10 +120,10 @@ SETTINGS: dict[str, tuple[Callable[[object], bool], str]] = {
                     "an object of stage names to whole minutes above zero"),
     "passes": (is_positive_whole, "a whole number above zero"),
     "discovered_bugs_into_epic": (lambda value: isinstance(value, bool), "true or false"),
-    EXTRA_COMMANDS: (lambda value: isinstance(value, list) and all(map(routes.is_text, value)),
+    EXTRA_COMMANDS: (lambda value: isinstance(value, list) and all(map(texts.is_text, value)),
                        "a list of commands"),
-    "tier_routes": (lambda value: is_map_of(value, routes.is_text), "an object of tier names to route names"),
-    "stage_tiers": (lambda value: is_map_of(value, routes.is_text), "an object of stage names to tier names"),
+    "tier_routes": (lambda value: is_map_of(value, texts.is_text), "an object of tier names to route names"),
+    "stage_tiers": (lambda value: is_map_of(value, texts.is_text), "an object of stage names to tier names"),
     "budget": (is_dollars, "a number of dollars above zero"),
     "reserves": (lambda value: is_map_of(value, is_share),
                  "an object of account names to a share above 0 and below 1"),
@@ -166,8 +168,8 @@ class Rules:
 def machine_lap_limit(home: Path) -> int:
     """The machine settings' lap limit, or DEFAULT_MACHINE_LAP_LIMIT when they hold none that is a whole number
     above zero. Settings that cannot be read give the default, and a line on stderr."""
-    held = routes.machine_default(home, LAP_LIMIT, "lap limit",
-                                  lambda value: value if is_positive_whole(value) else None)
+    held = machine_settings.machine_default(home, LAP_LIMIT, "lap limit",
+                                            lambda value: value if is_positive_whole(value) else None)
     return held if held is not None else DEFAULT_MACHINE_LAP_LIMIT
 
 

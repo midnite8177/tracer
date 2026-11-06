@@ -148,12 +148,13 @@
         }
 
         var removal = await Bd.RemoveLabelAsync(Address, TheHumanLabel);
-        return removal.Wrote
-            ? removal
-            : removal with
-            {
-                Message = $"The answer \"{option.Name}\" is on the bead, but the human label is still on. {removal.Message}",
-            };
+        if (removal.Wrote)
+        {
+            return removal;
+        }
+
+        var message = $"The answer \"{option.Name}\" is on the bead, but the human label is still on. {removal.Message}";
+        return removal.WithMessage(message);
     }
 
     private static BeadLabel BeadLabelFor(string word) =>

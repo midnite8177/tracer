@@ -3,19 +3,48 @@ using JidokaUi.Core.Projects;
 
 namespace JidokaUi.Core.Boards;
 
-/// <summary>The backlog of one project, or the reason that bd gave none.</summary>
-/// <param name="Answered">True when bd listed the beads.</param>
-/// <param name="Message">Empty when bd answered; otherwise a message for the person.</param>
-/// <param name="GaveUp">True when bd did not answer in time, so the app gave up on the read.</param>
-public sealed record BacklogOutcome(bool Answered, string Message, Backlog Backlog, bool GaveUp)
+/// <summary>
+/// The backlog of one project, or the reason that bd gave none. It is one of three cases, so that no
+/// outcome is both an answer and a give-up: bd listed the beads, bd failed, or the app stopped
+/// waiting on bd.
+/// </summary>
+public abstract record BacklogOutcome
 {
     private static readonly Backlog Empty = new([], [], BacklogReader.NoBlockers);
 
-    public static BacklogOutcome Answer(Backlog backlog) => new(true, string.Empty, backlog, false);
+    private BacklogOutcome()
+    {
+    }
 
-    public static BacklogOutcome Failure(string message) => new(false, message, Empty, false);
+    /// <summary>True when bd listed the beads.</summary>
+    public bool Answered => this is Given;
 
-    public static BacklogOutcome Abandoned(string message) => new(false, message, Empty, true);
+    /// <summary>True when bd did not answer in time, so the app gave up on the read.</summary>
+    public bool GaveUp => this is Abandoned;
+
+    /// <summary>The backlog that bd listed, or an empty one when bd listed none.</summary>
+    public Backlog Backlog => this is Given given ? given.Listed : Empty;
+
+    /// <summary>Empty when bd answered; otherwise a message for the person.</summary>
+    public string Message => this switch
+    {
+        Failed failed => failed.Reason,
+        Abandoned abandoned => abandoned.Reason,
+        _ => string.Empty,
+    };
+
+    /// <summary>The outcome that follows from a list that bd did not answer: it failed, or the app gave up.</summary>
+    internal static BacklogOutcome Unanswered(BdOutcome listed) =>
+        listed.GaveUp ? new Abandoned(listed.Message) : new Failed(listed.Message);
+
+    /// <summary>bd listed the beads.</summary>
+    public sealed record Given(Backlog Listed) : BacklogOutcome;
+
+    /// <summary>bd did not list the beads, or the app could not read them.</summary>
+    public sealed record Failed(string Reason) : BacklogOutcome;
+
+    /// <summary>bd did not answer in time, so the app stopped the read.</summary>
+    public sealed record Abandoned(string Reason) : BacklogOutcome;
 }
 
 /// <summary>
@@ -46,21 +75,19 @@ public sealed class BacklogReader
         var listed = await adapter.ListAsync(project);
         if (!listed.Answered)
         {
-            return listed.GaveUp
-                ? BacklogOutcome.Abandoned(listed.Message)
-                : BacklogOutcome.Failure(listed.Message);
+            return BacklogOutcome.Unanswered(listed);
         }
 
         var beads = listed.Records.Select(Bead.From).ToList();
         if (ReadyIdsDerivedFromTheList(listed.Records, beads) is { } derived)
         {
-            return BacklogOutcome.Answer(new Backlog(beads, derived, NoBlockers));
+            return new BacklogOutcome.Given(new Backlog(beads, derived, NoBlockers));
         }
 
         var ready = await adapter.ReadyAsync(project);
         var blocked = await adapter.BlockedAsync(project);
 
-        return BacklogOutcome.Answer(new Backlog(
+        return new BacklogOutcome.Given(new Backlog(
             beads,
             [.. ready.Records.Select(record => record.Text(BeadFields.IdNames))],
             BlockersIn(blocked.Records)));

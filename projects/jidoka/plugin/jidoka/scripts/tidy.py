@@ -32,6 +32,7 @@ from pathlib import Path
 
 import discovered
 import pass_support
+import routes
 from commands import env_as_factory, read_bead, run, set_metadata
 from pass_support import (MAIN_BRANCH, Committed, PassError, Stage, StageToRun, accepts_any_change, every_file,
                           worktree_at)
@@ -67,12 +68,12 @@ class TidyRoute:
     """Which route one tidy of the local-model trial is for, which its actions name: `route`, and for a native tidy
     `native_route`, the native route of the local tier."""
     route: str
-    native_route: dict | None
+    native_route: routes.Route | None
 
     def fields(self) -> dict:
         if self.native_route is None:
             return {"route": self.route}
-        return {"route": self.route, "native_route": self.native_route}
+        return {"route": self.route, "native_route": self.native_route.as_dict()}
 
 
 @dataclass(frozen=True)

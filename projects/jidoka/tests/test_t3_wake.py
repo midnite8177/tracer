@@ -306,6 +306,15 @@ class TheWakerBeatTests(unittest.TestCase):
 
         self.assertEqual(30, heartbeat.beat_age_seconds(self.home, "epic-1", 1030))
 
+    def test_a_stopped_heartbeat_stays_stopped(self):
+        heartbeat.write_beat(self.home, "epic-1", 1000, "session-2")
+        heartbeat.mark_stopped(self.home, "epic-1", 1010)
+
+        self.read_and_beat(1030)
+
+        self.assertIsNone(heartbeat.fresh_age_seconds(self.home, "epic-1", 1030))
+        self.assertEqual(30, heartbeat.beat_age_seconds(self.home, "epic-1", 1030))
+
     def test_a_beat_starts_no_heartbeat_for_an_epic_that_has_none(self):
         self.read_and_beat(1030)
 

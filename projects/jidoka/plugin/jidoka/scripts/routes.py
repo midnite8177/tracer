@@ -1,5 +1,4 @@
-"""The routes a machine records for its tiers, the native route each tier falls back to, and the reader of the machine
-settings file that holds them.
+"""The routes a machine records for its tiers, and the native route each tier falls back to.
 
 A route is a JSON object with `harness`, `model`, `version` and `effort`, kept under `routes` in
 <jidoka-home>/settings.json. A route on the harness `t3` also holds `provider`, the T3 provider instance that runs
@@ -8,21 +7,15 @@ that every script meets the same error for a recorded route that is incomplete. 
 harness, `claude`. A tier's native route is the one setup
 proposes for it when no other harness is on the machine, so a stage that falls back keeps the model its tier asked
 for. A tier with no row there falls back to the host's own model and effort, which null values stand for.
-
-The settings file also holds the default budget and the reserves, and the installer's own keys. The one reader and the
-one writer of that file, and of the other files jidoka keeps whole in its home, are here, so that every script
-meets the same error for a file it cannot read.
 """
 from __future__ import annotations
 
-import json
-import os
-import sys
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
+
+from machine_settings import MachineSettingsError, settings_in, settings_path
+from texts import is_text, text_or_none
 
 NATIVE_HARNESS = "claude"
 CODEX_HARNESS = "codex"
@@ -31,23 +24,12 @@ T3_REQUIRED_FIELDS = ("provider", "model", "effort")
 OPENCODE_DRIVER = "opencode"
 CODEX_PROGRAM = "codex"
 HARNESS_PROGRAMS = {CODEX_HARNESS: CODEX_PROGRAM}
-SETTINGS_FILE = "settings.json"
 RERUN = "Run install.py from your jidoka checkout to record this machine's routes"
 SECOND_TIER = "second"
-
-T = TypeVar("T")
 
 
 class RouteError(Exception):
     """Settings that cannot answer a question about a route, worded for the person who reads stderr."""
-
-
-def is_text(value: object) -> bool:
-    return isinstance(value, str) and value.strip() != ""
-
-
-def text_or_none(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
 
 
 @dataclass(frozen=True)
@@ -85,6 +67,11 @@ class Route:
         T3's catalog."""
         return self.harness == T3_HARNESS and self.driver == OPENCODE_DRIVER
 
+    def refusal(self, tier: str) -> str | None:
+        """Why this route cannot serve the tier under the factory's own stage tiers, or None when it can. A t3
+        OpenCode route follows `opencode_refusal`, and any other route follows `writing_refusal`."""
+        return opencode_refusal(tier) if self.is_opencode else writing_refusal(tier, self.harness, {})
+
     def as_dict(self) -> dict:
         """The JSON object of the settings: the four fields every route holds, and `provider` and `driver` when the
         route names them."""
@@ -93,11 +80,11 @@ class Route:
                 **{field: value for field, value in named.items() if value is not None}}
 
 
-def native(model: str | None, version: str | None, effort: str | None) -> dict:
-    return {"harness": NATIVE_HARNESS, "model": model, "version": version, "effort": effort}
+def native(model: str | None, version: str | None, effort: str | None) -> Route:
+    return Route(NATIVE_HARNESS, model, version, effort, None, None)
 
 
-NATIVE_ROUTES: dict[str, dict] = {
+NATIVE_ROUTES: dict[str, Route] = {
     "light": native("haiku", "5.5", "medium"),
     "standard": native("sonnet", "5.5", "high"),
     "deep": native("opus", "5.5", "high"),
@@ -134,10 +121,10 @@ READ_ONLY_HARNESSES: dict[str, str] = {
 }
 
 
-def writing_refusal(tier: str, harness: object, stage_tiers: dict[str, str]) -> str | None:
+def writing_refusal(tier: str, harness: str, stage_tiers: dict[str, str]) -> str | None:
     """Why a route on the harness cannot serve the tier because a stage that writes runs on it, or None when it can.
     A harness that is not in READ_ONLY_HARNESSES serves any tier."""
-    reason = READ_ONLY_HARNESSES.get(harness) if isinstance(harness, str) else None
+    reason = READ_ONLY_HARNESSES.get(harness)
     writing = writing_stages_on(tier, stage_tiers)
     if reason is None or not writing:
         return None
@@ -157,42 +144,24 @@ def opencode_refusal(tier: str) -> str | None:
     return f"a t3 OpenCode route runs the {OPENCODE_STAGE} alone, so the {tier} tier cannot run on it: {on_it}"
 
 
-def native_route_of(tier: str) -> dict:
-    return dict(NATIVE_ROUTES.get(tier, HOST_OWN_ROUTE))
+def native_route_of(tier: str) -> Route:
+    return NATIVE_ROUTES.get(tier, HOST_OWN_ROUTE)
 
 
-def missing_program(route: dict, which: Callable[[str], str | None]) -> str | None:
-    """The program that the route's harness starts and that `which` cannot find, or None. The host runs its own
-    harness and T3 runs the child task of a t3 route, so only a codex route starts a program of its own."""
-    program = HARNESS_PROGRAMS.get(str(route.get("harness")))
+def missing_program(harness: str, which: Callable[[str], str | None]) -> str | None:
+    """The program that the harness starts and that `which` cannot find, or None. The host runs its own harness and
+    T3 runs the child task of a t3 route, so only a codex route starts a program of its own."""
+    program = HARNESS_PROGRAMS.get(harness)
     return program if program is not None and which(program) is None else None
 
 
-def default_routes(codex_found: bool) -> dict[str, dict]:
+def default_routes(codex_found: bool) -> dict[str, Route]:
     """The route of each tier on a machine: the second tier runs in codex when it is found, else on its native route,
     and every other tier runs on its native route."""
-    defaults = {tier: native_route_of(tier) for tier in NATIVE_ROUTES}
+    defaults = dict(NATIVE_ROUTES)
     if codex_found:
-        defaults[SECOND_TIER] = {"harness": CODEX_HARNESS, "model": None, "version": None, "effort": None}
+        defaults[SECOND_TIER] = Route(CODEX_HARNESS, None, None, None, None, None)
     return defaults
-
-
-def settings_path(home: Path) -> Path:
-    return home / SETTINGS_FILE
-
-
-def settings_in(home: Path) -> dict:
-    """The machine settings object, or an empty one when the home has no settings file."""
-    path = settings_path(home)
-    if not path.is_file():
-        return {}
-    try:
-        settings = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError as error:
-        raise RouteError(f"{path} is not valid JSON: {error}") from error
-    if not isinstance(settings, dict):
-        raise RouteError(f"{path} does not hold a JSON object")
-    return settings
 
 
 def recorded_route(tier: str, home: Path) -> Route:
@@ -201,31 +170,11 @@ def recorded_route(tier: str, home: Path) -> Route:
     path = settings_path(home)
     if not path.is_file():
         raise RouteError(f"{path} does not exist. {RERUN}")
-    recorded = settings_in(home).get("routes")
+    try:
+        recorded = settings_in(home).get("routes")
+    except MachineSettingsError as error:
+        raise RouteError(str(error)) from error
     found = recorded.get(tier) if isinstance(recorded, dict) else None
     if not isinstance(found, dict) or not found.get("harness"):
         raise RouteError(f"{path} holds no route for the tier {tier!r}. {RERUN}")
     return Route.parse(tier, found)
-
-
-def machine_default(home: Path, key: str, noun: str, valid: Callable[[object], T | None]) -> T | None:
-    """What `valid` makes of the machine settings' value under the key, or None when it makes nothing of it.
-    Settings that cannot be read give none, and a line on stderr that names the noun."""
-    try:
-        return valid(settings_in(home).get(key))
-    except RouteError as error:
-        print(f"scheduler: the machine's default {noun} was not read: {error}", file=sys.stderr)
-        return None
-
-
-def write_in_home(home: Path, name: str, text: str) -> None:
-    """Replaces the file of the home whole, so that a reader running beside this one never reads half of it."""
-    home.mkdir(parents=True, exist_ok=True)
-    handle, temporary = tempfile.mkstemp(dir=home, prefix=f"{Path(name).stem}-", suffix=".tmp")
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(text)
-        os.replace(temporary, home / name)
-    except OSError:
-        Path(temporary).unlink(missing_ok=True)
-        raise

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using JidokaUi.Core.Boards;
 using JidokaUi.Core.Projects;
@@ -100,19 +101,21 @@ public sealed class BdAdapter
     {
         if (!result.Succeeded)
         {
-            return BdOutcome.Failure(BdFailure.Describe(arguments, result));
+            return new BdOutcome.Failed(BdFailure.Describe(arguments, result));
         }
 
         return BdJson.TryParse(result.StandardOutput, out var records)
-            ? BdOutcome.Answer(records)
-            : BdOutcome.Failure(
+            ? new BdOutcome.Given(records)
+            : new BdOutcome.Failed(
                 $"bd {string.Join(' ', arguments)} answered with something that is not JSON.");
     }
 
     private async Task<BdOutcome> OutcomeOfAsync(string workingDirectory, IReadOnlyList<string> arguments)
     {
         var run = await RunReadAsync(workingDirectory, arguments);
-        return run is Ran ran ? OutcomeOf(arguments, ran.Result) : BdOutcome.Abandoned(run.Message);
+        return run.Match<BdOutcome>(
+            result => OutcomeOf(arguments, result),
+            reason => new BdOutcome.Abandoned(reason));
     }
 
     private const string AbandonedReadMessage =
@@ -121,26 +124,57 @@ public sealed class BdAdapter
     private const string AbandonedWriteMessage =
         "bd has not answered. The app does not stop a write, so it may still have landed.";
 
-    // What became of one bd run: it answered, or the app gave up on it. Message is what the person is
-    // told when it gave up.
-    private abstract record Run(string Message);
+    // One run of bd: it answered, or the app stopped waiting and says why.
+    private abstract record Run
+    {
+        private Run()
+        {
+        }
 
-    private sealed record Ran(BdResult Result) : Run(string.Empty);
+        public T Match<T>(Func<BdResult, T> ran, Func<string, T> gaveUp) => this switch
+        {
+            Ran answered => ran(answered.Result),
+            GaveUp stopped => gaveUp(stopped.Reason),
+            _ => throw new UnreachableException(),
+        };
 
-    private sealed record GaveUp(string Message) : Run(Message);
+        public sealed record Ran(BdResult Result) : Run;
 
-    // The give-up rule of the adapter lives in these two runners. The app stops a read that it gave
-    // up on and leaves a write to finish, and each runner pairs that policy with the message that
-    // says so.
+        public sealed record GaveUp(string Reason) : Run;
+    }
+
     private async Task<Run> RunReadAsync(string workingDirectory, IReadOnlyList<string> arguments) =>
         await gate.RunOrGiveUpAsync(workingDirectory, arguments, GivingUp.StopsTheProcess) is { } result
-            ? new Ran(result)
-            : new GaveUp(AbandonedReadMessage);
+            ? new Run.Ran(result)
+            : new Run.GaveUp(AbandonedReadMessage);
 
     private async Task<Run> RunWriteAsync(string workingDirectory, IReadOnlyList<string> arguments) =>
         await gate.RunOrGiveUpAsync(workingDirectory, arguments, GivingUp.LeavesTheProcessRunning) is { } result
-            ? new Ran(result)
-            : new GaveUp(AbandonedWriteMessage);
+            ? new Run.Ran(result)
+            : new Run.GaveUp(AbandonedWriteMessage);
+
+    // How a write that went through the capability check and the run ended. The write and the create
+    // both end this way, and each turns the ending into its own outcome.
+    private abstract record WriteEnd
+    {
+        private WriteEnd()
+        {
+        }
+
+        public T Match<T>(Func<BdResult, T> wrote, Func<string, T> failed, Func<string, T> gaveUp) => this switch
+        {
+            Wrote written => wrote(written.Result),
+            Failed refused => failed(refused.Reason),
+            GaveUp stopped => gaveUp(stopped.Reason),
+            _ => throw new UnreachableException(),
+        };
+
+        public sealed record Wrote(BdResult Result) : WriteEnd;
+
+        public sealed record Failed(string Reason) : WriteEnd;
+
+        public sealed record GaveUp(string Reason) : WriteEnd;
+    }
 
     /// <summary>
     /// Reads every bead of the project, whatever its status. bd list hides the closed beads and
@@ -151,12 +185,12 @@ public sealed class BdAdapter
     {
         string[] everyStatus = ["list", "--all", "--limit", "0", "--json"];
         var run = await RunReadAsync(project.Value, everyStatus);
-        if (run is not Ran ran)
+        if (run is Run.GaveUp gaveUp)
         {
-            return BdOutcome.Abandoned(run.Message);
+            return new BdOutcome.Abandoned(gaveUp.Reason);
         }
 
-        if (ran.Result.Succeeded)
+        if (run is Run.Ran { Result.Succeeded: true } ran)
         {
             return OutcomeOf(everyStatus, ran.Result);
         }
@@ -202,8 +236,7 @@ public sealed class BdAdapter
     {
         if (adds.Count == 0 && removes.Count == 0)
         {
-            return Task.FromResult(
-                BdWriteOutcome.Failure("A change of the labels needs a label to add or to take off."));
+            return BdWriteOutcome.FailedTask("A change of the labels needs a label to add or to take off.");
         }
 
         return WriteAsync(
@@ -239,7 +272,7 @@ public sealed class BdAdapter
     {
         var newTitle = title.Trim();
         return newTitle.Length == 0
-            ? Task.FromResult(BdWriteOutcome.Failure("A bead needs a title."))
+            ? BdWriteOutcome.FailedTask("A bead needs a title.")
             : WriteAsync(
                 bead,
                 UiVerbs.EditTheProse,
@@ -277,11 +310,11 @@ public sealed class BdAdapter
         var blocker = blockerId.Trim();
         if (blocker.Length == 0)
         {
-            return Task.FromResult(BdWriteOutcome.Failure("An edge needs the blocker at its far end."));
+            return BdWriteOutcome.FailedTask("An edge needs the blocker at its far end.");
         }
 
         return string.Equals(blocker, bead.Id, StringComparison.Ordinal)
-            ? Task.FromResult(BdWriteOutcome.Failure("A bead cannot block itself."))
+            ? BdWriteOutcome.FailedTask("A bead cannot block itself.")
             : WriteAsync(bead, UiVerbs.EditADependencyEdge, ["dep", subcommand, bead.Id, blocker]);
     }
 
@@ -294,8 +327,8 @@ public sealed class BdAdapter
     /// </summary>
     public Task<BdWriteOutcome> CloseAsync(BeadAddress bead, string reason) =>
         reason.Trim().Length == 0
-            ? Task.FromResult(BdWriteOutcome.Failure(
-                "A close needs a reason. The history of this bead is what a later reader has."))
+            ? BdWriteOutcome.FailedTask(
+                "A close needs a reason. The history of this bead is what a later reader has.")
             : WriteAsync(bead, UiVerbs.CloseWithAReason, ["close", bead.Id, "--reason", reason]);
 
     /// <summary>
@@ -312,7 +345,7 @@ public sealed class BdAdapter
         var named = title.Trim();
         if (named.Length == 0)
         {
-            return BdCreateOutcome.Failure("A bead needs a title.");
+            return new BdCreateOutcome.Failed("A bead needs a title.");
         }
 
         var verb = epicId is null ? UiVerbs.CreateABead : UiVerbs.CreateInAnEpic;
@@ -331,22 +364,22 @@ public sealed class BdAdapter
         var named = title.Trim();
         if (named.Length == 0)
         {
-            return BdCreateOutcome.Failure("An epic needs a title.");
+            return new BdCreateOutcome.Failed("An epic needs a title.");
         }
 
         string[] arguments = ["create", "--title", named, "--type", "epic", "--silent"];
         var made = await MakeAsync(project, UiVerbs.CreateAnEpic, arguments);
-        if (!made.Created)
+        if (made is not BdCreateOutcome.Made epic)
         {
             return made;
         }
 
-        var started = await SetStatusAsync(new BeadAddress(project, made.Id), StoredStatusWord.InProgress);
+        var started = await SetStatusAsync(new BeadAddress(project, epic.BeadId), StoredStatusWord.InProgress);
         return started.Wrote
             ? made
-            : BdCreateOutcome.MadeButNotStarted(
-                made.Id,
-                $"bd made the epic {made.Id}, but it is still open. {started.Message}");
+            : new BdCreateOutcome.MadeButNotStarted(
+                epic.BeadId,
+                $"bd made the epic {epic.BeadId}, but it is still open. {started.Message}");
     }
 
     private async Task<BdCreateOutcome> MakeAsync(
@@ -354,30 +387,13 @@ public sealed class BdAdapter
         UiVerb verb,
         IReadOnlyList<string> arguments)
     {
-        var capabilities = await CapabilitiesAsync(project);
-        var missing = capabilities.MissingCapability(verb);
-        if (missing.Length > 0)
-        {
-            return BdCreateOutcome.Failure(missing);
-        }
-
-        var run = await RunWriteAsync(project.Value, arguments);
-        if (run is not Ran ran)
-        {
-            return BdCreateOutcome.Abandoned(run.Message);
-        }
-
-        var result = ran.Result;
-        if (!result.Succeeded)
-        {
-            return BdCreateOutcome.Failure(BdFailure.Describe(arguments, result));
-        }
-
-        NameTheProjectOrHoldItForTheRun(project);
-        var id = result.StandardOutput.Trim();
-        return id.Length > 0
-            ? BdCreateOutcome.Made(id)
-            : BdCreateOutcome.Failure("bd made a bead but printed no id for it.");
+        var end = await EndOfAWriteAsync(project, verb, arguments);
+        return end.Match<BdCreateOutcome>(
+            result => result.StandardOutput.Trim() is { Length: > 0 } id
+                ? new BdCreateOutcome.Made(id)
+                : new BdCreateOutcome.Failed("bd made a bead but printed no id for it."),
+            reason => new BdCreateOutcome.Failed(reason),
+            reason => new BdCreateOutcome.Abandoned(reason));
     }
 
     /// <summary>
@@ -392,27 +408,39 @@ public sealed class BdAdapter
         UiVerb verb,
         IReadOnlyList<string> arguments)
     {
-        var capabilities = await CapabilitiesAsync(bead.Project);
+        var end = await EndOfAWriteAsync(bead.Project, verb, arguments);
+        return end.Match<BdWriteOutcome>(
+            _ => new BdWriteOutcome.Written(),
+            reason => new BdWriteOutcome.Failed(reason),
+            reason => new BdWriteOutcome.Abandoned(reason));
+    }
+
+    // Asks the capabilities, refuses a verb that this bd lacks, runs the write, and names the project
+    // when bd made the change.
+    private async Task<WriteEnd> EndOfAWriteAsync(
+        ProjectPath project,
+        UiVerb verb,
+        IReadOnlyList<string> arguments)
+    {
+        var capabilities = await CapabilitiesAsync(project);
         var missing = capabilities.MissingCapability(verb);
         if (missing.Length > 0)
         {
-            return BdWriteOutcome.Failure(missing);
+            return new WriteEnd.Failed(missing);
         }
 
-        var run = await RunWriteAsync(bead.Project.Value, arguments);
-        if (run is not Ran ran)
+        var run = await RunWriteAsync(project.Value, arguments);
+        var end = run.Match<WriteEnd>(
+            result => result.Succeeded
+                ? new WriteEnd.Wrote(result)
+                : new WriteEnd.Failed(BdFailure.Describe(arguments, result)),
+            reason => new WriteEnd.GaveUp(reason));
+        if (end is WriteEnd.Wrote)
         {
-            return BdWriteOutcome.Abandoned(run.Message);
+            NameTheProjectOrHoldItForTheRun(project);
         }
 
-        var result = ran.Result;
-        if (!result.Succeeded)
-        {
-            return BdWriteOutcome.Failure(BdFailure.Describe(arguments, result));
-        }
-
-        NameTheProjectOrHoldItForTheRun(bead.Project);
-        return BdWriteOutcome.Written();
+        return end;
     }
 
     /// <summary>Probes the installed bd for this project. The answer holds for the life of the app.</summary>
@@ -439,7 +467,7 @@ public sealed class BdAdapter
     }
 
     private async Task<BdResult> ProbeRunAsync(ProjectPath project, IReadOnlyList<string> arguments) =>
-        await RunReadAsync(project.Value, arguments) is Ran ran ? ran.Result : GaveUpOnTheProbe;
+        (await RunReadAsync(project.Value, arguments)).Match(result => result, _ => GaveUpOnTheProbe);
 
     private static readonly BdResult GaveUpOnTheProbe = new(-1, string.Empty, AbandonedReadMessage);
 

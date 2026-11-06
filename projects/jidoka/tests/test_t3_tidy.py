@@ -315,7 +315,7 @@ class AFailedChildRunExitsOneRestoresItsFilesAndWritesAFailedRowTests(T3TidyCase
         started = self.started(action)
         state_file = Path(action["scratch"]) / "t3-tidy-start.json"
         state = json.loads(state_file.read_text(encoding="utf-8"))
-        state_file.write_text(json.dumps({**state, "head": "0" * 40}), encoding="utf-8")
+        state_file.write_text(json.dumps({**state, "own": {**state["own"], "head": "0" * 40}}), encoding="utf-8")
 
         done = self.finish_batch(action, started, "{\"outcome\": \"failed\", \"why\": \"lost the file\"}")
 
@@ -325,6 +325,22 @@ class AFailedChildRunExitsOneRestoresItsFilesAndWritesAFailedRowTests(T3TidyCase
         [row] = self.tidy_rows_of(epic)
         self.assertEqual("failed", row["outcome"])
         self.assertEqual({"outcome": "failed"}, self.result_of(action))
+
+    def test_the_start_record_declares_the_batch_files_and_a_record_without_them_is_not_a_start(self):
+        epic, _, printed = self.finish_epic_whose_task_built_a_commented_file()
+        action = self.tidy_action_of(printed)
+        started = self.started(action)
+        state_file = Path(action["scratch"]) / "t3-tidy-start.json"
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        self.assertEqual(action["files"], state["own"]["files"])
+        without_files = {key: value for key, value in state["own"].items() if key != "files"}
+        state_file.write_text(json.dumps({**state, "own": without_files}), encoding="utf-8")
+
+        done = self.finish_batch(action, started, DONE_REPLY)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("does not hold the start of a batch", done.stderr)
+        self.assertEqual([], self.tidy_rows_of(epic))
 
     def test_a_batch_that_never_started_fails_without_a_row(self):
         epic, _, printed = self.finish_epic_whose_task_built_a_commented_file()

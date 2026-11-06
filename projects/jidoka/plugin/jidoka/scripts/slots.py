@@ -33,7 +33,7 @@ from pathlib import Path
 
 import file_lock
 import heartbeat
-import routes
+import home_files
 from lap_record import Lap
 
 SLOTS_FILE = "slots.json"
@@ -172,7 +172,7 @@ def read(home: Path) -> list[Claim | Hold]:
 
 
 def write(home: Path, holders: list[Claim | Hold]) -> None:
-    routes.write_in_home(home, SLOTS_FILE, json.dumps({"slots": [entry_of(each) for each in holders]}))
+    home_files.write_in_home(home, SLOTS_FILE, json.dumps({"slots": [entry_of(each) for each in holders]}))
 
 
 def live(home: Path, now: int) -> list[Claim | Hold]:

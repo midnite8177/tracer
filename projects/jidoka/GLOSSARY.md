@@ -526,8 +526,10 @@ first call writes it with the id of the host session it runs in, and the lap
 mod of that session rewrites it every minute while the host lives. A beat
 from any other session open in the repo writes nothing. It holds the second
 of the last beat, so a heartbeat that stops getting younger shows a stopped
-factory. A manager that stops marks it stale at once, on every stop, so that
-the host's beat does not show a manager that is gone. It holds the limit of a fresh beat too, so jidoka-ui reads the limit
+factory. It also records a stop: the call that closes a manager's run sets its
+stopped field, so that the host's beat does not show a manager that is gone,
+and a stopped heartbeat counts as stale at any age until the next manager's
+first call. It holds the limit of a fresh beat too, so jidoka-ui reads the limit
 and keeps no copy. An epic handed off with no manager has none. Under T3 a
 released host has no lap mod, so the **Waker** beats the epic while it
 waits, with the session the heartbeat names.

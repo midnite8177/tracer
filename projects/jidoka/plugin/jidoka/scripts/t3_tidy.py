@@ -44,7 +44,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 import clock
@@ -52,11 +52,13 @@ import ledger
 import lap_record
 import routes
 import settings_reader
+import texts
 import tidy
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, run
 from lap_outcomes import CUT_OFF, DONE, FAILED
 from prices import Tokens
-from t3_child import CHILD, ChildError, ChildStart, WallClockExceeded, check_child_run, record_start, started_state
+from t3_child import (CHILD, ChildError, ChildStart, Started, WallClockExceeded, check_child_run, record_start,
+                      started_state)
 
 T3 = routes.T3_HARNESS
 TIER = "local"
@@ -64,7 +66,6 @@ RUNTIME_MODE = "auto-accept-edits"
 STATE_NAME = "t3-tidy-start.json"
 REPLY_NAME = "t3-tidy-reply.txt"
 RESULT_NAME = "t3-tidy-result.json"
-OWN_START_FIELDS = {"worktree": str, "head": str, "files": list}
 NO_COMMENTS_SKILL = Path("skills") / "no-comments" / "SKILL.md"
 UNSLOP_SKILL = Path("skills") / "unslop" / "SKILL.md"
 
@@ -98,7 +99,7 @@ class TidyBatch:
 
     @staticmethod
     def of_action(action: object) -> TidyBatch:
-        if not (isinstance(action, dict) and all(routes.is_text(action.get(key)) for key in (
+        if not (isinstance(action, dict) and all(texts.is_text(action.get(key)) for key in (
                 "epic", "worktree", "scratch", "base", "head")) and isinstance(action.get("batch"), int)
                 and isinstance(action.get("files"), list) and action["files"]
                 and all(isinstance(each, str) for each in action["files"])):
@@ -106,6 +107,27 @@ class TidyBatch:
                                  "base, a head and files")
         return TidyBatch(action["epic"], action["batch"], Path(action["worktree"]), Path(action["scratch"]),
                          action["base"], action["head"], action["files"])
+
+
+@dataclass(frozen=True)
+class BatchStart:
+    """What the tidy adds to the start record: the worktree and head the batch's files are put back from, and the
+    files."""
+    worktree: str
+    head: str
+    files: list[str]
+
+    def to_record(self) -> dict:
+        return asdict(self)
+
+    @staticmethod
+    def of(record: dict) -> BatchStart | None:
+        """The fields the record holds, or None when one is missing or of another type."""
+        worktree, head, files = (record.get(name) for name in ("worktree", "head", "files"))
+        if (isinstance(worktree, str) and isinstance(head, str)
+                and isinstance(files, list) and all(isinstance(each, str) for each in files)):
+            return BatchStart(worktree, head, files)
+        return None
 
 
 def batch_outcome(scratch: Path) -> str | None:
@@ -181,9 +203,9 @@ def start(batch: TidyBatch, docs: list[str], wall_seconds: int, home: Path, main
     diff = tidy.diff_of(batch.base, batch.head, batch.files, main_tree)
     prompt = prompt_of(batch, docs, diff, plugin)
     result_path(batch.scratch).unlink(missing_ok=True)
-    own_fields = {"batch": batch.number, "worktree": str(batch.worktree), "head": batch.head, "files": batch.files}
+    own = BatchStart(str(batch.worktree), batch.head, batch.files)
     child = ChildStart(state_path(batch.scratch), reply_path(batch.scratch), batch.epic, route, wall_seconds)
-    return record_start(child, main_tree, own_fields, delegate_task_of(prompt, route, wall_seconds))
+    return record_start(child, main_tree, own, delegate_task_of(prompt, route, wall_seconds))
 
 
 def ending_of(reply: str) -> dict:
@@ -199,32 +221,32 @@ def ending_of(reply: str) -> dict:
     raise TidyChildError(f"{CHILD}'s reply does not end with an outcome")
 
 
-def restore_files(state: dict) -> None:
+def restore_files(batch: BatchStart) -> None:
     """Puts the batch's files back as the head holds them, so a rerun starts from them. A restore that fails leaves
     the files as the child left them and says so on stderr, and the failure that called it is the one reported."""
-    if not state["files"]:
+    if not batch.files:
         return
     try:
-        run(["git", "-C", state["worktree"], "--literal-pathspecs", "checkout", state["head"], "--",
-             *state["files"]], Path(state["worktree"]), None)
+        run(["git", "-C", batch.worktree, "--literal-pathspecs", "checkout", batch.head, "--", *batch.files],
+            Path(batch.worktree), None)
     except CommandError as error:
         print(f"t3_tidy: the batch's files were not put back: {error}", file=sys.stderr)
 
 
-def record(home: Path, main_tree: Path, state: dict, route: routes.Route, seconds: int, outcome: str) -> None:
-    ran = ledger.Ran(Tokens(0, 0, 0, 0), T3, route.model, route.effort)
+def record(home: Path, main_tree: Path, state: Started, seconds: int, outcome: str) -> None:
+    ran = ledger.Ran(Tokens(0, 0, 0, 0), T3, state.route.model, state.route.effort)
     where = replace(ledger.Where.of_pass(tidy.STAGE.name), wall_seconds=seconds)
-    ledger.record_ran_or_say(home, main_tree, state["epic"], where, ledger.Worker(None, TIER, False), ran, outcome,
+    ledger.record_ran_or_say(home, main_tree, state.epic, where, ledger.Worker(None, TIER, False), ran, outcome,
                              clock.now())
 
 
-def settle_up(scratch: Path, state: dict, route: routes.Route, home: Path, main_tree: Path, seconds: int,
+def settle_up(scratch: Path, state: Started[BatchStart], home: Path, main_tree: Path, seconds: int,
               outcome: str) -> None:
     """What every run leaves, whatever its outcome: a failed run's files put back, the one ledger row, the result file
     and no start record. A failure of the restore never keeps the row from being written."""
     if outcome != DONE:
-        restore_files(state)
-    record(home, main_tree, state, route, seconds, outcome)
+        restore_files(state.own)
+    record(home, main_tree, state, seconds, outcome)
     result_path(scratch).write_text(json.dumps({"outcome": outcome}), encoding="utf-8")
     state_path(scratch).unlink(missing_ok=True)
 
@@ -232,11 +254,10 @@ def settle_up(scratch: Path, state: dict, route: routes.Route, home: Path, main_
 def finish(scratch: Path, home: Path, main_tree: Path, asked_for_approval: bool) -> None:
     """Records the row. Raises TidyChildError for a failed run, after putting the batch's files back."""
     try:
-        state = started_state(state_path(scratch), OWN_START_FIELDS, "batch")
+        state = started_state(state_path(scratch), BatchStart.of, "batch")
     except ChildError as error:
         raise TidyChildError(str(error)) from error
-    route = routes.Route.parse(TIER, state["route"])
-    seconds = max(0, clock.now() - state["started"])
+    seconds = state.elapsed()
     outcome = FAILED
     try:
         if asked_for_approval:
@@ -252,7 +273,7 @@ def finish(scratch: Path, home: Path, main_tree: Path, asked_for_approval: bool)
     except (CommandError, ChildError) as error:
         raise TidyChildError(str(error)) from error
     finally:
-        settle_up(scratch, state, route, home, main_tree, seconds, outcome)
+        settle_up(scratch, state, home, main_tree, seconds, outcome)
 
 
 def batch_of_file(path: Path) -> TidyBatch:

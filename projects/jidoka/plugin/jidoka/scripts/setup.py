@@ -51,9 +51,11 @@ import shutil
 import sys
 from pathlib import Path
 
+import machine_settings
 import settings_reader
 import routes
 import rules
+import texts
 
 SUBSCRIPTION = "subscription"
 API_KEY = "api_key"
@@ -97,7 +99,7 @@ def t3_effort_of(model: dict) -> str:
     else the first it offers. A model that lists no efforts gets high, because T3 accepts any model of its catalog."""
     option = effort_option(model)
     values = option.get("values")
-    efforts = [each for each in values if routes.is_text(each)] if isinstance(values, list) else []
+    efforts = [each for each in values if texts.is_text(each)] if isinstance(values, list) else []
     if not efforts or T3_CODEX_EFFORT in efforts:
         return T3_CODEX_EFFORT
     default = option.get("default")
@@ -108,7 +110,7 @@ def t3_model_of(provider: dict) -> dict:
     """The catalog model a t3 route proposes on the provider: gpt-6.1-sol when the provider lists it, else the first
     model it lists. A provider that lists none gets gpt-6.1-sol, because T3 accepts any model of its catalog."""
     models = provider.get("models")
-    listed = [each for each in models if isinstance(each, dict) and routes.is_text(each.get("id"))
+    listed = [each for each in models if isinstance(each, dict) and texts.is_text(each.get("id"))
               ] if isinstance(models, list) else []
     for each in listed:
         if each["id"] == T3_CODEX_MODEL:
@@ -116,7 +118,7 @@ def t3_model_of(provider: dict) -> dict:
     return listed[0] if listed else {"id": T3_CODEX_MODEL}
 
 
-def t3_codex_route(catalog: object) -> dict | None:
+def t3_codex_route(catalog: object) -> routes.Route | None:
     """The route for the second tier under T3, or None when the catalog offers no Codex provider that can run a
     child task. The catalog is the object T3's orchestrator_capabilities prints: a `providers` list whose entries
     hold `providerInstanceId`, `driverKind`, `canRunChildTask` and `models`, each model with its `id` and its
@@ -126,14 +128,14 @@ def t3_codex_route(catalog: object) -> dict | None:
         return None
     for provider in providers:
         if (isinstance(provider, dict) and provider.get("driverKind") == routes.CODEX_HARNESS
-                and provider.get("canRunChildTask") is True and routes.is_text(provider.get("providerInstanceId"))):
+                and provider.get("canRunChildTask") is True and texts.is_text(provider.get("providerInstanceId"))):
             model = t3_model_of(provider)
-            return {"harness": routes.T3_HARNESS, "provider": provider["providerInstanceId"], "model": model["id"],
-                    "version": None, "effort": t3_effort_of(model)}
+            return routes.Route(routes.T3_HARNESS, model["id"], None, t3_effort_of(model),
+                                provider["providerInstanceId"], None)
     return None
 
 
-def proposed_routes(codex_found: bool, catalog: object) -> dict[str, dict]:
+def proposed_routes(codex_found: bool, catalog: object) -> dict[str, routes.Route]:
     """The route of each tier. The second tier runs on t3 when the catalog offers a Codex provider that can run a
     child task, else in codex when it is found, else on its native route. Every other tier runs on its native
     route."""
@@ -148,23 +150,22 @@ def propose(home: Path, catalog: object) -> dict:
     found = {harness: shutil.which(harness) for harness in (routes.NATIVE_HARNESS, routes.CODEX_HARNESS)}
     accounts = {harness: billing_of(harness) for harness, path in found.items()
                 if harness == routes.NATIVE_HARNESS or path is not None}
-    recorded = routes.settings_in(home)
+    recorded = machine_settings.settings_in(home)
     claude_billing = accounts[routes.NATIVE_HARNESS]
     return {
         "found": found,
         "accounts": accounts,
-        "routes": proposed_routes(found[routes.CODEX_HARNESS] is not None, catalog),
+        "routes": {tier: route.as_dict() for tier, route
+                   in proposed_routes(found[routes.CODEX_HARNESS] is not None, catalog).items()},
         "budget": SUBSCRIPTION_BUDGET if claude_billing == SUBSCRIPTION else API_KEY_BUDGET,
-        "reserves": {routes.NATIVE_HARNESS: SUBSCRIPTION_RESERVE} if claude_billing == SUBSCRIPTION else {},
+        "reserves": {machine_settings.CLAUDE_ACCOUNT: SUBSCRIPTION_RESERVE} if claude_billing == SUBSCRIPTION else {},
         "lap_limit": rules.machine_lap_limit(home),
         "recorded": {key: recorded.get(key) for key in OWNED_KEYS},
     }
 
 
 def check_route(tier: str, recorded: object) -> None:
-    route = routes.Route.parse(tier, recorded)
-    refusal = (routes.opencode_refusal(tier) if route.is_opencode
-               else routes.writing_refusal(tier, route.harness, {}))
+    refusal = routes.Route.parse(tier, recorded).refusal(tier)
     if refusal:
         raise SetupError(refusal)
 
@@ -190,8 +191,8 @@ def check(confirmed: object) -> dict:
 
 def write(confirmed: object, home: Path) -> dict:
     owned = check(confirmed)
-    settings = {**routes.settings_in(home), **owned}
-    routes.write_in_home(home, routes.SETTINGS_FILE, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+    settings = {**machine_settings.settings_in(home), **owned}
+    machine_settings.write_settings(home, settings)
     return owned
 
 
@@ -221,7 +222,7 @@ def main(argv: list[str]) -> int:
             except ValueError as error:
                 raise SetupError(f"the proposal on stdin is not JSON: {error}") from error
             print(json.dumps(write(confirmed, home), indent=2))
-    except (SetupError, routes.RouteError, OSError) as error:
+    except (SetupError, routes.RouteError, machine_settings.MachineSettingsError, OSError) as error:
         print(f"setup: {error}", file=sys.stderr)
         return 1
     return 0

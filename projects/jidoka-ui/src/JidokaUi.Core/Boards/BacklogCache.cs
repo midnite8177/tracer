@@ -43,8 +43,6 @@ public sealed class BacklogCache
         var entry = held.GetOrAdd(
             project,
             path => new Lazy<Task<BacklogOutcome>>(() => TheOutcomeOfARead(path)));
-        // A removal by key alone would drop the newer read that an invalidation let in after this
-        // one began.
         var mine = new KeyValuePair<ProjectPath, Lazy<Task<BacklogOutcome>>>(project, entry);
         BacklogOutcome outcome;
         try
@@ -73,7 +71,7 @@ public sealed class BacklogCache
         }
         catch (Exception unread) when (unread is IOException or InvalidOperationException)
         {
-            return BacklogOutcome.Failure($"The app could not read the beads of this project. {unread.Message}");
+            return new BacklogOutcome.Failed($"The app could not read the beads of this project. {unread.Message}");
         }
     }
 

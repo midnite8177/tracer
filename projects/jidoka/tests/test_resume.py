@@ -421,6 +421,39 @@ class SecondManagerTests(ResumeCase):
 
         self.assertEqual(0, resumed.returncode, resumed.stderr)
 
+    def test_a_stop_from_any_terminal_records_itself_in_the_heartbeat_and_keeps_the_second_of_the_last_beat(self):
+        self.start_a_manager()
+        self.write_beat(30, MANAGER_SESSION)
+        last_beat = self.beat_time()
+
+        done = self.script_with(OTHER_SESSION, {}, SCHEDULER, "stop", self.epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        held = json.loads(self.beat_file().read_text(encoding="utf-8"))
+        self.assertIs(True, held["stopped"])
+        self.assertIsNone(held["session"])
+        self.assertEqual(last_beat, held["time"])
+
+    def test_a_stop_of_an_epic_with_no_heartbeat_writes_a_stopped_one_at_the_second_of_the_stop(self):
+        now = int(time.time())
+
+        done = self.script_with(MANAGER_SESSION, {"JIDOKA_NOW": str(now)}, SCHEDULER, "stop", self.epic)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        held = json.loads(self.beat_file().read_text(encoding="utf-8"))
+        self.assertIs(True, held["stopped"])
+        self.assertEqual(now, held["time"])
+
+    def test_a_managers_next_call_clears_the_stop_from_the_heartbeat(self):
+        self.start_a_manager()
+        self.assertEqual(0, self.script(SCHEDULER, "stop", self.epic).returncode)
+
+        self.next_printed()
+
+        held = json.loads(self.beat_file().read_text(encoding="utf-8"))
+        self.assertIs(False, held["stopped"])
+        self.assertEqual(MANAGER_SESSION, held["session"])
+
     def test_the_first_call_of_a_manager_lets_the_host_beat_the_epic_again(self):
         self.stop_the_host()
         self.next_printed()

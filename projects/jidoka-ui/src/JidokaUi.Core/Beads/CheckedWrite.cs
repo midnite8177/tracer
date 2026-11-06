@@ -15,7 +15,7 @@ public static class CheckedWrite
         where T : struct, Enum =>
         parse(value, out var parsed)
             ? write(parsed)
-            : Task.FromResult(BdWriteOutcome.Failure(failureMessage));
+            : BdWriteOutcome.FailedTask(failureMessage);
 
     public static Task<BdWriteOutcome> Async(
         string value,
@@ -23,5 +23,5 @@ public static class CheckedWrite
         string failureMessage) =>
         BeadLabel.TryFrom(value, out var label)
             ? write(label)
-            : Task.FromResult(BdWriteOutcome.Failure(failureMessage));
+            : BdWriteOutcome.FailedTask(failureMessage);
 }

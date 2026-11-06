@@ -78,7 +78,7 @@ public sealed class JidokaAdapter
 
     /// <summary>
     /// Stops the factory on an epic, by running the scheduler's stop in the project of the epic: it
-    /// ends each open lap interrupted and the epic's waker, and leaves the heartbeat stale, so that a
+    /// ends each open lap interrupted and the epic's waker, and records the stop in the heartbeat, so that a
     /// new manager takes the epic at once. It is how the person stops an epic whose host is gone.
     /// </summary>
     public Task<JidokaWriteOutcome> StopFactoryAsync(BeadAddress epic) =>

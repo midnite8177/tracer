@@ -26,8 +26,8 @@ the epic interrupted. The task is open with no assignee, `lap.stage` is interrup
 so, and its worktree and branch are kept. A stop is no cutoff, no try and no park, so it changes no count and leaves
 the brake as it was, and the interrupted task is ready again with a new lap. Then it sends the factory-stopped
 notification through notify.py, which sends nothing when the epic has no open task left, and prints the host's line
-for it on stderr. It ends the epic's T3 waker, so that no released thread is woken, and leaves the epic's heartbeat
-stale, so that no beat from a host still open shows a manager. Any terminal can run it, and jidoka-ui does, for an
+for it on stderr. It ends the epic's T3 waker, so that no released thread is woken, and records the stop in the epic's
+heartbeat, so that no beat from a host still open shows a manager. Any terminal can run it, and jidoka-ui does, for an
 epic whose host is gone. It
 prints `{"epic", "interrupted"}`, the ids of the tasks whose laps it ended. A notification that cannot be sent is a
 line on stderr and no failure.
@@ -181,7 +181,6 @@ from pathlib import Path
 import app_check
 import caps
 import clock
-import factory_state
 import gate_guard
 import heartbeat
 import holdouts
@@ -332,7 +331,7 @@ def wait_out_a_fresh_heartbeat(epic: str, session: str | None, home: Path, the_c
         print(f"scheduler: {epic}'s heartbeat is {seconds} seconds old and records this session, so this takes the "
               "epic back without waiting", file=sys.stderr)
         return
-    wait = factory_state.seconds_until_stale(seconds)
+    wait = heartbeat.seconds_until_stale(seconds)
     print(f"scheduler: {epic}'s heartbeat is {seconds} seconds old and is fresh for {heartbeat.FRESH_SECONDS}, so "
           f"this waits {wait} seconds to see whether its manager is still alive", file=sys.stderr)
     the_clock.sleep(wait)

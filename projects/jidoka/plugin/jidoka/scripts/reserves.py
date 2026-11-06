@@ -31,12 +31,12 @@ import park
 import pause
 from commands import env_as_factory, metadata_of, run
 from epics import state_of
-import routes
+import machine_settings
 from rules import is_map_of, is_number, is_share, is_whole, of_epic
 
 RESERVES_KEY = "reserves"
 USAGE_FOLDER = "usage"
-ACCOUNT = "claude"
+ACCOUNT = machine_settings.CLAUDE_ACCOUNT
 FRESH_SECONDS = 10 * 60
 FIVE_HOUR_SECONDS = 5 * 60 * 60
 SEVEN_DAY_SECONDS = 7 * 24 * 60 * 60
@@ -99,7 +99,7 @@ def share_in(value: object) -> float | None:
 def machine_share(home: Path) -> float | None:
     """The default reserve of the account in the machine settings; settings that cannot be read give none, and a line
     on stderr."""
-    return routes.machine_default(home, RESERVES_KEY, "reserves", share_in)
+    return machine_settings.machine_default(home, RESERVES_KEY, "reserves", share_in)
 
 
 def reserve_percents(shown: dict, home: Path) -> tuple[float, float]:

@@ -356,8 +356,8 @@ def tests_removed(page: GatePage) -> str:
 
 def fallen_back_to() -> str:
     """The model the local tier's native route names, which a batch the local model did not do fell back to."""
-    model = routes.native_route_of(tidy_trial.TIER).get("model")
-    return model.capitalize() if isinstance(model, str) and model else "the native route"
+    model = routes.native_route_of(tidy_trial.TIER).model
+    return model.capitalize() if model else "the native route"
 
 
 def batch_line(batch: tidy_trial.TrialBatch) -> str:

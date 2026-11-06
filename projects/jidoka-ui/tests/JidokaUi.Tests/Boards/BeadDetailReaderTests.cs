@@ -57,8 +57,6 @@ public sealed class BeadDetailReaderTests
         Assert.Equal("ready", detail.Status.Text);
     }
 
-    // A backlog of three levels: the epic x holds x-1, and x-1 holds x-1-1. The detail of x names
-    // the level under it and no level below that one.
     private const string ATreeOfThreeLevels = """
         [
           {"id": "x", "title": "The epic", "issue_type": "epic", "status": "in_progress"},
@@ -68,7 +66,6 @@ public sealed class BeadDetailReaderTests
         ]
         """;
 
-    // A bd that answers that tree, and the show of the epic that heads it.
     private static FakeBd ABdWithThatTree() =>
         new FakeBd()
             .Prints("list --all --limit 0 --json", ATreeOfThreeLevels)
@@ -119,8 +116,9 @@ public sealed class BeadDetailReaderTests
 
         var outcome = await ReaderOf(bd).ReadAsync(Project, "x-1");
 
-        Assert.Equal(["x", "x-1", "x-2", "x-9"], outcome.Beads.Select(bead => bead.Id));
-        Assert.Equal(["x"], outcome.Epics.Select(epic => epic.Id));
+        var given = Assert.IsType<BeadDetailRead.Given>(outcome);
+        Assert.Equal(["x", "x-1", "x-2", "x-9"], given.Beads.Select(bead => bead.Id));
+        Assert.Equal(["x"], given.Epics.Select(epic => epic.Id));
     }
 
     [Fact]
@@ -197,8 +195,25 @@ public sealed class BeadDetailReaderTests
 
         var outcome = await ReaderOf(bd).ReadAsync(Project, "x-9");
 
-        var unread = Assert.IsType<Read<BeadDetail>.Unread>(outcome.Detail);
-        Assert.Contains("issue not found: x-9", unread.Reason);
+        var failed = Assert.IsType<BeadDetailRead.Failed>(outcome);
+        Assert.Contains("issue not found: x-9", failed.Reason);
+    }
+
+    [Fact]
+    public async Task ReportsAGiveUpWhenBdDoesNotShowTheBeadInTime()
+    {
+        var bd = ABdWithThatBacklog().Holds("show x-1 --json");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var adapter = new BdAdapter(bd, clock);
+        var reader = new BeadDetailReader(adapter, new BacklogReader(adapter));
+
+        var reading = reader.ReadAsync(Project, "x-1");
+        clock.Advance(BdAdapter.WaitLimit);
+        var outcome = await reading;
+
+        var abandoned = Assert.IsType<BeadDetailRead.Abandoned>(outcome);
+        Assert.Contains("The app stopped it", abandoned.Reason, StringComparison.Ordinal);
+        Assert.True(outcome.GaveUp);
     }
 
     [Fact]
@@ -208,8 +223,8 @@ public sealed class BeadDetailReaderTests
 
         var outcome = await ReaderOf(bd).ReadAsync(Project, "x-7");
 
-        var unread = Assert.IsType<Read<BeadDetail>.Unread>(outcome.Detail);
-        Assert.Contains("x-7", unread.Reason);
+        var failed = Assert.IsType<BeadDetailRead.Failed>(outcome);
+        Assert.Contains("x-7", failed.Reason);
     }
 
     [Fact]
@@ -272,7 +287,7 @@ public sealed class BeadDetailReaderTests
     }
 
     private static BeadDetail TheBeadOf(BeadDetailRead outcome) =>
-        Assert.IsType<Read<BeadDetail>.Given>(outcome.Detail).Value;
+        Assert.IsType<BeadDetailRead.Given>(outcome).Detail;
 
     private static BacklogFacts TheBacklogFactsOf(BeadDetailRead outcome) =>
         Assert.IsType<Read<BacklogFacts>.Given>(TheBeadOf(outcome).BacklogFacts).Value;

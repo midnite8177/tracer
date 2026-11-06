@@ -844,7 +844,8 @@ _Avoid_: Alert, push, toast
 
 **Stale heartbeat**:
 The heartbeat of a running factory epic that is older than the limit its own
-file names, which jidoka writes into it. The factory watch warns once for it and stays quiet until
+file names, which jidoka writes into it, or whose file records that the manager
+stopped, at any age. The factory watch warns once for it and stays quiet until
 the heartbeat has been fresh again, so each stopped host gives one warning.
 An epic with no heartbeat file, one that a person or the acceptance gate
 holds, and a heartbeat that was already stale when the app first read the

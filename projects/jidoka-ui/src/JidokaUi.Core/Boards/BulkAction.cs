@@ -131,12 +131,10 @@ public static class BulkVerbs
     /// </summary>
     public static BulkVerbShape Of(BulkVerb verb) => Shapes[verb];
 
-    // Sets the priority that the action states. bd takes a number, so a value that is not one is a
-    // message for the person and not a write.
     private static Task<BdWriteOutcome> SetThePriorityAsync(BdAdapter bd, BeadAddress bead, string value) =>
         long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var priority)
             ? bd.SetPriorityAsync(bead, priority)
-            : Task.FromResult(BdWriteOutcome.Failure($"{value} is not a priority number."));
+            : BdWriteOutcome.FailedTask($"{value} is not a priority number.");
 
     private static Task<BdWriteOutcome> SetTheTypeAsync(BdAdapter bd, BeadAddress bead, string value) =>
         CheckedWrite.Async<BeadTypeWord>(

@@ -204,7 +204,7 @@ def route_of(home: Path, tier: str | None, on_native: bool) -> routes.Route | No
         return None
     try:
         if on_native:
-            return routes.Route.parse(tier, routes.native_route_of(tier))
+            return routes.native_route_of(tier)
         return routes.recorded_route(tier, home)
     except (routes.RouteError, OSError):
         return None
@@ -308,10 +308,7 @@ def record_run_or_say(home: Path, main_tree: Path, epic: str, where: Where, work
 def epic_claimed_by(home: Path, session: str) -> str | None:
     """The first epic, by id, whose heartbeat records the session, or None when the session claimed none. It reads
     the heartbeat files alone, because it runs after every request of every session."""
-    folder = home / heartbeat.HEARTBEAT_FOLDER
-    if not folder.is_dir():
-        return None
-    claimed = sorted(path.stem for path in folder.glob("*.json") if heartbeat.beat_session(home, path.stem) == session)
+    claimed = heartbeat.claimed_by(home, session)
     return claimed[0] if claimed else None
 
 

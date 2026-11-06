@@ -5,7 +5,6 @@
 @using JidokaUi.Core.Jidoka
 @using JidokaUi.Core.Projects
 @using AReadOfTheBacklog = JidokaUi.Core.Boards.Read<JidokaUi.Core.Boards.BacklogFacts>
-@using AReadOfTheBead = JidokaUi.Core.Boards.Read<JidokaUi.Core.Boards.BeadDetail>
 @inject BeadDetailReader Details
 @inject BacklogCache Backlogs
 @inject JidokaPages Pages
@@ -34,12 +33,12 @@ else if (read is null)
     <BeadHead Id="" Project="TheProjectOnTheScreen" />
     <p>The app is reading this bead…</p>
 }
-else if (read.Detail is AReadOfTheBead.Unread unreadBead)
+else if (read is BeadDetailRead.Failed or BeadDetailRead.Abandoned)
 {
     <BeadHead Id="" Project="TheProjectOnTheScreen"><Title><h1>@Id</h1></Title></BeadHead>
-    <p class="text-danger bead-message">@unreadBead.Reason</p>
+    <p class="text-danger bead-message">@read.Message</p>
 }
-else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProjectOnTheScreen is { } project)
+else if (read is BeadDetailRead.Given { Detail: var detail } given && TheProjectOnTheScreen is { } project)
 {
     var bead = new BeadAddress(project, detail.Bead.Id);
     var facts = detail.BacklogFacts;
@@ -73,8 +72,8 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
             <BeadFactStrip @key="bead"
                            Address="bead"
                            Detail="detail"
-                           Epics="read.Epics"
-                           Labels="read.Labels"
+                           Epics="given.Epics"
+                           Labels="given.Labels"
                            OnWritten="ReadForThePerson" />
 
             <div class="bead-prose-column">
@@ -122,7 +121,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
 
                 @if (facts is AReadOfTheBacklog.Given { Value: var answered })
                 {
-                    @if (FactoryEpic.Of(read.Backlog, detail.Bead) is { Tasks.Count: > 0 } factoryEpic)
+                    @if (FactoryEpic.Of(given.Backlog, detail.Bead) is { Tasks.Count: > 0 } factoryEpic)
                     {
                         <section class="bead-box bead-factory-tasks">
                             <h2 class="h4 bead-section">Tasks</h2>
@@ -147,7 +146,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
 
                     <BeadDependencyEdges Address="bead"
                                          Facts="answered"
-                                         Beads="read.Beads"
+                                         Beads="given.Beads"
                                          OnWritten="ReadForThePerson">
                         <HeldPress>
                             <BeadHeldCreate Address="bead" Detail="detail" OnCreated="ReadForThePerson" />
@@ -191,7 +190,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
     private sealed record BacklogFromBefore(BeadDetailRead Read, string Why);
 
     private string TheTitleOfThisPage =>
-        read?.Detail is AReadOfTheBead.Given { Value: var detail } ? detail.Bead.Title : Id;
+        read is BeadDetailRead.Given { Detail: var detail } ? detail.Bead.Title : Id;
 
     private PageProject TheProject =>
         theProject ??= new PageProject(
@@ -279,12 +278,12 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
 
     private string? WhyTheBeadStays(BeadDetailRead fresh, ReadCause cause)
     {
-        if (fresh.Detail is not AReadOfTheBead.Unread { Reason: var reason })
+        if (fresh is not (BeadDetailRead.Failed or BeadDetailRead.Abandoned))
         {
             return null;
         }
 
-        if (read?.Detail is not AReadOfTheBead.Given)
+        if (read is not BeadDetailRead.Given)
         {
             return null;
         }
@@ -294,7 +293,7 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
             return NoAnswerAgain;
         }
 
-        return cause is ReadCause.TheProjectWatcher ? reason : null;
+        return cause is ReadCause.TheProjectWatcher ? fresh.Message : null;
     }
 
     private BacklogFromBefore? TheBacklogThatStays(BeadDetailRead fresh, ReadCause cause)
@@ -304,21 +303,23 @@ else if (read.Detail is AReadOfTheBead.Given { Value: var detail } && TheProject
             return null;
         }
 
-        if (fresh.Detail is not AReadOfTheBead.Given { Value: var detail }
+        if (fresh is not BeadDetailRead.Given { Detail: var detail }
             || detail.BacklogFacts is not AReadOfTheBacklog.Unread { Reason: var reason })
         {
             return null;
         }
 
-        if (read is not { Detail: AReadOfTheBead.Given { Value.BacklogFacts: AReadOfTheBacklog.Given facts } } shown)
+        if (read is not BeadDetailRead.Given
+            {
+                Detail.BacklogFacts: AReadOfTheBacklog.Given facts,
+                Backlog: var shownBacklog,
+            })
         {
             return null;
         }
 
-        var kept = detail with { Status = shown.Backlog.StatusOf(detail.Bead), BacklogFacts = facts };
-        return new BacklogFromBefore(
-            fresh with { Detail = new AReadOfTheBead.Given(kept), Backlog = shown.Backlog },
-            reason);
+        var kept = detail with { Status = shownBacklog.StatusOf(detail.Bead), BacklogFacts = facts };
+        return new BacklogFromBefore(new BeadDetailRead.Given(kept, shownBacklog), reason);
     }
 
     private async Task Read(ReadCause cause)
