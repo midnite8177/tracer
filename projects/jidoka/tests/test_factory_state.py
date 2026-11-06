@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 import time
 import unittest
@@ -231,6 +232,37 @@ class ManagedEpicTests(FactoryStateCase):
         self.assertEqual("restart", shown["next_step"]["action"])
         self.assertEqual(RESTART, shown["next_step"]["command"])
         self.assertIn(f"Run {RESTART}", shown["next_step"]["text"])
+
+    def stop_in_session(self, session: str, epic: str) -> subprocess.CompletedProcess:
+        return fixture.run_launcher(test_status.LAUNCHER, [str(test_status.HEARTBEAT), "stop", epic], None,
+                                    {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
+                                     "JIDOKA_SESSION_ID": session}, self.repo, test_status.RUN_TIMEOUT_SECONDS)
+
+    def test_a_manager_that_stops_leaves_the_epic_stopped_while_its_host_keeps_beating(self):
+        stopped = self.stop_in_session(test_status.MANAGER_SESSION, self.epic)
+        self.assertEqual(0, stopped.returncode, stopped.stderr)
+        beaten = self.script(test_status.HEARTBEAT, "beat", "--session", test_status.MANAGER_SESSION)
+        self.assertEqual(0, beaten.returncode, beaten.stderr)
+
+        shown = self.state_of(self.epic)
+
+        self.assertEqual("stopped", shown["state"])
+        self.assertEqual("restart", shown["next_step"]["action"])
+        self.assertNotIn("is running", shown["next_step"]["text"])
+
+    def test_stopping_an_epic_no_manager_claimed_writes_no_heartbeat(self):
+        self.beat_file(self.epic).unlink()
+
+        stopped = self.stop_in_session(test_status.MANAGER_SESSION, self.epic)
+
+        self.assertEqual(0, stopped.returncode, stopped.stderr)
+        self.assertFalse(self.beat_file(self.epic).exists())
+
+    def test_a_session_that_did_not_claim_the_epic_cannot_stop_its_manager(self):
+        stopped = self.stop_in_session(test_status.OTHER_SESSION, self.epic)
+
+        self.assertEqual(0, stopped.returncode, stopped.stderr)
+        self.assertEqual("running", self.state_of(self.epic)["state"])
 
     def test_an_epic_no_manager_claimed_is_stopped(self):
         self.beat_file(self.epic).unlink()

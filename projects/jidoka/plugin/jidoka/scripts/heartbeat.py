@@ -16,6 +16,11 @@ is fresh while it is no older than FRESH_SECONDS, a beat and a half, and a manag
 whose heartbeat is fresh is a second manager. A beat never brings a stale heartbeat back to fresh; a stop
 leaves it stale when it ends the laps, and the next call of a manager claims the epic again.
 
+A manager that stops for any other reason, such as a refused report or a worker that failed, runs
+`heartbeat.py stop <epic>` first, so that the heartbeat records the stop and the factory state reads the epic as
+stopped while the host stays open. It reads the session from $JIDOKA_SESSION_ID and marks only a heartbeat that
+records that session, so a refused second manager stops nobody's heartbeat and an epic with none gets none.
+
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
 Exit codes:
@@ -100,6 +105,15 @@ def mark_stopped(home: Path, epic: str, now: int) -> None:
     write_beat(home, epic, now - FRESH_SECONDS - 1, None)
 
 
+def stop(home: Path, epic: str, now: int, session: str | None) -> None:
+    """Marks the epic's heartbeat stopped when the session claimed it, as a manager does on each stop that runs no
+    `scheduler.py stop`. A session that did not claim the epic, such as a second manager that was refused, leaves the
+    heartbeat of the manager that did, and an epic no manager claimed keeps no heartbeat, so a stop writes none for
+    it."""
+    if session is not None and beat_session(home, epic) == session:
+        mark_stopped(home, epic, now)
+
+
 def session_of_environment() -> str | None:
     """The id of the session the caller runs in, which the session_start hook exports as JIDOKA_SESSION_ID, or None
     when the caller got none."""
@@ -168,10 +182,18 @@ def main(argv: list[str]) -> int:
     beating = modes.add_parser("beat", help="renew the heartbeat of each epic the factory runs for this session")
     beating.add_argument("--session", required=True, help="the id of the session that beats")
     beating.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
+    stopping = modes.add_parser("stop", help="mark the heartbeat of an epic stopped when this session claimed it, "
+                                             "as a manager does when it stops")
+    stopping.add_argument("epic", help="the id of the epic whose manager stops")
+    stopping.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
     try:
-        main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
-        beat(settings_reader.jidoka_home(args.jidoka_home), main_tree, args.session)
+        home = settings_reader.jidoka_home(args.jidoka_home)
+        if args.mode == "stop":
+            stop(home, args.epic, clock.now(), session_of_environment())
+        else:
+            main_tree = settings_reader.main_worktree(Path.cwd(), COMMAND_TIMEOUT_SECONDS)
+            beat(home, main_tree, args.session)
     except (epics.EpicsError, EpicReadError, CommandError, settings_reader.SettingsError, OSError) as error:
         print(f"heartbeat: {error}", file=sys.stderr)
         return 1

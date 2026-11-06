@@ -30,6 +30,7 @@ takes none, so do not put a word in front of its first argument.
 - `watch.py`, no subcommand: the epic id comes first: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/watch.py"`
 - `t3_wake.py`, the subcommand `record`, then the epic id: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/t3_wake.py"`
 - `factory_state.py`, no subcommand: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/factory_state.py"`
+- `heartbeat.py`, the subcommand `stop`, then the epic id: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/heartbeat.py"`
 - `ui.py`, the subcommand `start`: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/ui.py"`
 
 The skill folder is the directory that holds this SKILL.md. Write every
@@ -73,8 +74,16 @@ closing line and stop.
 ### The closing line
 
 Every report ends with the epic's next step, so the human never has to guess
-whether to run `/jidoka:factory`. Each time you stop, and each time you start
-the watcher and wait, run `factory_state.py --jidoka-home ...` as the last
+whether to run `/jidoka:factory`. Each time you stop, first run
+`heartbeat.py stop <epic-id> --jidoka-home ...`, so that the heartbeat records
+that no manager works the epic and the host's beat does not show one. It
+marks only a heartbeat that records your session, so a refusal because another
+manager runs the epic leaves that manager's heartbeat alone. The
+host stays open after you stop and beats the epic's heartbeat while it is
+fresh. Skip it after `scheduler.py stop`, which marks the heartbeat itself, and
+when you start the watcher and wait, because you still work the epic. Each
+time you stop, and each time you start the watcher and wait, run
+`factory_state.py --jidoka-home ...` as the last
 command and write, as the last line, the `next:` line under `<epic-id>`
 exactly as the script printed it, without the `next:` label. The script
 prints a section for each epic in the factory; take your epic's. Where a step
