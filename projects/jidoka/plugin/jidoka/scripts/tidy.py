@@ -32,7 +32,7 @@ from pathlib import Path
 
 import discovered
 import pass_support
-from commands import SCRATCH_FOLDER, env_as_factory, read_bead, run, set_metadata
+from commands import env_as_factory, read_bead, run, set_metadata
 from pass_support import (MAIN_BRANCH, Committed, PassError, Stage, StageToRun, accepts_any_change, every_file,
                           worktree_at)
 from settings_reader import Settings
