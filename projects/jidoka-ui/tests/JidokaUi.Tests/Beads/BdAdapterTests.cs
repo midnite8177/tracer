@@ -534,19 +534,20 @@ public sealed class BdAdapterTests
     }
 
     [Fact]
-    public async Task GivesUpOnAReadThatOutrunsTheWaitLimitWithoutClaimingToHaveStoppedBd()
+    public async Task GivesUpOnAReadThatOutrunsTheWaitLimitAndStopsItsProcess()
     {
         var bd = new FakeBd().Holds("ready --json");
         var clock = new FakeTimeProvider(Start);
         var adapter = new BdAdapter(bd, clock);
 
         var reading = adapter.ReadyAsync(Project);
-        clock.Advance(BdRunGate.WaitLimit);
+        clock.Advance(BdAdapter.WaitLimit);
         var outcome = await reading;
 
         Assert.False(outcome.Answered);
         Assert.True(outcome.GaveUp);
-        Assert.DoesNotContain("stopped", outcome.Message, StringComparison.Ordinal);
+        Assert.Contains("The app stopped it", outcome.Message, StringComparison.Ordinal);
+        Assert.True(bd.Stops[0].IsCancellationRequested);
     }
 
     [Fact]
@@ -557,12 +558,13 @@ public sealed class BdAdapterTests
         var adapter = new BdAdapter(bd, clock);
 
         var writing = adapter.SetPriorityAsync(new BeadAddress(Project, "x-1"), 1);
-        clock.Advance(BdRunGate.WaitLimit);
+        clock.Advance(BdAdapter.WaitLimit);
         var outcome = await writing;
 
         Assert.False(outcome.Wrote);
         Assert.True(outcome.GaveUp);
         Assert.Contains("may still have landed", outcome.Message, StringComparison.Ordinal);
+        Assert.False(bd.Stops[^1].CanBeCanceled);
     }
 
     [Fact]
@@ -573,13 +575,13 @@ public sealed class BdAdapterTests
         var adapter = new BdAdapter(bd, clock);
 
         var probing = adapter.CapabilitiesAsync(Project);
-        clock.Advance(BdRunGate.WaitLimit);
+        clock.Advance(BdAdapter.WaitLimit);
         var capabilities = await probing;
 
         Assert.Equal(string.Empty, capabilities.Version);
         Assert.False(capabilities.VerbsKnown);
         Assert.Contains("bd version", capabilities.Problem, StringComparison.Ordinal);
-        Assert.DoesNotContain("stopped", capabilities.Problem, StringComparison.Ordinal);
+        Assert.True(bd.Stops[0].IsCancellationRequested);
     }
 
     private static readonly DateTimeOffset Start = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);

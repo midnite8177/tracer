@@ -12,7 +12,7 @@ namespace JidokaUi.Core.Boards;
 /// The backlog of the project, which answers what a picker of this page offers: the beads by title,
 /// the epics, and the labels that the project uses. It is empty when the read gave none.
 /// </param>
-/// <param name="GaveUp">True when the app stopped waiting on bd, so this read may still be running.</param>
+/// <param name="GaveUp">True when bd did not answer in time, so the app gave up on the read.</param>
 public sealed record BeadDetailRead(
     Read<BeadDetail> Detail,
     Backlog Backlog,

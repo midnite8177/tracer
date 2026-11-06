@@ -20,13 +20,10 @@ public sealed class BdProcess : IBdProcess
         this.programName = programName;
     }
 
-    public Task<BdResult> RunAsync(string workingDirectory, IReadOnlyList<string> arguments) =>
-        RunAsync(workingDirectory, arguments, CancellationToken.None);
-
     /// <summary>
-    /// Runs the program as <see cref="RunAsync(string, IReadOnlyList{string})"/> does, and kills it
-    /// together with every process that it started when <paramref name="stop"/> is cancelled. A
-    /// script that calls bd leaves those calls running if only the script dies.
+    /// Runs the program, and kills it together with every process that it started when
+    /// <paramref name="stop"/> is cancelled. A script that calls bd leaves those calls running if
+    /// only the script dies.
     /// </summary>
     public async Task<BdResult> RunAsync(
         string workingDirectory, IReadOnlyList<string> arguments, CancellationToken stop)

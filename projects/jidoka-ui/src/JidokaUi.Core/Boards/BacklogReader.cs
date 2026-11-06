@@ -6,7 +6,7 @@ namespace JidokaUi.Core.Boards;
 /// <summary>The backlog of one project, or the reason that bd gave none.</summary>
 /// <param name="Answered">True when bd listed the beads.</param>
 /// <param name="Message">Empty when bd answered; otherwise a message for the person.</param>
-/// <param name="GaveUp">True when the app stopped waiting on bd, so this read may still be running.</param>
+/// <param name="GaveUp">True when bd did not answer in time, so the app gave up on the read.</param>
 public sealed record BacklogOutcome(bool Answered, string Message, Backlog Backlog, bool GaveUp)
 {
     private static readonly Backlog Empty = new([], [], BacklogReader.NoBlockers);
@@ -66,10 +66,6 @@ public sealed class BacklogReader
             BlockersIn(blocked.Records)));
     }
 
-    // The one place where the app derives the ready set itself instead of asking bd. A closed bead is
-    // never ready. Any other bead is ready when it is open or in progress, counts none that it waits
-    // on and carries no date that could defer it. A bead that states less than that leaves bd to
-    // say, and then the result is null for the whole list.
     private static IReadOnlyList<string>? ReadyIdsDerivedFromTheList(
         IReadOnlyList<BeadRecord> records,
         IReadOnlyList<Bead> beads)

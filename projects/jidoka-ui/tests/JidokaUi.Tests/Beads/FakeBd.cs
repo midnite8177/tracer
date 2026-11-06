@@ -22,6 +22,9 @@ public sealed class FakeBd : IBdProcess
     /// <summary>The command lines that the code under test ran, in order.</summary>
     public List<string> Invocations { get; } = [];
 
+    /// <summary>The token of each run, in order, which the code under test cancels to stop that run.</summary>
+    public List<CancellationToken> Stops { get; } = [];
+
     /// <summary>How many times the code under test ran this command line in this directory.</summary>
     public int Runs(string workingDirectory, string commandLine) =>
         runs.Count(new Run(workingDirectory, commandLine).Equals);
@@ -244,10 +247,12 @@ public sealed class FakeBd : IBdProcess
         holding.SetResult(new BdResult(0, standardOutput, string.Empty));
     }
 
-    public Task<BdResult> RunAsync(string workingDirectory, IReadOnlyList<string> arguments)
+    public Task<BdResult> RunAsync(
+        string workingDirectory, IReadOnlyList<string> arguments, CancellationToken stop)
     {
         var commandLine = string.Join(' ', arguments);
         Invocations.Add(commandLine);
+        Stops.Add(stop);
         var run = new Run(workingDirectory, commandLine);
         runs.Add(run);
         if (heldPerDirectory.TryGetValue(run, out var holdingHere))
@@ -275,8 +280,6 @@ public sealed class FakeBd : IBdProcess
         return answer;
     }
 
-    // The scripted answer for this directory, or the one that every directory shares, or the
-    // failure that a bd gives a command it does not have.
     private Task<BdResult> Answer(Run run, string verb)
     {
         if (scriptedPerDirectory.TryGetValue(run, out var here))

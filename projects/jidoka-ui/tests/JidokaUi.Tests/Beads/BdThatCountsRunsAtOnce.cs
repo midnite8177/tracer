@@ -23,7 +23,8 @@ public sealed class BdThatCountsRunsAtOnce : IBdProcess
 
     public int Started => Volatile.Read(ref started);
 
-    public async Task<BdResult> RunAsync(string workingDirectory, IReadOnlyList<string> arguments)
+    public async Task<BdResult> RunAsync(
+        string workingDirectory, IReadOnlyList<string> arguments, CancellationToken stop)
     {
         Interlocked.Increment(ref started);
         var now = Interlocked.Increment(ref underWay);

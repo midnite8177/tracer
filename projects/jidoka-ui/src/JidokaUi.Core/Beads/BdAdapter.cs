@@ -8,6 +8,13 @@ namespace JidokaUi.Core.Beads;
 /// <summary>The one layer that owns every bd invocation.</summary>
 public sealed class BdAdapter
 {
+    /// <summary>
+    /// How long a caller waits for bd before the app gives up on a run. The abandoned read and the
+    /// abandoned write follow from it, so it is part of the interface of the adapter, and the run
+    /// gate reads it.
+    /// </summary>
+    public static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private readonly BdRunGate gate;
     private readonly ConcurrentDictionary<ProjectPath, Lazy<Task<BdCapabilities>>> probed = new();
     private readonly Lock gathering = new();
@@ -104,15 +111,36 @@ public sealed class BdAdapter
 
     private async Task<BdOutcome> OutcomeOfAsync(string workingDirectory, IReadOnlyList<string> arguments)
     {
-        var result = await gate.RunOrGiveUpAsync(workingDirectory, arguments);
-        return result is null ? BdOutcome.Abandoned(AbandonedReadMessage) : OutcomeOf(arguments, result);
+        var run = await RunReadAsync(workingDirectory, arguments);
+        return run is Ran ran ? OutcomeOf(arguments, ran.Result) : BdOutcome.Abandoned(run.Message);
     }
 
     private const string AbandonedReadMessage =
-        "bd has not answered. The app cannot stop it, so this read may still be running.";
+        "bd has not answered. The app stopped it, so this read is no longer running.";
 
     private const string AbandonedWriteMessage =
-        "bd has not answered. The app cannot stop it, so this write may still have landed.";
+        "bd has not answered. The app does not stop a write, so it may still have landed.";
+
+    // What became of one bd run: it answered, or the app gave up on it. Message is what the person is
+    // told when it gave up.
+    private abstract record Run(string Message);
+
+    private sealed record Ran(BdResult Result) : Run(string.Empty);
+
+    private sealed record GaveUp(string Message) : Run(Message);
+
+    // The give-up rule of the adapter lives in these two runners. The app stops a read that it gave
+    // up on and leaves a write to finish, and each runner pairs that policy with the message that
+    // says so.
+    private async Task<Run> RunReadAsync(string workingDirectory, IReadOnlyList<string> arguments) =>
+        await gate.RunOrGiveUpAsync(workingDirectory, arguments, GivingUp.StopsTheProcess) is { } result
+            ? new Ran(result)
+            : new GaveUp(AbandonedReadMessage);
+
+    private async Task<Run> RunWriteAsync(string workingDirectory, IReadOnlyList<string> arguments) =>
+        await gate.RunOrGiveUpAsync(workingDirectory, arguments, GivingUp.LeavesTheProcessRunning) is { } result
+            ? new Ran(result)
+            : new GaveUp(AbandonedWriteMessage);
 
     /// <summary>
     /// Reads every bead of the project, whatever its status. bd list hides the closed beads and
@@ -122,15 +150,15 @@ public sealed class BdAdapter
     public async Task<BdOutcome> ListAsync(ProjectPath project)
     {
         string[] everyStatus = ["list", "--all", "--limit", "0", "--json"];
-        var result = await gate.RunOrGiveUpAsync(project.Value, everyStatus);
-        if (result is null)
+        var run = await RunReadAsync(project.Value, everyStatus);
+        if (run is not Ran ran)
         {
-            return BdOutcome.Abandoned(AbandonedReadMessage);
+            return BdOutcome.Abandoned(run.Message);
         }
 
-        if (result.Succeeded)
+        if (ran.Result.Succeeded)
         {
-            return OutcomeOf(everyStatus, result);
+            return OutcomeOf(everyStatus, ran.Result);
         }
 
         return await OutcomeOfAsync(project.Value, ["list", "--json"]);
@@ -333,12 +361,13 @@ public sealed class BdAdapter
             return BdCreateOutcome.Failure(missing);
         }
 
-        var result = await gate.RunOrGiveUpAsync(project.Value, arguments);
-        if (result is null)
+        var run = await RunWriteAsync(project.Value, arguments);
+        if (run is not Ran ran)
         {
-            return BdCreateOutcome.Abandoned(AbandonedWriteMessage);
+            return BdCreateOutcome.Abandoned(run.Message);
         }
 
+        var result = ran.Result;
         if (!result.Succeeded)
         {
             return BdCreateOutcome.Failure(BdFailure.Describe(arguments, result));
@@ -370,12 +399,13 @@ public sealed class BdAdapter
             return BdWriteOutcome.Failure(missing);
         }
 
-        var result = await gate.RunOrGiveUpAsync(bead.Project.Value, arguments);
-        if (result is null)
+        var run = await RunWriteAsync(bead.Project.Value, arguments);
+        if (run is not Ran ran)
         {
-            return BdWriteOutcome.Abandoned(AbandonedWriteMessage);
+            return BdWriteOutcome.Abandoned(run.Message);
         }
 
+        var result = ran.Result;
         if (!result.Succeeded)
         {
             return BdWriteOutcome.Failure(BdFailure.Describe(arguments, result));
@@ -394,20 +424,22 @@ public sealed class BdAdapter
 
     private async Task<BdCapabilities> ProbeAsync(ProjectPath project)
     {
-        var version = await gate.RunOrGiveUpAsync(project.Value, ["version"]) ?? GaveUpOnTheProbe;
-        var help = await gate.RunOrGiveUpAsync(project.Value, ["--help"]) ?? GaveUpOnTheProbe;
+        var version = await ProbeRunAsync(project, ["version"]);
+        var help = await ProbeRunAsync(project, ["--help"]);
 
         var commandHelp = new Dictionary<string, BdResult>(StringComparer.Ordinal);
         foreach (var command in UiVerbs.Commands)
         {
-            commandHelp[command] =
-                await gate.RunOrGiveUpAsync(project.Value, [command, "--help"]) ?? GaveUpOnTheProbe;
+            commandHelp[command] = await ProbeRunAsync(project, [command, "--help"]);
         }
 
         var beads = await SampleAsync(project);
         var comments = await CommentsOfOneBeadAsync(project, beads);
         return CapabilityProbe.From(version, help, commandHelp, beads, comments);
     }
+
+    private async Task<BdResult> ProbeRunAsync(ProjectPath project, IReadOnlyList<string> arguments) =>
+        await RunReadAsync(project.Value, arguments) is Ran ran ? ran.Result : GaveUpOnTheProbe;
 
     private static readonly BdResult GaveUpOnTheProbe = new(-1, string.Empty, AbandonedReadMessage);
 

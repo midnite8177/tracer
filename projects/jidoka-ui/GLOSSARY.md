@@ -548,7 +548,7 @@ _Avoid_: Spinner, loading, busy, saving, progress
 
 **Abandoned write**:
 A write that `bd` did not answer, which the app stopped waiting for. The
-app cannot stop `bd`, so the write may still land, and the message says
+app does not stop a write, so it may still land, and the message says
 so. The control takes presses again, because every verb of a fact writes
 the same value twice as it writes it once. A comment is the exception:
 a second press would post a second comment, so that box keeps the words
@@ -556,8 +556,8 @@ and waits for the page to read again.
 _Avoid_: Timeout, cancelled write, failed write, stuck
 
 **Abandoned read**:
-A read that `bd` did not answer, which the app stopped waiting for. A
-first read has nothing to fall back on, so it reads as any other failed
+A read that `bd` did not answer, which the app stopped waiting for and
+then ended. A first read has nothing to fall back on, so it reads as any other failed
 read. A re-read is different: the board and the detail page keep what
 they already had on the screen and say that it is what was there before,
 because the beads on the screen are one write old and not wrong.
@@ -991,14 +991,16 @@ _Avoid_: Result, outcome, maybe, optional
 The one layer that owns every `bd` invocation. Besides the jidoka adapter,
 no other code starts a process. It runs only a few `bd` processes at once
 across all projects and queues the rest. A run that the app stopped waiting
-on keeps its place until its process ends. The `bd` calls of jidoka's scripts
-are not counted.
+on keeps its place until its process ends. The app stops a read that outruns
+its wait, because a run left going keeps the database busy, and lets a write
+finish, because a write stopped midway could leave a bead half changed. The
+`bd` calls of jidoka's scripts are not counted.
 _Avoid_: Client, wrapper, gateway
 
 **bd run gate**:
 The part of the bd adapter that decides when a `bd` process may start and when
 the app stops waiting for it. It holds the places, one for each process that may
-run, and the wait limit. A run waits for a place before its clock starts, and a
+run, and it applies the wait limit, which the bd adapter exposes. A run waits for a place before its clock starts, and a
 run it gave up on keeps its place until its process ends. The commands and their
 argument rules stay in the bd adapter.
 _Avoid_: Scheduler, throttle, pool
