@@ -1794,3 +1794,22 @@ test('a check worker may run the holdouts script on a Windows plugin root in eit
   expect(runsCheckScripts(run('C:/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/app_process.py'), WINDOWS_ROOT)).toBe(true)
   expect(runsCheckScripts(run('/c/Users/jeff/.jidoka/plugins/0.1.31/jidoka/scripts/scheduler.py'), WINDOWS_ROOT)).toBe(false)
 })
+
+test('a pass worker may name its own worktree with git -C, and no other folder', async ($, on) => {
+  const looks = [
+    { command: 'git diff', then: 'words', refusing: ['--output'] },
+    { command: 'git log', then: 'words', refusing: ['--output'] },
+  ]
+  engineBeneath(on, [...LAP_LIST, ...looks])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, `git -C ${WORKTREE} diff abc def --stat -- docs/a.md`)).toBe('allow')
+  expect(await bash($, `git -C ${WORKTREE}/ log --oneline`)).toBe('allow')
+  expect(await bash($, `git -C ${WORKTREE} diff --output=/etc/hosts`)).toBe('deny')
+  expect(await bash($, `git -C ${WORKTREE} push`)).toBe('deny')
+  expect(await bash($, `git -C ${WORKTREE} -C .. diff`)).toBe('deny')
+  expect(await bash($, 'git -C /repo diff')).toBe('deny')
+  expect(await bash($, `git -C ${WORKTREE}/src diff`)).toBe('deny')
+  expect(await bash($, 'git -C . diff')).toBe('deny')
+  expect(await bash($, `git -C ${WORKTREE} rm /etc/hosts`)).toBe('deny')
+})

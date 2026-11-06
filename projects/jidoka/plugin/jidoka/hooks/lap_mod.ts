@@ -169,6 +169,19 @@ function managerVerdict(tool: string, input: unknown, pluginRoot: string): Verdi
 type Refusal = 'off-lists' | 'outside-worktree' | 'unreadable-delete'
 
 /**
+ * The words of a git command with a leading `-C` taken off when it names the
+ * worker's own worktree by its absolute path, which is where the worker's shell
+ * already runs. A relative path stays, because it reads against whatever folder
+ * the shell is in by then.
+ */
+function withoutOwnWorktree(words: readonly string[], worktree: string): readonly string[] {
+  const [program, option, folder, ...rest] = words
+  if (program !== 'git' || option !== '-C' || folder === undefined) return words
+  const named = withDrive(folder)
+  return isAbsolute(named) && resolved(named, '/') === resolved(worktree, '/') ? [program, ...rest] : words
+}
+
+/**
  * Why `command` is refused, or undefined when every simple command of it is
  * on the worker's list or, for a lap worker, deletes only paths that really
  * land inside its worktree, the worktree itself excepted. A delete that
@@ -195,7 +208,7 @@ async function refusalOf(
       if (resolved(path, lap.worktree) === root || !(await landsInside(path))) return 'outside-worktree'
     }
   }
-  const unlisted = others.find(words => !areListed([words], lap.commands))
+  const unlisted = others.find(words => !areListed([withoutOwnWorktree(words, lap.worktree)], lap.commands))
   if (unlisted === undefined) return undefined
   return lap.kind === 'lap' && isDelete(unlisted) ? 'unreadable-delete' : 'off-lists'
 }
