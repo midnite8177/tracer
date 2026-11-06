@@ -57,16 +57,16 @@ import tidy
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, run
 from lap_outcomes import CUT_OFF, DONE, FAILED
 from prices import Tokens
-from t3_lane import fingerprint
+from t3_child import CHILD, ChildError, WallClockExceeded, check_child_run, record_start, started_state
 
 T3 = routes.T3_HARNESS
-CHILD = "the T3 child"
 TIER = "local"
 RUNTIME_MODE = "auto-accept-edits"
 STATE_NAME = "t3-tidy-start.json"
 REPLY_NAME = "t3-tidy-reply.txt"
 RESULT_NAME = "t3-tidy-result.json"
 ROUTE_FIELDS = ("provider", "model", "effort")
+OWN_START_FIELDS = {"worktree": str, "head": str, "files": list}
 NO_COMMENTS_SKILL = Path("skills") / "no-comments" / "SKILL.md"
 UNSLOP_SKILL = Path("skills") / "unslop" / "SKILL.md"
 
@@ -185,31 +185,10 @@ def start(batch: TidyBatch, docs: list[str], wall_seconds: int, home: Path, main
     plugin = Path(__file__).resolve().parent.parent
     diff = tidy.diff_of(batch.base, batch.head, batch.files, main_tree)
     prompt = prompt_of(batch, docs, diff, plugin)
-    started = clock.now()
-    reply_path(batch.scratch).unlink(missing_ok=True)
     result_path(batch.scratch).unlink(missing_ok=True)
-    batch.scratch.mkdir(parents=True, exist_ok=True)
-    state = {"epic": batch.epic, "batch": batch.number, "route": route, "reply": str(reply_path(batch.scratch)),
-             "started": started, "wall_seconds": wall_seconds, "main": fingerprint(main_tree),
-             "worktree": str(batch.worktree), "head": batch.head, "files": batch.files}
-    state_path(batch.scratch).write_text(json.dumps(state), encoding="utf-8")
-    return {"delegate_task": delegate_task_of(prompt, route, wall_seconds), "reply": state["reply"],
-            "wall_seconds": wall_seconds, "deadline": started + wall_seconds}
-
-
-def started_state(scratch: Path) -> dict:
-    path = state_path(scratch)
-    try:
-        state = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise TidyChildError(f"{path} was not read, so the batch never started: {error}") from error
-    if not (isinstance(state, dict) and isinstance(state.get("epic"), str) and isinstance(state.get("route"), dict)
-            and isinstance(state.get("reply"), str) and isinstance(state.get("started"), int)
-            and isinstance(state.get("wall_seconds"), int) and isinstance(state.get("main"), str)
-            and isinstance(state.get("worktree"), str) and isinstance(state.get("head"), str)
-            and isinstance(state.get("files"), list)):
-        raise TidyChildError(f"{path} does not hold the start of a batch")
-    return state
+    own_fields = {"batch": batch.number, "worktree": str(batch.worktree), "head": batch.head, "files": batch.files}
+    return record_start(state_path(batch.scratch), reply_path(batch.scratch), batch.epic, route, wall_seconds,
+                        main_tree, own_fields, delegate_task_of(prompt, route, wall_seconds))
 
 
 def ending_of(reply: str) -> dict:
@@ -258,27 +237,24 @@ def settle_up(scratch: Path, state: dict, home: Path, main_tree: Path, seconds: 
 
 def finish(scratch: Path, home: Path, main_tree: Path, asked_for_approval: bool) -> None:
     """Records the row. Raises TidyChildError for a failed run, after putting the batch's files back."""
-    state = started_state(scratch)
+    try:
+        state = started_state(state_path(scratch), OWN_START_FIELDS, "batch")
+    except ChildError as error:
+        raise TidyChildError(str(error)) from error
     seconds = max(0, clock.now() - state["started"])
     outcome = FAILED
     try:
         if asked_for_approval:
             raise TidyChildError(f"{CHILD} asked for an approval")
-        if seconds > state["wall_seconds"]:
-            outcome = CUT_OFF
-            raise TidyChildError(f"{CHILD} ran past the wall clock of {state['wall_seconds']} seconds")
-        if fingerprint(main_tree) != state["main"]:
-            raise TidyChildError(f"the main checkout {main_tree} changed while the child ran, and the tidy "
-                                 f"changes the tidy worktree alone")
-        reply = Path(state["reply"])
-        text = reply.read_text(encoding="utf-8", errors="replace") if reply.is_file() else ""
-        if not text.strip():
-            raise TidyChildError(f"{CHILD} left no reply at {reply}")
+        text = check_child_run(state, seconds, main_tree, "the tidy changes the tidy worktree alone")
         ended = ending_of(text)
         if ended["outcome"] != DONE:
             raise TidyChildError(f"{CHILD} ended {ended['outcome']}: {ended.get('why') or 'no reason given'}")
         outcome = DONE
-    except CommandError as error:
+    except WallClockExceeded as error:
+        outcome = CUT_OFF
+        raise TidyChildError(str(error)) from error
+    except (CommandError, ChildError) as error:
         raise TidyChildError(str(error)) from error
     finally:
         settle_up(scratch, state, home, main_tree, seconds, outcome)
