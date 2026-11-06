@@ -995,6 +995,14 @@ on keeps its place until its process ends. The `bd` calls of jidoka's scripts
 are not counted.
 _Avoid_: Client, wrapper, gateway
 
+**bd run gate**:
+The part of the bd adapter that decides when a `bd` process may start and when
+the app stops waiting for it. It holds the places, one for each process that may
+run, and the wait limit. A run waits for a place before its clock starts, and a
+run it gave up on keeps its place until its process ends. The commands and their
+argument rules stay in the bd adapter.
+_Avoid_: Scheduler, throttle, pool
+
 **jidoka adapter**:
 The one layer that starts jidoka's scripts. A metadata key that jidoka
 owns, such as the gate's decision or an epic's factory rules, has one

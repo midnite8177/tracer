@@ -134,7 +134,6 @@ public sealed class BdCreateTests
         Assert.DoesNotContain("update x-1 --parent x-9", bd.Invocations);
     }
 
-    // A bd of a version that cannot re-parent, on the create or on the update.
     private static FakeBd BdWithoutTheParentFlag() =>
         new FakeBd()
             .Prints("version", "bd version 1.0.0")
@@ -154,7 +153,6 @@ public sealed class BdCreateTests
                   -s, --status string   New status
                 """);
 
-    // A bd whose help declares the commands, subcommands and flags that a create needs.
     private static FakeBd BdThatCreates() =>
         new FakeBd()
             .Prints("version", "bd version 1.2.2")

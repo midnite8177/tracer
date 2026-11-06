@@ -541,7 +541,7 @@ public sealed class BdAdapterTests
         var adapter = new BdAdapter(bd, clock);
 
         var reading = adapter.ReadyAsync(Project);
-        clock.Advance(BdAdapter.WaitLimit);
+        clock.Advance(BdRunGate.WaitLimit);
         var outcome = await reading;
 
         Assert.False(outcome.Answered);
@@ -557,7 +557,7 @@ public sealed class BdAdapterTests
         var adapter = new BdAdapter(bd, clock);
 
         var writing = adapter.SetPriorityAsync(new BeadAddress(Project, "x-1"), 1);
-        clock.Advance(BdAdapter.WaitLimit);
+        clock.Advance(BdRunGate.WaitLimit);
         var outcome = await writing;
 
         Assert.False(outcome.Wrote);
@@ -573,7 +573,7 @@ public sealed class BdAdapterTests
         var adapter = new BdAdapter(bd, clock);
 
         var probing = adapter.CapabilitiesAsync(Project);
-        clock.Advance(BdAdapter.WaitLimit);
+        clock.Advance(BdRunGate.WaitLimit);
         var capabilities = await probing;
 
         Assert.Equal(string.Empty, capabilities.Version);

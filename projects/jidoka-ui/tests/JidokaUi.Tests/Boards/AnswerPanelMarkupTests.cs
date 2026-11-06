@@ -298,7 +298,6 @@ public sealed class AnswerPanelMarkupTests : BunitContext
         return TheDetailPageOf(TheParkedBead);
     }
 
-    // The scripts come first, so that a test replaces one of them with a failure afterwards.
     private void ABdThatTakesTheAnswer() =>
         projects.Bd
             .DeclaresEveryWrite()

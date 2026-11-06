@@ -911,12 +911,8 @@ public sealed class BoardMarkupTests : BunitContext
     private static IReadOnlyList<string> TheTitles(IRenderedComponent<BoardPage> board) =>
         [.. board.FindAll("a.board-title").Select(title => title.TextContent)];
 
-    // What bd answers about one backlog: the beads it lists, the ready ones, and the blocked ones
-    // with what blocks them. A board reads all three, so they travel as one value.
     private sealed record ABacklog(string Beads, string Ready, string Blocked)
     {
-        // A backlog where bd calls no bead ready and no bead blocked, so every row falls back to
-        // the status that bd stored.
         public static ABacklog OfBeadsAlone(string beads) => new(beads, "[]", "[]");
     }
 

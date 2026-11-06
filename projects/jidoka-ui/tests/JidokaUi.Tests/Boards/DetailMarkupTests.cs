@@ -11,7 +11,7 @@ using DetailPage = JidokaUi.Web.Components.Pages.Detail;
 
 namespace JidokaUi.Tests.Boards;
 
-/// <summary>The detail page as a browser draws it: the markup of one bead, and what a press on it does.</summary>
+/// <summary>The detail page as a browser draws it, with the markup of one bead and what a press on it does.</summary>
 public sealed class DetailMarkupTests : BunitContext
 {
     private const string ListCommand = "list --all --limit 0 --json";
