@@ -767,7 +767,11 @@ paths and look at the conflicts with git, and the merge worker of a
 validation alone may merge main, abort or continue that merge, add paths and
 look at the conflicts. A stage-scoped entry says what
 may follow its words, so `git rebase` never takes `--exec`. The repo's list
-is the repo settings' worker commands and each app's test command.
+is the repo settings' worker commands and each app's test command. A lap
+worker may run a listed command behind plain assignments of variables that the
+repo settings' `slot_use` names, by the rule the app process script applies to
+`--env`, so never one that changes how a program is found or loaded. A delete
+behind such a variable gets only what a list entry allows it.
 _Avoid_: Permission hook, guard, sandbox, allowlist
 
 **Permission question**:

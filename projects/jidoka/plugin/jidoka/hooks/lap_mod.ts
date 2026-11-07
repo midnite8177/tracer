@@ -3,7 +3,8 @@ import type { LapWorker, ListEntry } from '../types/index'
 import { changesFolder, deletedPaths, isDelete } from './delete_paths.js'
 import { areListed, entriesOf, splitIntoSimpleCommands } from './list_matcher.js'
 import { isAbsolute, isReallyBeneath, isReallyInside, resolved, withDrive } from './path_placement.js'
-import { simpleCommands } from './shell_words.js'
+import { mayExpand, readCommands } from './shell_words.js'
+import type { ReadCommand } from './shell_words.js'
 import { forgetLauncherShell, jidokaScriptsIn, runScript, scriptPlace } from './run_script.js'
 import { endFailedTurns, startHeartbeat, wakeAfterFailure } from './timers.js'
 import { forgetJidokaHome, recordRequest, recordUsage, tallyRequestStep, tallyWorkerStep } from './token_usage.js'
@@ -56,6 +57,20 @@ async function commandsFor($: EngineInterface, kind: LapWorker['kind'], worktree
   if (shown === undefined || shown.exitCode !== 0) return []
   const listed = entriesOf(jsonIn(shown.stdout))
   return splitIntoSimpleCommands(listed)
+}
+
+/**
+ * The variables a worker of this kind may set in front of a listed command,
+ * from jidoka's slot-variables script run in the worktree. A check worker has
+ * none. Neither has a lap worker when the script cannot print them or prints
+ * anything but a list of text, so that no prefix is allowed.
+ */
+async function slotVariablesFor($: EngineInterface, kind: LapWorker['kind'], worktree: string): Promise<string[]> {
+  if (kind === 'check') return []
+  const shown = await runScript($, 'slot_variables', [], worktree)
+  if (shown === undefined || shown.exitCode !== 0) return []
+  const named = jsonIn(shown.stdout)
+  return Array.isArray(named) && named.every((name): name is string => typeof name === 'string') ? named : []
 }
 
 /** The exit code of the lap-protected script for a folder that holds no task's lap, such as a pass worktree. */
@@ -181,36 +196,58 @@ function withoutOwnWorktree(words: readonly string[], worktree: string): readonl
   return isAbsolute(named) && resolved(named, '/') === resolved(worktree, '/') ? [program, ...rest] : words
 }
 
+function commandBehindAssignments({ words, assignments }: ReadCommand): string[] {
+  return words.slice(assignments.length)
+}
+
+/**
+ * The words a simple command may be judged as with its leading assignments of
+ * `names` off, one more off in each, because a list entry can spell a later
+ * assignment itself. An assignment of any other name, or one whose value may
+ * expand, ends them, and a bare assignment has no command behind it to judge.
+ */
+function behindSlotVariables({ words, assignments }: ReadCommand, names: readonly string[]): string[][] {
+  const end = assignments.findIndex(({ name, value }) => !names.includes(name) || mayExpand(value))
+  const taken = assignments.slice(0, end === -1 ? assignments.length : end)
+  return taken.map((_, index) => words.slice(index + 1)).filter(behind => behind.length > 0)
+}
+
 /**
  * Why `command` is refused, or undefined when every simple command of it is
- * on the worker's list or, for a lap worker, deletes only paths that really
- * land inside its worktree, the worktree itself excepted. A delete that
- * follows a change of folder is left to the list, because its relative paths
- * would read against another folder.
+ * on the worker's list, as spelled or behind variables the worker may set, or,
+ * for a lap worker, deletes only paths that really land inside its worktree,
+ * the worktree itself excepted. A delete that follows a change of folder is
+ * left to the list, because its relative paths would read against another
+ * folder, and so is one behind a variable, whose words do not start with the
+ * delete.
  */
 async function refusalOf(
   lap: LapWorker,
   command: string,
   landsInside: (path: string) => Promise<boolean>,
 ): Promise<Refusal | undefined> {
-  const parts = simpleCommands(command)
+  const parts = readCommands(command)
   if (parts === undefined) return 'off-lists'
-  const mayDelete = lap.kind === 'lap' && !parts.some(changesFolder)
+  const mayDelete = lap.kind === 'lap' && !parts.map(commandBehindAssignments).some(changesFolder)
   const root = resolved(lap.worktree, '/')
-  const others: string[][] = []
-  for (const words of parts) {
-    const paths = mayDelete ? deletedPaths(words) : undefined
+  const others: ReadCommand[] = []
+  for (const part of parts) {
+    const paths = mayDelete ? deletedPaths(part.words) : undefined
     if (paths === undefined) {
-      others.push(words)
+      others.push(part)
       continue
     }
     for (const path of paths.map(withDrive)) {
       if (resolved(path, lap.worktree) === root || !(await landsInside(path))) return 'outside-worktree'
     }
   }
-  const unlisted = others.find(words => !areListed([withoutOwnWorktree(words, lap.worktree)], lap.commands))
+  const isOnAList = (words: readonly string[]): boolean =>
+    areListed([withoutOwnWorktree(words, lap.worktree)], lap.commands)
+  const unlisted = others.find(
+    part => !isOnAList(part.words) && !behindSlotVariables(part, lap.slotVariables).some(isOnAList),
+  )
   if (unlisted === undefined) return undefined
-  return lap.kind === 'lap' && isDelete(unlisted) ? 'unreadable-delete' : 'off-lists'
+  return lap.kind === 'lap' && isDelete(commandBehindAssignments(unlisted)) ? 'unreadable-delete' : 'off-lists'
 }
 
 function refused(lap: LapWorker, call: string, refusal: Refusal): { decision: 'deny'; reason: string } {
@@ -219,8 +256,8 @@ function refused(lap: LapWorker, call: string, refusal: Refusal): { decision: 'd
     refusal === 'outside-worktree'
       ? `deletes outside the lap's worktree ${lap.worktree}`
       : 'is a delete whose paths jidoka cannot tell: a lap worker may delete only paths it names one by one, ' +
-        'with no option but -f and -r (git rm: -r, -q and --cached), no glob, variable or `~`, and no change of ' +
-        'folder before it'
+        'with no option but -f and -r (git rm: -r, -q and --cached), no glob, variable or `~`, no variable set in ' +
+        'front of it, and no change of folder before it'
   return { decision: 'deny', reason: `jidoka: ${call} ${why}. Find another way, or ${WAY_OUT[lap.kind].advice}.` }
 }
 
@@ -342,6 +379,7 @@ export const register: Register = on => {
       kind,
       worktree,
       commands: await commandsFor($, kind, worktree),
+      slotVariables: await slotVariablesFor($, kind, worktree),
       barred: await barredFor($, kind, worktree),
     }
     await $.state.set(STARTING, { lap })

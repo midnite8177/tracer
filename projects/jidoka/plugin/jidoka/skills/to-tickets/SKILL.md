@@ -143,3 +143,5 @@ Acceptance criteria (pass in `--acceptance`):
 </bead-template>
 
 In the bead, avoid specific file paths or code snippets: they go stale fast. Exception: if a prototype produced a snippet that encodes a decision more precisely than prose can (state machine, reducer, schema, type shape), inline it and note briefly that it came from a prototype. Trim to the decision-rich parts, not a working demo, just the important bits.
+
+A task step does not ask for `echo $?`. A bare command's tool result is already its exit status, and `cmd; echo $?` hides a failure from the tool.

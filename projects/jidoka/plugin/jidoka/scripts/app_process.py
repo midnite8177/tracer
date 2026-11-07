@@ -46,9 +46,6 @@ from commands import COMMAND_TIMEOUT_SECONDS, SCRATCH_FOLDER
 
 APPS_FOLDER = "apps"
 APP_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
-LOADING_NAMES = ("PATH", "SHELL", "HOME", "IFS", "ENV")
-LOADING_PREFIXES = ("LD_", "DYLD_", "BASH_", "PYTHON", "NODE_", "RUBY", "PERL", "JAVA", "_JAVA", "JIDOKA_")
 
 
 class AppProcessError(Exception):
@@ -77,19 +74,8 @@ def run_command_of(app: str, settings: settings_reader.Settings) -> str:
     return held.run
 
 
-def is_loading_name(name: str) -> bool:
-    return name in LOADING_NAMES or name.startswith(LOADING_PREFIXES)
-
-
-def slot_variables(settings: settings_reader.Settings) -> set[str]:
-    """The names a worker may give `--env`: the words of the settings' `slot_use`, in capitals, less the names that
-    change how a program is found or loaded."""
-    words = WORD.findall(settings.slot_use) if settings.slot_use is not None else []
-    return {word.upper() for word in words if not is_loading_name(word.upper())}
-
-
 def refuse_unnamed_variables(variables: dict[str, str], settings: settings_reader.Settings) -> None:
-    allowed = slot_variables(settings)
+    allowed = settings_reader.slot_variables(settings)
     for name in variables:
         if name not in allowed:
             raise AppProcessError(f"--env {name} is not a variable that the slot_use of the repo settings names, so "

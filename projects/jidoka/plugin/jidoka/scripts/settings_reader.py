@@ -9,13 +9,15 @@ value, whose fields are checked once, and refuses with the one wording every cal
 `find_settings` gives None instead, for the bench, which works in a repo before it is onboarded. Only the writer,
 repo_settings.py, works on the stored object itself (`read_stored`). The module also holds the
 whole schema of the stored settings: the keys and their defaults, the apps, their hand-run groups, and the checks
-(`problems_in`) that the writer applies before it stores anything and the readers rely on.
+(`problems_in`) that the writer applies before it stores anything and the readers rely on. `slot_variables` is the one
+rule for the variables a worker may set by the settings' `slot_use`, which the app process script and the lap mod share.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -40,6 +42,9 @@ RULE_CONFLICTS = "rule_conflicts"
 DEFAULTS = {**DOCS_DEFAULTS, RULE_CONFLICTS: [], LIZARD_LIMITS: DEFAULT_LIZARD_LIMITS}
 RULE_CONFLICT_KEYS = ["repo_rule", "written_in", "overrules"]
 ONBOARD = "/jidoka:onboard"
+WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+LOADING_NAMES = ("PATH", "SHELL", "HOME", "IFS", "ENV")
+LOADING_PREFIXES = ("LD_", "DYLD_", "BASH_", "PYTHON", "NODE_", "RUBY", "PERL", "JAVA", "_JAVA", "JIDOKA_")
 
 
 class SettingsError(Exception):
@@ -158,6 +163,18 @@ class Settings:
         """The hand-run groups of every app, in app order, each with the app's name."""
         return tuple(HandRunGroup(app.name, group.name, group.reason, group.command)
                      for app in self.apps for group in app.hand_run)
+
+
+def is_loading_name(name: str) -> bool:
+    return name in LOADING_NAMES or name.startswith(LOADING_PREFIXES)
+
+
+def slot_variables(settings: Settings) -> set[str]:
+    """The names a worker may set for its slot, with `--env` of the app process script or in front of a listed
+    command: the words of the settings' `slot_use`, in capitals, less the names that change how a program is found or
+    loaded. A name matches exactly, so lower case is no name."""
+    words = WORD.findall(settings.slot_use) if settings.slot_use is not None else []
+    return {word.upper() for word in words if not is_loading_name(word.upper())}
 
 
 def jidoka_home(flag: str | None) -> Path:

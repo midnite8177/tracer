@@ -191,7 +191,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
    jidoka-ui, so go on.
 2. **Route and settings.** Run `bench.py route standard --jidoka-home ...`,
    then `bench.py route deep --jidoka-home ...`, then `repo_settings.py show`. Keep each app's `name`, `test` and
-   `test_target` for the workers' prompts. Run `bench.py route light` too the
+   `test_target` and the repo settings' `slot_use` for the workers' prompts. Run `bench.py route light` too the
    first time an action's `track` is `full`, and `bench.py route second` the
    first time the actions hold a `review`.
 3. **Next.** Run `scheduler.py next <epic-id> --jidoka-home ...`. Exit 1 means
@@ -252,6 +252,10 @@ the printed route, native Sonnet, with the prompt of a native batch.
      read before writing a question report, and the repo's house rules by
      path;
    - each app's `name`, `test` and `test_target`;
+   - the action's `slot` and the repo settings' `slot_use`, from
+     `repo_settings.py show`. The lap's slot is the worker's own, and a
+     command may set a variable `slot_use` names with a plain assignment in
+     front of it, such as `PORT=5102 <command>`;
    - when the action's `specs` is not empty, the task makes those acceptance
      specs pass. Give the worker the names and the action's `specs_command`,
      and tell it to run the specs red before it writes any code, with
@@ -275,7 +279,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
      test files the diff reaches, with an app's `test` command followed by
      its `test_target` with a filter in the placeholder, and never an
      app's `test` command alone.
-     An app with no test command has no tests to run. When the lap mod
+     An app with no test command has no tests to run. A bare command's tool
+     result is its exit status: a non-zero exit comes back as an error with
+     the code, so a step needs no `echo $?`. When the lap mod
      denies a call, find another way, or end with the question outcome
      and a permission question that names the call, as below;
    - its notes: the assumptions it made, and each change to a library's
@@ -439,7 +445,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
    touches only the files in the action's `tests`. Its job: delete the tests
    that add neither confidence nor communication, such as duplicates of another
    test's behavior. Run only the test files its edits reach, and never an app's
-   `test` command alone. It lists each deletion in the action's `report`, a
+   `test` command alone. A bare command's tool result is its exit status: a
+   non-zero exit comes back as an error with the code, so a step needs no
+   `echo $?`. It lists each deletion in the action's `report`, a
    JSON list of `{"test", "file", "covered_by"}`, where `covered_by` names the
    kept test or acceptance spec that covers the same behavior and is not itself
    deleted. When it deletes nothing it writes `[]`. Its ending is
@@ -463,7 +471,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
    runs no `bd` command that changes anything, starts no workers, and asks no
    question. It reads each file with the Read tool, never with `cat`, `head`
    or `wc` through Bash, and never with a compound command such as
-   `cd <dir> && cat <file>`, which the lap mod denies. It leaves line wrapping
+   `cd <dir> && cat <file>`, which the lap mod denies. A bare command's tool
+   result is its exit status: a non-zero exit comes back as an error with the
+   code, so a step needs no `echo $?`. It leaves line wrapping
    alone: it never re-wraps a line or a paragraph, never splits or joins a
    sentence to fit a width, and changes a line only to delete a comment or to
    reword prose that the skills call for. Its job: read
@@ -559,7 +569,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
    glossary and the house rules, the epic as `bd show` printed it with its
    tasks' titles, and these limits: it works only in the worktree, changes no
    file but its `report`, commits nothing, runs no `bd` command that changes
-   anything, starts no workers, and asks no question. Its job: read
+   anything, starts no workers, and asks no question. A bare command's tool
+   result is its exit status: a non-zero exit comes back as an error with the
+   code, so a step needs no `echo $?`. Its job: read
    `<skill folder>/../code-review/SKILL.md` and run its unattended mode for
    the action's `lane` alone, over `git diff <base> <head> -- <files>` with the
    action's `base`, `head` and `files`. It writes its findings to the action's
@@ -630,7 +642,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
    `lane`, `file`, `line`, `title`, `note` and `size`, and these limits: it
    works only in the worktree, edits only the action's `files`, commits
    nothing, runs no `bd` command that changes anything, starts no workers, and
-   asks no question. Its job: fix each finding, and leave alone one that turns
+   asks no question. A bare command's tool result is its exit status: a
+   non-zero exit comes back as an error with the code, so a step needs no
+   `echo $?`. Its job: fix each finding, and leave alone one that turns
    out wrong. Run only the test files its edits reach, and never an app's
    `test` command alone. Its ending is `{"outcome": "done"}` or
    `{"outcome": "failed", "why": "<one line>"}`. Write the event line
@@ -644,7 +658,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
    worktree. Its prompt holds the action's `reason`, `files`, `branch` and
    `base`, the paths of the glossary and the house rules, and these limits:
    it works only in the worktree, runs no `bd` command that changes anything,
-   starts no workers, and asks no question. Its job: run `git merge main`,
+   starts no workers, and asks no question. A bare command's tool result is its
+   exit status: a non-zero exit comes back as an error with the code, so a step
+   needs no `echo $?`. Its job: run `git merge main`,
    resolve every conflict so that the epic's intent and main's both hold,
    run `git add` on each resolved path, and run
    `git -c core.editor=true merge --continue` to commit the merge. It looks

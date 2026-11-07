@@ -17,12 +17,20 @@ export type ListEntry = string | Grant
  * worker builds, merges or checks the diff of a task and can park it with a
  * question. A `check` worker is a validation or app check worker: it belongs
  * to no task, it reports a verdict for each holdout, and it also runs the
- * launcher on the holdouts script. `barred` holds the repo-relative folders
- * the worker may not write in, the acceptance folders for every lap worker
- * but the spec task's; it is null when the folders could not be established,
- * and the worker then writes nothing.
+ * launcher on the holdouts script. `slotVariables` holds the names a lap
+ * worker may set in front of a listed command; a check worker has none, and
+ * neither has a lap worker whose names could not be read. `barred` holds the
+ * repo-relative folders the worker may not write in, the acceptance folders
+ * for every lap worker but the spec task's; it is null when the folders could
+ * not be established, and the worker then writes nothing.
  */
-export type LapWorker = { kind: 'lap' | 'check'; worktree: string; commands: ListEntry[]; barred: string[] | null }
+export type LapWorker = {
+  kind: 'lap' | 'check'
+  worktree: string
+  commands: ListEntry[]
+  slotVariables: string[]
+  barred: string[] | null
+}
 
 /**
  * The lap whose worker is starting. It is held from before the spawn runs

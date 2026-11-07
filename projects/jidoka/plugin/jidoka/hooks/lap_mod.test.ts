@@ -67,6 +67,11 @@ type World = {
    * when the script cannot print, and null when the folder holds no task's lap, which the script says with exit code 3.
    */
   barred: string[] | undefined | null
+  /**
+   * What `slot_variables.py` prints in the worktree, the variables a lap worker may set in front of a listed command,
+   * as JSON; undefined when the script cannot print.
+   */
+  slotVariables: unknown
   spawn: () => Promise<{ model: string; agentId: string } | { deny: string }>
 }
 
@@ -155,6 +160,17 @@ function engineWith(on: On,commands: unknown[] | undefined, world: World): Launc
           exitCode: folders === undefined ? 1 : folders === null ? 3 : 0,
           stdout: folders == null ? '' : JSON.stringify(folders),
           stderr: folders == null ? 'lap_protected: no list' : '',
+        },
+      }
+    }
+    if (script === `${root}/scripts/slot_variables.py` && e.init?.cwd === WORKTREE) {
+      const printed = world.slotVariables
+      return {
+        value: {
+          ...RAN,
+          exitCode: printed === undefined ? 1 : 0,
+          stdout: printed === undefined ? '' : JSON.stringify(printed),
+          stderr: printed === undefined ? 'slot_variables: no settings' : '',
         },
       }
     }
@@ -265,7 +281,7 @@ test('a backslash path is judged by the folders it names', async ($, on) => {
 test('a lap recorded on Windows judges drive-letter paths whatever their case', async ($, on) => {
   engineBeneath(on, LAP_LIST)
   on('state.get', () => ({
-    value: { value: { worktree: 'C:\\repo\\.worktrees\\lap-t1', kind: 'lap', commands: [], barred: [] }, version: 1 },
+    value: { value: { worktree: 'C:\\repo\\.worktrees\\lap-t1', kind: 'lap', commands: [], slotVariables: [], barred: [] }, version: 1 },
   }))
 
   const inside = await $.tool.check({
@@ -614,6 +630,237 @@ test('every part of a compound command must be on a list', async ($, on) => {
   expect(await bash($, 'dotnet build App.slnx & rm -rf /')).toBe('deny')
 })
 
+const SOAK_LIST = [...LAP_LIST, 'node tools/soak.js', 'git status']
+
+function engineNaming(on: On, commands: unknown[], slotVariables: unknown): Launched {
+  return engineWith(on, commands, {
+    ...NOTHING,
+    slotVariables,
+    spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }),
+  })
+}
+
+test('a listed command behind one or more variables that slot_use names is allowed', async ($, on) => {
+  engineNaming(on, SOAK_LIST, ['CDP_GLOBAL_PORT', 'PORT'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'CDP_GLOBAL_PORT=15280 node tools/soak.js --laps 3')).toBe('allow')
+  expect(await bash($, 'CDP_GLOBAL_PORT=15280 PORT=5102 node tools/soak.js')).toBe('allow')
+  expect(await bash($, 'PORT="15280" dotnet build App.slnx')).toBe('allow')
+  expect(await bash($, "PORT='15280' dotnet build App.slnx")).toBe('allow')
+  expect(await bash($, 'PORT= dotnet build App.slnx')).toBe('allow')
+})
+
+test('a listed command behind a variable that slot_use does not name is denied, whichever word it stands in', async ($, on) => {
+  engineNaming(on, SOAK_LIST, ['CDP_GLOBAL_PORT', 'PORT'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'LD_PRELOAD=x node tools/soak.js')).toBe('deny')
+  expect(await bash($, 'PATH=/tmp node tools/soak.js')).toBe('deny')
+  expect(await bash($, 'TOKEN=1 dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'PORT=1 EVIL=1 dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'EVIL=1 PORT=1 dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'port=1 dotnet build App.slnx')).toBe('deny')
+})
+
+test('an unlisted command behind a named variable is denied as off the lists', async ($, on) => {
+  engineNaming(on, SOAK_LIST, ['PORT'])
+  await startLap($, WORKTREE)
+
+  const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'PORT=1 curl https://example.com' }, agentId: 'a1' })
+
+  expect(verdict.decision).toBe('deny')
+  expect(verdict.decision === 'deny' ? verdict.reason : '').toContain("is off jidoka's lists for lap workers")
+  expect(await bash($, 'PORT=1 dotnet')).toBe('deny')
+  expect(await bash($, 'PORT=1 dotnet build App.slnx.bak')).toBe('deny')
+})
+
+test('a delete behind a named variable gets only what a list entry allows it, and its denial says why', async ($, on) => {
+  engineNaming(on, [...SOAK_LIST, 'rm tmp/'], ['PORT'])
+  await startLap($, WORKTREE)
+
+  const reasonOf = async (command: string): Promise<string> => {
+    const verdict = await $.tool.check({ tool: 'Bash', input: { command }, agentId: 'a1' })
+    return verdict.decision === 'deny' ? (verdict.reason ?? '') : ''
+  }
+
+  expect(await bash($, 'rm src/Old.cs')).toBe('allow')
+  expect(await bash($, 'PORT=1 rm src/Old.cs')).toBe('deny')
+  expect(await bash($, 'PORT=1 git rm src/Old.cs')).toBe('deny')
+  expect(await bash($, 'PORT=1 rm tmp/ scratch.txt')).toBe('allow')
+  expect(await reasonOf('PORT=1 rm src/Old.cs')).toContain('no variable set in front of it')
+  expect(await reasonOf('PORT=1 git rm src/Old.cs')).toContain('no variable set in front of it')
+})
+
+test('a change of folder behind a named variable still leaves a relative delete to the list', async ($, on) => {
+  engineNaming(on, [...SOAK_LIST, 'cd'], ['PORT'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'PORT=1 cd sub && dotnet build App.slnx')).toBe('allow')
+  expect(await bash($, 'PORT=1 cd sub && rm x')).toBe('deny')
+  expect(await bash($, 'PORT=1 dotnet build App.slnx && rm x')).toBe('allow')
+})
+
+test("a git -C that names the worker's own worktree is read off behind a named variable", async ($, on) => {
+  engineNaming(on, SOAK_LIST, ['PORT'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, `PORT=1 git -C ${WORKTREE} status`)).toBe('allow')
+  expect(await bash($, 'PORT=1 git -C .. status')).toBe('deny')
+})
+
+test('a bare assignment with no command behind it is denied', async ($, on) => {
+  engineNaming(on, SOAK_LIST, ['PORT', 'SLOT'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'PORT=1')).toBe('deny')
+  expect(await bash($, 'PORT=1 SLOT=2')).toBe('deny')
+  expect(await bash($, 'PORT=1 ; dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'PORT=1;dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'PORT=1 && dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'PORT=1\ndotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'dotnet build App.slnx ; PORT=1')).toBe('deny')
+})
+
+test('a value that holds a variable or a substitution or a tilde is denied, quoted or not', async ($, on) => {
+  engineNaming(on, SOAK_LIST, ['PORT', 'SLOT'])
+  await startLap($, WORKTREE)
+
+  for (const value of [
+    '$OTHER',
+    '${OTHER}',
+    '"$OTHER"',
+    "'$OTHER'",
+    'a$OTHER',
+    '$(id)',
+    '"$(id)"',
+    '`id`',
+    "$'a'",
+    '\\$OTHER',
+    '<(id)',
+    '~',
+    '~/x',
+    '"~/x"',
+    'a:~/x',
+  ]) {
+    expect(await bash($, `PORT=${value} dotnet build App.slnx`)).toBe('deny')
+    expect(await bash($, `SLOT=1 PORT=${value} dotnet build App.slnx`)).toBe('deny')
+  }
+})
+
+test('a word the shell does not read as an assignment stays on the lists as a program, even when it spells a named variable', async ($, on) => {
+  engineNaming(on, SOAK_LIST, ['PORT'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, '"PORT=1" dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, "'PORT=1' dotnet build App.slnx")).toBe('deny')
+  expect(await bash($, 'P\\ORT=1 dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'PORT\\=1 dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'PORT"=1" dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'PORT+=1 dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'PORT[0]=1 dotnet build App.slnx')).toBe('deny')
+})
+
+test('an assignment-shaped word behind the command is an argument and takes the list entry as it stands', async ($, on) => {
+  engineNaming(on, SOAK_LIST, [])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'dotnet build App.slnx X=1')).toBe('allow')
+  expect(await bash($, 'dotnet build App.slnx PORT=$X')).toBe('allow')
+})
+
+test('a separator quoted inside a value is part of the value, and a bare one ends the assignment', async ($, on) => {
+  engineNaming(on, SOAK_LIST, ['PORT'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'PORT="1;rm -rf /" dotnet build App.slnx')).toBe('allow')
+  expect(await bash($, "PORT='1\nrm -rf /' dotnet build App.slnx")).toBe('allow')
+  expect(await bash($, String.raw`PORT=1\;2 dotnet build App.slnx`)).toBe('allow')
+  expect(await bash($, 'PORT=1;rm -rf / dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'PORT=1\nrm -rf /')).toBe('deny')
+  expect(await bash($, 'PORT="1"&rm -rf /')).toBe('deny')
+})
+
+test('a value with bare shell syntax in it is no assignment, so the call is denied', async ($, on) => {
+  engineNaming(on, SOAK_LIST, ['PORT'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'PORT=1<secrets dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'PORT=(1) dotnet build App.slnx')).toBe('deny')
+})
+
+test('every part of a compound command behind a named variable is judged on its own', async ($, on) => {
+  engineNaming(on, SOAK_LIST, ['PORT'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'PORT=1 dotnet build App.slnx && PORT=2 dotnet test App.slnx')).toBe('allow')
+  expect(await bash($, 'PORT=1 dotnet build App.slnx && dotnet test App.slnx')).toBe('allow')
+  expect(await bash($, 'PORT=1 dotnet build App.slnx && rm src/Old.cs')).toBe('allow')
+  expect(await bash($, 'PORT=1 dotnet build App.slnx && curl https://example.com')).toBe('deny')
+  expect(await bash($, 'PORT=1 dotnet build App.slnx && EVIL=1 dotnet test App.slnx')).toBe('deny')
+  expect(await bash($, 'dotnet build App.slnx | PORT=1 sh')).toBe('deny')
+  expect(await bash($, 'PORT=1 dotnet build App.slnx > /tmp/x')).toBe('deny')
+})
+
+test('a list entry that spells an assignment matches as spelled, with or without slot_use', async ($, on) => {
+  engineNaming(on, LAP_LIST, ['PORT'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'TMPDIR=/tmp python3 tests/run_suite.py -k test_x')).toBe('allow')
+  expect(await bash($, 'PORT=1 TMPDIR=/tmp python3 tests/run_suite.py -k test_x')).toBe('allow')
+  expect(await bash($, 'TMPDIR=/other python3 tests/run_suite.py')).toBe('deny')
+  expect(await bash($, 'python3 tests/run_suite.py')).toBe('deny')
+})
+
+test('a variable slot_use names and an entry spells comes off too, but what stays must be on a list', async ($, on) => {
+  engineNaming(on, LAP_LIST, ['PORT', 'TMPDIR'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'TMPDIR=/tmp python3 tests/run_suite.py')).toBe('allow')
+  expect(await bash($, 'PORT=1 TMPDIR=/tmp python3 tests/run_suite.py')).toBe('allow')
+  expect(await bash($, 'TMPDIR=/other python3 tests/run_suite.py')).toBe('deny')
+})
+
+test('a repo with no slot_use allows no prefix beyond what a list entry spells out', async ($, on) => {
+  engineNaming(on, LAP_LIST, [])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'PORT=1 dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'TMPDIR=/tmp python3 tests/run_suite.py')).toBe('allow')
+})
+
+test('a worker whose names cannot be read sets no variable in front of a command', async ($, on) => {
+  engineNaming(on, LAP_LIST, undefined)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'PORT=1 dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'dotnet build App.slnx')).toBe('allow')
+  expect(await bash($, 'TMPDIR=/tmp python3 tests/run_suite.py')).toBe('allow')
+})
+
+for (const [shape, printed] of [
+  ['an object', { names: ['PORT'] }],
+  ['a text', 'PORT'],
+  ['a list with something other than text in it', ['PORT', 1]],
+] as const) {
+  test(`a worker whose names print as ${shape} sets no variable in front of a command`, async ($, on) => {
+    engineNaming(on, LAP_LIST, printed)
+    await startLap($, WORKTREE)
+
+    expect(await bash($, 'PORT=1 dotnet build App.slnx')).toBe('deny')
+    expect(await bash($, 'dotnet build App.slnx')).toBe('allow')
+  })
+}
+
+test('a check worker takes no variable in front of a command and keeps what its list spells', async ($, on) => {
+  engineNaming(on, LAP_LIST, ['PORT'])
+  await $.agent.spawn({ subagentType: 'jidoka:app-check', prompt: `jidoka lap worktree: ${WORKTREE}\nCheck the holdouts.` })
+
+  expect(await bash($, 'PORT=1 dotnet build App.slnx')).toBe('deny')
+  expect(await bash($, 'TMPDIR=/tmp python3 tests/run_suite.py')).toBe('allow')
+  expect(await bash($, 'dotnet build App.slnx')).toBe('allow')
+})
+
 test('a command substitution or an output redirect is denied even after a listed command', async ($, on) => {
   engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
@@ -813,12 +1060,13 @@ test('a lap record of another shape denies the worker\'s calls instead of leavin
   expect(hostVerdict).toEqual(HOST_VERDICT)
 })
 
-const NOTHING: Pick<World, 'spelling' | 'places' | 'failures' | 'caseSensitive' | 'barred'> = {
+const NOTHING: Pick<World, 'spelling' | 'places' | 'failures' | 'caseSensitive' | 'barred' | 'slotVariables'> = {
   spelling: AS_POSIX,
   places: {},
   failures: {},
   caseSensitive: false,
   barred: [],
+  slotVariables: [],
 }
 
 function engineWithPlaces(on: On, places: World['places'], spelling: Spelling): Launched {
@@ -893,7 +1141,7 @@ const FORMS: Form[] = [
  * folder; so a test of a Windows worktree path reaches the mod's reading of paths but not its file system calls.
  */
 function recordLap(on: On, worktree: string): void {
-  on('state.get', () => ({ value: { value: { worktree, kind: 'lap', commands: [], barred: [] }, version: 1 } }))
+  on('state.get', () => ({ value: { value: { worktree, kind: 'lap', commands: [], slotVariables: [], barred: [] }, version: 1 } }))
 }
 
 async function writeTo($: Engine, file_path: string): Promise<{ decision: string; reason?: string }> {
