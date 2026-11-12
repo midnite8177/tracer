@@ -43,7 +43,7 @@ def stage_without_scratch(worktree: Path) -> list[str]:
     env = env_as_factory()
     run(["git", "add", "--all"], worktree, env)
     run(["git", "reset", "--quiet", "--", SCRATCH_FOLDER], worktree, env)
-    return sorted(run(["git", "diff", "--cached", "--name-only"], worktree, env).splitlines())
+    return sorted(run(["git", "diff", "--cached", "--name-only", "--no-renames"], worktree, env).splitlines())
 
 
 def unmerged_files(worktree: Path) -> list[str]:
@@ -53,5 +53,6 @@ def unmerged_files(worktree: Path) -> list[str]:
 
 def added_since_head(worktree: Path) -> list[str]:
     """The staged paths that the worktree's head does not hold, sorted."""
-    listed = run(["git", "diff", "--cached", "--name-only", "--diff-filter=A"], worktree, env_as_factory())
+    listed = run(["git", "diff", "--cached", "--name-only", "--no-renames", "--diff-filter=A"], worktree,
+                 env_as_factory())
     return sorted(listed.splitlines())

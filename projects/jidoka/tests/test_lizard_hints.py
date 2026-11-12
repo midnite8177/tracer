@@ -148,6 +148,21 @@ class LizardScriptTests(LizardScriptCase):
 
         self.assertEqual([("Till.cs", "ccn")], [(each["file"], each["metric"]) for each in hints])
 
+    def test_measures_a_file_the_range_renamed_as_a_new_file_even_when_git_finds_renames(self):
+        base = self.commit({MODULE: branching("total", 9)})
+        os.rename(self.repo / MODULE, self.repo / "register.py")
+        fixture.git_commit_all(self.repo, "Rename the till")
+        head = fixture.run(["git", "rev-parse", "HEAD"], self.repo).strip()
+        finds_renames = {**os.environ, "JIDOKA_HOME": str(self.home), "GIT_CONFIG_COUNT": "1",
+                         "GIT_CONFIG_KEY_0": "diff.renames", "GIT_CONFIG_VALUE_0": "copies"}
+
+        done = fixture.run_launcher(LAUNCHER, [str(LIZARD_SCRIPT), base, head], "", finds_renames, self.repo,
+                                    TIMEOUT_SECONDS)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([("register.py", "total", None)],
+                         [(each["file"], each["name"], each["was"]) for each in json.loads(done.stdout)])
+
     def test_lists_only_the_files_it_is_given(self):
         base = self.commit({"README.md": "shop\n"})
         head = self.commit({MODULE: branching("total", 9), "reader.py": branching("read", 9)})

@@ -405,6 +405,20 @@ class BeadsStealthTests(unittest.TestCase):
         self.assertEqual(tracked, tracked_beads(self.repo))
         self.assertEqual(exclude_before, exclude_lines(self.repo))
 
+    def test_refuses_naming_the_old_path_when_a_staged_rename_moves_a_file_into_the_workspace(self):
+        fixture.add_committed_bd_init(self.repo)
+        (self.repo / "NOTES.md").write_text("open at nine\n", encoding="utf-8")
+        fixture.git_commit_all(self.repo, "Add the shop's notes")
+        fixture.run(["git", "config", "diff.renames", "copies"], self.repo)
+        fixture.run(["git", "mv", "NOTES.md", ".beads/notes.md"], self.repo)
+        tracked = tracked_beads(self.repo)
+
+        done = self.switch(self.repo)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("NOTES.md", done.stderr)
+        self.assertEqual(tracked, tracked_beads(self.repo))
+
     def test_a_second_switch_changes_nothing_and_says_the_workspace_is_already_stealth(self):
         fixture.add_committed_bd_init(self.repo)
         claude = self.repo / "CLAUDE.md"

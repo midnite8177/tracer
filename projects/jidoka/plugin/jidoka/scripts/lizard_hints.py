@@ -92,7 +92,7 @@ def hints_between(base: str, head: str, files: list[str], limits: dict[str, int]
 
 
 def changed_files(base: str, head: str, cwd: Path) -> list[str]:
-    return run(["git", "diff", "--name-only", "--diff-filter=AM", base, head], cwd, None).splitlines()
+    return run(["git", "diff", "--name-only", "--no-renames", "--diff-filter=AM", base, head], cwd, None).splitlines()
 
 
 def main(argv: list[str]) -> int:

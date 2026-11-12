@@ -162,7 +162,7 @@ def plan_switch(main_tree: Path) -> Switch:
 
 
 def refuse_other_staged_changes(main_tree: Path, touched: list[str]) -> None:
-    staged = run(["git", "diff", "--cached", "--name-only", "-z"], main_tree, None).split("\0")
+    staged = run(["git", "diff", "--cached", "--name-only", "--no-renames", "-z"], main_tree, None).split("\0")
     others = [path for path in staged
               if path and not any(path == own or path.startswith(f"{own}/") for own in touched)]
     if others:
@@ -195,7 +195,8 @@ def switch(main_tree: Path) -> list[str]:
 
 def switch_commit(main_tree: Path) -> str | None:
     """The commit that took the workspace out of git, which is the latest that deleted files under it and left none tracked."""
-    found = capture(["git", "log", "-1", "--format=%H", "--diff-filter=D", "--", WORKSPACE], main_tree, None)
+    found = capture(["git", "log", "-1", "--format=%H", "--no-renames", "--diff-filter=D", "--", WORKSPACE], main_tree,
+                    None)
     commit = found.stdout.strip() if found.returncode == 0 else ""
     if not commit or run(["git", "ls-tree", "-r", "--name-only", commit, "--", WORKSPACE], main_tree, None).strip():
         return None
@@ -228,8 +229,9 @@ def restore(main_tree: Path) -> list[str]:
     if commit is None:
         return []
     handled = [WORKSPACE, bd_files.SKILL_FOLDER, *bd_files.HOOK_FILES, *bd_files.RULES_FILES]
-    deleted = [path for path in run(["git", "diff", "--name-only", "-z", "--diff-filter=D", f"{commit}^", commit,
-                                     "--", *handled], main_tree, None).split("\0") if path]
+    listed = run(["git", "diff", "--name-only", "--no-renames", "-z", "--diff-filter=D", f"{commit}^", commit, "--",
+                  *handled], main_tree, None)
+    deleted = [path for path in listed.split("\0") if path]
     missing = [path for path in deleted if not os.path.lexists(main_tree / path)]
     done = []
     if missing:

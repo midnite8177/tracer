@@ -261,7 +261,7 @@ def review_owed(epic: str, shown: dict, branch: str, settings: Settings, main_tr
         return None
     head = required_head(branch, main_tree, ReviewError)
     base = own_work_base(fixed_point(shown, head, main_tree), head, main_tree)
-    since = set(run(["git", "diff", "--name-only", base, head], main_tree, None).splitlines())
+    since = set(run(["git", "diff", "--name-only", "--no-renames", base, head], main_tree, None).splitlines())
     modules = epic_files(head, settings, main_tree)
     files = [path for path in modules if path in since]
     if not files:

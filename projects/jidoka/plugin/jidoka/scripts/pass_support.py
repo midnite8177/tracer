@@ -183,8 +183,8 @@ def settle_worktree(found: StageToRun, check: Callable[[list[str]], None], setti
 def epic_files(branch_head: str, settings: Settings, main_tree: Path) -> list[str]:
     """The files the epic added or changed, outside every acceptance folder, sorted."""
     folders = protected_folders(settings)
-    listed = run(["git", "diff", "--name-only", "--diff-filter=AM", f"{MAIN_BRANCH}...{branch_head}"], main_tree,
-                 None).splitlines()
+    listed = run(["git", "diff", "--name-only", "--no-renames", "--diff-filter=AM", f"{MAIN_BRANCH}...{branch_head}"],
+                 main_tree, None).splitlines()
     return sorted(path for path in listed if not is_protected(path, folders))
 
 
