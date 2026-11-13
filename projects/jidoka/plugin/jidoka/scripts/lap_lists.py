@@ -24,14 +24,18 @@ JSON list. The kind is the lap mod's kind of worker:
 
 Each list prints its values whole. The lap mod splits a value into its simple
 commands, as it splits every command it decides on, and a value it cannot
-split, such as one with a command substitution or an output redirect, adds
+split, such as one with a command substitution or a redirect into a file, adds
 nothing.
 
 A text entry allows its words with any words after them. An object entry is
 `{"command", "then"}`, which allows its words with nothing after them when
 `then` is `nothing`, with only paths after them when it is `paths`, and with
-any words but the long options in its `refusing` list, or an abbreviation of
-one, when it is `words`. The looks are `git status`, `git diff` and `git log`
+any words but the options in its `refusing` list when it is `words`: a long
+option or an abbreviation of one, and a short option alone or in a bundle of
+short options. The built-in searches, which every lap worker's list holds
+after the merge worker's grants, are `grep`, `/usr/bin/grep`, `/bin/grep`,
+`git grep` without `--open-files-in-pager` and `-O`, `head`, `tail`, `wc`,
+`ls` and `cat`. The looks are `git status`, `git diff` and `git log`
 without `--output`. The merge worker's grants are `git rebase <epic
 branch>`, `git rebase --abort` and `git -c core.editor=true rebase
 --continue` whole, `git add` of paths, and the looks. The merge worker of a validation works in the
@@ -79,6 +83,9 @@ LAP = "lap"
 CHECK = "check"
 LOOKS_REFUSING = ["--output"]
 SPECS_REFUSING = ["--jidoka-home"]
+GIT_GREP_REFUSING = ["--open-files-in-pager", "-O"]
+GREP_PROGRAMS = ["grep", "/usr/bin/grep", "/bin/grep"]
+LOOK_PROGRAMS = ["head", "tail", "wc", "ls", "cat"]
 PASS_PREFIXES = [cleanup.STAGE.prefix, tidy.STAGE.prefix, tidy.LOCAL_STAGE.prefix, review.REVIEW_PREFIX,
                  review.FIX_PREFIX]
 PART_ERRORS = (lap_record.NotALapWorktree, rules.RulesError, CommandError, settings_reader.SettingsError, OSError)
@@ -92,7 +99,7 @@ class Grant(TypedDict):
 
 
 class RefusingGrant(Grant):
-    """A `words` entry, which refuses the long options in `refusing` and their abbreviations."""
+    """A `words` entry, which refuses the options in `refusing`: a long option and its abbreviations, a short option alone or in a bundle."""
     refusing: list[str]
 
 
@@ -111,6 +118,14 @@ def looks() -> list[Grant]:
     """`git status`, `git diff` and `git log` with any words but `--output`, which writes a file."""
     return [RefusingGrant(command=command, then="words", refusing=LOOKS_REFUSING)
             for command in ["git status", "git diff", "git log"]]
+
+
+def searches() -> list[str | Grant]:
+    """The commands that search and look and write nothing: grep by name or absolute path, `git grep` without the
+    option that opens its matches in another program, whether spelled long, short or bundled, then head, tail, wc,
+    ls and cat."""
+    return [*GREP_PROGRAMS, RefusingGrant(command="git grep", then="words", refusing=GIT_GREP_REFUSING),
+            *LOOK_PROGRAMS]
 
 
 def grants(whole: list[str]) -> list[Grant]:
@@ -210,7 +225,7 @@ def lap_list(worktree: Path, home: Path, main_tree: Path) -> list[str | Grant]:
     repo = part_or("the repo settings' commands", [], lambda: repo_part(home, main_tree))
     built_in = part_or("the built-in list", [], lambda: settings_reader.built_in_commands(home))
     epic = part_or("the epic's commands", NO_EPIC_PART, lambda: epic_part(worktree, main_tree))
-    return [*repo, *pass_looks(worktree, main_tree), *epic.granted, *built_in, *epic.extra]
+    return [*repo, *pass_looks(worktree, main_tree), *epic.granted, *searches(), *built_in, *epic.extra]
 
 
 def check_list(settings: settings_reader.Settings) -> list[str]:

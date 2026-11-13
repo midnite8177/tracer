@@ -26,8 +26,7 @@ words, every option with its confidence, the recommendation and the page's
 link. It sets the task's metadata `question.sentence` to the question,
 `question.options` to the options as JSON, each with its `name`, `confidence`
 and `next`, and `question.recommended` to the recommended name. The comment
-holds the whole question without the page. The report file is removed once
-posted.
+holds the whole question without the page. Posting removes the report file.
 
 The human answers by taking the `human` label off. answer_of gives the answer
 to the lap that follows: the comments posted since the question, or the
@@ -39,10 +38,11 @@ report adds three keys:
   call     the call the lap mod denied, as the denial printed it.
   pattern  the command prefix that would allow it: one simple command whose
            words appear in the call.
-  cause    why the lap mod denied it, as the denial says: `off-lists` when
-           the call is off the lists, `outside-worktree` when a delete lands
-           outside the worktree, `unreadable-delete` when a delete's paths
-           cannot be told.
+  cause    why the lap mod denied it, as the denial says: `outside-worktree`
+           when a delete lands outside the worktree, `unreadable-delete` when
+           a delete's paths cannot be told, and `off-lists` for any other
+           denial, a new folder or a move outside the worktree or in or over
+           an acceptance folder included.
 Its options are exactly the three lists, `epic` (the epic's factory rules),
 `repo` (the repo settings' worker commands) and `built-in` (the built-in
 list's additions on this machine), and `none`, which changes no list.

@@ -111,7 +111,14 @@ The settings:
 - `worker_commands`: the commands lap workers may run, as a list.
 - `slot_use`: what the repo does with a lap's slot number and scratch
   folder, such as `"port 5000 plus the slot"`, or `null` when app checks
-  run one at a time.
+  run one at a time. A variable that names a folder names a subfolder of
+  the scratch folder that holds nothing else, never the scratch folder
+  itself, because a command may delete the folder it is handed when it
+  finishes, and with it the stage's reports. A repo whose soak harness
+  takes a folder gets `"port 5000 plus the slot; the soak folder is the
+  subfolder soak of the scratch folder"`, not `"the soak folder is the
+  scratch folder"`. When the repo's harness takes a folder, propose a
+  `slot_use` that names a subfolder.
 - `lap_limit`: the lap limit, a whole number above zero. The repo does not
   hold it, so ask the user.
 - `apps`: one object per app with `name`, `kind` (`"program"` or

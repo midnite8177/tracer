@@ -194,6 +194,12 @@ async function bash($: Engine, command: string): Promise<string> {
   return verdict.decision
 }
 
+/** The reason a Bash call is denied with; empty when it is not denied. */
+async function reasonOf($: Engine, command: string): Promise<string> {
+  const verdict = await $.tool.check({ tool: 'Bash', input: { command }, agentId: 'a1' })
+  return verdict.decision === 'deny' ? (verdict.reason ?? '') : ''
+}
+
 test('a spawn whose prompt names a lap worktree runs the worker in that worktree', async ($, on) => {
   const started: (string | undefined)[] = []
   on('agent.spawn', (_, e) => {
@@ -457,6 +463,43 @@ test('a merge worker may rebase onto the epic branch, add what it resolved, cont
   expect(await bash($, 'git rebase --abort')).toBe('allow')
 })
 
+const SEARCHES = [
+  'grep',
+  '/usr/bin/grep',
+  { command: 'git grep', then: 'words', refusing: ['--open-files-in-pager', '-O'] },
+  'head',
+  'tail',
+  'wc',
+  'ls',
+  'cat',
+]
+
+test('a lap worker may search with grep and git grep and look with head, tail, wc, ls and cat', async ($, on) => {
+  engineBeneath(on, [...LAP_LIST, ...SEARCHES])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'git grep -n -C 3 "TODO" -- src | head -40')).toBe('allow')
+  expect(await bash($, '/usr/bin/grep -rn "TODO" src')).toBe('allow')
+  expect(await bash($, 'grep -c TODO src/a.py | tail -n 2')).toBe('allow')
+  expect(await bash($, 'ls -la src | wc -l')).toBe('allow')
+  expect(await bash($, 'cat src/a.py')).toBe('allow')
+  expect(await bash($, '/opt/bin/grep -rn TODO src')).toBe('deny')
+})
+
+test('a lap worker may not run git grep with the option that opens its matches in another program', async ($, on) => {
+  engineBeneath(on, [...LAP_LIST, ...SEARCHES])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'git grep -O TODO')).toBe('deny')
+  expect(await bash($, 'git grep -Oless TODO')).toBe('deny')
+  expect(await bash($, 'git grep -nO TODO')).toBe('deny')
+  expect(await bash($, 'git grep -On TODO')).toBe('deny')
+  expect(await bash($, 'git grep --open-files-in-pager=vi TODO')).toBe('deny')
+  expect(await bash($, 'git grep --open-files TODO')).toBe('deny')
+  expect(await bash($, 'git grep TODO -O')).toBe('deny')
+  expect(await bash($, 'git grep -n TODO | head && git grep -O TODO')).toBe('deny')
+})
+
 test('a build worker may not rebase, add or continue a rebase', async ($, on) => {
   engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
@@ -530,15 +573,11 @@ test('a delete of the worktree itself is denied', async ($, on) => {
 test('a denied delete says whether it reaches outside the worktree or has paths the mod cannot tell, and a denied call off the lists says neither', async ($, on) => {
   engineBeneath(on, LAP_LIST)
   await startLap($, WORKTREE)
-  const reasonOf = async (command: string): Promise<string> => {
-    const verdict = await $.tool.check({ tool: 'Bash', input: { command }, agentId: 'a1' })
-    return verdict.decision === 'deny' ? (verdict.reason ?? '') : ''
-  }
 
-  expect(await reasonOf('rm /tmp/x')).toContain(`deletes outside the lap's worktree ${WORKTREE}`)
-  expect(await reasonOf('rm src/*.cs')).toContain('is a delete whose paths jidoka cannot tell')
-  expect(await reasonOf('rm -i src/Old.cs')).toContain('is a delete whose paths jidoka cannot tell')
-  expect(await reasonOf('curl https://example.com')).toContain("is off jidoka's lists for lap workers")
+  expect(await reasonOf($, 'rm /tmp/x')).toContain(`deletes outside the lap's worktree ${WORKTREE}`)
+  expect(await reasonOf($, 'rm src/*.cs')).toContain('is a delete whose paths jidoka cannot tell')
+  expect(await reasonOf($, 'rm -i src/Old.cs')).toContain('is a delete whose paths jidoka cannot tell')
+  expect(await reasonOf($, 'curl https://example.com')).toContain("is off jidoka's lists for lap workers")
 })
 
 test('a delete that follows a change of folder is denied, because its paths no longer read against the worktree', async ($, on) => {
@@ -565,6 +604,150 @@ test('a delete is allowed beside other commands only when each of them is allowe
   expect(await bash($, 'rm src/Old.cs && curl https://example.com')).toBe('deny')
   expect(await bash($, 'rm src/Old.cs $(rm /tmp/x)')).toBe('deny')
   expect(await bash($, 'rm src/Old.cs > /tmp/x')).toBe('deny')
+})
+
+test('a lap worker may make folders and move files inside its worktree with mkdir -p, mv -f and git mv -f', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'mkdir -p .scratch/run-1')).toBe('allow')
+  expect(await bash($, `mkdir -p ${WORKTREE}/.scratch/a "src/new dir"`)).toBe('allow')
+  expect(await bash($, 'mv -f src/Old.cs src/New.cs')).toBe('allow')
+  expect(await bash($, 'mv src/a.cs src/b.cs tests')).toBe('allow')
+  expect(await bash($, 'git mv -f src/Old.cs src/New.cs')).toBe('allow')
+  expect(await bash($, 'git mv src/Old.cs src/New.cs')).toBe('allow')
+  expect(await bash($, 'mkdir -p .scratch/run-1 && git mv src/Old.cs .scratch/run-1/Old.cs && rm .scratch/x')).toBe('allow')
+})
+
+test('a move or a new folder outside the worktree is denied with the outside-worktree reason', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'mv -f src/Old.cs /tmp/Old.cs')).toBe('deny')
+  expect(await bash($, 'mv -f /tmp/x src/x')).toBe('deny')
+  expect(await bash($, 'mv src/Old.cs ../other/Old.cs')).toBe('deny')
+  expect(await bash($, `mv src/Old.cs ${WORKTREE}-old/Old.cs`)).toBe('deny')
+  expect(await bash($, 'git mv -f src/Old.cs ../other/Old.cs')).toBe('deny')
+  expect(await bash($, 'mkdir -p /tmp/x')).toBe('deny')
+  expect(await bash($, 'mkdir -p src/../../x')).toBe('deny')
+  expect(await reasonOf($, 'mv -f src/Old.cs /tmp/Old.cs')).toContain(`outside the lap's worktree ${WORKTREE}`)
+  expect(await reasonOf($, 'mkdir -p /tmp/x')).toContain(`outside the lap's worktree ${WORKTREE}`)
+})
+
+test('a move or a new folder is denied when a symlink on a path leads out of the worktree', async ($, on) => {
+  engineWithPlaces(on, { [`${WORKTREE}/escape`]: '/repo/secrets' }, AS_POSIX)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'mv -f src/Old.cs escape/Old.cs')).toBe('deny')
+  expect(await bash($, 'mv -f escape/key.pem src/key.pem')).toBe('deny')
+  expect(await bash($, 'git mv src/Old.cs escape/Old.cs')).toBe('deny')
+  expect(await bash($, 'mkdir -p escape/sub')).toBe('deny')
+  expect(await bash($, 'mv -f src/Old.cs src/New.cs')).toBe('allow')
+})
+
+test('a move or a new folder inside an acceptance folder the lap may not write in is denied', async ($, on) => {
+  engineBarring(on, BARRED_FROM_ACCEPTANCE, { [`${WORKTREE}/shortcut`]: `${WORKTREE}/${ACCEPTANCE}` })
+  await startLap($, WORKTREE)
+
+  expect(await bash($, `mkdir -p ${ACCEPTANCE}/new`)).toBe('deny')
+  expect(await bash($, `mv -f src/a.cs ${ACCEPTANCE}/a.cs`)).toBe('deny')
+  expect(await bash($, `mv -f ${ACCEPTANCE}/Card.feature src/Card.feature`)).toBe('deny')
+  expect(await bash($, `git mv src/a.cs ${WORKTREE}/${ACCEPTANCE}/steps/a.cs`)).toBe('deny')
+  expect(await bash($, 'git mv src/a.cs shortcut/a.cs')).toBe('deny')
+  expect(await bash($, `mkdir -p ${ACCEPTANCE}-notes`)).toBe('allow')
+  expect(await bash($, 'mv -f src/a.cs src/b.cs')).toBe('allow')
+  expect(await reasonOf($, `mkdir -p ${ACCEPTANCE}/new`)).toContain(`is inside the acceptance folder ${ACCEPTANCE}`)
+})
+
+test('a move or a delete of a folder that holds an acceptance folder is denied, and so is a move that puts a folder in its place', async ($, on) => {
+  engineBarring(on, BARRED_FROM_ACCEPTANCE, { [`${WORKTREE}/shortcut`]: `${WORKTREE}/specs` })
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'mv -f specs archived-specs')).toBe('deny')
+  expect(await bash($, `git mv ${WORKTREE}/specs archived-specs`)).toBe('deny')
+  expect(await bash($, 'mv -f specs/../specs old/specs')).toBe('deny')
+  expect(await bash($, 'mv -f shortcut archived-specs')).toBe('deny')
+  expect(await bash($, 'rm -rf specs')).toBe('deny')
+  expect(await bash($, `rm -r ${ACCEPTANCE}/Card.feature`)).toBe('deny')
+  expect(await bash($, 'mv -f other/acceptance specs')).toBe('deny')
+  expect(await bash($, 'mv -f src/acceptance specs/')).toBe('deny')
+  expect(await reasonOf($, 'mv -f specs archived-specs')).toContain(`holds the acceptance folder ${ACCEPTANCE}`)
+  expect(await bash($, 'mv -f src/a.cs specs')).toBe('allow')
+  expect(await bash($, 'mv -f src/a.cs src/b.cs specs/other')).toBe('allow')
+  expect(await bash($, 'mv -f src/old src/new')).toBe('allow')
+  expect(await bash($, 'rm -rf src/old')).toBe('allow')
+  expect(await bash($, 'mkdir -p specs')).toBe('allow')
+})
+
+test('a lap worker whose acceptance folders could not be read may not make a folder or move a file', async ($, on) => {
+  engineBarring(on, undefined, {})
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'mkdir -p .scratch/a')).toBe('deny')
+  expect(await bash($, 'mv -f src/a.cs src/b.cs')).toBe('deny')
+})
+
+test('a worker of the spec task, barred from no folder, may make folders and move files in the acceptance folder', async ($, on) => {
+  engineBarring(on, [], {})
+  await startLap($, WORKTREE)
+
+  expect(await bash($, `mkdir -p ${ACCEPTANCE}/new`)).toBe('allow')
+  expect(await bash($, `git mv -f ${ACCEPTANCE}/a.feature ${ACCEPTANCE}/b.feature`)).toBe('allow')
+})
+
+test('a move or a new folder with a glob, a variable, a tilde, an unlisted option or too few paths is left to the lists', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'mv -f src/*.cs tests')).toBe('deny')
+  expect(await bash($, 'mv -f src/Old?.cs tests')).toBe('deny')
+  expect(await bash($, 'mv -f src/{A,B}.cs tests')).toBe('deny')
+  expect(await bash($, 'mv -f src/Old.cs ~/x')).toBe('deny')
+  expect(await bash($, 'mv -f "$OLD" src/x')).toBe('deny')
+  expect(await bash($, 'mkdir -p "$HOME/x"')).toBe('deny')
+  expect(await bash($, 'mkdir -p src/{a,b}')).toBe('deny')
+  expect(await bash($, 'git mv src/*.cs tests')).toBe('deny')
+  expect(await bash($, 'mkdir -m 777 src/x')).toBe('deny')
+  expect(await bash($, 'mkdir -pv src/x')).toBe('deny')
+  expect(await bash($, 'mv -i src/a.cs src/b.cs')).toBe('deny')
+  expect(await bash($, 'mv -t tests src/a.cs')).toBe('deny')
+  expect(await bash($, 'mv -- src/a.cs src/b.cs')).toBe('deny')
+  expect(await bash($, 'git mv -k src/a.cs src/b.cs')).toBe('deny')
+  expect(await bash($, 'git -C .. mv src/a.cs src/b.cs')).toBe('deny')
+  expect(await bash($, 'mv -f src/a.cs')).toBe('deny')
+  expect(await bash($, 'git mv src/a.cs')).toBe('deny')
+  expect(await bash($, 'mkdir')).toBe('deny')
+  expect(await bash($, 'mkdir -p')).toBe('deny')
+  expect(await reasonOf($, 'mv -f src/*.cs tests')).toContain("is off jidoka's lists for lap workers")
+})
+
+test('a move or a new folder behind a variable, after a change of folder or beside a command off the lists is denied', async ($, on) => {
+  engineNaming(on, [...LAP_LIST, 'cd'], ['PORT'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'PORT=1 mkdir -p src/x')).toBe('deny')
+  expect(await bash($, 'PORT=1 mv -f src/a.cs src/b.cs')).toBe('deny')
+  expect(await bash($, 'cd .. && mv -f lap-t2/a.cs lap-t2/b.cs')).toBe('deny')
+  expect(await bash($, 'cd src; mkdir -p x')).toBe('deny')
+  expect(await bash($, 'mkdir -p src/x && curl https://example.com')).toBe('deny')
+  expect(await bash($, 'mv -f src/a.cs src/b.cs > /tmp/x')).toBe('deny')
+  expect(await bash($, 'mv -f src/a.cs $(rm /tmp/x)')).toBe('deny')
+})
+
+test('a move of the worktree itself is denied', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'mv -f . ../moved')).toBe('deny')
+  expect(await bash($, `git mv -f ${WORKTREE} ${WORKTREE}/src/inner`)).toBe('deny')
+})
+
+test('a check worker may neither make a folder nor move a file', async ($, on) => {
+  engineBeneath(on, LAP_LIST)
+  await $.agent.spawn({ subagentType: 'jidoka:app-check', prompt: `jidoka lap worktree: ${WORKTREE}\nCheck the holdouts.` })
+
+  expect(await bash($, 'mkdir -p src/x')).toBe('deny')
+  expect(await bash($, 'mv -f src/a.cs src/b.cs')).toBe('deny')
 })
 
 test('a check worker may not delete, even inside the worktree', async ($, on) => {
@@ -679,17 +862,12 @@ test('a delete behind a named variable gets only what a list entry allows it, an
   engineNaming(on, [...SOAK_LIST, 'rm tmp/'], ['PORT'])
   await startLap($, WORKTREE)
 
-  const reasonOf = async (command: string): Promise<string> => {
-    const verdict = await $.tool.check({ tool: 'Bash', input: { command }, agentId: 'a1' })
-    return verdict.decision === 'deny' ? (verdict.reason ?? '') : ''
-  }
-
   expect(await bash($, 'rm src/Old.cs')).toBe('allow')
   expect(await bash($, 'PORT=1 rm src/Old.cs')).toBe('deny')
   expect(await bash($, 'PORT=1 git rm src/Old.cs')).toBe('deny')
   expect(await bash($, 'PORT=1 rm tmp/ scratch.txt')).toBe('allow')
-  expect(await reasonOf('PORT=1 rm src/Old.cs')).toContain('no variable set in front of it')
-  expect(await reasonOf('PORT=1 git rm src/Old.cs')).toContain('no variable set in front of it')
+  expect(await reasonOf($, 'PORT=1 rm src/Old.cs')).toContain('no variable set in front of it')
+  expect(await reasonOf($, 'PORT=1 git rm src/Old.cs')).toContain('no variable set in front of it')
 })
 
 test('a change of folder behind a named variable still leaves a relative delete to the list', async ($, on) => {
@@ -869,7 +1047,31 @@ test('a command substitution or an output redirect is denied even after a listed
   expect(await bash($, 'dotnet build App.slnx "$(rm -rf /)"')).toBe('deny')
   expect(await bash($, 'dotnet build App.slnx `rm -rf /`')).toBe('deny')
   expect(await bash($, 'dotnet build App.slnx > /etc/hosts')).toBe('deny')
-  expect(await bash($, 'dotnet build App.slnx 2>&1')).toBe('deny')
+  expect(await bash($, 'dotnet build App.slnx >> build.log')).toBe('deny')
+  expect(await bash($, 'dotnet build App.slnx 2>build.log')).toBe('deny')
+})
+
+test('a listed command with a descriptor duplication or a redirect to dev null is allowed, and a redirect to a file is denied', async ($, on) => {
+  engineBeneath(on, [...LAP_LIST, 'tail'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'dotnet build App.slnx 2>&1')).toBe('allow')
+  expect(await bash($, 'dotnet build App.slnx 2>&1 | tail -n 20')).toBe('allow')
+  expect(await bash($, 'dotnet build App.slnx >/dev/null 2>&1')).toBe('allow')
+  expect(await bash($, 'dotnet build App.slnx &>/dev/null')).toBe('allow')
+  expect(await bash($, 'dotnet build App.slnx 2>&1 | tail -n 20 > build.log')).toBe('deny')
+  expect(await bash($, 'dotnet build App.slnx > build.log 2>&1')).toBe('deny')
+  expect(await bash($, 'curl https://example.com 2>&1')).toBe('deny')
+})
+
+test('a list entry that holds a redirect to dev null is split into its simple commands', async ($, on) => {
+  engineBeneath(on, ['dotnet build App.slnx 2>&1 | tail -n 20', 'dotnet test App.slnx >/dev/null'])
+  await startLap($, WORKTREE)
+
+  expect(await bash($, 'dotnet test App.slnx --filter A')).toBe('allow')
+  expect(await bash($, 'tail -n 20')).toBe('allow')
+  expect(await bash($, 'tail -n 3')).toBe('deny')
+  expect(await bash($, 'curl https://example.com')).toBe('deny')
 })
 
 test('a quoted separator is part of an argument, not a second command', async ($, on) => {

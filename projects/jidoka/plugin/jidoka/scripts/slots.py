@@ -2,17 +2,20 @@
 
 The record is <jidoka-home>/slots.json, a JSON object with `slots`, a list of holds of two kinds. A lap's is
 `{"kind": "lap", "epic", "task", "slot", "repo", "area"}`, one for each open lap that a scheduler call recorded, with
-the repo's main checkout and the lap's area; an entry with no kind is a lap's. A validation's is `{"kind":
-"validation", "epic", "slot"}`: it names no task, repo or area, and it takes no part in the area rule. The lock is
+the repo's main checkout and the lap's area; an entry with no kind is a lap's. An epic's own hold, on a slot while it
+has no lap there, is `{"kind": "epic", "epic", "slot"}`: an epic in validation takes one for each spec it runs, and an
+epic whose pass owes a stage takes one for the pass workers. It names no task, repo or area, and it takes no part in
+the area rule. The lock is
 <jidoka-home>/slots.lock. Slot numbers are unique on the machine, so two repos whose slot use picks overlapping ports
 never clash. Areas are not shared that far: two laps in one area never run together across the running epics of one
 repo, and epics of two repos never share an area.
 
 A scheduler call takes its epic's slots through `share`. Under the lock the call drops each entry whose epic's
 heartbeat is no longer fresh, because a handed-off epic with no manager holds no slot, replaces its own epic's
-entries with the laps the epic holds now, which frees the slot and the area of a lap that ended, places the epic's
-candidate laps beside what the other running epics hold, and records them. The record is written before the lap is
-opened, so a second epic's call that follows sees the slot taken.
+laps with the laps the epic holds now, which frees the slot and the area of a lap that ended, places the epic's
+candidate laps beside what the other running epics hold and the epic's own holds, and records them. The record is
+written before the lap is opened, so a second epic's call that follows sees the slot taken. The epic's own holds stay
+until it releases them.
 
 Every running epic, one whose heartbeat is fresh, keeps at least one slot: an epic with no lap may open one while the
 machine is under its limit, and an epic with a lap opens another only while a slot stays free for each other running
@@ -21,14 +24,16 @@ rule, so the scheduler, which sorts the candidates, and the watcher, which asks 
 question.
 
 An epic in validation holds no lap, so it takes slots through `hold_free`, runs one acceptance spec on each, and gives
-them back through `release`. `Machine.free_for_validation` holds the rule for how many: the slots no other running
-epic holds, less one kept free for each other running epic that holds none, and at least one for the validating epic.
+them back through `release`. `Machine.free_for_an_epic_without_laps` holds the rule for how many: the slots no other
+running epic holds, less one kept free for each other running epic that holds none, and at least one for the epic.
+An epic whose pass owes a stage holds no lap either, so `hold_one` gives its pass workers one slot, the lowest free,
+and keeps the slot the epic already holds for its pass while that slot stays free.
 """
 from __future__ import annotations
 
 import itertools
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import file_lock
@@ -40,7 +45,7 @@ SLOTS_FILE = "slots.json"
 SLOTS_LOCK = "slots.lock"
 FIRST_SLOT = 1
 LAP_KIND = "lap"
-VALIDATION_KIND = "validation"
+EPIC_KIND = "epic"
 
 
 def repo_key(main_tree: Path) -> str:
@@ -63,15 +68,16 @@ class Claim:
 
 
 @dataclass(frozen=True)
-class Hold:
-    """An epic in validation's hold on a slot, where it runs one acceptance spec. It holds no lap, so it names no task,
-    repo or area, and the area rule leaves it out."""
+class EpicHold:
+    """An epic's hold on a slot with no lap on it: an epic in validation runs one acceptance spec there, and an epic
+    whose pass owes a stage runs the pass workers there. It names no task, repo or area, and the area rule leaves it
+    out."""
     epic: str
     slot: int
 
     @property
     def task(self) -> str:
-        """No task: a reader that prints the epic and task of every held slot prints none for a validation's."""
+        """No task: a reader that prints the epic and task of every held slot prints none for an epic's hold."""
         return ""
 
 
@@ -137,10 +143,10 @@ class Machine:
             taken.add(slot)
         return placed
 
-    def free_for_validation(self) -> list[int]:
-        """The slots an epic in validation takes, lowest first: the ones no other running epic holds, less one kept free
-        for each other running epic that holds none, though always at least one, because the validating epic holds no
-        lap and so is owed a slot even when the machine is full."""
+    def free_for_an_epic_without_laps(self) -> list[int]:
+        """The slots an epic that holds no lap takes, lowest first: the ones no other running epic holds, less one kept
+        free for each other running epic that holds none, though always at least one, because the epic is owed a slot
+        even when the machine is full."""
         count = max(1, self.limit - len(self.taken) - self.running_without_a_slot)
         return list(itertools.islice((number for number in itertools.count(FIRST_SLOT) if number not in self.taken),
                                      count))
@@ -150,20 +156,20 @@ def record_path(home: Path) -> Path:
     return home / SLOTS_FILE
 
 
-def holder_of(entry: dict) -> Claim | Hold:
-    if entry.get("kind") == VALIDATION_KIND:
-        return Hold(str(entry["epic"]), int(entry["slot"]))
+def holder_of(entry: dict) -> Claim | EpicHold:
+    if entry.get("kind") == EPIC_KIND:
+        return EpicHold(str(entry["epic"]), int(entry["slot"]))
     return Claim(str(entry["epic"]), str(entry["task"]), int(entry["slot"]), str(entry["repo"]), str(entry["area"]))
 
 
-def entry_of(holder: Claim | Hold) -> dict:
-    if isinstance(holder, Hold):
-        return {"kind": VALIDATION_KIND, "epic": holder.epic, "slot": holder.slot}
+def entry_of(holder: Claim | EpicHold) -> dict:
+    if isinstance(holder, EpicHold):
+        return {"kind": EPIC_KIND, "epic": holder.epic, "slot": holder.slot}
     return {"kind": LAP_KIND, "epic": holder.epic, "task": holder.task, "slot": holder.slot, "repo": holder.repo,
             "area": holder.area}
 
 
-def read(home: Path) -> list[Claim | Hold]:
+def read(home: Path) -> list[Claim | EpicHold]:
     """The holds on record; a record that is missing or cannot be read holds none."""
     try:
         return [holder_of(each) for each in json.loads(record_path(home).read_text(encoding="utf-8"))["slots"]]
@@ -171,17 +177,17 @@ def read(home: Path) -> list[Claim | Hold]:
         return []
 
 
-def write(home: Path, holders: list[Claim | Hold]) -> None:
+def write(home: Path, holders: list[Claim | EpicHold]) -> None:
     home_files.write_in_home(home, SLOTS_FILE, json.dumps({"slots": [entry_of(each) for each in holders]}))
 
 
-def live(home: Path, now: int) -> list[Claim | Hold]:
+def live(home: Path, now: int) -> list[Claim | EpicHold]:
     """The holds of the epics whose heartbeat is fresh, by slot."""
     return sorted((each for each in read(home) if heartbeat.is_fresh(home, each.epic, now)),
                   key=lambda each: (each.slot, each.epic))
 
 
-def machine_beside(standing: Standing) -> tuple[Machine, list[Claim | Hold]]:
+def machine_beside(standing: Standing) -> tuple[Machine, list[Claim | EpicHold]]:
     """The machine as the epic sees it, and the live holds of the other running epics, by slot."""
     beside = [each for each in live(standing.home, standing.now) if each.epic != standing.epic]
     holders = {each.epic for each in beside}
@@ -192,32 +198,54 @@ def machine_beside(standing: Standing) -> tuple[Machine, list[Claim | Hold]]:
 
 
 def hold_free(standing: Standing) -> list[int]:
-    """Records, under the lock, a hold on each slot `Machine.free_for_validation` gives the epic, and returns their
-    numbers, lowest first. The holds stop the other epics from opening a lap over the specs, and `release` takes them
-    off."""
+    """Records, under the lock, a hold on each slot `Machine.free_for_an_epic_without_laps` gives the epic, and returns
+    their numbers, lowest first. The holds stop the other epics from opening a lap over the specs, and `release` takes
+    them off."""
     with file_lock.exclusive(standing.home / SLOTS_LOCK):
         machine, beside = machine_beside(standing)
-        numbers = machine.free_for_validation()
-        write(standing.home, beside + [Hold(standing.epic, number) for number in numbers])
+        numbers = machine.free_for_an_epic_without_laps()
+        write(standing.home, beside + [EpicHold(standing.epic, number) for number in numbers])
     return numbers
 
 
+def holds_of(home: Path, epic: str) -> list[EpicHold]:
+    """The holds on record for the epic."""
+    return [each for each in read(home) if isinstance(each, EpicHold) and each.epic == epic]
+
+
+def hold_one(standing: Standing) -> int:
+    """Records, under the lock, a hold on one slot no other running epic holds, and returns it: the slot the epic
+    already holds when that is still free, else the lowest free. A finished epic's pass runs its workers in worktrees
+    that belong to no lap, so this one slot is theirs, call after call until the pass ends. A worker that runs a
+    harness on the ports `slot_use` names takes them from it, and no other epic's lap shares them. The epic holds no
+    open lap while its pass runs, so its entries on record become this hold, and `release` gives the slot back."""
+    with file_lock.exclusive(standing.home / SLOTS_LOCK):
+        machine, beside = machine_beside(standing)
+        still_free = [each.slot for each in holds_of(standing.home, standing.epic) if each.slot not in machine.taken]
+        number = still_free[0] if still_free else machine.free_for_an_epic_without_laps()[0]
+        write(standing.home, beside + [EpicHold(standing.epic, number)])
+    return number
+
+
 def release(home: Path, epic: str) -> None:
-    """Takes off the holds `hold_free` recorded for the epic."""
+    """Takes off the epic's holds, those `hold_free` and `hold_one` recorded, when it has any."""
     with file_lock.exclusive(home / SLOTS_LOCK):
-        write(home, [each for each in read(home) if not (isinstance(each, Hold) and each.epic == epic)])
+        if holds_of(home, epic):
+            write(home, [each for each in read(home) if not (isinstance(each, EpicHold) and each.epic == epic)])
 
 
 def share(standing: Standing, held: list[Lap], candidates: list[Candidate], epic_limit: int) -> list[Placement]:
     """Places the epic's candidate laps beside the machine's, under the lock, and records them with the laps it holds.
 
-    `held` are the epic's open laps, which replace its entries on record. `candidates` come in the order the epic
-    prefers, and `epic_limit` is the most laps the epic runs at once.
+    `held` are the epic's open laps, which replace its laps on record. The epic's own holds stay on record, and no lap
+    takes their slots. `candidates` come in the order the epic prefers, and `epic_limit` is the most laps the epic runs
+    at once.
     """
     with file_lock.exclusive(standing.home / SLOTS_LOCK):
         machine, beside = machine_beside(standing)
-        placed = machine.place(held, candidates, epic_limit)
+        own = holds_of(standing.home, standing.epic)
+        placed = replace(machine, taken=machine.taken | {each.slot for each in own}).place(held, candidates, epic_limit)
         repo = repo_key(standing.main_tree)
-        write(standing.home, beside + [Claim(standing.epic, lap.task, lap.slot, repo, lap.area) for lap in held]
+        write(standing.home, beside + own + [Claim(standing.epic, lap.task, lap.slot, repo, lap.area) for lap in held]
               + [Claim(standing.epic, each.task, each.slot, repo, each.area) for each in placed])
     return placed

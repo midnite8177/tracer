@@ -34,6 +34,17 @@ LOOKS = [
     {"command": "git diff", "then": "words", "refusing": ["--output"]},
     {"command": "git log", "then": "words", "refusing": ["--output"]},
 ]
+SEARCHES = [
+    "grep",
+    "/usr/bin/grep",
+    "/bin/grep",
+    {"command": "git grep", "then": "words", "refusing": ["--open-files-in-pager", "-O"]},
+    "head",
+    "tail",
+    "wc",
+    "ls",
+    "cat",
+]
 MERGE_MAIN_GRANT = [
     {"command": "git merge main", "then": "nothing"},
     {"command": "git merge --abort", "then": "nothing"},
@@ -43,6 +54,11 @@ MERGE_MAIN_GRANT = [
     {"command": "git diff", "then": "words", "refusing": ["--output"]},
     {"command": "git log", "then": "words", "refusing": ["--output"]},
 ]
+
+
+def without_searches(listed: list) -> list:
+    """The list as printed, less the built-in searches every lap worker's list holds."""
+    return [entry for entry in listed if entry not in SEARCHES]
 
 
 def lap_lists(kind: str, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
@@ -96,7 +112,17 @@ class LapListsTests(test_scheduler.SchedulerCase):
 
         printed = self.printed("lap", lap.worktree)
 
-        self.assertEqual(["make test", "make build", "make fmt", "make lint"], printed)
+        self.assertEqual(["make test", "make build", *SEARCHES, "make fmt", "make lint"], printed)
+
+    def test_a_lap_worker_may_search_with_grep_by_name_or_absolute_path_and_git_grep_that_never_opens_a_pager_and_look_with_head_tail_wc_ls_and_cat(
+            self):
+        lap = self.open_one_lap()
+
+        printed = self.printed("lap", lap.worktree)
+
+        self.assertEqual(SEARCHES, [entry for entry in printed if entry in SEARCHES])
+        self.assertIn({"command": "git grep", "then": "words", "refusing": ["--open-files-in-pager", "-O"]},
+                      printed)
 
     def test_a_merge_worker_is_also_granted_the_rebase_the_epic_branch_needs(self):
         self.write_settings({"worker_commands": [], "apps": [APP]})
@@ -106,7 +132,7 @@ class LapListsTests(test_scheduler.SchedulerCase):
         printed = self.printed("lap", lap.worktree)
 
         grant = [{**entry, "command": entry["command"].format(branch=lap.epic_branch)} for entry in MERGE_GRANT]
-        self.assertEqual(["make test", *grant], printed)
+        self.assertEqual(["make test", *grant], without_searches(printed))
 
     def test_a_lap_at_the_merge_whose_worktree_is_in_the_middle_of_a_rebase_still_gets_the_merge_worker_s_commands(
             self):
@@ -129,7 +155,7 @@ class LapListsTests(test_scheduler.SchedulerCase):
         done = self.lap_list("lap", lap.worktree, bare)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(["make lint"], json.loads(done.stdout))
+        self.assertEqual(["make lint"], without_searches(json.loads(done.stdout)))
 
     def test_a_check_list_without_repo_settings_is_refused_with_a_pointer_to_onboarding(self):
         bare = self.new_home("home-without-settings-for-a-check")
@@ -167,7 +193,7 @@ class LapListsTests(test_scheduler.SchedulerCase):
         done = lap_lists("lap", lap.worktree, env)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(["make test", "make build", "make fmt"], json.loads(done.stdout))
+        self.assertEqual(["make test", "make build", "make fmt"], without_searches(json.loads(done.stdout)))
         self.assertIn("the epic's commands", done.stderr)
         self.assertIn(f"Error fetching {lap.epic}", done.stderr)
 
@@ -178,7 +204,7 @@ class LapListsTests(test_scheduler.SchedulerCase):
         done = self.lap_list("lap", self.repo, self.home)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(["make test", "make build", "make fmt"], json.loads(done.stdout))
+        self.assertEqual(["make test", "make build", "make fmt"], without_searches(json.loads(done.stdout)))
         self.assertIn("the epic's commands", done.stderr)
         self.assertIn("is not a lap worktree", done.stderr)
 
@@ -192,7 +218,7 @@ class LapListsTests(test_scheduler.SchedulerCase):
         done = self.lap_list("lap", lap.worktree, home)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(["make fmt", "make lint"], json.loads(done.stdout))
+        self.assertEqual(["make fmt", "make lint"], without_searches(json.loads(done.stdout)))
         self.assertIn("the repo settings' commands", done.stderr)
 
     def test_a_built_in_list_that_does_not_read_drops_only_itself(self):
@@ -206,7 +232,7 @@ class LapListsTests(test_scheduler.SchedulerCase):
         done = self.lap_list("lap", lap.worktree, self.home)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(["make test", "make build", "make lint"], json.loads(done.stdout))
+        self.assertEqual(["make test", "make build", "make lint"], without_searches(json.loads(done.stdout)))
         self.assertIn("the built-in list", done.stderr)
 
     def test_a_call_with_no_worker_kind_is_a_usage_error(self):
@@ -239,7 +265,8 @@ class PassWorktreeListsTests(test_review.ReviewCase):
         done = lap_lists("lap", worktree, self.caller_env(self.home_with_settings()))
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(["make test", "make build", *LOOKS, "make fmt", "make lint"], json.loads(done.stdout))
+        self.assertEqual(["make test", "make build", *LOOKS, "make fmt", "make lint"],
+                         without_searches(json.loads(done.stdout)))
         self.assertEqual("", done.stderr)
 
     def test_a_pass_worktree_whose_epic_bd_refuses_still_gets_the_repo_settings_commands_and_the_built_in_list(self):
@@ -251,7 +278,7 @@ class PassWorktreeListsTests(test_review.ReviewCase):
         done = lap_lists("lap", worktree, env)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(["make test", "make build", *LOOKS, "make fmt"], json.loads(done.stdout))
+        self.assertEqual(["make test", "make build", *LOOKS, "make fmt"], without_searches(json.loads(done.stdout)))
         self.assertIn("the epic's commands", done.stderr)
         self.assertIn(f"Error fetching {epic}", done.stderr)
 
@@ -281,9 +308,8 @@ class ValidationWorktreeListsTests(test_validation.ValidationCase):
         done = lap_lists("lap", Path(action["worktree"]), self.caller_env(self.home))
 
         self.assertEqual(0, done.returncode, done.stderr)
-        listed = json.loads(done.stdout)
-        self.assertEqual(MERGE_MAIN_GRANT, listed[-len(MERGE_MAIN_GRANT):])
-        self.assertEqual(1 + len(MERGE_MAIN_GRANT), len(listed))
+        listed = without_searches(json.loads(done.stdout))
+        self.assertEqual(MERGE_MAIN_GRANT, listed[1:])
         self.assertEqual("", done.stderr)
 
     def test_a_validation_worktree_of_an_epic_that_owes_no_merge_worker_gets_no_merge_grant(self):
@@ -296,7 +322,7 @@ class ValidationWorktreeListsTests(test_validation.ValidationCase):
         done = lap_lists("lap", leftover, self.caller_env(self.home))
 
         self.assertEqual(0, done.returncode, done.stderr)
-        listed = json.loads(done.stdout)
+        listed = without_searches(json.loads(done.stdout))
         self.assertEqual(1, len(listed))
         self.assertNotIn(MERGE_MAIN_GRANT[0], listed)
 

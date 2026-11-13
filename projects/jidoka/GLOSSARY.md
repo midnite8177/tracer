@@ -187,8 +187,9 @@ _Avoid_: Land, merge agent, approval
 **Protected path**:
 A path that no lap but the spec task's may change: any path inside an
 app's acceptance folder, as the repo settings name it. The lap mod refuses
-Write and Edit in one to every other lap worker, and the merge gate
-refuses any other lap whose diff touches one.
+every other lap worker's Write, Edit, delete, new folder and move in one, and
+a delete or move of a folder that holds one, and the merge gate refuses any
+other lap whose diff touches one.
 _Avoid_: Locked path, guarded file, read-only path
 
 **Test cleanup**:
@@ -739,7 +740,10 @@ record in the jidoka home that every running epic's scheduler shares under a
 lock. A slot held by an epic whose heartbeat went stale, or by a lap that is no
 longer open, is free again, and each running epic keeps at least one, an
 epic in validation included: its specs take the slots no other running epic
-needs, and it takes no area. The repo
+needs, and it takes no area. An epic
+whose pass owes a stage holds one slot for the pass workers, all of them
+alike, and no area, and keeps the same slot for as long as the pass owes a
+stage. The repo
 settings' slot use says what a lap does with it, such as pick a port, so two
 laps side by side never clash, even laps of two repos, and so two app checks
 never share one.
@@ -760,18 +764,26 @@ worktree, whether by its path or through a symlink, and denies the rest
 with a reason. It decides a worker's first call too, before the worker's
 agent id is known. The built-in list holds every call the tool marks
 read-only, a write inside the worktree, a delete there with `rm` or
-`git rm`, the commands a human added to it for every repo on the machine,
-and entries scoped to one stage: a merge worker alone may
+`git rm`, a folder made there with `mkdir -p`, a file moved there with `mv -f`
+or `git mv -f`, the commands a human added to it for every repo on the machine,
+the searches and looks, `grep` by name or by its absolute path, `git grep`
+without the option that opens its matches in another program, `head`, `tail`,
+`wc`, `ls` and `cat`, and entries scoped to one stage: a merge worker alone may
 rebase the lap onto the epic branch, abort or continue that rebase, add
 paths and look at the conflicts with git, and the merge worker of a
 validation alone may merge main, abort or continue that merge, add paths and
 look at the conflicts. A stage-scoped entry says what
-may follow its words, so `git rebase` never takes `--exec`. The repo's list
+may follow its words, so `git rebase` never takes `--exec` and `git grep` never
+takes `-O`, alone or in a bundle. The repo's list
 is the repo settings' worker commands and each app's test command. A lap
 worker may run a listed command behind plain assignments of variables that the
 repo settings' `slot_use` names, by the rule the app process script applies to
 `--env`, so never one that changes how a program is found or loaded. A delete
-behind such a variable gets only what a list entry allows it.
+behind such a variable gets only what a list entry allows it. A lap worker may
+make folders and move files inside its worktree, outside every acceptance
+folder its lap may not write in, when each path is named one by one and really
+lands inside the worktree, by the delete's rule: no glob, variable or `~`, no
+variable set in front, and no change of folder before it.
 _Avoid_: Permission hook, guard, sandbox, allowlist
 
 **Permission question**:

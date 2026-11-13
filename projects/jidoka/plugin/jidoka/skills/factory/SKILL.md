@@ -332,10 +332,11 @@ the printed route, native Sonnet, with the prompt of a native batch.
      other way round. Its report adds `call`, the denied call as the
      denial printed it, `pattern`, the command prefix that would allow
      it: one simple command whose words appear in `call`, and `cause`, why
-     the lap mod denied it: `off-lists` when the denial says the call is
-     off jidoka's lists, `outside-worktree` when it says the call deletes
-     outside the worktree, and `unreadable-delete` when it says the
-     delete's paths cannot be told. Its report needs no `question`,
+     the lap mod denied it: `outside-worktree` when the denial says the call
+     deletes outside the worktree, `unreadable-delete` when it says the
+     delete's paths cannot be told, and `off-lists` for any other denial: the
+     call is off jidoka's lists, or it makes a folder or moves a file outside
+     the worktree or in or over an acceptance folder. Its report needs no `question`,
      because the scheduler writes "May lap workers run <pattern>?" itself.
      Its `options` are exactly `epic` (the epic's factory rules), `repo`
      (the repo's list), `built-in` (the built-in list, for every repo on
@@ -440,19 +441,32 @@ the printed route, native Sonnet, with the prompt of a native batch.
    scratch folder that holds nothing else, because an app may delete a folder
    it is handed. Write the event line for the started app check worker.
 
+   Every action of the pass, the `test-cleanup`, `tidy`, `review`, `fix` and
+   `merge` ones, holds a `slot`, the one slot the epic's pass holds on the
+   machine, and the same for each of them. Each of those workers' prompts
+   holds it with the repo settings' `slot_use`, the pass slot, named as such.
+   A pass worker is no lap's, but the lap mod allows it the same prefix: a
+   command may set a variable `slot_use` names with a plain assignment in
+   front of it, such as `PORT=5102 <command>`, so that a harness it runs does
+   not take the ports of another lap. A variable that names a folder names a
+   subfolder of the worker's scratch folder that holds nothing else, never the
+   scratch folder itself, because a command may delete a folder it is handed.
+   The side by side workers of one stage share the one slot, so a harness
+   belongs to one of them at a time.
+
    An action whose `action` is `test-cleanup` has no task: every task has
    merged, and the epic branch holds tests the epic added or changed. Start one
    lap worker on the deep tier's route, with the first line
    `jidoka lap worktree: <worktree>`, the action's `worktree`. Its prompt holds
    the paths of the glossary and the house rules, each app's `name`, `test` and
-   `test_target`, and these limits: it works only in the worktree, commits
-   nothing, runs no `bd` command that changes anything, starts no workers, and
-   touches only the files in the action's `tests`. Its job: delete the tests
-   that add neither confidence nor communication, such as duplicates of another
-   test's behavior. Run only the test files its edits reach, and never an app's
-   `test` command alone. A bare command's tool result is its exit status: a
-   non-zero exit comes back as an error with the code, so a step needs no
-   `echo $?`. It lists each deletion in the action's `report`, a
+   `test_target`, the pass slot and `slot_use`, and these limits: it works
+   only in the worktree, commits nothing, runs no `bd` command that changes
+   anything, starts no workers, and touches only the files in the action's
+   `tests`. Its job: delete the tests that add neither confidence nor
+   communication, such as duplicates of another test's behavior. Run only the
+   test files its edits reach, and never an app's `test` command alone. A bare
+   command's tool result is its exit status: a non-zero exit comes back as an
+   error with the code, so a step needs no `echo $?`. It lists each deletion in the action's `report`, a
    JSON list of `{"test", "file", "covered_by"}`, where `covered_by` names the
    kept test or acceptance spec that covers the same behavior and is not itself
    deleted. When it deletes nothing it writes `[]`. Its ending is
@@ -472,9 +486,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
    with no extra step. Each prompt's first line is
    `jidoka lap worktree: <worktree>`, the action's `worktree`, which the
    batches share. Each prompt holds the paths of the glossary and the house
-   rules, and these limits: it works only in the worktree, commits nothing,
-   runs no `bd` command that changes anything, starts no workers, and asks no
-   question. It reads each file with the Read tool, never with `cat`, `head`
+   rules, the pass slot and `slot_use`, and these limits: it works only in the
+   worktree, commits nothing, runs no `bd` command that changes anything,
+   starts no workers, and asks no question. It reads each file with the Read tool, never with `cat`, `head`
    or `wc` through Bash, and never with a compound command such as
    `cd <dir> && cat <file>`, which the lap mod denies. A bare command's tool
    result is its exit status: a non-zero exit comes back as an error with the
@@ -572,11 +586,12 @@ the printed route, native Sonnet, with the prompt of a native batch.
    `jidoka lap worktree: <worktree>`, the action's
    `worktree`, which the lanes share. Each prompt holds the paths of the
    glossary and the house rules, the epic as `bd show` printed it with its
-   tasks' titles, and these limits: it works only in the worktree, changes no
-   file but its `report`, commits nothing, runs no `bd` command that changes
-   anything, starts no workers, and asks no question. A bare command's tool
-   result is its exit status: a non-zero exit comes back as an error with the
-   code, so a step needs no `echo $?`. Its job: read
+   tasks' titles, the pass slot and `slot_use`, and these limits: it works only
+   in the worktree, changes no file but its `report`, commits nothing, runs no
+   `bd` command that changes anything, starts no workers, and asks no
+   question. A bare command's tool result is its exit status: a non-zero exit
+   comes back as an error with the code, so a step needs no `echo $?`. Its job:
+   read
    `<skill folder>/../code-review/SKILL.md` and run its unattended mode for
    the action's `lane` alone, over `git diff <base> <head> -- <files>` with the
    action's `base`, `head` and `files`. It writes its findings to the action's
@@ -643,11 +658,11 @@ the printed route, native Sonnet, with the prompt of a native batch.
    fix. Start one lap worker on the standard tier's route, with the first
    line `jidoka lap worktree: <worktree>`, the action's `worktree`. Its prompt
    holds the paths of the glossary and the house rules, each app's `name`,
-   `test` and `test_target`, every finding of the action's `findings` with its
-   `lane`, `file`, `line`, `title`, `note` and `size`, and these limits: it
-   works only in the worktree, edits only the action's `files`, commits
-   nothing, runs no `bd` command that changes anything, starts no workers, and
-   asks no question. A bare command's tool result is its exit status: a
+   `test` and `test_target`, the pass slot and `slot_use`, every finding of the
+   action's `findings` with its `lane`, `file`, `line`, `title`, `note` and
+   `size`, and these limits: it works only in the worktree, edits only the
+   action's `files`, commits nothing, runs no `bd` command that changes
+   anything, starts no workers, and asks no question. A bare command's tool result is its exit status: a
    non-zero exit comes back as an error with the code, so a step needs no
    `echo $?`. Its job: fix each finding, and leave alone one that turns
    out wrong. Run only the test files its edits reach, and never an app's
@@ -661,12 +676,12 @@ the printed route, native Sonnet, with the prompt of a native batch.
    lines. Start one worker on the deep tier's route, with the first line
    `jidoka lap worktree: <worktree>`, the action's `worktree`, the validation
    worktree. Its prompt holds the action's `reason`, `files`, `branch` and
-   `base`, the paths of the glossary and the house rules, and these limits:
-   it works only in the worktree, runs no `bd` command that changes anything,
-   starts no workers, and asks no question. A bare command's tool result is its
-   exit status: a non-zero exit comes back as an error with the code, so a step
-   needs no `echo $?`. Its job: run `git merge main`,
-   resolve every conflict so that the epic's intent and main's both hold,
+   `base`, the paths of the glossary and the house rules, the pass slot and
+   `slot_use`, and these limits: it works only in the worktree, runs no `bd`
+   command that changes anything, starts no workers, and asks no question. A
+   bare command's tool result is its exit status: a non-zero exit comes back
+   as an error with the code, so a step needs no `echo $?`. Its job: run
+   `git merge main`, resolve every conflict so that the epic's intent and main's both hold,
    run `git add` on each resolved path, and run
    `git -c core.editor=true merge --continue` to commit the merge. It looks
    at the conflicts with `git status`, `git diff` and `git log`. These are

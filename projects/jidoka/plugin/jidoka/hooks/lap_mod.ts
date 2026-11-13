@@ -1,6 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 import type { LapWorker, ListEntry } from '../types/index'
-import { changesFolder, deletedPaths, isDelete } from './delete_paths.js'
+import { changesFolder, deletedPaths, isDelete, placedPaths } from './delete_paths.js'
+import type { Placed } from './delete_paths.js'
 import { areListed, entriesOf, splitIntoSimpleCommands } from './list_matcher.js'
 import { isAbsolute, isReallyBeneath, isReallyInside, resolved, withDrive } from './path_placement.js'
 import { mayExpand, readCommands } from './shell_words.js'
@@ -180,8 +181,101 @@ function managerVerdict(tool: string, input: unknown, pluginRoot: string): Verdi
   return { decision: 'allow' }
 }
 
-/** Why a Bash call is refused, in the words a lap worker's permission question reports as its `cause`. */
-type Refusal = 'off-lists' | 'outside-worktree' | 'unreadable-delete'
+/**
+ * Why a path is barred to a lap worker: jidoka could not read the folders the
+ * lap may not write in, or the path is inside one of them, or holds one, so
+ * that a move or a delete of it would take the folder along.
+ */
+type Barred = 'acceptance-folders-unread' | { acceptanceFolder: string; relation: 'inside' | 'holds' }
+
+/**
+ * Why a Bash call is refused. `refused` words each one, and a lap worker reads
+ * that wording to pick the `cause` of its permission question, which is not
+ * this type: only a delete outside the worktree has the cause
+ * `outside-worktree`, and the cause of any other denial but `unreadable-delete`
+ * is `off-lists`.
+ */
+type Refusal = 'off-lists' | 'outside-worktree' | 'unreadable-delete' | 'placed-outside-worktree' | Barred
+
+/** What a verdict asks the file system about where a path really lands. */
+type PathProbes = {
+  landsInside: (path: string) => Promise<boolean>
+  landsBeneath: (path: string, folder: string) => Promise<boolean>
+}
+
+/** Why a lap worker may not change `path`: it is inside an acceptance folder the lap may not write in, or those folders are unread. */
+async function barredRefusal(lap: LapWorker, path: string, probes: PathProbes): Promise<Barred | undefined> {
+  if (lap.barred === null) return 'acceptance-folders-unread'
+  for (const folder of lap.barred) {
+    if (await probes.landsBeneath(path, folder)) return { acceptanceFolder: folder, relation: 'inside' }
+  }
+  return undefined
+}
+
+/**
+ * Why a lap worker may not write at `path`, the one rule for every call that
+ * changes a path: it is the worktree itself or lands outside it, or it is
+ * barred.
+ */
+async function writeRefusal(
+  lap: LapWorker,
+  path: string,
+  probes: PathProbes,
+): Promise<'outside-worktree' | Barred | undefined> {
+  const isTheWorktree = resolved(path, lap.worktree) === resolved(lap.worktree, '/')
+  if (isTheWorktree || !(await probes.landsInside(path))) return 'outside-worktree'
+  return barredRefusal(lap, path, probes)
+}
+
+/** Why a lap worker may not remove `path` from where it is: it may not write there, or it holds an acceptance folder. */
+async function removalRefusal(
+  lap: LapWorker,
+  path: string,
+  probes: PathProbes,
+): Promise<'outside-worktree' | Barred | undefined> {
+  const refusal = await writeRefusal(lap, path, probes)
+  if (refusal !== undefined) return refusal
+  for (const folder of lap.barred ?? []) {
+    if (await probes.landsBeneath(folder, path)) return { acceptanceFolder: folder, relation: 'holds' }
+  }
+  return undefined
+}
+
+async function firstRefusal<Refused>(
+  paths: readonly string[],
+  refuse: (path: string) => Promise<Refused | undefined>,
+): Promise<Refused | undefined> {
+  for (const path of paths) {
+    const refusal = await refuse(path)
+    if (refusal !== undefined) return refusal
+  }
+  return undefined
+}
+
+async function deleteRefusal(lap: LapWorker, deleted: readonly string[], probes: PathProbes): Promise<Refusal | undefined> {
+  return firstRefusal(deleted.map(withDrive), path => removalRefusal(lap, path, probes))
+}
+
+/**
+ * Where a move into an existing folder puts what it moves: beneath each
+ * destination, under the name of each source. The words do not say whether the
+ * destination is a folder, so these places are judged beside the destination.
+ */
+function beneathDestinations(lap: LapWorker, sources: readonly string[], destinations: readonly string[]): string[] {
+  const names = sources.flatMap(source => resolved(source, lap.worktree)?.split('/').slice(-1) ?? [])
+  return destinations.flatMap(destination => names.map(name => `${destination.replace(/[\\/]+$/, '')}/${name}`))
+}
+
+async function placeRefusal(lap: LapWorker, placed: Placed, probes: PathProbes): Promise<Refusal | undefined> {
+  const leaving = placed.leaving.map(withDrive)
+  const arriving = placed.arriving.map(withDrive)
+  const refusal =
+    (await firstRefusal(leaving, path => removalRefusal(lap, path, probes))) ??
+    (await firstRefusal([...arriving, ...beneathDestinations(lap, leaving, arriving)], path =>
+      writeRefusal(lap, path, probes),
+    ))
+  return refusal === 'outside-worktree' ? 'placed-outside-worktree' : refusal
+}
 
 /**
  * The words of a git command with a leading `-C` taken off when it names the
@@ -216,31 +310,38 @@ function behindSlotVariables({ words, assignments }: ReadCommand, names: readonl
  * Why `command` is refused, or undefined when every simple command of it is
  * on the worker's list, as spelled or behind variables the worker may set, or,
  * for a lap worker, deletes only paths that really land inside its worktree,
- * the worktree itself excepted. A delete that follows a change of folder is
- * left to the list, because its relative paths would read against another
- * folder, and so is one behind a variable, whose words do not start with the
- * delete.
+ * the worktree itself excepted, and makes folders and moves files only
+ * between such paths, outside every acceptance folder it may not write in, and
+ * moves or deletes no folder that holds one. A delete, a move or a new folder
+ * that follows a change of folder is left to the list, because its relative
+ * paths would read against another folder, and so is one behind a variable,
+ * whose words do not start with the command.
  */
-async function refusalOf(
-  lap: LapWorker,
-  command: string,
-  landsInside: (path: string) => Promise<boolean>,
-): Promise<Refusal | undefined> {
+async function refusalOf(lap: LapWorker, command: string, probes: PathProbes): Promise<Refusal | undefined> {
   const parts = readCommands(command)
   if (parts === undefined) return 'off-lists'
-  const mayDelete = lap.kind === 'lap' && !parts.map(commandBehindAssignments).some(changesFolder)
-  const root = resolved(lap.worktree, '/')
+  const mayReadPaths = lap.kind === 'lap' && !parts.map(commandBehindAssignments).some(changesFolder)
   const others: ReadCommand[] = []
   for (const part of parts) {
-    const paths = mayDelete ? deletedPaths(part.words) : undefined
-    if (paths === undefined) {
+    const deleted = mayReadPaths ? deletedPaths(part.words) : undefined
+    const placed = mayReadPaths ? placedPaths(part.words) : undefined
+    if (deleted === undefined && placed === undefined) {
       others.push(part)
       continue
     }
-    for (const path of paths.map(withDrive)) {
-      if (resolved(path, lap.worktree) === root || !(await landsInside(path))) return 'outside-worktree'
-    }
+    const refusal =
+      deleted !== undefined
+        ? await deleteRefusal(lap, deleted, probes)
+        : placed !== undefined
+          ? await placeRefusal(lap, placed, probes)
+          : undefined
+    if (refusal !== undefined) return refusal
   }
+  return unlistedRefusal(lap, others)
+}
+
+/** Why the worker's list refuses a command of `others`, none of which reads paths; undefined when each is on a list. */
+function unlistedRefusal(lap: LapWorker, others: readonly ReadCommand[]): 'off-lists' | 'unreadable-delete' | undefined {
   const isOnAList = (words: readonly string[]): boolean =>
     areListed([withoutOwnWorktree(words, lap.worktree)], lap.commands)
   const unlisted = others.find(
@@ -250,28 +351,49 @@ async function refusalOf(
   return lap.kind === 'lap' && isDelete(commandBehindAssignments(unlisted)) ? 'unreadable-delete' : 'off-lists'
 }
 
+/** The denial of a path that is barred, in one wording for every call that changes a path. */
+function barredDenial(call: string, barred: Barred): { decision: 'deny'; reason: string } {
+  if (barred === 'acceptance-folders-unread') {
+    return {
+      decision: 'deny',
+      reason:
+        `jidoka: ${call} is denied, because jidoka could not read which acceptance folders this lap ` +
+        'may not write in. Park the task with a question that says so.',
+    }
+  }
+  const where = barred.relation === 'inside' ? 'is inside' : 'holds'
+  return {
+    decision: 'deny',
+    reason:
+      `jidoka: ${call} ${where} the acceptance folder ${barred.acceptanceFolder}, which only the spec ` +
+      "task's lap may change. If a spec looks wrong, park the task with a question that says which spec and why.",
+  }
+}
+
 function refused(lap: LapWorker, call: string, refusal: Refusal): { decision: 'deny'; reason: string } {
   if (refusal === 'off-lists') return offTheLists(lap, call)
+  if (typeof refusal === 'object' || refusal === 'acceptance-folders-unread') return barredDenial(call, refusal)
   const why =
     refusal === 'outside-worktree'
       ? `deletes outside the lap's worktree ${lap.worktree}`
-      : 'is a delete whose paths jidoka cannot tell: a lap worker may delete only paths it names one by one, ' +
-        'with no option but -f and -r (git rm: -r, -q and --cached), no glob, variable or `~`, no variable set in ' +
-        'front of it, and no change of folder before it'
+      : refusal === 'placed-outside-worktree'
+        ? `makes a folder or moves a file outside the lap's worktree ${lap.worktree}`
+        : 'is a delete whose paths jidoka cannot tell: a lap worker may delete only paths it names one by one, ' +
+          'with no option but -f and -r (git rm: -r, -q and --cached), no glob, variable or `~`, no variable set in ' +
+          'front of it, and no change of folder before it'
   return { decision: 'deny', reason: `jidoka: ${call} ${why}. Find another way, or ${WAY_OUT[lap.kind].advice}.` }
 }
 
 /**
  * What a lap or check worker's tool call gets: allowed or denied with a reason,
- * or undefined for the host's own tools, which the host decides. `landsInside`
- * says whether a path really lands inside the worker's worktree.
+ * or undefined for the host's own tools, which the host decides. `probes` say
+ * where a path really lands.
  */
 async function workerVerdict(
   lap: LapWorker,
   call: ToolCall,
   pluginRoot: string,
-  landsInside: (path: string) => Promise<boolean>,
-  landsBeneath: (path: string, folder: string) => Promise<boolean>,
+  probes: PathProbes,
 ): Promise<Verdict | undefined> {
   const { tool } = call
   if (HOST_ONLY.has(tool)) return undefined
@@ -300,33 +422,18 @@ async function workerVerdict(
   if (pathField !== undefined) {
     const path = filePathOf(pathField, call.input)
     if (path === undefined) return { decision: 'deny', reason: `jidoka: ${tool} names no ${pathField}.` }
-    if (!(await landsInside(path))) {
+    const refusal = await writeRefusal(lap, path, probes)
+    if (refusal === undefined) return { decision: 'allow' }
+    if (refusal === 'outside-worktree') {
       return { decision: 'deny', reason: `jidoka: ${tool} of ${path} is outside the lap's worktree ${lap.worktree}.` }
     }
-    if (lap.barred === null) {
-      return {
-        decision: 'deny',
-        reason:
-          `jidoka: ${tool} of ${path} is denied, because jidoka could not read which acceptance folders this lap ` +
-          'may not write in. Park the task with a question that says so.',
-      }
-    }
-    for (const folder of lap.barred) {
-      if (!(await landsBeneath(path, folder))) continue
-      return {
-        decision: 'deny',
-        reason:
-          `jidoka: ${tool} of ${path} is inside the acceptance folder ${folder}, which only the spec task's lap ` +
-          'may change. If a spec looks wrong, park the task with a question that says which spec and why.',
-      }
-    }
-    return { decision: 'allow' }
+    return barredDenial(`${tool} of ${path}`, refusal)
   }
   if (call.isReadOnly === true) return { decision: 'allow' }
   if (tool === 'Bash') {
     const command = commandOf(call.input)
     if (lap.kind === 'check' && runsCheckScripts(command, pluginRoot)) return { decision: 'allow' }
-    const refusal = await refusalOf(lap, command, landsInside)
+    const refusal = await refusalOf(lap, command, probes)
     return refusal === undefined ? { decision: 'allow' } : refused(lap, `\`${command}\``, refusal)
   }
   return offTheLists(lap, tool)
@@ -405,13 +512,10 @@ export const register: Register = on => {
     const lap = await lapOf($, e.agentId)
     if (lap === undefined) return next(e)
     const call = { tool: e.tool, input: e.input, isReadOnly: e.isReadOnly }
-    const verdict = await workerVerdict(
-      lap,
-      call,
-      $.plugin.root,
-      path => isReallyInside($, path, lap.worktree),
-      (path, folder) => isReallyBeneath($, path, folder, lap.worktree),
-    )
+    const verdict = await workerVerdict(lap, call, $.plugin.root, {
+      landsInside: path => isReallyInside($, path, lap.worktree),
+      landsBeneath: (path, folder) => isReallyBeneath($, path, folder, lap.worktree),
+    })
     return verdict ?? next(e)
   }).catch(($, e, next) =>
     e.agentId === undefined

@@ -123,7 +123,8 @@ Each call prints one JSON object:
              room of another running epic, and watch.py then ends when that room frees.
   actions    the lap a report sent back to a worker or on to the next one,
              then the laps this call opened, then the pass stage's actions
-             (test-cleanup, tidy, fix or the review lanes), then the
+             (test-cleanup, tidy, fix or the review lanes, all sharing the
+             one slot the pass holds), then the
              holdouts run when the epic waits on one, each lap with action ("research",
              "build", "app-check", "spec-check" or "merge"), task, title,
              area, lap (its number), slot, branch, worktree, scratch, track
@@ -200,6 +201,7 @@ import pause
 import permission_question
 import private_docs
 import settings_reader
+import slots
 import reserves
 import resume
 import rules
@@ -391,16 +393,27 @@ def resume_laps(epic: Epic, now: int, home: Path, main_tree: Path) -> set[str]:
 @dataclass(frozen=True)
 class PassState:
     """What settling the epic's own state left: the epic as bd shows it now, the validation this call ran, the holdouts
-    the epic waits on, and the pass stage's actions."""
+    the epic waits on, and the pass stage's actions, each with the slot the epic holds for its pass workers."""
     epic: Epic
     validated: pass_stages.Settled | None
     holdouts_run: holdouts_run.HoldoutsToRun | None
     pass_actions: list[dict]
 
 
-def settle_epic(epic: Epic, settings: settings_reader.Settings, home: Path, main_tree: Path) -> PassState:
-    """Settles the epic's own state: the pass it owes, the pass cap, and the holdouts it waits on. It reads the epic
-    again after each step that writes on it."""
+def with_pass_slot(actions: list[dict], standing: slots.Standing) -> list[dict]:
+    """The pass stage's actions, each with the slot of the epic's hold for its pass workers, which the epic keeps while
+    its pass owes a stage. With no action the epic holds none."""
+    if not actions:
+        slots.release(standing.home, standing.epic)
+        return []
+    slot = slots.hold_one(standing)
+    return [{**action, "slot": slot} for action in actions]
+
+
+def settle_epic(epic: Epic, settings: settings_reader.Settings, home: Path, main_tree: Path,
+                standing: slots.Standing) -> PassState:
+    """Settles the epic's own state: the pass it owes, the pass cap, and the holdouts it waits on, and the slot the
+    pass workers take. It reads the epic again after each step that writes on it."""
     ran = pass_stages.PassRun([], None)
     if gate_guard.is_unlabeled_at_the_gate(epic.shown):
         gate_guard.park_again(epic.id, main_tree)
@@ -416,7 +429,7 @@ def settle_epic(epic: Epic, settings: settings_reader.Settings, home: Path, main
     to_run = ran.holdouts
     if to_run is None:
         to_run = pass_stages.holdouts_owed(epic, home, main_tree)
-    return PassState(epic, ran.validated, to_run, ran.actions)
+    return PassState(epic, ran.validated, to_run, with_pass_slot(ran.actions, standing))
 
 
 def running_laps(held: list[Lap]) -> list[Lap]:
@@ -461,7 +474,9 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
         epic = checked_epic(bead, settings, main_tree)
     standstill = lap_holds.Standstill(pause.waiting_at(epic.shown, now),
                                       lap_holds.parking_of(epic, reading, now, home, main_tree))
-    state = PassState(epic, None, None, []) if standstill.is_on else settle_epic(epic, settings, home, main_tree)
+    standing = slots.Standing(home, epic.id, main_tree, rules.machine_lap_limit(home), now)
+    state = (PassState(epic, None, None, with_pass_slot([], standing)) if standstill.is_on
+             else settle_epic(epic, settings, home, main_tree, standing))
     epic = state.epic
     tasks = epic.open_task_beads
     open_now = [lap for lap in map(open_lap, tasks) if lap is not None]
@@ -483,7 +498,8 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
             "watch": has_work_to_wait_for(epic),
             "actions": [action_of(lap, answer_fields(lap, metadata[lap.task], epic.id, home, main_tree),
                                   made_to_pass[lap.task])
-                        for lap in holds.rebuilds + planned] + state.pass_actions
+                        for lap in holds.rebuilds + planned]
+                       + state.pass_actions
                        + ([state.holdouts_run.fields()] if state.holdouts_run is not None else []),
             "laps": [{**lap.fields(), "stage": lap.stage, "tries": lap.tries}
                      for lap in sorted(holds.held + planned, key=lambda lap: lap.slot)]}

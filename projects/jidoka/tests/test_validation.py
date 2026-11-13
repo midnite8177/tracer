@@ -1190,6 +1190,70 @@ class ValidationSlotHoldTests(unittest.TestCase):
         self.assertEqual([lap], slots.read(self.home))
 
 
+class PassSlotHoldTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name)
+        self.main_tree = Path("/work/shop")
+        self.now = int(time.time())
+        for epic in ("shop-1", "shop-2"):
+            heartbeat.write_beat(self.home, epic, self.now, "manager")
+
+    def standing(self, epic: str) -> slots.Standing:
+        return slots.Standing(self.home, epic, self.main_tree, 4, self.now)
+
+    def test_a_pass_holds_the_lowest_slot_that_no_other_epic_holds(self):
+        slots.write(self.home, [slots.Claim("shop-2", "shop-9", 1, str(self.main_tree), "till")])
+
+        held = slots.hold_one(self.standing("shop-1"))
+
+        self.assertEqual(2, held)
+
+    def test_a_pass_hold_names_no_area_so_it_blocks_no_task_of_another_epic(self):
+        slots.hold_one(self.standing("shop-1"))
+
+        machine, _ = slots.machine_beside(self.standing("shop-2"))
+
+        self.assertEqual(frozenset(), machine.areas)
+
+    def test_holding_again_replaces_the_pass_hold_instead_of_adding_a_second(self):
+        slots.hold_one(self.standing("shop-1"))
+        slots.hold_one(self.standing("shop-1"))
+
+        self.assertEqual([slots.EpicHold("shop-1", 1)], slots.read(self.home))
+
+    def test_a_pass_keeps_the_slot_it_holds_when_a_lower_one_is_freed(self):
+        claim = slots.Claim("shop-2", "shop-9", 1, str(self.main_tree), "till")
+        slots.write(self.home, [claim])
+        held = slots.hold_one(self.standing("shop-1"))
+        slots.write(self.home, [slots.EpicHold("shop-1", held)])
+
+        self.assertEqual(held, slots.hold_one(self.standing("shop-1")))
+
+    def test_sharing_the_epics_laps_keeps_its_pass_hold_and_gives_no_lap_its_slot(self):
+        slots.hold_one(self.standing("shop-1"))
+
+        placed = slots.share(self.standing("shop-1"), [], [slots.Candidate("shop-5", "till")], 2)
+
+        self.assertEqual(([2], [slots.EpicHold("shop-1", 1)]),
+                         ([each.slot for each in placed], [each for each in slots.read(self.home)
+                                                           if isinstance(each, slots.EpicHold)]))
+
+    def test_releasing_gives_the_pass_slot_back(self):
+        slots.hold_one(self.standing("shop-1"))
+
+        slots.release(self.home, "shop-1")
+
+        self.assertEqual([], slots.read(self.home))
+
+    def test_a_pass_that_the_machine_leaves_no_slot_still_gets_one(self):
+        slots.write(self.home, [slots.Claim("shop-2", f"shop-{number}", number, str(self.main_tree), f"area-{number}")
+                                for number in (1, 2, 3, 4)])
+
+        self.assertEqual(5, slots.hold_one(self.standing("shop-1")))
+
+
 def git(repo: Path, *args: str) -> str:
     return fixture.run(["git", *args], repo).strip()
 

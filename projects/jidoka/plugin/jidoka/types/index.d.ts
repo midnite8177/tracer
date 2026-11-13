@@ -1,8 +1,9 @@
 /**
  * A list entry that says what may follow its command's words: `nothing`, only
- * paths, or any words but the long options it refuses. The built-in list's
- * entries for one stage take this shape, because a bare prefix such as
- * `git rebase` would also allow `--exec`.
+ * paths, or any words but the options it refuses, long or short. The built-in
+ * list's entries for one stage take this shape, because a bare prefix such as
+ * `git rebase` would also allow `--exec`, and so does `git grep`, which would
+ * also allow `-O`.
  */
 export type Grant =
   | { command: string; then: 'nothing' | 'paths' }

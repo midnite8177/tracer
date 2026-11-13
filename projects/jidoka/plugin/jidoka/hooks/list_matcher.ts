@@ -1,8 +1,17 @@
 import type { Grant, ListEntry } from '../types/index'
 import { simpleCommands } from './shell_words.js'
 
-/** True when `word` is the long option, gives it a value, or abbreviates it as git lets a long option be abbreviated. */
+/**
+ * True when `word` is the option. A long option is matched as itself, with a
+ * value, or abbreviated as git lets a long option be abbreviated. A short
+ * option is matched alone or anywhere in a bundle of short options, so `-n`
+ * refuses `-nO` and a value stuck to it, such as `-Oless`; a long option
+ * never reads as a bundle.
+ */
 function isOption(word: string, option: string): boolean {
+  if (!option.startsWith('--')) {
+    return word.startsWith('-') && !word.startsWith('--') && word.includes(option.slice(1))
+  }
   const name = word.split('=', 1)[0] ?? ''
   return word === option || (name.startsWith('--') && name.length > 2 && option.startsWith(name))
 }
@@ -65,7 +74,7 @@ function quoted(word: string): string {
  * A text entry split into one entry for each simple command it holds, each
  * word quoted so that it reads back as the same word; an entry object stays
  * as it is, and a text that holds a command substitution, a process
- * substitution, an output redirect or an unclosed quote adds nothing, because
+ * substitution, a redirect into a file or an unclosed quote adds nothing, because
  * no list entry can vouch for it.
  */
 export function splitIntoSimpleCommands(entries: readonly ListEntry[]): ListEntry[] {

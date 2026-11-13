@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { entriesOf, splitIntoSimpleCommands } from './list_matcher.js'
+import { areListed, entriesOf, splitIntoSimpleCommands } from './list_matcher.js'
 import { simpleCommands } from './shell_words.js'
 
 test('ReadsTextAndEntryObjectsAndLeavesOutAnItemOfAnotherShape', () => {
@@ -44,4 +44,22 @@ test('KeepsAQuotedWordThatHoldsASpaceOneWordOfItsEntry', () => {
     [['dotnet', 'test', '--filter', 'x y']],
     [['make', "it's"]],
   ])
+})
+
+test('AnEntryThatRefusesAShortOptionRefusesItAloneAndInABundleAndAllowsOtherShortOptions', () => {
+  const grep = [{ command: 'git grep', then: 'words', refusing: ['-O'] } as const]
+
+  expect(areListed([['git', 'grep', '-n', '-C3', 'TODO']], grep)).toBe(true)
+  expect(areListed([['git', 'grep', '-o', 'TODO']], grep)).toBe(true)
+  expect(areListed([['git', 'grep', 'TODO', 'O']], grep)).toBe(true)
+  expect(areListed([['git', 'grep', '-O', 'TODO']], grep)).toBe(false)
+  expect(areListed([['git', 'grep', '-nO', 'TODO']], grep)).toBe(false)
+  expect(areListed([['git', 'grep', '-Oless', 'TODO']], grep)).toBe(false)
+})
+
+test('AnEntryThatRefusesAShortOptionDoesNotReadALongOptionAsABundle', () => {
+  const grep = [{ command: 'git grep', then: 'words', refusing: ['-O'] } as const]
+
+  expect(areListed([['git', 'grep', '--files-with-matches', 'TODO']], grep)).toBe(true)
+  expect(areListed([['git', 'grep', '--Open', 'TODO']], grep)).toBe(true)
 })

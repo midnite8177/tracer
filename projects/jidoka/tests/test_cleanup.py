@@ -69,6 +69,14 @@ class TestCleanupStartsThePassTests(CleanupCase):
 
         self.assertEqual(([], "pass"), (printed["actions"], printed["validation"]["result"]))
 
+    def test_a_pass_action_names_a_slot_that_the_next_lap_of_another_epic_does_not_take(self):
+        _, _, printed = self.finish_epic_whose_task_added_tests()
+        other = self.handed_off_epic(1)
+
+        [lap] = self.next_printed(other)["actions"]
+
+        self.assertEqual((1, 2), (self.cleanup_action_of(printed)["slot"], lap["slot"]))
+
     def test_a_cleanup_action_repeats_on_every_call_until_its_report_is_taken(self):
         epic, _, printed = self.finish_epic_whose_task_added_tests()
 

@@ -18,11 +18,53 @@ test('DropsABackslashNewlineJoin', () => {
   expect(simpleCommands('echo a\\\nb')).toEqual([['echo', 'ab']])
 })
 
-test('RefusesACommandSubstitutionABacktickAProcessSubstitutionAndARedirect', () => {
+test('RefusesACommandSubstitutionABacktickAProcessSubstitutionAndARedirectIntoAFile', () => {
   expect(simpleCommands('echo $(id)')).toBeUndefined()
   expect(simpleCommands('echo `id`')).toBeUndefined()
   expect(simpleCommands('diff <(a) b')).toBeUndefined()
   expect(simpleCommands('echo a > b')).toBeUndefined()
+})
+
+test('ReadsADescriptorDuplicationAndARedirectToDevNullAsTheCommandWithoutIt', () => {
+  for (const redirect of ['2>&1', '>&2', '1>&2', '>/dev/null', '2>/dev/null', '&>/dev/null', '> /dev/null', '2> /dev/null']) {
+    expect(simpleCommands(`make ${redirect}`)).toEqual([['make']])
+  }
+  expect(simpleCommands('make -j4 >/dev/null 2>&1')).toEqual([['make', '-j4']])
+  expect(simpleCommands('make 2>&1 | tail -n 5')).toEqual([['make'], ['tail', '-n', '5']])
+  expect(simpleCommands('make 2>/dev/null; ls&&wc')).toEqual([['make'], ['ls'], ['wc']])
+  expect(simpleCommands('make a>/dev/null')).toEqual([['make', 'a']])
+})
+
+test('KeepsADigitWordThatNoRedirectFollowsAsAWord', () => {
+  expect(simpleCommands('echo 2 3>/dev/null')).toEqual([['echo', '2']])
+  expect(simpleCommands('echo 2 >/dev/null')).toEqual([['echo', '2']])
+})
+
+test('RefusesARedirectToAnyFileAndAnAppend', () => {
+  for (const redirect of [
+    '> out.txt',
+    '2>out.txt',
+    '&>out.txt',
+    '>> out.txt',
+    '>>/dev/null',
+    '&>>/dev/null',
+    '>/dev/nullx',
+    '>/dev/null/x',
+    '>"/dev/null"',
+    '>&out.txt',
+    '>&2x',
+    '>&',
+    '>&-',
+    '&>&2',
+    '>',
+    '>|/dev/null',
+    '>(cat)',
+    '>/etc/hosts',
+  ]) {
+    expect(simpleCommands(`make ${redirect}`)).toBeUndefined()
+  }
+  expect(simpleCommands('make >/dev/null >out.txt')).toBeUndefined()
+  expect(simpleCommands('make 2>&1 > out.txt')).toBeUndefined()
 })
 
 test('RefusesAnUnclosedQuote', () => {
