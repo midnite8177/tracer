@@ -255,7 +255,10 @@ the printed route, native Sonnet, with the prompt of a native batch.
    - the action's `slot` and the repo settings' `slot_use`, from
      `repo_settings.py show`. The lap's slot is the worker's own, and a
      command may set a variable `slot_use` names with a plain assignment in
-     front of it, such as `PORT=5102 <command>`;
+     front of it, such as `PORT=5102 <command>`. A command may delete a
+     folder it is handed, so a variable that names a folder names a
+     subfolder of the scratch folder that holds nothing else, never the
+     scratch folder itself, where the stage's reports live;
    - when the action's `specs` is not empty, the task makes those acceptance
      specs pass. Give the worker the names and the action's `specs_command`,
      and tell it to run the specs red before it writes any code, with
@@ -433,7 +436,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
    which starts and stops an app through the launcher. It holds no
    holdout, you read none and never print one. The lap's slot is the worker's
    own: it picks the port or folder `slot_use` names from it, so that no other
-   app check shares it. Write the event line for the started app check worker.
+   app check shares it. A folder it hands the app is a subfolder of the
+   scratch folder that holds nothing else, because an app may delete a folder
+   it is handed. Write the event line for the started app check worker.
 
    An action whose `action` is `test-cleanup` has no task: every task has
    merged, and the epic branch holds tests the epic added or changed. Start one
