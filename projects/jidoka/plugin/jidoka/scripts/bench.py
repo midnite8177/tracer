@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Starts, ends and releases bench work on one bead, and prints the route of a tier.
 
-Run it from inside any checkout of the repo. The bench works under the git
-user.name of the repo: the script claims the bead and writes its comments
-with BEADS_ACTOR set to that name, whatever BEADS_ACTOR the caller has.
+Run it from inside any checkout of the repo. The bench works under the
+caller's BEADS_ACTOR: the script claims the bead, checks who else has
+claimed it and writes its comments as that actor. When the caller has no
+BEADS_ACTOR, it uses the git user.name of the repo instead.
 
 `start <bead>` refuses an epic, which covers milestones and maps, a task
 under an epic that carries the factory label, and a bead someone else has
@@ -52,7 +53,8 @@ import private_docs
 import routes
 import settings_reader
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, MAIN_REF, WORKTREE_FOLDER, CommandError,
-                      env_as_git_user, head_of, labels_of, metadata_of, parent_of, read_bead, run, worktree_list)
+                      env_as_caller_or_git_user, head_of, labels_of, metadata_of, parent_of, read_bead, run,
+                      worktree_list)
 from epic_branch import branch_head
 from worktrees import hide_worktrees
 
@@ -166,7 +168,7 @@ def start(bead_id: str, main_tree: Path) -> Workspace:
     if bead.issue_type in CONTAINER_TYPES:
         raise BenchError(f"{bead.id} is an epic, which holds work and is never built. Bench one of its tasks")
     refuse_factory_epic(bead, main_tree)
-    env = env_as_git_user(main_tree)
+    env = env_as_caller_or_git_user(main_tree)
     if bead.assignee and bead.assignee != env["BEADS_ACTOR"]:
         raise BenchError(f"{bead.id} is claimed by {bead.assignee}. Bench it after they release it")
     workspace = planned_workspace(bead, main_tree)
@@ -185,12 +187,12 @@ def start(bead_id: str, main_tree: Path) -> Workspace:
 def end(bead: str, outcome: str, main_tree: Path) -> None:
     if not outcome.strip():
         raise BenchError("the outcome is empty")
-    env = env_as_git_user(main_tree)
+    env = env_as_caller_or_git_user(main_tree)
     run(["bd", "comment", bead, f"bench ended: {outcome}"], main_tree, env)
 
 
 def release(bead: str, main_tree: Path) -> None:
-    env = env_as_git_user(main_tree)
+    env = env_as_caller_or_git_user(main_tree)
     run(["bd", "update", bead, "--status=open", "--assignee="], main_tree, env)
 
 

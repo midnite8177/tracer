@@ -62,8 +62,13 @@ class BenchCase(unittest.TestCase):
         return created["id"]
 
     def caller_env(self) -> dict[str, str]:
-        return {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
-                "BEADS_ACTOR": "claude"}
+        """The caller's environment with no BEADS_ACTOR, so the bench works under the git user.name."""
+        env = {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)}
+        env.pop("BEADS_ACTOR", None)
+        return env
+
+    def caller_env_as(self, actor: str) -> dict[str, str]:
+        return {**self.caller_env(), "BEADS_ACTOR": actor}
 
     def bench(self, env: dict[str, str], *args: str) -> subprocess.CompletedProcess:
         return fixture.run_launcher(LAUNCHER, [str(BENCH), *args], None, env, self.repo, RUN_TIMEOUT_SECONDS)
@@ -189,6 +194,32 @@ class BenchReleaseAndEndTests(BenchCase):
         exclude = Path(git(self.repo, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "info" / "exclude"
         self.assertEqual(1, exclude.read_text(encoding="utf-8").splitlines().count(".worktrees/"))
 
+    def test_starting_bench_work_claims_and_comments_as_the_callers_beads_actor_when_it_is_set(self):
+        bead = self.new_bead("task")
+
+        done = self.bench(self.caller_env_as("claude"), "start", bead)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("claude", self.shown(bead).get("assignee"))
+        self.assertEqual(["claude"], [c["author"] for c in self.comments(bead)])
+
+    def test_a_second_start_as_the_callers_beads_actor_reuses_its_own_claim(self):
+        bead = self.new_bead("task")
+        self.assertEqual(0, self.bench(self.caller_env_as("claude"), "start", bead).returncode)
+
+        done = self.bench(self.caller_env_as("claude"), "start", bead)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("claude", self.shown(bead).get("assignee"))
+
+    def test_ending_posts_the_outcome_as_the_callers_beads_actor_when_it_is_set(self):
+        bead = self.new_bead("task")
+
+        done = self.bench(self.caller_env_as("claude"), "end", bead, "landed as 3a9f1c2")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["claude"], [c["author"] for c in self.comments(bead)])
+
     def test_ending_posts_the_outcome_on_the_bead_under_the_git_user_name(self):
         bead = self.new_bead("task")
 
@@ -222,6 +253,17 @@ class BenchRefusedBeadTests(BenchCase):
         self.assertFalse((self.repo / ".worktrees" / f"print-the-receipt-{self.count}").exists())
         self.assertEqual([], self.comments(bead))
 
+    def test_start_as_the_callers_beads_actor_refuses_a_bead_the_git_user_claimed(self):
+        bead = self.new_bead("task")
+        fixture.run([self.bd, "update", bead, "--assignee", JEFF], self.repo)
+
+        done = self.bench(self.caller_env_as("claude"), "start", bead)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(JEFF, done.stderr)
+        self.assertEqual(JEFF, self.shown(bead).get("assignee"))
+        self.assertEqual([], self.comments(bead))
+
     def test_start_refuses_a_task_whose_epic_the_factory_holds_and_claims_nothing(self):
         epic = self.new_bead("epic")
         fixture.run([self.bd, "label", "add", epic, "factory"], self.repo)
@@ -250,6 +292,19 @@ class BenchRefusedWorkspaceTests(BenchCase):
         self.assertEqual(1, done.returncode)
         self.assertIn("user.name is not set", done.stderr)
         self.assertEqual("", self.shown(bead).get("assignee", ""))
+
+    def test_start_needs_no_git_user_name_when_the_caller_sets_beads_actor(self):
+        bead = self.new_bead("task")
+        git(self.repo, "config", "--unset", "user.name")
+        self.addCleanup(git, self.repo, "config", "user.name", JEFF)
+        empty_global = self.root / "empty-gitconfig"
+        empty_global.write_text("", encoding="utf-8")
+        env = {**self.caller_env_as("claude"), "GIT_CONFIG_GLOBAL": str(empty_global), "GIT_CONFIG_NOSYSTEM": "1"}
+
+        done = self.bench(env, "start", bead)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("claude", self.shown(bead).get("assignee"))
 
     def test_start_refuses_when_the_worktree_path_is_a_plain_folder_and_leaves_the_bead_unclaimed(self):
         bead = self.new_bead("task")

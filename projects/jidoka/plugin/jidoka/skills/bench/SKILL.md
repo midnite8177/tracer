@@ -40,7 +40,8 @@ message, which says to run the installer, and go to step 11 with
    Read the parent epic's description when there is one. Run
    `bench start <bead-id>`. It refuses an epic, which covers milestones
    and maps, a task whose epic carries the `factory` label, a bead
-   someone else has claimed, a repo with no `git config user.name`, and,
+   someone else has claimed, a caller with no `BEADS_ACTOR` in a repo
+   with no `git config user.name`, and,
    when the repo keeps its glossary and ADRs private, a worktree that
    holds its own file or folder at one of their paths.
    It refuses before it claims, and it makes the worktree before it

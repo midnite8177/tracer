@@ -138,6 +138,14 @@ def env_as_git_user(main_tree: Path) -> dict[str, str]:
     return {**os.environ, "BEADS_ACTOR": name}
 
 
+def env_as_caller_or_git_user(main_tree: Path) -> dict[str, str]:
+    """The environment bd runs in, keeping the caller's BEADS_ACTOR, which a repo can set to fix who its
+    assignees are, and setting it to the repo's git user.name only when the caller has none."""
+    if os.environ.get("BEADS_ACTOR", "").strip():
+        return dict(os.environ)
+    return env_as_git_user(main_tree)
+
+
 def env_as_factory() -> dict[str, str]:
     """The environment bd runs in for what the factory writes on a lap, with BEADS_ACTOR set to jidoka."""
     return {**os.environ, "BEADS_ACTOR": FACTORY_ACTOR}
