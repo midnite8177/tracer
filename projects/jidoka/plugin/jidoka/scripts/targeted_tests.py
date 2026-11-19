@@ -14,6 +14,14 @@ brought in) and tests.result (pass or fail), then posts one comment on the
 bead that quotes the command, the result, the base branch and that sha. The
 only commit it makes is the merge commit git makes, and a rebase makes none.
 
+With --none and a reason in place of --app and --filter, the script runs
+nothing and records that no app's targeted tests apply, for a bead whose
+diff reaches no app, such as one that changes only a CI workflow or a
+README. It sets tests.base to the base branch's head, tests.result to none
+and tests.reason to the reason, removes tests.command, and posts one
+comment that quotes the reason. Landing accepts that record; the merge gate
+does not. A run that records a result removes tests.reason.
+
 A run that executed no tests records nothing. The script reads that from the
 output: dotnet test's summary lines, summed over the test assemblies, or its
 "No test matches the given testcase filter" with no summary line, and
@@ -254,8 +262,29 @@ def record(bead: str, outcome: TestOutcome, main_tree: Path, env: dict[str, str]
     run(["bd", "update", bead,
          "--set-metadata", f"tests.command={outcome.command}",
          "--set-metadata", f"tests.base={outcome.recorded.base}",
-         "--set-metadata", f"tests.result={outcome.recorded.result}"], main_tree, env)
+         "--set-metadata", f"tests.result={outcome.recorded.result}",
+         "--unset-metadata", "tests.reason"], main_tree, env)
     run(["bd", "comment", bead, outcome.comment()], main_tree, env)
+
+
+def record_none_apply(bead: str, worktree: Path, base_branch: str, reason: str) -> str:
+    """Records on the bead that no app's targeted tests apply, for the reason given, and returns the base branch's
+    head it recorded."""
+    if not reason.strip():
+        raise TestRunError("--none needs a reason, such as \"only the CI workflow changed\"")
+    try:
+        main_tree = settings_reader.main_worktree(worktree, COMMAND_TIMEOUT_SECONDS)
+    except settings_reader.SettingsError as error:
+        raise TestRunError(str(error)) from error
+    base = base_head(base_branch, worktree)
+    run(["bd", "update", bead,
+         "--set-metadata", f"tests.base={base}",
+         "--set-metadata", "tests.result=none",
+         "--set-metadata", f"tests.reason={reason.strip()}",
+         "--unset-metadata", "tests.command"], main_tree, None)
+    run(["bd", "comment", bead,
+         f"No app's targeted tests apply, with {base_branch} at {base}. Reason:\n{reason.strip()}"], main_tree, None)
+    return base
 
 
 def targeted_tests(bead: str, worktree: Path, base_branch: str, how: Integration, app: str, test_filter: str,
@@ -297,10 +326,24 @@ def main() -> int:
     parser.add_argument("--base", required=True, help="the branch to bring into the worktree, such as main")
     parser.add_argument("--rebase", action="store_true",
                         help="rebase the worktree onto the base branch, where without it the base branch is merged in")
-    parser.add_argument("--app", required=True, help="the app's name in the repo settings")
-    parser.add_argument("--filter", required=True, help="the value that replaces the test_target placeholder")
+    parser.add_argument("--app", help="the app's name in the repo settings")
+    parser.add_argument("--filter", help="the value that replaces the test_target placeholder")
+    parser.add_argument("--none", metavar="REASON",
+                        help="record that no app's targeted tests apply, for this reason, in place of --app and --filter")
     parser.add_argument("--jidoka-home", type=Path, required=True)
     args = parser.parse_args()
+    if args.none is not None:
+        if args.app is not None or args.filter is not None:
+            parser.error("--none takes the place of --app and --filter")
+        try:
+            base = record_none_apply(args.bead, args.worktree.resolve(), args.base, args.none)
+        except (TestRunError, CommandError) as error:
+            print(f"targeted_tests: {error}", file=sys.stderr)
+            return 1
+        print(f"targeted_tests: no app's tests apply, on {args.base} at {base}, recorded on {args.bead}")
+        return 0
+    if args.app is None or args.filter is None:
+        parser.error("--app and --filter are required, unless --none records that no app's tests apply")
 
     try:
         how = Integration.REBASE if args.rebase else Integration.MERGE

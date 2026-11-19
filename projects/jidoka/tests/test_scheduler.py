@@ -2311,7 +2311,7 @@ class EpicBranchMovesBeforeTheGateTests(SchedulerCase):
         self.commit_in(lap.worktree, "card.txt", "built\n")
         lock = self.home / "locks" / "merge.lock"
         lock.parent.mkdir(parents=True, exist_ok=True)
-        lock.write_text("424242\n", encoding="utf-8")
+        lock.write_text(f"{os.getpid()}\n", encoding="utf-8")
         self.addCleanup(lambda: lock.unlink(missing_ok=True))
         command = fixture.launch_command(LAUNCHER, [str(SCHEDULER), "report", lap.epic, lap.task, "done", "--app",
                                                     "shop", "--filter", "test_card"])

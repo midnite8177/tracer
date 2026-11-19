@@ -196,6 +196,9 @@ class Play:
                   "--set-metadata", "kept=1")
         self.call("unset a metadata key", "Jeff Contract", "update", loose, "--unset-metadata", "holdouts")
         self.show("show a bead whose metadata key was unset", loose)
+        self.call("set a key and unset one the bead lacks", "Jeff Contract", "update", loose, "--set-metadata",
+                  "kept=2", "--unset-metadata", "absent")
+        self.show("show a bead after unsetting a key it lacked", loose)
         other = self.create("create a second epic", "other", "--title", "Print the receipts", "--type=epic")
         self.call("move a task to another epic", "Jeff Contract", "update", loose, f"--parent={other}")
         self.show("show a moved task and its new epic", loose, other)

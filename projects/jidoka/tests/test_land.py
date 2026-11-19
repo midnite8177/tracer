@@ -383,6 +383,42 @@ class RecordedTestsAndSettingsTests(LandingCase):
         self.assert_nothing_landed(bead, head)
         self.assertEqual(tip, self.tip(bead))
 
+    def test_the_refusal_for_a_bead_with_no_recorded_tests_says_how_to_record_that_none_apply(self):
+        bead = self.new_bead(None)
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(1, done.returncode, done.stderr)
+        self.assertIn("--none", done.stderr)
+
+    def test_a_bead_recorded_as_reaching_no_apps_tests_lands_after_the_full_suite(self):
+        bead = self.new_bead(None)
+        self.record_no_tests_apply(bead, "only the CI workflow and a README changed")
+        head = git(self.repo, "rev-parse", "main")
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotEqual(head, git(self.repo, "rev-parse", "main"))
+        self.assertNotEqual([], self.suite_runs_of(bead))
+
+    def test_a_bead_recorded_as_reaching_no_apps_tests_without_a_reason_is_refused(self):
+        bead = self.new_bead(None)
+        self.record_no_tests_apply(bead, "")
+        head = git(self.repo, "rev-parse", "main")
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(1, done.returncode, done.stderr)
+        self.assertIn("no reason", done.stderr)
+        self.assert_nothing_landed(bead, head)
+
+    def record_no_tests_apply(self, bead: Bead, reason: str) -> None:
+        fixture.run([self.bd, "update", bead.id,
+                     "--set-metadata", f"tests.base={git(self.repo, 'rev-parse', 'main')}",
+                     "--set-metadata", "tests.result=none",
+                     "--set-metadata", f"tests.reason={reason}"], self.repo)
+
     def test_a_bead_whose_recorded_tests_failed_is_refused_and_main_is_unchanged(self):
         bead = self.new_bead("fail")
         head = git(self.repo, "rev-parse", "main")
@@ -737,7 +773,7 @@ class MergeLockAndRecoveryTests(LandingCase):
         head = git(self.repo, "rev-parse", "main")
         lock = self.home / LOCK
         lock.parent.mkdir(parents=True, exist_ok=True)
-        lock.write_text("424242\n", encoding="utf-8")
+        lock.write_text(f"{os.getpid()}\n", encoding="utf-8")
         self.addCleanup(lambda: lock.unlink(missing_ok=True))
 
         process = self.start_land(bead, MESSAGE)
@@ -745,7 +781,7 @@ class MergeLockAndRecoveryTests(LandingCase):
             line = first_line_within(process.stdout, LOCK_LINE_SECONDS)
             self.assertIsNotNone(line, "the landing printed nothing while the lock was held")
             self.assertIn("waiting for the merge lock", line)
-            self.assertIn("424242", line)
+            self.assertIn(str(os.getpid()), line)
             self.assertIsNone(process.poll())
             self.assertEqual(head, git(self.repo, "rev-parse", "main"))
             lock.unlink()
@@ -755,6 +791,23 @@ class MergeLockAndRecoveryTests(LandingCase):
             process.communicate()
 
         self.assertEqual(0, process.returncode, err)
+        self.assertNotEqual(head, git(self.repo, "rev-parse", "main"))
+        self.assertFalse(lock.exists())
+
+    def test_a_landing_takes_over_a_merge_lock_whose_holder_is_gone(self):
+        bead = self.new_bead("pass")
+        head = git(self.repo, "rev-parse", "main")
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        lock = self.home / LOCK
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(f"{gone.pid}\n", encoding="utf-8")
+        self.addCleanup(lambda: lock.unlink(missing_ok=True))
+
+        done = self.land(bead, MESSAGE)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn(f"held by process {gone.pid}, which is gone", done.stdout)
         self.assertNotEqual(head, git(self.repo, "rev-parse", "main"))
         self.assertFalse(lock.exists())
 

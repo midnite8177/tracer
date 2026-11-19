@@ -9,6 +9,8 @@ after one fails. An app with no test command has no full-suite command, so
 before the full suite runs the script prints one line on stdout for each such
 app. The bead's recorded targeted tests must
 have passed, but they do not run again, because the full suite holds them.
+A bead whose diff reaches no app instead records that no app's targeted
+tests apply, with its reason, and the full suite still runs.
 The script fast-forwards main in the checkout that has main checked out,
 closes the bead with the commit's sha in the reason, and removes the bead's
 worktree and branch. It never pushes and never opens a pull request.
@@ -19,6 +21,10 @@ already on main included, the script lists each group with its app, its
 reason and the command that runs it, after the rest of its output on the
 same stream, so the human can run them. It lists nothing when no app has a
 group.
+
+The merge lock is a file that holds the id of the process that took it.
+A landing that finds the lock held by a process that is gone, such as one
+killed partway, clears it and takes it.
 
 Exit codes:
   0  landed and closed.
@@ -48,6 +54,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+import processes
 import settings_reader
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, bd_list, capture, head_of, metadata_of, read_bead, run,
                       worktree_list)
@@ -55,6 +62,7 @@ from full_suite import FullSuiteFailed, run_full_suite
 from settings_reader import SuiteCommand
 
 LOCK_POLL_SECONDS = 0.1
+LOCK_UNRECORDED_SECONDS = 60
 WAITING_ON_EDITS_EXIT_CODE = 3
 PARTLY_LANDED_EXIT_CODE = 4
 FULL_SUITE_FAILED_EXIT_CODE = 5
@@ -84,12 +92,39 @@ class Landed:
     failed_steps: list[str]
 
 
-def lock_holder(lock: Path) -> str:
+def recorded_holder(lock: Path) -> int | None:
     try:
-        recorded = lock.read_text(encoding="utf-8").strip()
+        return int(lock.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
-        recorded = ""
-    return f"held by process {recorded}" if recorded else "holder not recorded"
+        return None
+
+
+def lock_holder(lock: Path) -> str:
+    holder = recorded_holder(lock)
+    return f"held by process {holder}" if holder is not None else "holder not recorded"
+
+
+def clear_dead_lock(lock: Path, now: float) -> str | None:
+    """Removes the lock when its holder is gone, and returns a line saying so; None when it is free or held.
+
+    The lock file holds the id of the process that took it, and that process may have been killed before it could
+    remove the file. A file with no readable id is dead once it is older than LOCK_UNRECORDED_SECONDS, which is longer
+    than a live holder needs to write its id. The id is read again just before the removal, so a lock that another
+    waiter took over in the meantime stays."""
+    holder = recorded_holder(lock)
+    if holder is None:
+        try:
+            if now - lock.stat().st_mtime <= LOCK_UNRECORDED_SECONDS:
+                return None
+        except OSError:
+            return None
+    elif processes.is_alive(holder):
+        return None
+    if recorded_holder(lock) != holder:
+        return None
+    lock.unlink(missing_ok=True)
+    who = f"process {holder}" if holder is not None else "a process that recorded no id"
+    return f"the merge lock at {lock} was held by {who}, which is gone, so it is cleared"
 
 
 def merge_lock(home: Path) -> Path:
@@ -98,14 +133,18 @@ def merge_lock(home: Path) -> Path:
 
 
 def take_lock(lock: Path, waiting_on: TextIO) -> None:
-    """Creates the lock file exclusively, polling until the holder removes it, and says once on `waiting_on` that it
-    waits."""
+    """Creates the lock file exclusively, polling until the holder removes it or is gone, and says once on
+    `waiting_on` that it waits. A lock whose holder is gone is cleared, with a line on `waiting_on` that says so."""
     lock.parent.mkdir(parents=True, exist_ok=True)
     announced = False
     while True:
         try:
             descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
+            cleared = clear_dead_lock(lock, time.time())
+            if cleared is not None:
+                print(cleared, file=waiting_on, flush=True)
+                continue
             if not announced:
                 print(f"waiting for the merge lock at {lock}, {lock_holder(lock)}", file=waiting_on, flush=True)
                 announced = True
@@ -181,7 +220,7 @@ def bead_ids_in(message: str, bead: str, checkout: Path) -> list[str]:
 
 def recorded_tests(bead: str, checkout: Path) -> dict[str, str]:
     metadata = metadata_of(read_bead(bead, checkout))
-    return {key: str(metadata.get(f"tests.{key}", "")) for key in ("command", "base", "result")}
+    return {key: str(metadata.get(f"tests.{key}", "")) for key in ("command", "base", "result", "reason")}
 
 
 def edited_paths(checkout: Path) -> set[str]:
@@ -217,9 +256,20 @@ def refuse_overlapping_edits(branch: str, checkout: Path) -> None:
 
 def check_recorded(tests: dict[str, str]) -> None:
     if not tests["command"] or not tests["base"] or not tests["result"]:
-        raise LandingError("the bead has no tests recorded; run the tests and record them first")
+        raise LandingError("the bead has no tests recorded; run the tests and record them first, or, when the diff "
+                           "reaches no app, record that with targeted tests --none \"<reason>\"")
     if tests["result"] != "pass":
         raise LandingError(f"the recorded tests did not pass, the recorded result is {tests['result']}")
+
+
+def check_landing_record(tests: dict[str, str]) -> None:
+    """Accepts a passing run, or a record that no app's targeted tests apply that gives its reason."""
+    if tests["result"] != "none":
+        check_recorded(tests)
+        return
+    if not tests["reason"].strip():
+        raise LandingError("the bead records that no app's tests apply but gives no reason; record it again with "
+                           "targeted tests --none \"<reason>\"")
 
 
 def rebase_on_main(worktree: Path) -> None:
@@ -256,7 +306,7 @@ def landed_commit(branch: str, message: str, checkout: Path) -> str | None:
 def squash_onto_main(bead: str, branch: str, worktree: Path, message: str, checkout: Path,
                      settings: LandingSettings) -> str:
     """Rebuilds the branch as one commit on main's head and fast-forwards main to it; returns the new sha."""
-    check_recorded(recorded_tests(bead, checkout))
+    check_landing_record(recorded_tests(bead, checkout))
     refuse_overlapping_edits(branch, checkout)
     rebase_on_main(worktree)
     for app in settings.untested_apps:

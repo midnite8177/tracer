@@ -9,9 +9,6 @@ gate and one whose only open tasks are parked wait on the human, not on a restar
 
 An orphan worker is a process that a dead host left running in a lap's worktree: its parent is the init process, or on
 Windows a process that has ended, so no host owns it. A person's shell or editor in the worktree has a parent and is left alone.
-
-A merge lock is dead when the process that took it is gone. The lock file holds that process's id; a file with no
-readable id is dead once it is older than LOCK_UNRECORDED_SECONDS, which is longer than a live holder needs to write it.
 """
 from __future__ import annotations
 
@@ -26,11 +23,10 @@ from commands import FACTORY_LABEL, bd_list, bd_show, is_labeled_for_human, meta
 from epic_branch import branch_head
 from epic_reader import EPIC_TYPE, read_epic
 from epics import is_running
-from land import merge_lock
+from land import clear_dead_lock, merge_lock
 from merge_gate import contains
 
 FACTORY_COMMAND = "/jidoka:factory"
-LOCK_UNRECORDED_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -46,31 +42,9 @@ class StoppedEpic:
                 f"Resume it with {FACTORY_COMMAND} {self.id}")
 
 
-def recorded_holder(lock: Path) -> int | None:
-    try:
-        return int(lock.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return None
-
-
 def clear_dead_merge_lock(home: Path, now: float) -> str | None:
     """Removes the merge lock when its holder is gone, and returns a line saying so; None when nothing was cleared."""
-    lock = merge_lock(home)
-    if not lock.is_file():
-        return None
-    holder = recorded_holder(lock)
-    if holder is not None:
-        dead = not processes.is_alive(holder)
-    else:
-        try:
-            dead = now - lock.stat().st_mtime > LOCK_UNRECORDED_SECONDS
-        except OSError:
-            return None
-    if not dead:
-        return None
-    lock.unlink(missing_ok=True)
-    who = f"process {holder}" if holder is not None else "a process that recorded no id"
-    return f"the merge lock at {lock} was held by {who}, which is gone, so it is cleared"
+    return clear_dead_lock(merge_lock(home), now)
 
 
 def stop_orphans(worktree: Path) -> list[int]:

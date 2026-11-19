@@ -95,7 +95,12 @@ message, which says to run the installer, and go to step 11 with
    message that names no bead.
 5. **Targeted tests.** Run `targeted tests --bead <bead-id> --worktree
    <worktree> --base main --app <app> --filter <filter> --jidoka-home ...` with the
-   app and filter the builder named. Exit 3 means the tests failed. Send
+   app and filter the builder named. When the diff reaches no app, such
+   as one that changes only a CI workflow or a README, run `targeted tests
+   --bead <bead-id> --worktree <worktree> --base main --none "<reason>"
+   --jidoka-home ...` instead, with the reason in one line. It runs
+   nothing and records that no app's tests apply; never record an
+   unrelated test in its place. Exit 3 means the tests failed. Send
    the output back to the builder, then commit and run them again. Exit 4
    means the filter needs fixing, because it repeats the text the `test_target`
    puts before its placeholder, or the run executed no tests. Send the
@@ -154,7 +159,10 @@ message, which says to run the installer, and go to step 11 with
     --worktree <worktree> --message "<message>" --jidoka-home ...` with the
     main checkout as the cwd, because landing removes the worktree. It
     rebases the branch on main and runs every app's full test suite there
-    before anything lands.
+    before anything lands. That can take many minutes, longer than a
+    command's usual time limit, so run it in the background, or with the
+    longest time limit the host allows, and wait for it to exit. Never
+    stop it partway.
     Exit 0 landed the commit and closed the bead. Exit 3 means the
     human's uncommitted edits in main's checkout touch the bead's files.
     Name the files, wait for the human, then run the same command again.

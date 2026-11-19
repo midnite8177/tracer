@@ -255,6 +255,63 @@ class RecordedRunTests(TargetedTestsCase):
         self.assertIn("passed", comment)
 
 
+class NoTestsApplyTests(TargetedTestsCase):
+    def record_none(self, bead: Bead, *flags: str) -> subprocess.CompletedProcess:
+        return fixture.run_launcher(LAUNCHER, [
+            str(TARGETED_TESTS), "--bead", bead.id, "--worktree", str(bead.worktree), "--base", "main",
+            "--jidoka-home", str(self.home), *flags], None,
+            {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)}, self.root,
+            RUN_TIMEOUT_SECONDS)
+
+    def test_none_records_that_no_apps_tests_apply_with_the_reason_and_runs_nothing(self):
+        bead = self.new_bead()
+
+        done = self.record_none(bead, "--none", "only the CI workflow changed")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([], self.runs_of(bead))
+        self.assertEqual({"tests.base": self.main_head(), "tests.result": "none",
+                          "tests.reason": "only the CI workflow changed"}, self.metadata(bead))
+        [comment] = self.comments(bead)
+        self.assertIn("No app's targeted tests apply", comment)
+        self.assertIn("only the CI workflow changed", comment)
+
+    def test_none_replaces_an_earlier_run_so_its_command_is_no_longer_recorded(self):
+        bead = self.new_bead()
+        self.targeted_tests(bead, "shop", "test_greeting", self.home)
+
+        done = self.record_none(bead, "--none", "the change is to docs only")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("tests.command", self.metadata(bead))
+
+    def test_a_run_after_none_no_longer_records_the_reason(self):
+        bead = self.new_bead()
+        self.record_none(bead, "--none", "the change is to docs only")
+
+        done = self.targeted_tests(bead, "shop", "test_greeting", self.home)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotIn("tests.reason", self.metadata(bead))
+
+    def test_none_with_an_empty_reason_is_refused_and_records_nothing(self):
+        bead = self.new_bead()
+
+        done = self.record_none(bead, "--none", "  ")
+
+        self.assertNotEqual(0, done.returncode)
+        self.assertEqual({}, self.metadata(bead))
+
+    def test_none_with_an_app_is_refused_and_records_nothing(self):
+        bead = self.new_bead()
+
+        done = self.record_none(bead, "--none", "docs only", "--app", "shop", "--filter", "test_greeting")
+
+        self.assertNotEqual(0, done.returncode)
+        self.assertEqual([], self.runs_of(bead))
+        self.assertEqual({}, self.metadata(bead))
+
+
 class BaseBranchTests(TargetedTestsCase):
     def test_the_tests_run_on_the_worktree_merged_with_the_base_branch_named_and_record_its_head(self):
         bead = self.new_bead()
