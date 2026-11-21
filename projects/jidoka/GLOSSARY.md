@@ -686,6 +686,13 @@ its own bill: a subscription at home, an API key at work. The human may
 change it at any time; jidoka reads it and never chooses it.
 _Avoid_: Subscription, plan, login, seat
 
+**Bucket**:
+The part of an Antigravity account's quota that one family of models
+draws on, such as Gemini or Claude and GPT together, with a five-hour and
+a weekly window of its own. A reserve on that account watches the bucket
+of the stage's model.
+_Avoid_: Pool, quota group
+
 **Budget**:
 The most an epic may spend, in dollars at list price, before it parks.
 _Avoid_: Spend cap, limit, quota ("cap" counts tries)
