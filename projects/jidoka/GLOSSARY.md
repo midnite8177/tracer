@@ -524,7 +524,9 @@ _Avoid_: Root session, driver, parent
 **Heartbeat**:
 A file in the jidoka home, one for each epic a manager runs. The manager's
 first call writes it with the id of the host session it runs in, and the lap
-mod of that session rewrites it every minute while the host lives. A beat
+mod of that session rewrites it every minute while the host lives. A host
+with no lap mod, such as Antigravity, names its T3 thread instead, and its
+**Beater** rewrites it every minute. A beat
 from any other session open in the repo writes nothing. It holds the second
 of the last beat, so a heartbeat that stops getting younger shows a stopped
 factory. It also records a stop: the call that closes a manager's run sets its
@@ -535,6 +537,17 @@ and keeps no copy. An epic handed off with no manager has none. Under T3 a
 released host has no lap mod, so the **Waker** beats the epic while it
 waits, with the session the heartbeat names.
 _Avoid_: Pulse, ping, keep-alive
+
+**Beater**:
+The detached background script that beats a manager's heartbeat for a host
+with no lap mod. A manager's call starts it for the manager's T3 thread, at
+most one for each thread. It renews only the epics whose fresh heartbeat
+names that thread, and it never asks whether the host still lives. It ends
+on a stop, when another session claims the epic, or when its thread holds no
+fresh epic. A host that is gone while its beater runs shows a running
+factory until the human stops the epic, and a manager that starts on the
+epic meanwhile is a second manager.
+_Avoid_: Daemon, pacemaker, keep-alive
 
 **Waker**:
 The detached background script that wakes a manager T3 released. It starts
