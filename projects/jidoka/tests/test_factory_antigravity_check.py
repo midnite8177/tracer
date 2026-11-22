@@ -12,6 +12,7 @@ sys.path.insert(0, str(HERE.parent))
 import install  # noqa: E402
 import jidoka_fixture as fixture  # noqa: E402
 import test_factory  # noqa: E402
+import test_factory_t3_stage  # noqa: E402
 
 PLUGIN_HOOKS = fixture.PROJECT / "plugin" / "jidoka" / "hooks" / "hooks.json"
 INSTALLED_GROUPS = install.antigravity_hooks(PLUGIN_HOOKS, Path("/home/jidoka/plugins/0.1.62/jidoka"),
@@ -30,6 +31,15 @@ class FactoryCheckOnAntigravityTests(test_factory.FactoryCheckCase):
     def setUp(self):
         super().setUp()
         self.profiles = self.home / ".t3" / "userdata" / "providers" / "antigravity"
+        self.t3 = self.root / "t3"
+        self.t3.mkdir()
+        self.acp = fixture.write_executable(self.t3 / "acp-node", test_factory_t3_stage.FAKE_ACP_MCP_CALL)
+        self.manager_runs_in("full-access")
+
+    def manager_runs_in(self, mode: str) -> None:
+        """Has the fake T3 answer that the manager's thread runs in this runtime mode."""
+        (self.t3 / "answers.json").write_text(
+            json.dumps({"t3_thread_read": {"thread": {"threadId": THREAD, "runtimeMode": mode}}}), encoding="utf-8")
 
     def install_copy(self, profile: str, groups: list | None) -> None:
         """Gives the profile a config folder and, unless groups is None, a jidoka copy whose hooks.json holds these
@@ -47,6 +57,8 @@ class FactoryCheckOnAntigravityTests(test_factory.FactoryCheckCase):
                **fixture.system_variables(os.environ, fixture.WINDOWS)}
         if acp_node is not None:
             env["T3_ACP_MCP_NODE"] = acp_node
+            env["FAKE_T3_FOLDER"] = str(self.t3)
+            env["FAKE_T3_GUARDS"] = str(self.jidoka_home / "lap-guards")
         return fixture.run_launcher(self.plugin / "bin" / "jidoka-run",
                                     [str(self.plugin / "scripts" / "factory.py"), "check"], None, env, self.root,
                                     test_factory.RUN_TIMEOUT_SECONDS)
@@ -55,7 +67,7 @@ class FactoryCheckOnAntigravityTests(test_factory.FactoryCheckCase):
         self.install_copy("profile-a", [OTHER_GROUP, GUARD_GROUP])
         self.hooks_load([])
 
-        done = self.check_in_a_thread("acp-node")
+        done = self.check_in_a_thread(str(self.acp))
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual("", done.stderr)
@@ -65,14 +77,14 @@ class FactoryCheckOnAntigravityTests(test_factory.FactoryCheckCase):
     def test_passes_for_every_group_the_installer_writes_into_a_profile_copy(self):
         self.install_copy("profile-a", INSTALLED_GROUPS)
 
-        done = self.check_in_a_thread("acp-node")
+        done = self.check_in_a_thread(str(self.acp))
 
         self.assertEqual(0, done.returncode, done.stderr)
 
     def test_refuses_a_profile_copy_that_holds_no_guard_and_says_to_run_the_installer(self):
         self.install_copy("profile-a", [OTHER_GROUP])
 
-        done = self.check_in_a_thread("acp-node")
+        done = self.check_in_a_thread(str(self.acp))
 
         self.assertEqual(1, done.returncode)
         self.assertEqual("", done.stdout)
@@ -83,7 +95,7 @@ class FactoryCheckOnAntigravityTests(test_factory.FactoryCheckCase):
         self.install_copy("profile-a", [GUARD_GROUP])
         self.install_copy("profile-b", [OTHER_GROUP])
 
-        done = self.check_in_a_thread("acp-node")
+        done = self.check_in_a_thread(str(self.acp))
 
         self.assertEqual(1, done.returncode)
         self.assertIn(f"the jidoka copy in {self.profiles / 'profile-b'} holds no profile guard", done.stderr)
@@ -92,7 +104,7 @@ class FactoryCheckOnAntigravityTests(test_factory.FactoryCheckCase):
     def test_refuses_when_no_profile_holds_a_jidoka_copy(self):
         self.install_copy("profile-a", None)
 
-        done = self.check_in_a_thread("acp-node")
+        done = self.check_in_a_thread(str(self.acp))
 
         self.assertEqual(1, done.returncode)
         self.assertIn(f"no T3 Antigravity profile under {self.profiles} holds a jidoka copy", done.stderr)
@@ -105,6 +117,25 @@ class FactoryCheckOnAntigravityTests(test_factory.FactoryCheckCase):
         self.assertEqual(1, done.returncode)
         self.assertIn("T3_ACP_MCP_NODE is not set", done.stderr)
         self.assertIn("holds no profile guard", done.stderr)
+
+
+    def test_refuses_a_manager_thread_that_does_not_run_in_full_access(self):
+        self.install_copy("profile-a", INSTALLED_GROUPS)
+        self.manager_runs_in("auto")
+
+        done = self.check_in_a_thread(str(self.acp))
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("runs in auto", done.stderr)
+        self.assertIn("Full access", done.stderr)
+
+    def test_reads_the_mode_of_the_thread_the_manager_runs_in(self):
+        self.install_copy("profile-a", INSTALLED_GROUPS)
+
+        self.check_in_a_thread(str(self.acp))
+
+        [read] = [json.loads(line) for line in (self.t3 / "calls.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(("t3_thread_read", THREAD), (read["tool"], read["arguments"]["threadId"]))
 
 
 if __name__ == "__main__":

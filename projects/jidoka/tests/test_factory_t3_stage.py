@@ -148,6 +148,7 @@ class StartingTheBuildTests(T3StageCase):
         self.assertEqual(["acp-mcp-call"], launch["argv"])
         self.assertEqual("1", launch["electron"])
         self.assertEqual({"type": "existing_worktree", "worktreePath": self.worktree}, arguments["workspaceStrategy"])
+        self.assertEqual("full-access", arguments["runtimeMode"])
         self.assertEqual({"instanceId": "antigravity-main", "model": "gemini-4-neon",
                           "options": {"thought_level": "high"}}, arguments["modelSelection"])
         self.assertEqual(self.prompt.read_text(encoding="utf-8"), arguments["message"])

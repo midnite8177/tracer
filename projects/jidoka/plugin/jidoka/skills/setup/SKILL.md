@@ -42,7 +42,10 @@ and writes the machine settings in `~/.jidoka`, so it runs from any folder.
      the catalog's model id and its thought level as the effort, and the
      catalog's Claude models are never proposed. The second tier is the same
      codex route as on Claude Code, else the deep route. A tier whose model
-     the catalog lacks is left out.
+     the catalog lacks is left out. Tell the human that every jidoka session
+     on Antigravity runs in T3's Full access mode, set before its first
+     message: in any other mode Antigravity asks before each read of
+     jidoka's files in the jidoka home, and the factory refuses to start.
    - the default budget, in dollars at list price. It is lower for an
      account that bills by API key, where the dollars are real.
    - the reserve of the claude account, which is the share of its usage window the

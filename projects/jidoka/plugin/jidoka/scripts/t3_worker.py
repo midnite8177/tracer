@@ -30,6 +30,7 @@ READ_LIMIT = 20
 READ_CHARACTERS = 20_000
 TITLE_PREFIX = "lap · "
 EXISTING_WORKTREE = "existing_worktree"
+FULL_ACCESS = "full-access"
 
 
 class T3Error(Exception):
@@ -106,11 +107,14 @@ def model_selection(route: routes.Route) -> dict:
 
 def launch(title: str, message: str, worktree: Path, selection: dict, client_request_id: str) -> str:
     """Starts a top-level thread in the existing worktree, with the message as its first prompt, and returns its id.
+    The thread runs in full access: Antigravity asks before it reads a file outside the worktree, jidoka's own files
+    are in the jidoka home, and no person answers a lap worker. T3 refuses a mode above the manager's, which is why
+    factory.py check refuses a manager that does not run in full access.
     A failed call is made once more with the same client request id, which T3 answers with the thread the first call
     made when that one got through."""
     arguments = {"title": title, "message": message, "modelSelection": selection,
                  "workspaceStrategy": {"type": EXISTING_WORKTREE, "worktreePath": str(worktree)},
-                 "clientRequestId": client_request_id}
+                 "runtimeMode": FULL_ACCESS, "clientRequestId": client_request_id}
     failure = T3Error("t3_thread_launch was not tried")
     for _ in range(LAUNCH_ATTEMPTS):
         try:
@@ -123,6 +127,14 @@ def launch(title: str, message: str, worktree: Path, selection: dict, client_req
             return thread
         failure = T3Error("t3_thread_launch named no threadId")
     raise failure
+
+
+def runtime_mode(thread: str) -> str | None:
+    """The runtime mode the thread runs in, such as `auto` or `full-access`, or None when T3 names none."""
+    result = call("t3_thread_read", {"threadId": thread, "view": "messages", "limit": 1})
+    held = result.get("thread")
+    mode = held.get("runtimeMode") if isinstance(held, dict) else None
+    return mode if is_text(mode) else None
 
 
 def is_running_after_wait(thread: str) -> bool:

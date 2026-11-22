@@ -15,9 +15,9 @@ The host's config dir is $CLAUDE_CONFIG_DIR, else ~/.claude. There,
 so claude reads the same config dir the message names.
 
 An Antigravity host, which routes.host_of_environment decides, has no lap mod and no claude. There the profile guard
-holds the lap workers' tool calls (ADR 0012), so the check is three: $T3_ACP_MCP_NODE must name the program that
+holds the lap workers' tool calls (ADR 0012), so the check is four: $T3_ACP_MCP_NODE must name the program that
 calls T3's tools, at least one T3 Antigravity profile under ~/.t3/userdata/providers/antigravity must hold a jidoka
-copy, and every profile that holds one must carry the guard in the copy's hooks.json, in the group that lap_guard_record.hook_group_of shapes and install.py writes.
+copy, and every profile that holds one must carry the guard in the copy's hooks.json, in the group that lap_guard_record.hook_group_of shapes and install.py writes. The manager's own thread must also run in T3's full-access mode, or Antigravity asks before each read of jidoka's files in the jidoka home.
 
 The three modes below run only on an Antigravity host. Each names the lap by its worktree, and a `wait` or `report`
 names the same --worktree and --jidoka-home as the `start` it follows. t3_stage.py describes them.
@@ -178,9 +178,30 @@ def t3_tools_problem() -> str | None:
             "factory in a T3 thread of an Antigravity provider, which sets it, and run /jidoka:factory again")
 
 
+def runtime_mode_problem() -> str | None:
+    """Why the manager's thread cannot run the factory in its runtime mode, or None when it runs in full access.
+    Antigravity asks before it reads a file outside the workspace, every jidoka skill reads its files in the jidoka
+    home, and a lap thread can run in no higher mode than the manager's."""
+    thread = routes.thread_of_environment()
+    if thread is None:
+        return None
+    try:
+        mode = t3_worker.runtime_mode(thread)
+    except t3_worker.T3Error as error:
+        return f"T3 did not say which mode this thread runs in ({error}), so jidoka cannot tell that a lap worker " \
+               "will read its files without a prompt. Run /jidoka:factory again"
+    if mode == t3_worker.FULL_ACCESS:
+        return None
+    return (f"this thread runs in {mode or 'an unnamed mode'}, and Antigravity then asks before it reads jidoka's own "
+            "files, which no person answers in a lap. Start a new session, set it to Full access before its first "
+            "message, and run /jidoka:factory again")
+
+
 def check_antigravity() -> int:
     profiles = t3_profiles()
-    problems = [problem for problem in (t3_tools_problem(), *guard_problems(profiles)) if problem]
+    tools = t3_tools_problem()
+    problems = [problem for problem in (tools, *guard_problems(profiles),
+                                        None if tools else runtime_mode_problem()) if problem]
     if problems:
         print("factory: the factory does not start:\n" + "\n".join(f"  {problem}" for problem in problems),
               file=sys.stderr)

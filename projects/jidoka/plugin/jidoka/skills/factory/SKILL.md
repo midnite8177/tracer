@@ -179,9 +179,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
 
 1. **Check.** Run `factory.py check`. Exit 1 means this session cannot run
    lap workers under the lap mod, or on an Antigravity host under the
-   profile guard. Its message names the config dir or the profile that
-   lacks jidoka, or says to start a new session. Show it verbatim and
-   stop. Exit 0 prints one line; show it. Then run
+   profile guard and in T3's Full access mode. Its message names the config
+   dir or the profile that lacks jidoka, or says to start a new session.
+   Show it verbatim and stop. Exit 0 prints one line; show it. Then run
    `ui.py start --jidoka-home ... --wait 60`. It starts jidoka-ui when
    its address does not answer, so the human can answer questions from the
    board and the phone, and returns once the address answers. It prints one
