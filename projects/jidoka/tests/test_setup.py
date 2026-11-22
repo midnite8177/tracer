@@ -608,12 +608,18 @@ SECRET = "t3-read-token-0123456789abcdef"
 
 
 class ProviderTokenTests(SetupCase):
-    """The fake t3 CLI prints a token and keeps each call's arguments in a file, so a test sees whether setup ran it."""
+    """The fake t3 CLI answers `auth session issue` as the real one does: the token alone with --token-only, else a
+    report whose first line names the session. It keeps each call's arguments in a file, so a test sees whether setup
+    ran it."""
 
     def setUp(self):
         super().setUp()
         self.calls = self.root / f"t3-calls-{self.count}.txt"
-        self.install_t3(f"printf '%s\\n' '{SECRET}'")
+        self.install_t3(f"case \" $* \" in\n"
+                        f"  *' --token-only '*) printf '%s\\n' '{SECRET}' ;;\n"
+                        f"  *) printf '%s\\n' 'Issued session 9f53c55c-520a-485b-bf31-0dea682816db.' '' "
+                        f"'  scopes: orchestration:read' '  token: {SECRET}' ;;\n"
+                        f"esac")
 
     def install_t3(self, body: str) -> None:
         fixture.write_executable(self.bin / "t3", f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{self.calls.as_posix()}\"\n"
@@ -698,12 +704,20 @@ class ProviderTokenTests(SetupCase):
         self.assertEqual(1, done.returncode)
         self.assertEqual(["python"], self.home_files())
 
-    def test_a_token_that_t3_prints_as_json_is_read_from_its_token_field(self):
-        self.install_t3(f"printf '%s\\n' '{{\"token\": \"{SECRET}\", \"expiresAt\": \"later\"}}'")
-
+    def test_setup_asks_t3_for_the_token_alone_and_saves_it(self):
         self.issue()
 
+        self.assertIn("--token-only", self.t3_calls()[-1].split())
         self.assertEqual(SECRET, (self.home / "t3-token").read_text(encoding="utf-8").strip())
+
+    def test_output_of_more_than_one_line_is_no_token(self):
+        self.install_t3(f"printf '%s\\n' 'Issued session 9f53c55c.' '  token: {SECRET}'")
+
+        done = self.issue()
+
+        self.assertEqual(1, done.returncode)
+        self.assertNotIn(SECRET, done.stdout + done.stderr)
+        self.assertEqual(["python"], self.home_files())
 
     def test_a_second_issue_replaces_the_token(self):
         self.issue()

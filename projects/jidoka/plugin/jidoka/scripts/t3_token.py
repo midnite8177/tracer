@@ -7,7 +7,6 @@ outcome names the file.
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import tempfile
@@ -32,7 +31,7 @@ def token_path(home: Path) -> Path:
 
 
 def issue_command(t3: str) -> list[str]:
-    return [t3, "auth", "session", "issue", "--scope", SCOPE, "--label", LABEL, "--ttl", TTL]
+    return [t3, "auth", "session", "issue", "--scope", SCOPE, "--label", LABEL, "--ttl", TTL, "--token-only"]
 
 
 def read_token(home: Path) -> str | None:
@@ -61,17 +60,10 @@ def save_token(home: Path, token: str) -> Path:
 
 
 def token_in(output: str) -> str | None:
-    """The token in what `t3 auth session issue` printed: the `token` of a JSON object, else the first line."""
+    """The token in what `t3 auth session issue --token-only` printed: one line that holds no space. Anything else,
+    such as the report the command prints without --token-only, is no token."""
     text = output.strip()
-    try:
-        held = json.loads(text)
-    except ValueError:
-        held = None
-    if isinstance(held, dict):
-        named = held.get("token")
-        return named.strip() if isinstance(named, str) and named.strip() else None
-    lines = text.splitlines()
-    return lines[0].strip() if lines and lines[0].strip() else None
+    return text if text and len(text.split()) == 1 else None
 
 
 def issue(t3: str) -> str:
