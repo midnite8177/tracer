@@ -547,6 +547,12 @@ on a stop, when another session claims the epic, or when its thread holds no
 fresh epic. A host that is gone while its beater runs shows a running
 factory until the human stops the epic, and a manager that starts on the
 epic meanwhile is a second manager.
+The beater also does the lap mod's other duties for the thread's manager.
+It wakes the manager after a turn that failed, with the same back-off, and
+pauses the epic when the account is signed out. It does the waker's work:
+when the thread sits idle and the watcher would wake, it sends the
+carry-on prompt. It sends the permission-prompt notice once for each
+approval the thread waits on.
 _Avoid_: Daemon, pacemaker, keep-alive
 
 **Waker**:
