@@ -5,7 +5,9 @@ by model id, such as `claude-sonnet-5-5`, because models of one family differ in
 no one ratio. A model id with a snapshot date (`-20251001`) or a context suffix (`[1m]`) is priced as the id without
 it. A model the table does not list has no price, and `dollars` answers None for it instead of a guess. A cache price
 is None when the provider lists none for the model, and tokens of that kind then have no cost either. The cache write
-price is the five-minute one, or OpenAI's thirty-minute one. Haiku 5.5 is priced at its rate for prompts up to
+price is the five-minute one, or OpenAI's thirty-minute one. Google lists none for Gemini, and the ledger takes cache
+creation out of a row's fresh input, so a Gemini model's cache write price is its input price: those tokens cost what
+fresh input does. Its cached input is priced at five percent of its input in the hand-written rows. Haiku 5.5 is priced at its rate for prompts up to
 100,000 tokens, because sums of tokens over many steps do not say how long any prompt was.
 
 SPEND_KEY is the epic metadata key that holds the running total of the dollars its runs cost; the ledger writes it and
@@ -37,6 +39,18 @@ class Tokens:
     def total(self) -> int:
         return self.input + self.output + self.cache_read + self.cache_write
 
+    def plus(self, other: Tokens) -> Tokens:
+        return Tokens(self.input + other.input, self.output + other.output, self.cache_read + other.cache_read,
+                      self.cache_write + other.cache_write)
+
+
+NO_TOKENS = Tokens(0, 0, 0, 0)
+
+
+def count_of(written: object) -> int:
+    """The token count a provider or a file wrote, or 0 when it is not a whole number of at least 0."""
+    return written if isinstance(written, int) and not isinstance(written, bool) and written >= 0 else 0
+
 
 @dataclass(frozen=True)
 class Price:
@@ -60,6 +74,9 @@ PRICES: dict[str, Price] = {
     "claude-sonnet-4-6": Price(input=3.0, output=15.0, cache_read=0.30, cache_write=3.75),
     "claude-haiku-5-5": Price(input=0.10, output=0.50, cache_read=0.01, cache_write=0.125),
     "claude-haiku-4-5": Price(input=1.0, output=5.0, cache_read=0.10, cache_write=1.25),
+    "gemini-4-neon": Price(input=3.0, output=15.0, cache_read=0.15, cache_write=3.0),
+    "gemini-4-hydrogen": Price(input=1.50, output=7.50, cache_read=0.075, cache_write=1.50),
+    "gemini-4-carbon": Price(input=2.0, output=10.0, cache_read=0.10, cache_write=2.0),
 }
 
 

@@ -6,13 +6,19 @@ for each request of a manager. It lives in the user-scope home, not in a repo's 
 prices and holds every repo. A row names the repo (the path of its main worktree), the epic, the task, the lap, the
 stage, the try, the track, the tier, the route's harness, the model that ran, the route's effort, the agent id, the
 tokens by kind, the dollars at list price (price_pages.py), the wall time in seconds and the outcome. A row is
-written once and never changed, so it keeps the dollars it was written with when the list prices change. The dollars
-are None when the model has no listed price.
+written once and keeps the dollars it was written with when the list prices change; only its outcome can change, as
+the next paragraph says. The dollars are None when the model has no listed price.
 
 The lap mod writes <jidoka-home>/tokens/<agent id>.json for each lap worker, a JSON object with `model` and the sums
 over all the worker's steps: `input_tokens`, `output_tokens`, `cache_read_input_tokens` and
-`cache_creation_input_tokens`. The scheduler records a run when a worker's report comes in, naming the agent
-id the manager got when it started the worker. A report that names no agent writes its row with no tokens. The
+`cache_creation_input_tokens`. Under an Antigravity host there is no lap mod, the agent id is the worker's T3 thread,
+and t3_turns.py reads the thread's provider turns from T3's state db: a row for each model the turns' runs name, else one
+row on the route's model. Turns that cannot be read write the row with no tokens and a line on stderr. The
+scheduler records a run when a worker's report comes in, naming the agent
+id the manager got when it started the worker. A report that names no agent writes its row with no tokens. Under an
+Antigravity host a thread whose rows the ledger holds already is not priced again, so a T3 stage that priced its
+thread when it was reported (t3_stage.py) is not counted twice: the scheduler's report gives those rows its outcome
+and writes none. The
 workers of an epic's pass (the test cleanup, the tidy, each review lane, the fix and the validation) belong to no task,
 so their rows have no task and the stage's name. Both go through `record_run_or_say`, which takes the worker, where the
 run belongs and the outcome, and never fails. A run that a script measured itself goes through `record_ran_or_say`.
@@ -28,6 +34,8 @@ tokens) and `at`, the second the row was written.
 is what the lap mod runs when a manager's request ends, from the host's folder. It writes a `manager` row on the
 epic whose heartbeat records that session (the first by id when there are several), and nothing when none does. It
 reads the heartbeat files before anything else, because the mod runs it after every request of every session.
+Under an Antigravity host there is no lap mod, and the beater (beater.py) writes the same row for each completed run
+of the manager's T3 thread, one for each model the run's provider turns name.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
@@ -51,9 +59,10 @@ import heartbeat
 import price_pages
 import settings_reader
 import routes
+import t3_turns
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, env_as_factory, run, set_metadata
 from lap_record import Lap
-from prices import SPEND_KEY, Tokens
+from prices import NO_TOKENS, SPEND_KEY, Tokens, count_of
 
 LEDGER_FILE = "ledger.sqlite"
 TOKENS_FOLDER = "tokens"
@@ -159,7 +168,7 @@ class Used:
     tokens: Tokens
 
 
-NOTHING_USED = Used(None, Tokens(0, 0, 0, 0))
+NOTHING_USED = Used(None, NO_TOKENS)
 
 
 def ledger_path(home: Path) -> Path:
@@ -172,10 +181,6 @@ def connect(home: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(ledger_path(home), timeout=BUSY_TIMEOUT_SECONDS)
     connection.execute(SCHEMA)
     return connection
-
-
-def count_of(written: object) -> int:
-    return written if isinstance(written, int) and not isinstance(written, bool) and written >= 0 else 0
 
 
 def tokens_of(home: Path, agent: str | None) -> Used:
@@ -198,14 +203,14 @@ def tokens_of(home: Path, agent: str | None) -> Used:
 
 def route_of(home: Path, tier: str | None, on_native: bool) -> routes.Route | None:
     """The route the worker ran on: the tier's native route when it fell back to it, else the tier's route from the
-    machine settings, or None when the settings cannot give a complete one. A run is priced whatever the settings
-    hold."""
+    table of the host the caller runs under, or None when the settings cannot give a complete one. A run is priced
+    whatever the settings hold."""
     if not tier:
         return None
     try:
         if on_native:
             return routes.native_route_of(tier)
-        return routes.recorded_route(tier, home)
+        return routes.recorded_route_here(tier, home)
     except (routes.RouteError, OSError):
         return None
 
@@ -258,13 +263,42 @@ class Ran:
     effort: str | None
 
 
-def ran_by(home: Path, worker: Worker) -> Ran:
-    """The run of the worker. The model is the one its steps ran on, else the route's of its tier."""
-    used = tokens_of(home, worker.agent)
+def lap_mod_tokens(home: Path, agent: str | None) -> list[tuple[str | None, Tokens]]:
+    """The model and tokens of the agent that the lap mod's file holds, as the Claude Code host keeps them."""
+    written = tokens_of(home, agent)
+    return [(written.model, written.tokens)]
+
+
+def t3_tokens(home: Path, agent: str | None) -> list[tuple[str | None, Tokens]]:
+    """The model and tokens of each model the T3 thread ran on, from its provider turns, as the Antigravity host keeps
+    them. An agent id that is no thread, and turns that T3 cannot give, are one entry with no tokens, and the reason
+    goes to stderr."""
+    if not agent:
+        return [(None, NO_TOKENS)]
+    try:
+        return [(each.model, each.tokens) for each in t3_turns.read_turns(agent)]
+    except t3_turns.NoTurns as why:
+        print(f"ledger: no tokens for thread {agent}: {why}", file=sys.stderr)
+        return [(None, NO_TOKENS)]
+
+
+TOKEN_SOURCES = {routes.CLAUDE_CODE_HOST: lap_mod_tokens, routes.ANTIGRAVITY_HOST: t3_tokens}
+
+
+def tokens_for(home: Path, worker: Worker) -> list[tuple[str | None, Tokens]]:
+    """The tokens the worker used, one entry for each model it ran on, from the source of the host the caller runs
+    under: the lap mod's file under Claude Code, the thread's provider turns under Antigravity (t3_turns.py)."""
+    return TOKEN_SOURCES[routes.host_of_environment()](home, worker.agent)
+
+
+def ran_by(home: Path, worker: Worker) -> list[Ran]:
+    """The runs of the worker, one for each model it ran on, priced on the model the tokens name, else the route's of
+    its tier."""
     route = route_of(home, worker.tier, worker.on_native)
+    used = tokens_for(home, worker)
     if route is None:
-        return Ran(used.tokens, None, used.model, None)
-    return Ran(used.tokens, route.harness, used.model or route.model, route.effort)
+        return [Ran(tokens, None, model, None) for model, tokens in used]
+    return [Ran(tokens, route.harness, model or route.model, route.effort) for model, tokens in used]
 
 
 def append(home: Path, main_tree: Path, epic: str, row: Row) -> float:
@@ -298,11 +332,30 @@ def record_ran_or_say(home: Path, main_tree: Path, epic: str, where: Where, work
         print(f"ledger: took no row for the {where.stage} of {where.task or epic}: {error}", file=sys.stderr)
 
 
+def settle_priced(home: Path, repo: str, epic: str, agent: str, outcome: str) -> bool:
+    """Gives the epic's rows of the agent the outcome and says whether the agent had any. A thread that has rows was
+    priced already, as a T3 stage's own report prices it, so pricing it again would count its tokens twice."""
+    with closing(connect(home)) as connection, connection:
+        changed = connection.execute("UPDATE runs SET outcome = ? WHERE repo = ? AND epic = ? AND agent = ?",
+                                     (outcome, repo, epic, agent)).rowcount
+    return changed > 0
+
+
 def record_run_or_say(home: Path, main_tree: Path, epic: str, where: Where, worker: Worker, outcome: str,
                       now: int) -> None:
-    """Writes the row of a worker that has ended. A ledger that cannot take the row is a line on stderr, never a
-    failure, because the report of the worker must settle whatever the ledger does."""
-    record_ran_or_say(home, main_tree, epic, where, worker, ran_by(home, worker), outcome, now)
+    """Writes the row of a worker that has ended. Under an Antigravity host the agent id is a T3 thread, which no
+    other worker shares, so a thread that already has rows in the ledger is not priced again; its rows take the
+    outcome. A ledger that cannot take the row is a line on stderr, never a failure, because the report of the worker
+    must settle whatever the ledger does."""
+    try:
+        if (worker.agent and routes.host_of_environment() == routes.ANTIGRAVITY_HOST
+                and settle_priced(home, str(main_tree), epic, worker.agent, outcome)):
+            return
+    except (sqlite3.Error, OSError) as error:
+        print(f"ledger: took no row for the {where.stage} of {where.task or epic}: {error}", file=sys.stderr)
+        return
+    for ran in ran_by(home, worker):
+        record_ran_or_say(home, main_tree, epic, where, worker, ran, outcome, now)
 
 
 def epic_claimed_by(home: Path, session: str) -> str | None:
@@ -312,8 +365,9 @@ def epic_claimed_by(home: Path, session: str) -> str | None:
     return claimed[0] if claimed else None
 
 
-def record_request(home: Path, main_tree: Path, epic: str, model: str, used: Tokens, seconds: int) -> float:
-    """Writes a manager row on the epic and returns the epic's running total."""
+def record_request(home: Path, main_tree: Path, epic: str, model: str | None, used: Tokens, seconds: int) -> float:
+    """Writes a manager row on the epic and returns the epic's running total. A row whose model is None has no
+    price."""
     return append(home, main_tree, epic, Row(
         at=clock.now(), repo=str(main_tree), epic=epic, task=None, lap=None, stage=MANAGER_STAGE, try_number=None,
         track=None, tier=None, harness=None, model=model, effort=None, agent=None, used=used,

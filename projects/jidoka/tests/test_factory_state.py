@@ -1,20 +1,24 @@
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import jidoka_fixture as fixture
+import t3_state
 import test_status
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 sys.path.insert(0, str(PLUGIN / "scripts"))
 
+import beater  # noqa: E402
 import processes  # noqa: E402
 import watcher_record  # noqa: E402
 
@@ -352,6 +356,139 @@ class ManagedEpicTests(FactoryStateCase):
         self.bd("close", closed)
 
         self.assertEqual([self.epic], [item["epic"] for item in self.states()])
+
+
+THREAD = "thread-of-the-antigravity-manager"
+STATE_DB_VARIABLE = "JIDOKA_T3_STATE_DB"
+
+
+class AntigravityManagerTests(FactoryStateCase):
+    """The manager runs in a T3 thread that a live beater keeps. It starts no watcher, so the beater is the one
+    process that waits for the factory to have something to do."""
+
+    def setUp(self):
+        super().setUp()
+        self.state = self.root / "statev2.sqlite"
+        t3_state.create(self.state, (t3_state.RUNS_TABLE,))
+        before = os.environ.get(STATE_DB_VARIABLE)
+        os.environ[STATE_DB_VARIABLE] = str(self.state)
+        self.addCleanup(self.restore_state_variable, before)
+        self.epic = self.new_epic("Take card payments", "factory")
+        self.task = self.new_task(self.epic, "Read the card")
+        self.write_beat(self.epic, 10, THREAD)
+        self.start_beater(THREAD)
+        self.the_latest_run_is("completed")
+
+    @staticmethod
+    def restore_state_variable(before: str | None) -> None:
+        if before is None:
+            os.environ.pop(STATE_DB_VARIABLE, None)
+        else:
+            os.environ[STATE_DB_VARIABLE] = before
+
+    def start_beater(self, thread: str) -> None:
+        beater.write_record(self.home, thread, os.getpid())
+
+    def the_latest_run_is(self, status: str) -> None:
+        with closing(sqlite3.connect(self.state)) as db, db:
+            db.execute("DELETE FROM orchestration_v2_projection_runs")
+        t3_state.add_run_in_status(self.state, "run-1", THREAD, 1, status)
+
+    def test_a_live_beater_and_an_idle_thread_with_no_lap_read_the_epic_as_waiting(self):
+        shown = self.state_of(self.epic)
+
+        self.assertEqual("waiting", shown["state"])
+        self.assertTrue(shown["watcher"])
+        self.assertEqual("wait", shown["next_step"]["action"])
+        self.assertIn("wakes by itself", shown["next_step"]["text"])
+
+    def test_a_live_beater_while_the_managers_turn_runs_reads_the_epic_as_running(self):
+        self.the_latest_run_is("running")
+
+        shown = self.state_of(self.epic)
+
+        self.assertEqual("running", shown["state"])
+        self.assertFalse(shown["watcher"])
+        self.assertEqual("none", shown["next_step"]["action"])
+
+    def test_a_live_beater_while_a_lap_runs_reads_the_epic_as_running_though_the_thread_is_idle(self):
+        self.set_metadata(self.task, lap_number="1", lap_stage="build", lap_tries="0", lap_slot="3",
+                          lap_started=str(int(time.time())))
+
+        shown = self.state_of(self.epic)
+
+        self.assertEqual("running", shown["state"])
+        self.assertFalse(shown["watcher"])
+
+    def test_a_task_whose_lap_rests_does_not_keep_the_epic_from_waiting(self):
+        self.set_metadata(self.task, lap_number="1", lap_stage="parked", lap_tries="0", lap_slot="3")
+
+        self.assertEqual("waiting", self.state_of(self.epic)["state"])
+
+    def test_a_beater_whose_process_is_gone_leaves_the_epic_running(self):
+        record = beater.record_path(self.home, THREAD)
+        record.write_text(json.dumps({"thread": THREAD, "pid": 2 ** 22 + 12345,
+                                      "started": "Thu Jan  1 00:00:00 1970"}), encoding="utf-8")
+
+        shown = self.state_of(self.epic)
+
+        self.assertEqual("running", shown["state"])
+        self.assertFalse(shown["watcher"])
+
+    def test_a_beater_of_another_thread_is_no_watcher_for_this_manager(self):
+        beater.record_path(self.home, THREAD).unlink()
+        self.start_beater("another-thread")
+
+        self.assertEqual("running", self.state_of(self.epic)["state"])
+
+    def test_a_manager_in_a_claude_code_session_is_not_taken_for_a_beaten_thread(self):
+        self.write_beat(self.epic, 10, test_status.MANAGER_SESSION)
+
+        self.assertEqual("running", self.state_of(self.epic)["state"])
+
+    def test_a_state_db_that_cannot_be_read_leaves_the_epic_running(self):
+        self.state.unlink()
+
+        self.assertEqual("running", self.state_of(self.epic)["state"])
+
+    def test_a_pause_names_the_time_the_beater_carries_the_factory_on(self):
+        until = int(time.time()) + 20 * MINUTE
+        self.bd("update", self.epic, "--set-metadata",
+                "pause=" + json.dumps({"cause": "usage-limit", "since": until - 600, "until": until, "retries": 0}))
+
+        shown = self.state_of(self.epic)
+
+        self.assertEqual("waiting", shown["state"])
+        self.assertEqual(until, shown["next_step"]["wakes_at"])
+
+    def test_a_parked_task_beside_an_idle_manager_says_that_answering_wakes_it(self):
+        self.park_on_question(self.task)
+
+        shown = self.state_of(self.epic)
+
+        self.assertEqual("waiting-on-you", shown["state"])
+        self.assertTrue(shown["next_step"]["wakes_on_answer"])
+        self.assertEqual([{"bead": self.task, "kind": "question", "text": QUESTION, "wakes": True}],
+                         shown["waiting_on"])
+        self.assertNotIn(RESTART, shown["next_step"]["text"])
+
+    def test_a_parked_task_beside_a_manager_whose_turn_runs_does_not_make_the_epic_wait_on_you(self):
+        self.park_on_question(self.task)
+        self.the_latest_run_is("running")
+
+        shown = self.state_of(self.epic)
+
+        self.assertEqual("running", shown["state"])
+        self.assertEqual([{"bead": self.task, "kind": "question", "text": QUESTION, "wakes": False}],
+                         shown["waiting_on"])
+
+    def test_a_parked_epic_a_live_beater_still_keeps_says_that_answering_wakes_it(self):
+        self.park_on_question(self.epic)
+
+        shown = self.state_of(self.epic)
+
+        self.assertEqual("waiting-on-you", shown["state"])
+        self.assertTrue(shown["next_step"]["wakes_on_answer"])
 
 
 class PrintedFormTests(FactoryStateCase):

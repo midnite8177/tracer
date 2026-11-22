@@ -43,6 +43,7 @@ from run_suite import SHARED_FOLDER
 WINDOWS = os.name == "nt"
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT / "plugin" / "jidoka" / "scripts"))
+import lap_guard_record  # noqa: E402
 import processes  # noqa: E402
 import windows_processes  # noqa: E402
 SHIPPED = ["install.py", "release.py"]
@@ -174,6 +175,17 @@ def run_with_env(args: list, cwd: Path, env: dict) -> str:
     if done.returncode != 0:
         raise FixtureError(f"{' '.join(args)} failed in {cwd}: {done.stderr.strip()}")
     return done.stdout
+
+
+def write_guard_record_of(home: Path, worktree: Path, kind: str, commands: list, barred: list[str] | None) -> None:
+    """The guard record of the lap worktree at its build stage, whole, in the home."""
+    lap_guard_record.write_record(home, lap_guard_record.GuardRecord(
+        worktree=str(worktree), kind=kind, stage="build", commands=commands, barred=barred))
+
+
+def write_guard_record(home: Path, worktree: Path) -> None:
+    """The guard record of a lap worker who may run nothing and is barred from no folder."""
+    write_guard_record_of(home, worktree, lap_guard_record.LAP, [], [])
 
 
 def git_commit_all(repo: Path, message: str) -> None:
@@ -907,10 +919,20 @@ def launch_command_on_path(launcher: Path, arguments: list, path: str) -> list:
     return [str(launcher), *arguments]
 
 
+def without_ambient_thread(env: dict) -> dict:
+    """The environment with the T3 thread of the session that runs the tests taken out, so that a script under test
+    never takes that thread for its own manager's and starts a beater for it. A thread a test sets itself differs from
+    the ambient one and stays."""
+    ambient = os.environ.get("T3CODE_THREAD_ID")
+    if ambient and env.get("T3CODE_THREAD_ID") == ambient:
+        return {key: value for key, value in env.items() if key != "T3CODE_THREAD_ID"}
+    return env
+
+
 def run_command(command: list, stdin: str | None, env: dict, cwd: Path | None,
                 timeout: float | None) -> subprocess.CompletedProcess:
     return subprocess.run(command, input=stdin, capture_output=True, text=True, encoding="utf-8", timeout=timeout,
-                          env=env, cwd=cwd)
+                          env=without_ambient_thread(env), cwd=cwd)
 
 
 def run_launcher(launcher: Path, arguments: list, stdin: str | None, env: dict, cwd: Path | None,

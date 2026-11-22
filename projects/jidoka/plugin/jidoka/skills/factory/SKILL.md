@@ -19,7 +19,7 @@ it, and goes on with the call's own arguments. Each script's entry says
 whether its first argument is a subcommand; a script with no subcommand
 takes none, so do not put a word in front of its first argument.
 
-- `factory.py`, the subcommand `check`: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/factory.py"`
+- `factory.py`, the subcommand `check`, `start`, `wait` or `report`: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/factory.py"`
 - `scheduler.py`, a subcommand, such as `next` or `report`, then the epic id: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/scheduler.py"`
 - `bench.py`, the subcommand `route`, then the tier: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/bench.py"`
 - `route.py`, the subcommand `fallback`, then the bead: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/route.py"`
@@ -178,7 +178,8 @@ the printed route, native Sonnet, with the prompt of a native batch.
 ## Steps
 
 1. **Check.** Run `factory.py check`. Exit 1 means this session cannot run
-   lap workers under the lap mod. Its message names the config dir that
+   lap workers under the lap mod, or on an Antigravity host under the
+   profile guard. Its message names the config dir or the profile that
    lacks jidoka, or says to start a new session. Show it verbatim and
    stop. Exit 0 prints one line; show it. Then run
    `ui.py start --jidoka-home ... --wait 60`. It starts jidoka-ui when
@@ -368,6 +369,37 @@ the printed route, native Sonnet, with the prompt of a native batch.
    Write the event line for the started build, with the route's model or
    `the host's model`.
 
+   When the tier's route has the harness `t3` and the driver `antigravity`,
+   this holds for every stage of a lap: a build, a merge, a research brief, an
+   app check and a Spec check. No Agent tool starts the worker, and no lap mod
+   decides its calls. Build the stage's prompt as its paragraph says, then
+   make the start that `factory.py` prints:
+   1. Save the prompt with the Write tool to `<scratch>/<stage>-prompt.md`, the
+      action's `scratch`, with `build`, `merge`, `research`, `app-check` or
+      `spec-check` for the stage. That file is the one file the manager
+      writes for a stage.
+   2. Run `factory.py start --worktree <worktree> --prompt
+      <scratch>/<stage>-prompt.md --tier <tier> --jidoka-home ...`, with the
+      action's `worktree` and the tier whose route you took. It writes the
+      lap's guard record, which holds the worker to the lists of its stage,
+      launches the stage as a T3 thread titled `lap · ` and the task's title,
+      in the lap's worktree, on the route's model and thought level, and prints
+      `thread`, `deadline`, `wait` and `report`. A thread has no agent type,
+      so for an app check and a Spec check the script puts the worker's
+      instructions at the head of the first message, ahead of your prompt.
+      Exit 1 is a refusal: show it, write the closing line and stop.
+   3. Wait on what the script names. Run the printed `wait` call as a command
+      of its own, then the `next` that each answer prints, until the answer's
+      `state` is `ended` or `cut off`. Each call waits at most 45 seconds, so
+      with several workers wait on each in turn. A `cut off` means the script
+      found the stage past its `deadline` and stopped it.
+   4. Run the `report` call that the last answer names. It reads the
+      thread's last reply, archives the thread and prints `thread`, `cut_off`
+      and `reply`. When `cut_off` is true, report the task as `"cut off"`.
+      Otherwise treat `reply` as the worker's reply in step 5, and give
+      `--agent` the `thread` in place of an agent id.
+   Never delete a thread: it would offer to delete the lap's worktree.
+
    An action whose `action` is `merge` starts a merge worker instead, on the
    route of the deep tier. Its prompt is built as above, with the same first
    line, the task, the paths, the apps and the limits, except for these:
@@ -390,12 +422,18 @@ the printed route, native Sonnet, with the prompt of a native batch.
    - the same ending: `done` with the app and the filter that run the
      tests the merge touches, or `failed` with its `why`.
 
+   On an Antigravity route, make the start that `factory.py` prints, as
+   above, with the deep tier. The script writes the merge worker's guard
+   record with its grants: the rebase onto the epic branch, `git add` and the
+   looks.
+
    Write the event line for the started merge worker.
 
    An action whose `action` is `research` starts a research worker on the
-   route of the light tier. Its prompt is built as above, with the same first
-   line, the task, the paths of the glossary and the house rules, and the
-   limits, except for these:
+   route of the light tier. On an Antigravity route, make the start that
+   `factory.py` prints, as above, with the light tier. Its prompt is built as
+   above, with the same first line, the task, the paths of the glossary and
+   the house rules, and the limits, except for these:
    - its job: write the research brief. It reads the repo and changes
      nothing in the worktree. It writes the brief, under 2,500 words, to
      `research-brief.md` in the scratch folder, with these sections: `Files
@@ -419,11 +457,19 @@ the printed route, native Sonnet, with the prompt of a native batch.
      ends its reply with, to `spec-check.json` in the scratch folder, and
      ends its reply with that same block. A `pass` needs no file.
 
+   On an Antigravity route, make the start that `factory.py` prints, as
+   above, with the standard tier. The script puts the Spec check skill at the
+   head of the thread's first message, so the prompt keeps its job as it is.
+
    Write the event line for the started Spec check worker.
 
-   An action whose `action` is `app-check` starts an app check worker with the
-   Agent tool, in the background, with `subagent_type` `jidoka:app-check`, on
-   the route of the standard tier. Its prompt's first line is
+   An action whose `action` is `app-check` starts an app check worker on the
+   route of the standard tier. On an Antigravity route, make the start that
+   `factory.py` prints, as above: the script puts the app check agent's
+   instructions at the head of the thread's first message and writes a guard
+   record that holds the worker to the check list, so the prompt below is all
+   you write. Otherwise start it with the Agent tool, in the background, with
+   `subagent_type` `jidoka:app-check`. Its prompt's first line is
    `jidoka lap worktree: <worktree>`, the action's `worktree`, so that the lap
    mod decides its tool calls: it allows each app's `build`, `run` and `way_in`
    and the launcher on the holdouts script and on the app process script, and
@@ -866,8 +912,12 @@ the printed route, native Sonnet, with the prompt of a native batch.
 6. **Wait or end.** When `watch` is true, something is still open and
    nothing can run now: the epic is paused, parked, or holds only parked
    or blocked tasks, or its ready tasks wait on a slot or an area that
-   another running epic holds. Write `<epic-id>: waiting`, then start the
-   watcher in the background (`run_in_background: true`) with
+   another running epic holds. Write `<epic-id>: waiting`. On an Antigravity
+   host, start no watcher: write the closing line and end your turn. The
+   beater wakes you with the carry-on prompt when a task is unparked, a task
+   is added, the pause is over or another epic frees room; a watcher too
+   would send you a second prompt for the same event. On any other host,
+   start the watcher in the background (`run_in_background: true`) with
    `watch.py <epic-id> --jidoka-home ...`, write the closing line, which
    reads the watcher's record, and wait. The watcher exits when a task is
    unparked, a task is added, a task merges, the pause is over, or another

@@ -19,6 +19,27 @@ RUN_TIMEOUT_SECONDS = 120
 SYSTEM_PATH = (str(Path(os.environ["SystemRoot"]) / "System32") if fixture.WINDOWS
                else f"/usr/bin{os.pathsep}/bin")
 KEY_VARIABLES = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY"]
+HOST_VARIABLES = ["JIDOKA_SESSION_ID", "T3CODE_THREAD_ID", "T3CODE_CLI_PATH"]
+THOUGHT_LEVELS = ["low", "medium", "high"]
+
+
+def gemini(name: str, levels: list[str]) -> dict:
+    return {"id": f"gemini-4-{name}", "options": [{"id": "thinkingLevel", "values": levels}]}
+
+
+ANTIGRAVITY_MODELS = [gemini("hydrogen", THOUGHT_LEVELS), gemini("neon", [*THOUGHT_LEVELS, "xhigh"]),
+                      {"id": "claude-opus-4-6", "options": [{"id": "thinkingLevel", "values": THOUGHT_LEVELS}]},
+                      {"id": "claude-sonnet-4-6", "options": []}]
+ANTIGRAVITY_CATALOG = {"providers": [
+    {"providerInstanceId": "antigravity", "driverKind": "antigravity", "models": ANTIGRAVITY_MODELS,
+     "canRunChildTask": False},
+    {"providerInstanceId": "codex", "driverKind": "codex", "models": [], "canRunChildTask": True},
+]}
+
+
+def antigravity_route(model: str, effort: str) -> dict:
+    return {"harness": "t3", "model": model, "version": None, "effort": effort, "provider": "antigravity",
+            "driver": "antigravity"}
 CODEX = {"harness": "codex", "model": None, "version": None, "effort": None}
 T3_CODEX = {"harness": "t3", "provider": "codex", "model": "gpt-6.1-sol", "version": None, "effort": "high"}
 T3_OPENCODE = {"harness": "t3", "driver": "opencode", "provider": "strata", "model": "qwen3-coder-next",
@@ -64,6 +85,10 @@ class SetupCase(unittest.TestCase):
         self.xdg = self.root / f"xdg-{self.count}"
         self.opencode = self.xdg / "opencode"
         self.keys: dict[str, str] = {}
+        self.host: dict[str, str] = {}
+
+    def under_antigravity(self) -> None:
+        self.host = {"T3CODE_THREAD_ID": "thread-of-the-test"}
 
     def with_codex(self) -> None:
         fixture.write_executable(self.bin / "codex", "#!/bin/sh\nexit 0\n")
@@ -77,9 +102,9 @@ class SetupCase(unittest.TestCase):
         return str(path)
 
     def setup_script(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
-        env = {name: value for name, value in os.environ.items() if name not in KEY_VARIABLES}
+        env = {name: value for name, value in os.environ.items() if name not in KEY_VARIABLES + HOST_VARIABLES}
         env.update({"PATH": f"{self.bin}{os.pathsep}{SYSTEM_PATH}", "JIDOKA_HOME": str(self.home),
-                    "XDG_CONFIG_HOME": str(self.xdg), **self.keys})
+                    "XDG_CONFIG_HOME": str(self.xdg), **self.keys, **self.host})
         return fixture.run_launcher(LAUNCHER, [str(SETUP), *args], stdin, env, self.repo, RUN_TIMEOUT_SECONDS)
 
     def proposal(self, *args: str) -> dict:
@@ -291,6 +316,104 @@ class ProposeTests(SetupCase):
         self.assertEqual(["python"], self.home_files())
 
 
+class ProposeUnderAntigravityTests(SetupCase):
+    def propose_from(self, models: list) -> dict:
+        self.under_antigravity()
+        self.without_codex()
+        catalog = {"providers": [{**ANTIGRAVITY_CATALOG["providers"][0], "models": models}]}
+        return self.proposal("--t3-catalog", self.catalog_file(catalog))
+
+    def test_the_table_is_filled_from_the_catalog_with_no_claude_model(self):
+        proposal = self.propose_from(ANTIGRAVITY_MODELS)
+
+        routes = proposal["routes"]
+        self.assertEqual("antigravity", proposal["host"])
+        self.assertEqual(antigravity_route("gemini-4-hydrogen", "medium"), routes["light"])
+        self.assertEqual(antigravity_route("gemini-4-hydrogen", "medium"), routes["local"])
+        self.assertEqual(antigravity_route("gemini-4-neon", "high"), routes["standard"])
+        self.assertEqual(antigravity_route("gemini-4-neon", "xhigh"), routes["deep"])
+        self.assertEqual([], [tier for tier, route in routes.items() if "claude" in str(route["model"])])
+        self.assertEqual([], [tier for tier, route in routes.items() if route["harness"] == "claude"])
+
+    def test_carbon_is_proposed_for_the_deep_tier_when_the_catalog_lists_it(self):
+        proposal = self.propose_from([*ANTIGRAVITY_MODELS, gemini("carbon", [*THOUGHT_LEVELS, "xhigh"])])
+
+        self.assertEqual(antigravity_route("gemini-4-carbon", "xhigh"), proposal["routes"]["deep"])
+        self.assertEqual(antigravity_route("gemini-4-neon", "high"), proposal["routes"]["standard"])
+
+    def test_a_tier_whose_model_the_catalog_does_not_list_gets_no_route(self):
+        neon = {"id": "gemini-4-neon", "options": [{"id": "thinkingLevel", "values": THOUGHT_LEVELS,
+                                                    "default": "high"}]}
+
+        proposal = self.propose_from([neon])
+
+        self.assertEqual(["deep", "second", "standard"], sorted(proposal["routes"]))
+        self.assertEqual(antigravity_route("gemini-4-neon", "high"), proposal["routes"]["deep"])
+
+    def test_the_second_tier_is_the_same_codex_route_on_both_hosts(self):
+        self.with_codex()
+        catalog = self.catalog_file(ANTIGRAVITY_CATALOG)
+        on_claude_code = self.proposal("--t3-catalog", catalog)["routes"]["second"]
+        self.under_antigravity()
+
+        on_antigravity = self.proposal("--t3-catalog", catalog)["routes"]["second"]
+
+        self.assertEqual(T3_CODEX, on_claude_code)
+        self.assertEqual(on_claude_code, on_antigravity)
+
+    def test_the_second_tier_runs_in_codex_when_the_catalog_has_no_codex_provider_and_codex_is_on_the_path(self):
+        self.with_codex()
+        self.under_antigravity()
+        catalog = {"providers": [ANTIGRAVITY_CATALOG["providers"][0]]}
+
+        proposal = self.proposal("--t3-catalog", self.catalog_file(catalog))
+
+        self.assertEqual(CODEX, proposal["routes"]["second"])
+
+    def test_the_second_tier_has_the_deep_route_when_there_is_no_codex_at_all(self):
+        proposal = self.propose_from(ANTIGRAVITY_MODELS)
+
+        self.assertEqual(proposal["routes"]["deep"], proposal["routes"]["second"])
+
+    def test_the_proposal_shows_the_antigravity_table_the_settings_record_now(self):
+        self.under_antigravity()
+        self.without_codex()
+        recorded = {"deep": antigravity_route("gemini-4-neon", "high")}
+        (self.home / "settings.json").write_text(json.dumps({**SETTINGS_FROM_THE_INSTALLER,
+                                                             "antigravity_routes": recorded}), encoding="utf-8")
+
+        self.assertEqual(recorded, self.proposal()["recorded"]["routes"])
+
+    def test_an_antigravity_route_is_accepted_for_every_tier_that_writes(self):
+        self.under_antigravity()
+        routes = {tier: antigravity_route("gemini-4-neon", "high") for tier in ("light", "standard", "deep", "local")}
+
+        done = self.confirm({"routes": routes, "budget": 20, "reserves": {}, "lap_limit": 2})
+
+        self.assertEqual(0, done.returncode, done.stderr)
+
+    def test_confirming_under_antigravity_writes_its_table_and_leaves_the_claude_code_table(self):
+        self.record_installer_settings()
+        self.under_antigravity()
+        routes = {"standard": antigravity_route("gemini-4-neon", "high")}
+
+        self.confirm({"routes": routes, "budget": 20, "reserves": {}, "lap_limit": 2})
+
+        settings = self.settings()
+        self.assertEqual(routes, settings["antigravity_routes"])
+        self.assertEqual(SETTINGS_FROM_THE_INSTALLER["routes"], settings["routes"])
+
+    def test_confirming_under_claude_code_leaves_the_antigravity_table(self):
+        table = {"standard": antigravity_route("gemini-4-neon", "high")}
+        (self.home / "settings.json").write_text(json.dumps({"antigravity_routes": table}), encoding="utf-8")
+
+        self.confirm({"routes": {"deep": NATIVE_OPUS}, "budget": 20, "reserves": {}, "lap_limit": 2})
+
+        settings = self.settings()
+        self.assertEqual(table, settings["antigravity_routes"])
+        self.assertEqual({"deep": NATIVE_OPUS}, settings["routes"])
+
+
 class WriteTests(SetupCase):
     CONFIRMED = {
         "routes": {"deep": NATIVE_OPUS, "second": CODEX},
@@ -479,6 +602,126 @@ class WriteTests(SetupCase):
         self.assertEqual(50, settings["budget"])
         self.assertEqual({"claude": 0.2}, settings["reserves"])
         self.assertEqual(4, settings["lap_limit"])
+
+
+SECRET = "t3-read-token-0123456789abcdef"
+
+
+class ProviderTokenTests(SetupCase):
+    """The fake t3 CLI prints a token and keeps each call's arguments in a file, so a test sees whether setup ran it."""
+
+    def setUp(self):
+        super().setUp()
+        self.calls = self.root / f"t3-calls-{self.count}.txt"
+        self.install_t3(f"printf '%s\\n' '{SECRET}'")
+
+    def install_t3(self, body: str) -> None:
+        fixture.write_executable(self.bin / "t3", f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{self.calls.as_posix()}\"\n"
+                                                 f"{body}\n")
+
+    def t3_calls(self) -> list[str]:
+        return self.calls.read_text(encoding="utf-8").splitlines() if self.calls.exists() else []
+
+    def issue(self) -> subprocess.CompletedProcess:
+        return self.setup_script("issue-token", "--confirmed")
+
+    def test_the_proposal_describes_the_token_and_says_that_its_scope_reads_every_thread(self):
+        token = self.proposal()["t3_token"]
+
+        self.assertEqual("orchestration:read", token["scope"])
+        self.assertEqual("jidoka", token["label"])
+        self.assertTrue(token["reads_every_thread"])
+        self.assertIn("every thread", token["warning"])
+        self.assertEqual(["auth", "session", "issue", "--scope", "orchestration:read", "--label", "jidoka"],
+                         token["command"][1:8])
+        self.assertIn("--ttl", token["command"])
+        self.assertFalse(token["recorded"])
+
+    def test_proposing_issues_no_token_and_writes_nothing(self):
+        self.proposal()
+
+        self.assertEqual([], self.t3_calls())
+        self.assertEqual(["python"], self.home_files())
+
+    def test_issuing_without_the_human_s_confirm_is_a_usage_error_and_runs_no_t3(self):
+        done = self.setup_script("issue-token")
+
+        self.assertEqual(2, done.returncode)
+        self.assertEqual([], self.t3_calls())
+        self.assertEqual(["python"], self.home_files())
+
+    def test_a_confirmed_issue_runs_t3_with_the_read_scope_and_the_jidoka_label(self):
+        done = self.issue()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        [call] = self.t3_calls()
+        self.assertTrue(call.startswith("auth session issue --scope orchestration:read --label jidoka --ttl "), call)
+
+    def test_the_token_is_saved_in_the_home_in_a_file_that_only_the_user_can_read(self):
+        self.issue()
+
+        saved = self.home / "t3-token"
+        self.assertEqual(SECRET, saved.read_text(encoding="utf-8").strip())
+        if not fixture.WINDOWS:
+            self.assertEqual(0o600, saved.stat().st_mode & 0o777)
+        self.assertEqual(["python", "t3-token"], self.home_files())
+
+    def test_the_token_appears_in_no_output(self):
+        done = self.issue()
+
+        self.assertNotIn(SECRET, done.stdout)
+        self.assertNotIn(SECRET, done.stderr)
+        self.assertIn("t3-token", done.stdout)
+
+    def test_the_token_appears_in_no_output_of_the_proposal_made_after_it_was_saved(self):
+        self.issue()
+
+        done = self.setup_script("propose")
+
+        self.assertNotIn(SECRET, done.stdout + done.stderr)
+        self.assertTrue(json.loads(done.stdout)["t3_token"]["recorded"])
+
+    def test_a_t3_that_fails_leaves_no_token_file_and_leaks_nothing(self):
+        self.install_t3(f"printf '%s\\n' '{SECRET}' >&2\nexit 3")
+
+        done = self.issue()
+
+        self.assertEqual(1, done.returncode)
+        self.assertNotIn(SECRET, done.stdout + done.stderr)
+        self.assertEqual(["python"], self.home_files())
+
+    def test_a_t3_that_prints_no_token_leaves_no_token_file(self):
+        self.install_t3("exit 0")
+
+        done = self.issue()
+
+        self.assertEqual(1, done.returncode)
+        self.assertEqual(["python"], self.home_files())
+
+    def test_a_token_that_t3_prints_as_json_is_read_from_its_token_field(self):
+        self.install_t3(f"printf '%s\\n' '{{\"token\": \"{SECRET}\", \"expiresAt\": \"later\"}}'")
+
+        self.issue()
+
+        self.assertEqual(SECRET, (self.home / "t3-token").read_text(encoding="utf-8").strip())
+
+    def test_a_second_issue_replaces_the_token(self):
+        self.issue()
+        self.install_t3("printf '%s\\n' 'second-token'")
+
+        self.issue()
+
+        self.assertEqual("second-token", (self.home / "t3-token").read_text(encoding="utf-8").strip())
+
+    def test_the_t3_command_is_the_one_the_environment_names(self):
+        elsewhere = fixture.write_executable(self.root / f"other-t3-{self.count}",
+                                             f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{self.calls.as_posix()}\"\n"
+                                             "printf '%s\\n' 'from-the-other-t3'")
+        self.host = {"T3CODE_CLI_PATH": str(elsewhere)}
+
+        self.issue()
+
+        self.assertEqual("from-the-other-t3", (self.home / "t3-token").read_text(encoding="utf-8").strip())
 
 
 if __name__ == "__main__":

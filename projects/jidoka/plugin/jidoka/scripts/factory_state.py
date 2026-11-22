@@ -23,6 +23,11 @@ with `kind` and `text`, the reason it was put there:
   question         the factory's latest comment on the bead is a `Question:`; `text` is its sentence.
   parked           it is a `Parked:` comment, such as the budget's; `text` is the comment's first line.
   human            the label is on the bead and the factory posted no reason.
+On Antigravity the manager starts no watcher, and the live beater of its T3 thread (beater.py) does the waking. The
+beater counts as the watcher only while the epic waits as a watcher's epic would: no task holds a lap, T3 shows no run
+in progress in the thread (t3_turns.has_run_in_progress), and the state db can be read. While a lap runs or the
+manager's turn goes on, the epic reads `running`. The beater keeps no record of what it found parked, so it waits for
+every bead that carries the human label, one labeled after the beater began included.
 `wakes` is true when the epic has a live watcher whose record lists the bead among those it waits on, so that taking
 the label off ends the watch and the manager goes on; a bead that was labeled after the watch began is not in the
 record, and the watcher does not end on it. Nothing wakes a stopped epic.
@@ -56,16 +61,19 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 
+import beater
 import clock
 import heartbeat
 import pause
 import park
 import settings_reader
+import t3_turns
 import watcher_record
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError, NotAWholeNumber, bd_list,
-                      is_labeled_for_human, labels_of, parent_of)
+                      is_labeled_for_human, labels_of, metadata_of, parent_of)
 from epic_reader import EPIC_TYPE
 from epics import at_the_gate, is_closed
+from lap_record import RESTING_STAGES, stage_of
 from lap_outcomes import SchedulerError
 
 class State(Enum):
@@ -232,26 +240,57 @@ def step_for_a_waiting_epic(shown: dict, now: int) -> NextStep:
                          f"pause ends, and sooner {sooner}.", held_pause.until)
 
 
+def holds_open_lap(task: dict) -> bool:
+    """True when the task's metadata records a lap that is not at rest: a stage, and not parked, blocked or
+    interrupted."""
+    stage = stage_of(metadata_of(task))
+    return bool(stage) and stage not in RESTING_STAGES
+
+
+def beater_stands_in_for_a_watcher(home: Path, epic: str, tasks: list[dict]) -> bool:
+    """True when the epic's manager is a T3 thread that a live beater keeps, and the epic waits as it would with a
+    live watcher: no task holds a lap and T3 shows no run in progress in the thread. A beater lives as long as the
+    manager holds the epic, so its being alive says nothing while laps run or the manager's turn goes on. A state db
+    that cannot be read cannot show the turn over, so it counts as no watcher."""
+    thread = heartbeat.beat_session(home, epic)
+    if thread is None or beater.running_beater(home, thread) is None:
+        return False
+    if any(holds_open_lap(task) for task in tasks):
+        return False
+    try:
+        return not t3_turns.has_run_in_progress(thread)
+    except t3_turns.NoRunState:
+        return False
+
+
 def state_of_epic(shown: dict, tasks: list[dict], home: Path, main_tree: Path, now: int) -> EpicState:
-    """The state of the epic, from the epic and its open tasks as bd lists them."""
+    """The state of the epic, from the epic and its open tasks as bd lists them. A beater that stands in for a watcher
+    waits for each bead that carries the human label, because it keeps no record of what it found parked."""
     epic = str(shown["id"])
     fresh_age = heartbeat.fresh_age_seconds(home, epic, now)
     record = watcher_record.live_watcher(home, epic)
-    listed = record.waits_for.parked if record is not None else frozenset()
     has_manager = fresh_age is not None
+    beaten = record is None and has_manager and beater_stands_in_for_a_watcher(home, epic, tasks)
+    watched = record is not None or beaten
+    if record is not None:
+        listed = record.waits_for.parked
+    elif beaten:
+        listed = frozenset(str(bead["id"]) for bead in [shown, *tasks] if is_labeled_for_human(bead))
+    else:
+        listed = frozenset()
     stopped = not has_manager and not is_labeled_for_human(shown)
     held = waiting_on(shown, tasks, frozenset() if stopped else listed, main_tree)
-    task_waits = record is not None and has_manager and any(is_labeled_for_human(task) for task in tasks)
+    task_waits = watched and has_manager and any(is_labeled_for_human(task) for task in tasks)
     if is_labeled_for_human(shown) or task_waits:
         state, step = State.WAITING_ON_YOU, step_for_you(epic, held, fresh_age, now)
     elif stopped:
         state, step = State.STOPPED, step_for_a_stopped_epic(held)
-    elif record is not None:
+    elif watched:
         state, step = State.WAITING, step_for_a_waiting_epic(shown, now)
     else:
         state, step = State.RUNNING, NextStep.none("Nothing to do. The factory is running.")
     return EpicState(epic, str(shown.get("title") or ""), state, heartbeat.beat_age_seconds(home, epic, now),
-                     record is not None, held, step)
+                     watched, held, step)
 
 
 def states(home: Path, main_tree: Path, now: int) -> list[EpicState]:

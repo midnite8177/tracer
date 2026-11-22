@@ -2,6 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import { jidokaScriptsIn, runsCheckScripts, runsScheduler } from './lap_mod.js'
+import { lapGuardCases } from './lap_guard_cases.js'
 
 const WORKTREE = '/repo/.worktrees/lap-t1'
 const HOST_VERDICT = { decision: 'ask', reason: 'the host decides' } as const
@@ -2263,3 +2264,72 @@ test('a pass worker may name its own worktree with git -C, and no other folder',
   expect(await bash($, 'git -C . diff')).toBe('deny')
   expect(await bash($, `git -C ${WORKTREE} rm /etc/hosts`)).toBe('deny')
 })
+
+type SharedCase = {
+  name: string
+  kind: 'lap' | 'check'
+  call?: string
+  use?: { tool: string; path?: string }
+  links?: Record<string, string>
+  verdict: { decision: string; reason?: string }
+}
+
+type SharedTool = { tool: string; field?: string; isReadOnly?: true }
+
+/**
+ * How the lap mod names and calls each tool a shared case uses. A tool the table names that is not here is a tool no
+ * rule knows, and is its own name. The lap mod's `Agent` starts a worker and its `Workflow` defines them.
+ */
+const SHARED_TOOLS: Record<string, SharedTool> = {
+  write: { tool: 'Write', field: 'file_path' },
+  edit: { tool: 'Edit', field: 'file_path' },
+  edit_notebook: { tool: 'NotebookEdit', field: 'notebook_path' },
+  read: { tool: 'Read', field: 'file_path', isReadOnly: true },
+  start_workers: { tool: 'Agent' },
+  define_workers: { tool: 'Workflow' },
+  ask: { tool: 'AskUserQuestion' },
+}
+
+/** A folder beside the worktree, where a shared case puts what the lap may not touch. */
+const OUTSIDE = '/repo/.worktrees/outside'
+
+/** The text of a shared case with its `{worktree}`, `{outside}` and the host's `{tool}` filled in. */
+function placed(text: string, tool: string): string {
+  return text.replaceAll('{worktree}', WORKTREE).replaceAll('{outside}', OUTSIDE).replaceAll('{tool}', tool)
+}
+
+/** The cases that the profile guard's own tests run through its Python port of the same rules, so the two cannot drift apart. */
+const SHARED = lapGuardCases as { commands: unknown[]; barred: string[]; cases: SharedCase[] }
+
+for (const { name, kind, call, use, links, verdict } of SHARED.cases) {
+  test(`shared case ${name}`, async ($, on) => {
+    const named: SharedTool | undefined = use === undefined ? undefined : (SHARED_TOOLS[use.tool] ?? { tool: use.tool })
+    const tool = named?.tool ?? 'Bash'
+    const places = Object.fromEntries(
+      Object.entries(links ?? {}).map(([link, target]) => [placed(link, tool), placed(target, tool)]),
+    )
+    engineWith(on, SHARED.commands, {
+      ...NOTHING,
+      barred: SHARED.barred,
+      places,
+      spawn: () => Promise.resolve({ model: 'sonnet', agentId: 'a1' }),
+    })
+    if (kind === 'check') await startCheck($, 'app-check')
+    else await startLap($, WORKTREE)
+    const input =
+      use === undefined
+        ? { command: placed(call ?? '', tool) }
+        : use.path === undefined || named?.field === undefined
+          ? {}
+          : { [named.field]: placed(use.path, tool) }
+
+    const got = await $.tool.check({
+      tool,
+      input,
+      agentId: 'a1',
+      ...(named?.isReadOnly === true ? { isReadOnly: true } : {}),
+    })
+
+    expect(got).toEqual(verdict.reason === undefined ? verdict : { ...verdict, reason: placed(verdict.reason, tool) })
+  })
+}

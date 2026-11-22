@@ -14,6 +14,9 @@ import jidoka_fixture as fixture  # noqa: E402
 from test_notify import APP_TOKEN, USER_KEY, UI_URL, PushoverStandIn  # noqa: E402
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
+sys.path.insert(0, str(PLUGIN / "scripts"))
+import lap_guard_record  # noqa: E402
+
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 SCHEDULER = PLUGIN / "scripts" / "scheduler.py"
 HANDOFF = PLUGIN / "scripts" / "handoff.py"
@@ -116,6 +119,18 @@ class StoppingTheHostTests(StopCase):
             [comment] = [text for text in (str(c["text"]) for c in self.comments(task))
                          if text.startswith("Interrupted: ")]
             self.assertIn("stopped", comment)
+
+    def test_a_stop_removes_the_guard_record_of_each_lap_it_ends_interrupted(self):
+        running = self.open_two_laps()
+        worktrees = [self.repo / ".worktrees" / f"lap-{task}" for task in running]
+        for worktree in worktrees:
+            fixture.write_guard_record(self.home, worktree)
+
+        done = self.stop()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        for worktree in worktrees:
+            self.assertIsNone(lap_guard_record.read_record(self.home, worktree))
 
     def test_a_stop_leaves_the_task_with_no_lap_unchanged(self):
         running = self.open_two_laps()

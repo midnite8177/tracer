@@ -33,9 +33,9 @@ KEY_PREFIX = "route.native."
 
 
 def fallback(bead: str, stage: str, tier: str, mark: str, home: Path, main_tree: Path) -> dict:
-    failed = routes.recorded_route(tier, home)
-    if failed.harness == routes.NATIVE_HARNESS:
-        return {"rerun": False, "why": f"the {tier} route already runs on {routes.NATIVE_HARNESS}, so there is "
+    failed = routes.recorded_route_here(tier, home)
+    if failed.is_native:
+        return {"rerun": False, "why": f"the {tier} route already runs on the host's own harness, so there is "
                                        "no native route to fall back to"}
     shown = bd_show(bead, main_tree)
     if shown is None:

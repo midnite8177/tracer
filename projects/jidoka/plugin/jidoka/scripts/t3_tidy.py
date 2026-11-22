@@ -56,7 +56,7 @@ import texts
 import tidy
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, run
 from lap_outcomes import CUT_OFF, DONE, FAILED
-from prices import Tokens
+from prices import NO_TOKENS
 from t3_child import (CHILD, ChildError, ChildStart, Started, WallClockExceeded, check_child_run, record_start,
                       started_state)
 
@@ -142,7 +142,7 @@ def batch_outcome(scratch: Path) -> str | None:
 
 
 def opencode_route(home: Path) -> routes.Route:
-    route = routes.recorded_route(TIER, home)
+    route = routes.recorded_route_here(TIER, home)
     if not route.is_opencode:
         raise TidyChildError(f"the {TIER} tier's route is not a {T3} {routes.OPENCODE_DRIVER} route")
     return route
@@ -194,7 +194,7 @@ def delegate_task_of(prompt: str, route: routes.Route, wall_seconds: int) -> dic
     return {"task": prompt, "role": "implementation", "isolation": "shared", "mode": "wait",
             "timeoutMs": wall_seconds * 1000, "runtimeMode": RUNTIME_MODE,
             "target": {"providerInstanceId": route.provider, "driverKind": routes.OPENCODE_DRIVER,
-                       "model": route.model, "options": {"variant": route.effort}}}
+                       "model": route.model, "options": {route.effort_option: route.effort}}}
 
 
 def start(batch: TidyBatch, docs: list[str], wall_seconds: int, home: Path, main_tree: Path) -> dict:
@@ -234,7 +234,7 @@ def restore_files(batch: BatchStart) -> None:
 
 
 def record(home: Path, main_tree: Path, state: Started, seconds: int, outcome: str) -> None:
-    ran = ledger.Ran(Tokens(0, 0, 0, 0), T3, state.route.model, state.route.effort)
+    ran = ledger.Ran(NO_TOKENS, T3, state.route.model, state.route.effort)
     where = replace(ledger.Where.of_pass(tidy.STAGE.name), wall_seconds=seconds)
     ledger.record_ran_or_say(home, main_tree, state.epic, where, ledger.Worker(None, TIER, False), ran, outcome,
                              clock.now())

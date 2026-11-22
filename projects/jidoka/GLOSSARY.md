@@ -552,7 +552,9 @@ It wakes the manager after a turn that failed, with the same back-off, and
 pauses the epic when the account is signed out. It does the waker's work:
 when the thread sits idle and the watcher would wake, it sends the
 carry-on prompt. It sends the permission-prompt notice once for each
-approval the thread waits on.
+approval the thread waits on, and it writes the ledger row of each run of
+the manager that ended, from the run's provider turns. It keeps the ids it
+handled, so a beater that starts again repeats neither.
 _Avoid_: Daemon, pacemaker, keep-alive
 
 **Waker**:
@@ -593,7 +595,9 @@ _Avoid_: Dashboard, monitor
 **Factory state**:
 The one state of an epic the factory holds, with the one next step the human
 can act on. It is running, when a manager works it; waiting, when a live
-watcher waits and the factory carries on by itself; waiting on you, when the
+watcher waits and the factory carries on by itself (on Antigravity, a live
+beater counts as the watcher while no lap runs and T3 shows no run in the
+manager's thread); waiting on you, when the
 epic carries the human label, or a task does while a manager's heartbeat is
 fresh and a live watcher waits, for a question, the acceptance gate or a
 budget park; or stopped, when no manager runs it. It follows from the
@@ -678,15 +682,22 @@ the child runs under OpenCode's default one. A child that asks for such an
 approval fails its batch at once and falls back; the lap mod, which
 keeps a permission prompt from holding a lap, does not guard a T3 child.
 Setup checks nothing of OpenCode on the machine for the route. Each machine
-keeps its own routes, and a route that cannot run falls back to the host's
-harness. A route that fails reruns its stage once on the native route, the
+keeps its own routes, one table for each host, and a script reads the table
+of the host it runs under. Claude Code's table is the `routes` of the machine
+settings. Antigravity's holds a native route for each tier that T3's
+Antigravity catalog fills: a T3 Antigravity thread, its model the catalog's
+model id and its effort that model's thought level, on Gemini 4 Hydrogen for
+the light and local tiers, on Neon for standard and on Neon, or Carbon when
+the catalog lists it, for deep. It never holds one of the catalog's Claude
+models. The second tier runs the same codex route on both hosts. A route that
+cannot run falls back to the host's harness. A route that fails reruns its stage once on the native route, the
 host's own harness at the model and effort the tier asks for; a second
 failure is the stage's own failure.
 _Avoid_: Provider, backend, adapter
 
 **Machine settings**:
 What install and setup record about one machine in jidoka's home: its
-Python, config dirs, routes, the default budget of an epic, the reserves,
+Python, config dirs, the route table of each host, the default budget of an epic, the reserves,
 the lap limit, jidoka's source repo and the jidoka-ui that the installer
 published, which the factory starts. They hold nothing about a repo.
 _Avoid_: Global config, user settings, preferences
@@ -698,6 +709,16 @@ tier, the default budget, the reserves and the lap limit. It shows the
 proposal and writes nothing until the human confirms. It is not onboarding,
 which brings a repo under jidoka.
 _Avoid_: Configure, install, init
+
+**T3 token**:
+The read-only token that setup issues, on the human's confirm, for T3's local
+server, with the scope `orchestration:read` and the label `jidoka`. It is the
+narrowest scope that serves T3's provider status, and it can also read every
+thread. Jidoka's home keeps it in a file only the user can read, and no output
+or log ever holds it. A script trades it for a ticket and opens T3's websocket
+to read the provider status: whether the Antigravity account is signed in.
+A refused ticket, a closed socket or an unknown reply is no status.
+_Avoid_: Session token, API key, credential
 
 **Account**:
 The login a harness runs on at the moment, with its own usage windows or
@@ -731,14 +752,20 @@ _Avoid_: Headroom, buffer, threshold
 The SQLite file in jidoka's home that holds one row for each worker run and
 each request of a manager, priced in dollars at list price when the row is
 written. It holds every repo and outlives the epics it prices. An epic's
-running total, kept in its metadata, is the sum of its rows.
+running total, kept in its metadata, is the sum of its rows. Under an Antigravity
+host a worker's row takes its tokens from the provider turns of the worker's T3 thread, read from each turn's
+`turnTokenUsage`, and its model from the `modelSelection` of the turn's run: fresh input is the input
+less the cached and cache-creation tokens, cached and cache creation count as such, and reasoning is not added
+to the output, because T3 already counts it there.
 _Avoid_: Spend log, usage table, cost database
 
 **List price**:
 What a provider's pricing page asks, at its standard tier, for a million
-tokens of each kind of one model. jidoka reads it from the pages and keeps
-it in its home for seven days; its own hand-written table prices what the
-pages do not list.
+tokens of each kind of one model. When a price has a date, the one in force
+today is the list price. jidoka reads it from the pages and keeps it in its
+home for seven days; its own hand-written table prices what the
+pages do not list. Google lists no cache-write price for Gemini, so the list
+price of Gemini cache creation is the model's input price.
 _Avoid_: Rate card, cost, tariff
 
 **Area**:
@@ -780,6 +807,48 @@ The `.scratch` folder at the root of a lap's worktree, where the lap's
 workers keep files that are not part of the work. The repo's git exclude
 file hides it from every git status.
 _Avoid_: Temp folder, tmp, workspace
+
+**Profile guard**:
+The PreToolUse hook in the profile copy that holds a lap worker's tool
+calls to the lap's rules, as the lap mod does for a Claude Code worker. It
+loads in every T3 Antigravity session, so it acts only when the call's
+folder or workspace is a lap worktree with a guard record, and prints
+nothing elsewhere. Inside a lap it allows a listed `run_command` and denies
+any other, and it denies a command it cannot split. A delete, a new folder
+and a move must land inside the worktree and outside the acceptance
+folders, as for the lap mod. A `write_file`, `edit_file` or `notebook_edit`
+must name an absolute path that really lands there, links followed. It
+allows `read_file`, and denies `invoke_subagent`, `define_subagent`,
+`ask_question` and any tool it does not know, by name. Each denial has the
+lap mod's reason. A crash exits nonzero, which fails the call closed.
+_Avoid_: Antigravity lap mod, permission hook
+
+**Guard record**:
+The file in the jidoka home, keyed by a lap worktree's path, that tells the
+profile guard the worktree is a lap. It names the kind of worker, the lap's
+stage, the lists `lap_lists.py` prints for that worker and the acceptance
+folders `lap_protected.py` prints, or null when they could not be read, so
+the guard never runs either script on a call.
+_Avoid_: Lap record, guard config
+
+**Stage thread**:
+The top-level T3 thread that runs one stage of a lap on an Antigravity host,
+which has no Agent tool to start a worker. `factory.py start` writes the
+guard record, then launches the thread in the lap's existing worktree on the
+route's model and thought level, titled `lap · ` and the task's title with no
+bead id, and prints the thread, the deadline and the calls that wait and
+report. Every stage with a worker starts this way: research, build, app
+check, Spec check and merge. A thread has no agent type, so the app check's
+thread and the Spec check's open with the worker's instructions from the
+plugin's files, ahead of the prompt. The manager calls those as printed: each `wait` is one T3 step of at
+most 45 seconds, and a stage found past its deadline is stopped with an
+interrupt and ends cut off. `report` reads the thread's last reply and
+archives the thread, and removes the guard record once the read has answered,
+whether or not the archive does. A `stop`, and a resume that ends a lap
+interrupted or finds it merged, remove the lap's guard record too. A stage thread is never deleted, because T3 offers to
+delete its worktree with it. Calls to T3 go through `acp-mcp-call`, as the
+manager's own thread.
+_Avoid_: Worker thread, child thread, sub-agent
 
 **Profile copy**:
 The plugin as install.py converts it for a T3 Antigravity profile, in the

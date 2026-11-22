@@ -10,12 +10,17 @@ which this text names where a mode hands over to it.
 fresh it waits the seconds until that beat would be stale, then refuses, writing nothing, only if the heartbeat was
 renewed meanwhile, because a manager already runs the epic. A heartbeat that the T3 waker beats has no manager behind
 it, so the call ends the waker and takes the epic at once. Each call of a manager that succeeds claims the
-epic with a fresh heartbeat that records the session in $JIDOKA_SESSION_ID, as heartbeat.py describes. It takes
+epic with a fresh heartbeat that records the session in $JIDOKA_SESSION_ID, else $T3CODE_THREAD_ID, as heartbeat.py
+describes. A host with no session variable but a T3 thread has no lap mod, so the call also starts a detached
+beater for that thread, at most one for each thread, as beater.py describes. It takes
 every open lap at a worker stage for one an earlier session left with no worker, unless the human's brake holds it.
 Git wins where it disagrees with the record. A lap whose branch git shows merged into the epic branch closes its
-task as a merge does, and it drops the records of worktrees whose folders are gone. For each other lap it stops
+task as a merge does, after it interrupts and archives the lap's stage thread, if it has one, and it drops the
+records of worktrees whose folders are gone. For each other lap it stops
 the orphan workers left in its worktree, abandons a rebase left half done, and ends the lap interrupted as `stop`
-does, which counts no cutoff and no try, so that the task is ready again with a new lap on the work it left. A merge
+does, which counts no cutoff and no try, so that the task is ready again with a new lap on the work it left. It
+removes the guard record of each worktree whose lap it ends or closes, except one whose stage thread could not be
+interrupted. That record stays, as t3_stage.stop_thread says. A merge
 lock whose holder is gone is cleared. It reports each on stderr. Then it makes the checks below and opens the laps.
 
 `carry-on <epic>` is the call that goes on after a pause, an unpark, a new task or a merge. It does what `next` does
@@ -24,7 +29,8 @@ after any outcome, with no restart and no heartbeat check.
 `stop <epic>` is the call a manager makes when the human tells the host to stop at once. It ends every open lap of
 the epic interrupted. The task is open with no assignee, `lap.stage` is interrupted, an `Interrupted:` comment says
 so, and its worktree and branch are kept. A stop is no cutoff, no try and no park, so it changes no count and leaves
-the brake as it was, and the interrupted task is ready again with a new lap. Then it sends the factory-stopped
+the brake as it was, and the interrupted task is ready again with a new lap. It removes the guard record of each such
+lap's worktree, except one whose stage thread could not be interrupted. Then it sends the factory-stopped
 notification through notify.py, which sends nothing when the epic has no open task left, and prints the host's line
 for it on stderr. It ends the epic's T3 waker, so that no released thread is woken, and records the stop in the epic's
 heartbeat, so that no beat from a host still open shows a manager. Any terminal can run it, and jidoka-ui does, for an
@@ -180,6 +186,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import app_check
+import beater
 import caps
 import clock
 import gate_guard
@@ -204,9 +211,11 @@ import settings_reader
 import slots
 import reserves
 import resume
+import routes
 import rules
 import spec_check
 import specs
+import t3_stage
 import t3_wake
 from bench import BenchError
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError,
@@ -377,6 +386,7 @@ def resume_laps(epic: Epic, now: int, home: Path, main_tree: Path) -> set[str]:
     for lap in sorted(running, key=lambda lap: lap.slot):
         merged = resume.merged_head(lap.branch, lap.title, epic_branch, main_tree)
         if merged is not None:
+            t3_stage.release(lap.worktree, home)
             close_merged_lap(lap, merged, epic_branch, epic.id, main_tree)
             continue
         for pid in resume.stop_orphans(lap.worktree):
@@ -385,7 +395,7 @@ def resume_laps(epic: Epic, now: int, home: Path, main_tree: Path) -> set[str]:
             lap_stages.abandon_rebase(lap)
         print(f"scheduler: {lap.task} was left at the {lap.stage} with no worker, so its lap ends interrupted and "
               "a new lap starts on its worktree", file=sys.stderr)
-        interrupt_for_stop(lap, main_tree)
+        interrupt_for_stop(lap, home, main_tree)
         interrupted.add(lap.task)
     return interrupted
 
@@ -449,10 +459,24 @@ def unplaced_tasks(tasks: list[dict]) -> list[str]:
     return unplaced
 
 
+def start_beater(home: Path) -> None:
+    """Starts the beater for the manager's T3 thread when the host has no lap mod to beat for it, as
+    routes.thread_of_environment says. A beater that cannot start is a line on stderr and no failure, since the
+    manager's own calls still renew the heartbeat."""
+    thread = routes.thread_of_environment()
+    if thread is None:
+        return
+    try:
+        beater.start(home, thread, Path.cwd())
+    except OSError as error:
+        print(f"scheduler: the beater for thread {thread} did not start: {error}", file=sys.stderr)
+
+
 def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], restarting: bool) -> dict:
     """Prints the laps that go back to a worker or start, after the rebuilds of laps a report sent back.
 
-    The call claims the epic's heartbeat for the session it runs in, as heartbeat.claim says. It reads the specs each
+    The call claims the epic's heartbeat for the session it runs in, as heartbeat.claim says, and starts the beater
+    for its T3 thread when the host has no lap mod, as start_beater says. It reads the specs each
     task makes pass first, so metadata that cannot be read stops the call before a lap opens that would get no worker.
 
     When restarting, no worker of this manager is running, so every open lap at a worker stage was left by an
@@ -489,6 +513,7 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
     except specs.SpecsError as error:
         raise SchedulerError(str(error)) from error
     heartbeat.claim(home, epic.id, the_clock.now())
+    start_beater(home)
     planned = lap_opening.open_laps(epic, holds, resumed, limit, now, home, main_tree)
     metadata = {str(task["id"]): metadata_of(task) for task in tasks}
     return {"epic": epic.id, "branch": epic.branch, "lap_limit": limit.epic,
@@ -705,7 +730,7 @@ def stop(bead: str, home: Path, main_tree: Path) -> dict:
     epic = epic_of(bead, main_tree, RERUN)
     held = [lap for lap in map(open_lap, epic.open_task_beads) if lap is not None]
     for lap in held:
-        interrupt_for_stop(lap, main_tree)
+        interrupt_for_stop(lap, home, main_tree)
     t3_wake.end_waker(home, epic.id)
     t3_wake.forget(home, epic.id)
     heartbeat.mark_stopped(home, epic.id, clock.now())

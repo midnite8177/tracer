@@ -28,8 +28,8 @@ the bead, branch, worktree and start sha as one JSON object.
 worktree, the branch, their commits and the bench metadata for the next
 start.
 
-`route <tier>` prints the tier's route from <jidoka-home>/settings.json as
-one JSON object. When the route's harness starts a program that is not on
+`route <tier>` prints the tier's route from the route table of the host the caller runs under in
+<jidoka-home>/settings.json as one JSON object. When the route's harness starts a program that is not on
 the PATH, as codex for a codex route, the object also holds `missing`, which
 names that program and says the route cannot run here. The home is --jidoka-home, else $JIDOKA_HOME, else
 ~/.jidoka.
@@ -198,7 +198,7 @@ def release(bead: str, main_tree: Path) -> None:
 
 def route(tier: str, home: Path) -> dict:
     try:
-        recorded = routes.recorded_route(tier, home)
+        recorded = routes.recorded_route_here(tier, home)
     except routes.RouteError as error:
         raise BenchError(str(error)) from error
     program = routes.missing_program(recorded.harness, shutil.which)

@@ -20,7 +20,14 @@ the next call of a manager claims the epic again, which also clears a stop.
 A stopped heartbeat keeps `time`, the second of the last beat, and names no session, so that a host still open and a
 waker renew nothing. `scheduler.py stop` writes it for any epic, from any terminal. `factory_state.py --stopping
 <epic>`, the closing line of every other stop of a manager, writes it only when the heartbeat records the session in
-$JIDOKA_SESSION_ID, so a refused second manager stops nobody's heartbeat and an epic with none gets none.
+the session id, so a refused second manager stops nobody's heartbeat and an epic with none gets none.
+
+The claim, the stop and each renewal of an epic's heartbeat hold the epic's lock (lock_path) from their read of the
+heartbeat to their write, and a renewal reads it again under the lock, so a beat that was due before a stop or a claim
+by another session never overwrites it.
+
+The session id is $JIDOKA_SESSION_ID, else $T3CODE_THREAD_ID, as session_of_environment reads it. A host with no lap
+mod exports no session, so its manager's heartbeat names its T3 thread, and beater.py beats it.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
@@ -35,19 +42,22 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import clock
 import epics
+import file_lock
 import home_files
+import routes
 import settings_reader
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, bd_show
 from epic_reader import EpicReadError
 
 HEARTBEAT_FOLDER = "heartbeat"
 FRESH_SECONDS = 90
-SESSION_VARIABLE = "JIDOKA_SESSION_ID"
+SESSION_VARIABLE = routes.SESSION_VARIABLE
 
 
 def heartbeat_path(home: Path, epic: str) -> Path:
@@ -130,12 +140,24 @@ def fresh_epics(home: Path, now: int) -> list[str]:
     return sorted(path.stem for path in folder.glob("*.json") if is_fresh(home, path.stem, now))
 
 
+def lock_path(home: Path, epic: str) -> Path:
+    """The file whose lock serializes the writes of one epic's heartbeat: the claim, the stop and the renewal. Each
+    holds it from the read of the heartbeat to the write, so a renewal never overwrites a stop or a claim that came
+    after the renewal read the heartbeat."""
+    return home / HEARTBEAT_FOLDER / f"{epic}.lock"
+
+
+def stop_unlocked(home: Path, epic: str, now: int) -> None:
+    held = read_heartbeat(home, epic)
+    write_heartbeat(home, epic, Heartbeat(now if held is None else min(held.time, now), None, True))
+
+
 def mark_stopped(home: Path, epic: str, now: int) -> None:
     """Records that no manager runs the epic, so its heartbeat counts as stale whatever its age. The session goes, so
     that a host still open and a waker renew nothing, and `time` stays the second of the last beat; an epic with no
     readable beat has no such second, and gets `now`."""
-    held = read_heartbeat(home, epic)
-    write_heartbeat(home, epic, Heartbeat(now if held is None else min(held.time, now), None, True))
+    with file_lock.exclusive(lock_path(home, epic)):
+        stop_unlocked(home, epic, now)
 
 
 def stop(home: Path, epic: str, now: int, session: str | None) -> None:
@@ -143,14 +165,18 @@ def stop(home: Path, epic: str, now: int, session: str | None) -> None:
     session that did not claim the epic, such as a second manager that was refused, leaves the heartbeat of the manager
     that did, and an epic no manager claimed keeps no heartbeat, so a stop writes none for it. A heartbeat already
     stopped names no session, so it stays as it is."""
-    if session is not None and beat_session(home, epic) == session:
-        mark_stopped(home, epic, now)
+    if session is None:
+        return
+    with file_lock.exclusive(lock_path(home, epic)):
+        if beat_session(home, epic) == session:
+            stop_unlocked(home, epic, now)
 
 
 def session_of_environment() -> str | None:
-    """The id of the session the caller runs in, which the session_start hook exports as JIDOKA_SESSION_ID, or None
-    when the caller got none."""
-    return os.environ.get(SESSION_VARIABLE) or None
+    """The id of the session the caller runs in: $JIDOKA_SESSION_ID, which the session_start hook exports under Claude
+    Code, else $T3CODE_THREAD_ID, the T3 thread of a host that has no lap mod and no hook that exports a session. None
+    when the caller got neither. The claim, the stop, the watcher record and the factory state all read the id here."""
+    return os.environ.get(routes.SESSION_VARIABLE) or os.environ.get(routes.THREAD_VARIABLE) or None
 
 
 def claim(home: Path, epic: str, now: int) -> None:
@@ -163,10 +189,12 @@ def claim(home: Path, epic: str, now: int) -> None:
     """
     session = session_of_environment()
     if session is None:
-        print(f"heartbeat: {SESSION_VARIABLE} is not set in this call, so the heartbeat of {epic} records no session "
-              f"and no beat will renew it. It goes stale in {FRESH_SECONDS} seconds, and a second manager may then "
-              "start. Start the session again so that its hook exports the variable", file=sys.stderr)
-    write_beat(home, epic, now, session)
+        print(f"heartbeat: {routes.SESSION_VARIABLE} is not set in this call, and {routes.THREAD_VARIABLE} is not "
+              f"either, so the heartbeat of {epic} records no session and no beat will renew it. It goes stale in "
+              f"{FRESH_SECONDS} seconds, and a second manager may then start. Start the session again so that its "
+              "hook exports the variable", file=sys.stderr)
+    with file_lock.exclusive(lock_path(home, epic)):
+        write_beat(home, epic, now, session)
 
 
 def claimed_by(home: Path, session: str) -> list[str]:
@@ -195,6 +223,29 @@ def managed_by(home: Path, main_tree: Path, session: str) -> list[str]:
     return [epic for epic in claimed_by(home, session) if runs_here(epic, main_tree)]
 
 
+def renew_when(home: Path, epic: str, now: int, session: str, allowed: Callable[[Heartbeat], bool]) -> bool:
+    """Writes a beat for the epic when its heartbeat records the session and `allowed` accepts it, and says whether it
+    did. The heartbeat is read again under the lock, so a stop or a claim by another session that came after the
+    caller's last read is kept."""
+    with file_lock.exclusive(lock_path(home, epic)):
+        held = read_heartbeat(home, epic)
+        if held is None or held.session != session or not allowed(held):
+            return False
+        write_beat(home, epic, now, session)
+        return True
+
+
+def renew(home: Path, epic: str, now: int, session: str) -> bool:
+    """Renews the epic's heartbeat when it records the session and is fresh."""
+    return renew_when(home, epic, now, session, lambda held: held.is_fresh(now))
+
+
+def renew_claim(home: Path, epic: str, now: int, session: str) -> bool:
+    """Renews the epic's heartbeat when it records the session, however old the last beat is. A stop clears the
+    session, so a stopped heartbeat is not renewed."""
+    return renew_when(home, epic, now, session, lambda held: True)
+
+
 def beat(home: Path, main_tree: Path, session: str) -> list[str]:
     """Renews the heartbeat of each running epic that a manager of this session claimed and returns their ids.
 
@@ -203,10 +254,7 @@ def beat(home: Path, main_tree: Path, session: str) -> list[str]:
     a manager where none runs. Only a manager's call claims an epic.
     """
     now = clock.now()
-    beaten = [epic for epic in managed_by(home, main_tree, session) if is_fresh(home, epic, now)]
-    for epic in beaten:
-        write_beat(home, epic, now, session)
-    return beaten
+    return [epic for epic in managed_by(home, main_tree, session) if renew(home, epic, now, session)]
 
 
 def main(argv: list[str]) -> int:

@@ -1,3 +1,4 @@
+import calendar
 import json
 import subprocess
 import sys
@@ -22,7 +23,12 @@ OPUS = "claude-opus-5-5"
 FABLE = "claude-fable-5-1"
 OLD_SONNET = "claude-sonnet-4-6"
 HAIKU_3_5 = "claude-haiku-3-5"
+NEON = "gemini-4-neon"
+HYDROGEN = "gemini-4-hydrogen"
+CARBON = "gemini-4-carbon"
 DAY = 86400
+LAST_DAY_OF_NOVEMBER = calendar.timegm((2026, 11, 30, 12, 0, 0))
+FIRST_DAY_OF_DECEMBER = calendar.timegm((2026, 12, 1, 12, 0, 0))
 ROUTES = {"routes": {"standard": {"harness": "claude", "model": "sonnet", "version": "5.5", "effort": "high"},
                      "deep": {"harness": "claude", "model": "opus", "version": "5.5", "effort": "max"},
                      "second": {"harness": "codex", "model": None, "version": None, "effort": None}}}
@@ -141,6 +147,28 @@ class TheLedgerPricesEveryWorkerRunTests(LedgerCase):
         [row] = self.listed(lap.epic)["rows"]
         self.assertEqual(("second", "codex", OPUS), (row["tier"], row["harness"], row["model"]))
 
+    def test_a_worker_under_antigravity_is_recorded_on_the_route_of_the_antigravity_table(self):
+        lap = self.open_one_lap()
+        self.leave_tokens("agent-1", tokens("gemini-4-neon", 1_000, 0, 0, 0))
+        neon = {"harness": "t3", "provider": "antigravity", "model": "gemini-4-neon", "version": None,
+                "effort": "high", "driver": "antigravity"}
+        original = (self.home / "settings.json").read_text(encoding="utf-8")
+        (self.home / "settings.json").write_text(json.dumps({**ROUTES, "antigravity_routes": {"standard": neon}}),
+                                                 encoding="utf-8")
+        self.addCleanup((self.home / "settings.json").write_text, original, encoding="utf-8")
+        env = {key: value for key, value in self.caller_env(self.home).items() if key != "JIDOKA_SESSION_ID"}
+        started = int(self.metadata(lap.task)["lap.started"])
+
+        done = fixture.run_launcher(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"), "report", lap.epic,
+                                               lap.task, "failed", "--agent", "agent-1", "--tier", "standard",
+                                               "--why", "red"], None,
+                                    {**env, "T3CODE_THREAD_ID": "thread-of-the-test",
+                                     "JIDOKA_NOW": str(started + 5)}, self.repo, RUN_TIMEOUT_SECONDS)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        [row] = self.listed(lap.epic)["rows"]
+        self.assertEqual(("t3", "gemini-4-neon", "high"), (row["harness"], row["model"], row["effort"]))
+
     def test_a_recorded_t3_route_without_a_model_names_no_harness_and_the_run_is_priced_from_its_tokens(self):
         lap = self.open_one_lap()
         self.leave_tokens("agent-1", tokens(OPUS, 0, 1_000_000, 0, 0))
@@ -223,51 +251,79 @@ class EachModelIsPricedByItsOwnListPriceTests(LedgerCase):
 
 
 class TheProvidersPagesGiveTheStandardPricesTests(LedgerCase):
-    def list_prices(self) -> dict:
-        """The prices the lookup prints from a home with no cache, which makes it read both saved pages."""
+    def list_prices_on_the_machines_clock(self) -> dict:
+        """The prices the lookup prints from a home with no cache, which makes it read the saved pages."""
+        return self.list_prices_with(self.caller_env(self.home))
+
+    def list_prices_at(self, now: int) -> dict:
+        """The prices the lookup prints at the second `now`, from a home with no cache."""
+        return self.list_prices_with({**self.caller_env(self.home), "JIDOKA_NOW": str(now)})
+
+    def list_prices_with(self, env: dict) -> dict:
         (self.home / "prices.json").unlink(missing_ok=True)
-        done = self.launch(PRICE_PAGES, "list")
+        done = fixture.run_launcher(LAUNCHER, [str(PRICE_PAGES), "list"], None, env, self.repo, RUN_TIMEOUT_SECONDS)
         self.assertEqual(0, done.returncode, done.stderr)
         return json.loads(done.stdout)["prices"]
 
     def test_a_claude_model_is_keyed_by_the_model_id_its_display_name_makes(self):
-        listed = self.list_prices()
+        listed = self.list_prices_on_the_machines_clock()
 
         self.assertEqual(price(2.0, 10.0, 0.10, 2.5), listed["claude-sonnet-5-5"])
         self.assertEqual(price(10.0, 50.0, 0.25, 12.5), listed["claude-mythos-5-1"])
 
     def test_a_claude_model_whose_name_carries_a_note_and_a_link_is_keyed_by_the_name_alone(self):
-        self.assertEqual(price(15.0, 75.0, 1.5, 18.75), self.list_prices()["claude-opus-4-1"])
+        self.assertEqual(price(15.0, 75.0, 1.5, 18.75), self.list_prices_on_the_machines_clock()["claude-opus-4-1"])
 
     def test_a_claude_price_with_a_footnote_mark_is_the_number_before_it(self):
-        self.assertEqual(price(2.0, 10.0, 0.20, 2.5), self.list_prices()["claude-sonnet-5"])
+        self.assertEqual(price(2.0, 10.0, 0.20, 2.5), self.list_prices_on_the_machines_clock()["claude-sonnet-5"])
 
     def test_haiku_5_5_is_priced_at_its_rate_for_prompts_up_to_100000_tokens(self):
-        self.assertEqual(price(0.10, 0.50, 0.01, 0.125), self.list_prices()["claude-haiku-5-5"])
+        self.assertEqual(price(0.10, 0.50, 0.01, 0.125), self.list_prices_on_the_machines_clock()["claude-haiku-5-5"])
 
     def test_the_batch_and_fast_tables_of_the_claude_page_price_nothing(self):
-        listed = self.list_prices()
+        listed = self.list_prices_on_the_machines_clock()
 
         self.assertEqual(4.0, listed["claude-opus-5-5"]["input"])
         self.assertEqual(0.80, listed["claude-haiku-3-5"]["input"])
 
     def test_an_openai_model_is_priced_at_its_standard_short_context_rates(self):
-        self.assertEqual(price(4.0, 20.0, 0.40, 5.0), self.list_prices()["gpt-5.6-sol"])
+        self.assertEqual(price(4.0, 20.0, 0.40, 5.0), self.list_prices_on_the_machines_clock()["gpt-5.6-sol"])
 
     def test_an_openai_model_split_by_context_length_is_keyed_without_the_split(self):
-        listed = self.list_prices()
+        listed = self.list_prices_on_the_machines_clock()
 
         self.assertEqual(price(5.0, 30.0, 0.50, None), listed["gpt-5.5"])
         self.assertNotIn("gpt-5.5 (<272k context length)", listed)
 
     def test_a_dash_on_the_openai_page_is_no_price_rather_than_a_free_one(self):
-        self.assertEqual(price(30.0, 180.0, None, None), self.list_prices()["gpt-5.5-pro"])
+        self.assertEqual(price(30.0, 180.0, None, None), self.list_prices_on_the_machines_clock()["gpt-5.5-pro"])
 
     def test_the_openai_table_of_older_models_and_the_cyber_models_are_priced_too(self):
-        listed = self.list_prices()
+        listed = self.list_prices_on_the_machines_clock()
 
         self.assertEqual(price(2.0, 8.0, 0.50, None), listed["gpt-4.1"])
         self.assertEqual(price(12.5, 75.0, 1.25, 15.625), listed["gpt-5.6-cyber"])
+
+    def test_a_gemini_model_is_priced_from_its_heading_at_the_paid_tier_of_the_standard_tab(self):
+        listed = self.list_prices_at(FIRST_DAY_OF_DECEMBER)
+
+        self.assertEqual(price(3.20, 16.0, 0.16, 3.20), listed[NEON])
+        self.assertEqual(price(1.60, 8.0, 0.08, 1.60), listed[HYDROGEN])
+
+    def test_a_gemini_price_with_a_date_is_the_one_in_force_on_the_day(self):
+        before = self.list_prices_at(LAST_DAY_OF_NOVEMBER)[CARBON]
+        after = self.list_prices_at(FIRST_DAY_OF_DECEMBER)[CARBON]
+
+        self.assertEqual(price(2.20, 11.0, 0.11, 2.20), before)
+        self.assertEqual(price(2.60, 13.0, 0.13, 2.60), after)
+
+    def test_a_gemini_model_whose_standard_tab_follows_another_tab_is_priced_from_the_standard_one(self):
+        self.assertEqual(2.20, self.list_prices_at(LAST_DAY_OF_NOVEMBER)[CARBON]["input"])
+
+    def test_a_heading_that_is_no_model_with_an_input_and_an_output_price_prices_nothing(self):
+        listed = self.list_prices_at(FIRST_DAY_OF_DECEMBER)
+
+        self.assertNotIn("gemini embedding", listed)
 
 
 class TheLedgerPricesWithTheCachedListPricesTests(LedgerCase):
@@ -296,7 +352,12 @@ class TheLedgerPricesWithTheCachedListPricesTests(LedgerCase):
     def report_priced(self, lap, now: int, model: str, pages: Path) -> tuple[float | None, str]:
         """Reports the lap's build with a worker that used a million input tokens of the model, with the pages read
         from the folder, and returns the dollars of its row and what the report said on stderr."""
-        self.leave_tokens("agent-1", tokens(model, 1_000_000, 0, 0, 0))
+        return self.report_used(lap, now, tokens(model, 1_000_000, 0, 0, 0), pages)
+
+    def report_used(self, lap, now: int, used: dict, pages: Path) -> tuple[float | None, str]:
+        """Reports the lap's build with a worker that used the tokens, with the pages read from the folder, and
+        returns the dollars of its row and what the report said on stderr."""
+        self.leave_tokens("agent-1", used)
         done = fixture.run_launcher(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"), "report", lap.epic,
                                                lap.task, "failed", "--agent", "agent-1", "--why", "red"], None,
                                     {**self.caller_env(self.home), "JIDOKA_NOW": str(now),
@@ -394,6 +455,49 @@ class TheLedgerPricesWithTheCachedListPricesTests(LedgerCase):
         dollars, _ = self.report_priced(lap, now, SONNET, SAVED_PRICE_PAGES)
 
         self.assertAlmostEqual(2.0, dollars, places=6)
+
+    def test_a_gemini_row_is_priced_from_the_page_with_its_cached_tokens_at_the_cached_price(self):
+        lap, now = self.opened()
+        (self.home / "prices.json").unlink(missing_ok=True)
+
+        dollars, _ = self.report_used(lap, now, tokens(NEON, 1_000_000, 1_000_000, 1_000_000, 0),
+                                      SAVED_PRICE_PAGES)
+
+        self.assertAlmostEqual(3.20 + 16.0 + 0.16, dollars, places=6)
+
+    def test_with_no_page_the_hand_written_rows_price_each_gemini_model_above_nothing(self):
+        for model, expected in ((NEON, 3.0 + 15.0 + 0.15), (HYDROGEN, 1.5 + 7.5 + 0.075),
+                                (CARBON, 2.0 + 10.0 + 0.10)):
+            with self.subTest(model=model):
+                lap = self.open_lap_in(f"area-of-{model}")
+                now = int(self.metadata(lap.task)["lap.started"]) + 5
+                (self.home / "prices.json").unlink(missing_ok=True)
+
+                dollars, _ = self.report_used(lap, now, tokens(model, 1_000_000, 1_000_000, 1_000_000, 0),
+                                              self.root / "no-network")
+
+                self.assertGreater(dollars, 0)
+                self.assertAlmostEqual(expected, dollars, places=6)
+
+    def test_a_gemini_row_with_cache_creation_tokens_prices_them_at_the_input_price_from_the_page(self):
+        lap, now = self.opened()
+        (self.home / "prices.json").unlink(missing_ok=True)
+
+        dollars, _ = self.report_used(lap, now, tokens(NEON, 1_000_000, 1_000_000, 1_000_000, 1_000_000),
+                                      SAVED_PRICE_PAGES)
+
+        self.assertAlmostEqual(3.20 + 16.0 + 0.16 + 3.20, dollars, places=6)
+
+    def test_with_no_page_a_gemini_row_with_cache_creation_tokens_prices_them_at_the_input_price(self):
+        for model, input_price in ((NEON, 3.0), (HYDROGEN, 1.5), (CARBON, 2.0)):
+            with self.subTest(model=model):
+                lap = self.open_lap_in(f"creation-area-of-{model}")
+                now = int(self.metadata(lap.task)["lap.started"]) + 5
+                (self.home / "prices.json").unlink(missing_ok=True)
+
+                dollars, _ = self.report_used(lap, now, tokens(model, 0, 0, 0, 1_000_000), self.root / "no-network")
+
+                self.assertAlmostEqual(input_price, dollars, places=6)
 
     def test_a_row_keeps_the_dollars_it_was_written_with_when_the_prices_change(self):
         lap, now = self.opened()

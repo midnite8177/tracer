@@ -1018,7 +1018,8 @@ class AntigravityProfileTests(InstallerTestCase):
 
     def commands(self, profile: Path) -> list[str]:
         named = self.hooks(profile)["jidoka"]
-        return [named["PreToolUse"][0]["hooks"][0]["command"], named["SessionStart"][0]["command"]]
+        return [named["PreToolUse"][0]["hooks"][0]["command"], named["SessionStart"][0]["command"],
+                named["PreToolUse"][1]["hooks"][0]["command"]]
 
     def files_of(self, folder: Path) -> dict:
         return {str(path.relative_to(folder)): (path.read_bytes(), path.stat().st_mtime_ns)
@@ -1055,13 +1056,30 @@ class AntigravityProfileTests(InstallerTestCase):
         self.assertEqual([], list(copy.rglob("lap_mod*")))
         self.assertFalse((copy / "hooks" / "hooks.json").exists())
 
+    def test_the_copy_carries_a_second_pre_tool_use_group_for_every_tool_that_runs_the_profile_guard(self):
+        self.make_profile(self.profile_a, {})
+
+        self.install_for_t3()
+
+        groups = self.hooks(self.profile_a)["jidoka"]["PreToolUse"]
+        self.assertEqual(["run_command", "*"], [group["matcher"] for group in groups])
+        self.assertEqual("command", groups[1]["hooks"][0]["type"])
+        self.assertEqual(60, groups[1]["hooks"][0]["timeout"])
+        self.assertIn("profile_guard.py", groups[1]["hooks"][0]["command"])
+
+    def test_the_claude_code_hooks_file_does_not_run_the_profile_guard(self):
+        hooks = (fixture.PROJECT / "plugin" / "jidoka" / "hooks" / "hooks.json").read_text(encoding="utf-8")
+
+        self.assertNotIn("profile_guard", hooks)
+
     def test_every_hook_command_names_the_launcher_and_its_script_by_absolute_path_in_the_snapshot(self):
         self.make_profile(self.profile_a, {})
 
         self.install_for_t3()
 
         plugin = self.snapshot("0.1.0") / "jidoka"
-        for command, script in zip(self.commands(self.profile_a), ["holdouts_guard.py", "session_start.py"]):
+        for command, script in zip(self.commands(self.profile_a), ["holdouts_guard.py", "session_start.py",
+                                                                      "profile_guard.py"]):
             self.assertIn(str(plugin / "bin" / "jidoka-run"), command)
             self.assertIn(str(plugin / "hooks" / script), command)
             self.assertNotIn("CLAUDE_PLUGIN_ROOT", command)
@@ -1211,7 +1229,7 @@ class AntigravityProfileTests(InstallerTestCase):
         done = self.install_for_t3()
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(2, len(self.commands(self.profile_a)))
+        self.assertEqual(3, len(self.commands(self.profile_a)))
         self.assertEqual(["jidoka"], sorted(path.name for path in self.plugin_copy(self.profile_a).parent.iterdir()))
 
     def test_a_copy_with_no_readable_manifest_is_replaced(self):

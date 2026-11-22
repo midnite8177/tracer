@@ -152,6 +152,26 @@ class FallbackTests(RouteCase):
         self.assertNotIn("route.native.build", self.shown(task).get("metadata") or {})
         self.assertEqual([], self.comments(task))
 
+    def test_an_antigravity_thread_route_already_runs_natively_and_has_nothing_to_fall_back_to(self):
+        task = self.new_task()
+        home = self.root / "home-antigravity"
+        home.mkdir(exist_ok=True)
+        (home / "python").write_text(sys.executable + "\n", encoding="utf-8")
+        neon = {"harness": "t3", "provider": "antigravity", "model": "gemini-4-neon", "version": None,
+                "effort": "high", "driver": "antigravity"}
+        (home / "settings.json").write_text(json.dumps({"routes": ROUTES, "antigravity_routes": {"deep": neon}}),
+                                            encoding="utf-8")
+        env = {key: value for key, value in os.environ.items() if key != "JIDOKA_SESSION_ID"}
+        env.update({"PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home),
+                    "T3CODE_THREAD_ID": "thread-of-the-test"})
+
+        done = fixture.run_launcher(LAUNCHER, [str(ROUTE), "fallback", task, "build", "deep", "--run", "1"], None,
+                                    env, self.repo, RUN_TIMEOUT_SECONDS)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertFalse(json.loads(done.stdout)["rerun"])
+        self.assertEqual([], self.comments(task))
+
     def test_a_home_without_settings_refuses_and_writes_nothing(self):
         task = self.new_task()
         missing = self.root / "home-without-settings"

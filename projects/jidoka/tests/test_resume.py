@@ -14,6 +14,9 @@ sys.path.insert(0, str(HERE))
 import jidoka_fixture as fixture  # noqa: E402
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
+sys.path.insert(0, str(PLUGIN / "scripts"))
+import lap_guard_record  # noqa: E402
+
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
 SCHEDULER = PLUGIN / "scripts" / "scheduler.py"
 HANDOFF = PLUGIN / "scripts" / "handoff.py"
@@ -146,6 +149,12 @@ class ResumeCase(unittest.TestCase):
         self.write_beat(STALE_SECONDS, MANAGER_SESSION)
         return opened
 
+    def guard_the_worktrees(self, opened: dict[str, dict]) -> list[Path]:
+        worktrees = [Path(action["worktree"]) for action in opened.values()]
+        for worktree in worktrees:
+            fixture.write_guard_record(self.home, worktree)
+        return worktrees
+
 
 class ResumeLapsTests(ResumeCase):
     def test_a_resume_ends_the_running_laps_interrupted_and_starts_fresh_laps_from_their_worktrees(self):
@@ -171,6 +180,15 @@ class ResumeLapsTests(ResumeCase):
         self.assertEqual(kept_head, fixture.run(["git", "rev-parse", "HEAD"], committed).strip())
         self.assertEqual("slip\n", (uncommitted / "slip.txt").read_text(encoding="utf-8"))
         self.assertIn("interrupted", done.stderr)
+
+    def test_a_resume_removes_the_guard_record_of_each_lap_it_ends_interrupted(self):
+        worktrees = self.guard_the_worktrees(self.stop_the_host())
+
+        done = self.next_run()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        for worktree in worktrees:
+            self.assertIsNone(lap_guard_record.read_record(self.home, worktree))
 
     def test_a_resume_counts_no_cutoff_and_no_try(self):
         opened = self.stop_the_host()
@@ -248,6 +266,20 @@ class GitWinsTests(ResumeCase):
         self.assertIn(other, [action["task"] for action in json.loads(done.stdout)["actions"]])
         self.assertFalse(worktree.exists())
         self.assertIn("git wins", done.stderr)
+
+    def test_a_lap_git_shows_merged_has_no_guard_record_after_its_task_is_closed(self):
+        opened = self.stop_the_host()
+        [merged, _] = opened
+        [worktree, _] = self.guard_the_worktrees(opened)
+        (worktree / "till.txt").write_text("till\n", encoding="utf-8")
+        fixture.git_commit_all(worktree, self.shown(merged)["title"])
+        head = fixture.run(["git", "rev-parse", "HEAD"], worktree).strip()
+        self.git("update-ref", f"refs/heads/{self.next_epic_branch()}", head)
+
+        done = self.next_run()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIsNone(lap_guard_record.read_record(self.home, worktree))
 
     def test_a_lap_not_built_yet_is_not_taken_for_merged_when_the_epic_branch_has_not_moved(self):
         opened = self.stop_the_host()

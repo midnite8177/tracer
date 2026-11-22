@@ -493,6 +493,49 @@ class BenchRouteTests(BenchCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(t3, json.loads(done.stdout))
 
+    def home_with_both_tables(self, name: str) -> tuple[Path, dict, dict]:
+        claude_code = {"harness": "claude", "model": "sonnet", "version": "5.5", "effort": "high"}
+        neon = {"harness": "t3", "model": "gemini-4-neon", "version": None, "effort": "high",
+                "provider": "antigravity", "driver": "antigravity"}
+        home = self.root / name
+        home.mkdir(exist_ok=True)
+        (home / "settings.json").write_text(json.dumps({"routes": {"standard": claude_code},
+                                                        "antigravity_routes": {"standard": neon}}), encoding="utf-8")
+        return home, claude_code, neon
+
+    def test_route_under_antigravity_prints_a_gemini_route_from_the_antigravity_table(self):
+        home, _, neon = self.home_with_both_tables("home-both-tables-antigravity")
+        env = {key: value for key, value in self.caller_env().items() if key != "JIDOKA_SESSION_ID"}
+
+        done = self.bench({**env, "T3CODE_THREAD_ID": "thread-of-the-test"}, "route", "standard",
+                          "--jidoka-home", str(home))
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(neon, json.loads(done.stdout))
+
+    def test_route_under_claude_code_prints_the_route_of_the_claude_code_table(self):
+        home, claude_code, _ = self.home_with_both_tables("home-both-tables-claude-code")
+
+        done = self.bench({**self.caller_env(), "JIDOKA_SESSION_ID": "session-of-the-test",
+                           "T3CODE_THREAD_ID": "thread-of-the-test"}, "route", "standard",
+                          "--jidoka-home", str(home))
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(claude_code, json.loads(done.stdout))
+
+    def test_route_under_antigravity_refuses_a_tier_its_table_lacks(self):
+        home = self.root / "home-claude-code-table-only"
+        home.mkdir(exist_ok=True)
+        (home / "settings.json").write_text(json.dumps({"routes": {"light": {"harness": "claude"}}}),
+                                            encoding="utf-8")
+        env = {key: value for key, value in self.caller_env().items() if key != "JIDOKA_SESSION_ID"}
+
+        done = self.bench({**env, "T3CODE_THREAD_ID": "thread-of-the-test"}, "route", "light",
+                          "--jidoka-home", str(home))
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("'light'", done.stderr)
+
     def route_on_path(self, tier: str, home: Path, path: Path) -> subprocess.CompletedProcess:
         env = {**self.caller_env(), "PATH": str(path)}
         return fixture.run_launcher_on_path(LAUNCHER, [str(BENCH), "route", tier, "--jidoka-home", str(home)], None,

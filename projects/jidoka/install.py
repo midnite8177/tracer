@@ -18,7 +18,8 @@ whose hooks/hooks.json names no modules, because Codex refuses a hooks file that
 of the hooks. It also writes a converted copy of the plugin into each T3 Antigravity profile, the folders under
 <t3-userdata>/providers/antigravity that hold a config folder, and enables jidoka in the profile's config.json. It
 makes the copy itself, because `antigravity plugin install` writes only to ~/.gemini. The copy has a root plugin.json
-and a root hooks.json with one named hook, Bash matched as run_command, no lap mod and no SessionEnd, whose commands
+and a root hooks.json with one named hook, Bash matched as run_command, and the profile guard, matched to every tool,
+which holds a lap worker's calls to the lap's rules. It has no lap mod and no SessionEnd. Its commands
 name the launcher and the scripts by absolute path in the snapshot, set JIDOKA_HOME to the home this run records, and
 end in `--host antigravity`. The copy holds no bin or scripts folder, and each `<skill folder>/../../bin`, `scripts`
 or `hooks` path in a skill's text names the snapshot instead, so that a running factory keeps its version's scripts.
@@ -68,6 +69,7 @@ DONT_WRITE_BYTECODE_BEFORE_IMPORTS = sys.dont_write_bytecode
 # A bytecode file written into the plugin folder would make the installer refuse that folder as uncommitted.
 sys.dont_write_bytecode = True
 import commands  # noqa: E402
+import lap_guard_record  # noqa: E402
 import links  # noqa: E402
 import machine_settings  # noqa: E402
 import routes as machine_routes  # noqa: E402
@@ -626,7 +628,17 @@ def antigravity_hooks(hooks_file: Path, plugin: Path, jidoka_home: Path) -> dict
                             for handler in antigravity_handlers(group, plugin, jidoka_home, hooks_file)]
         else:
             raise InstallerError(f"{hooks_file} has {event} hooks, which the Antigravity copy has no form for")
+    named.setdefault(lap_guard_record.HOOK_EVENT, []).append(profile_guard_group(plugin, jidoka_home))
     return {PLUGIN_NAME: named}
+
+
+def profile_guard_group(plugin: Path, jidoka_home: Path) -> dict:
+    """The hook group that holds a lap worker's calls to the lap's rules. It matches every tool, because the guard
+    denies a tool it does not know. hooks.json does not name it, because Claude Code has the lap mod for that and
+    would only pay for a second process on every call."""
+    command = f'"{CLAUDE_PLUGIN_ROOT}/bin/jidoka-run" "{CLAUDE_PLUGIN_ROOT}/hooks/{lap_guard_record.HOOK_SCRIPT}"'
+    return lap_guard_record.hook_group_of(antigravity_command(command, plugin, jidoka_home),
+                                          ANTIGRAVITY_HOOK_TIMEOUT_SECONDS)
 
 
 def antigravity_manifest(plugin: Path) -> dict:

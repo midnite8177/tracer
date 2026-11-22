@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Reads the list prices from the providers' pricing pages, and keeps them in a cache in jidoka's home.
 
-Anthropic and OpenAI each publish their pricing page as markdown. On Anthropic's page the table under `## Model
+Anthropic and OpenAI each publish their pricing page as markdown, and Google publishes its as Markdoc source,
+`pricing.md.txt`. On Google's page each heading is a model id, such as `gemini-4-neon`, and holds tabs; the tab
+titled Standard holds a table whose `Paid Tier` column gives the `Input price`, `Output price` and `Context caching
+price` rows. A cell may hold several prices on lines of their own, each with the day it holds `from` or `until` (that
+day included), as `$2.60, from 2026-12-01`; the first that holds today (UTC) is the price, and one with no day always
+holds. Gemini lists no cache write, so its cache write is its input price. A heading with no such tab or no input and output
+price prices nothing. On Anthropic's page the table under `## Model
 pricing` names each model by its display name, such as `Claude Sonnet 5.5`, which is keyed by its model id,
 `claude-sonnet-5-5`. It is the name before any note in parentheses, lowercased, with spaces and dots as hyphens. Its
 columns are read by header: base input, output, cache hits and the 5m cache write; the 1h write is not priced. A
@@ -13,13 +19,13 @@ length)`, is keyed by the id before the parenthesis and priced at its short cont
 
 The cache is <jidoka-home>/prices.json: {"fetched_at", the second it was fetched, and "prices", each model id's
 "input", "output", "cache_read" and "cache_write", in dollars for a million tokens}. A cache older than seven days,
-or no cache, makes the next lookup fetch both pages and write a new cache whole. When a fetch or a parse fails, the
+or no cache, makes the next lookup fetch all three pages and write a new cache whole. When a fetch or a parse fails, the
 cache stays as it was, the lookup prices with it, or with the hand-written table in prices.py when there is none,
 and says so on stderr. A cache that cannot be read counts as none. The cache's prices win, and the hand-written
 table prices what the pages do not list.
 
 $JIDOKA_PRICE_PAGES, when it names a folder, stands in for the network: the pages are read from
-anthropic-pricing.md and openai-pricing.md in it, so a test can serve saved copies.
+anthropic-pricing.md, openai-pricing.md and google-pricing.md.txt in it, so a test can serve saved copies.
 
 `list` prints {"fetched_at", the second the prices were fetched, or null for the hand-written table alone,
 "prices"}, the table the ledger prices with, fetching first when the cache is stale.
@@ -42,6 +48,7 @@ import time
 import urllib.request
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import clock
@@ -58,6 +65,14 @@ USER_AGENT = "jidoka"
 AMOUNT = re.compile(r"\$\s*(\d+(?:\.\d+)?)")
 MARKUP = re.compile(r"<[^>]+>")
 SPACES_AND_DOTS = re.compile(r"[\s.]+")
+TAB_OPEN = re.compile(r'\{%\s*tab\s+title="([^"]*)"\s*%\}')
+TAB_CLOSE = re.compile(r"\{%\s*/tab\s*%\}")
+STANDARD_TAB = "standard"
+PAID_TIER = "paid tier"
+LINE_BREAK = re.compile(r"<br\s*/?>", re.IGNORECASE)
+FROM_DAY = re.compile(r"\bfrom (\d{4}-\d{2}-\d{2})")
+UNTIL_DAY = re.compile(r"\buntil (\d{4}-\d{2}-\d{2})")
+GEMINI_ROWS = {"input": "input price", "output": "output price", "cache_read": "context caching price"}
 
 
 class PageError(Exception):
@@ -179,9 +194,98 @@ def openai_prices(text: str) -> dict[str, Price]:
     return prices_in(sections_under(text, "### Standard pricing data"), OPENAI_COLUMNS, openai_id)
 
 
+def sections_by_heading(text: str) -> list[tuple[str, list[str]]]:
+    """Each heading of the text with the lines under it, up to the next heading of any level."""
+    found: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        if line.startswith("#"):
+            found.append((line.lstrip("#").strip().strip("`").strip(), []))
+        elif found:
+            found[-1][1].append(line)
+    return found
+
+
+def standard_tab_in(lines: list[str]) -> list[str]:
+    """The lines inside the first tab titled Standard, up to the tag that closes it."""
+    inside = False
+    kept: list[str] = []
+    for line in lines:
+        opened = TAB_OPEN.search(line)
+        if opened is not None:
+            if inside:
+                break
+            inside = opened.group(1).strip().lower() == STANDARD_TAB
+        elif TAB_CLOSE.search(line):
+            if inside:
+                break
+        elif inside:
+            kept.append(line)
+    return kept
+
+
+def price_in_force(cell: str, today: date) -> float | None:
+    """The dollars of the first price in the cell that holds today. The prices in a cell are on lines of their own
+    (`<br>`), and a price that names a day, `from 2026-12-01` or `until 2026-11-30` (that day included), holds
+    from or until it; one that names none always holds."""
+    for entry in LINE_BREAK.split(cell):
+        text = MARKUP.sub("", entry)
+        starts, ends = FROM_DAY.search(text), UNTIL_DAY.search(text)
+        if starts is not None and date.fromisoformat(starts.group(1)) > today:
+            continue
+        if ends is not None and date.fromisoformat(ends.group(1)) < today:
+            continue
+        amount = amount_in(entry)
+        if amount is not None:
+            return amount
+    return None
+
+
+def paid_column_of(rows: list[dict]) -> str | None:
+    """The header of the paid tier's column in the table, or None when the table has none."""
+    if not rows:
+        return None
+    return next((header for header in rows[0] if header.lower().startswith(PAID_TIER)), None)
+
+
+def price_rows_of(rows: list[dict], paid: str, today: date) -> dict[str, float | None]:
+    """The paid tier's price in force today for each kind of GEMINI_ROWS: the first row whose label starts with the
+    kind's prefix, or None for a kind that no row names or whose row holds no price."""
+    cells = {next(iter(row.values())).lower(): price_in_force(row[paid], today) for row in rows}
+    return {kind: next((amount for label, amount in cells.items() if label.startswith(prefix)), None)
+            for kind, prefix in GEMINI_ROWS.items()}
+
+
+def first_table_price(lines: list[str], today: date) -> Price | None:
+    """The price in the first table of the lines that has a paid tier column and an input and an output price. Gemini
+    lists no cache write, so its cache write price is its input price, which is what the cache creation tokens that the
+    ledger takes out of fresh input would have cost. A table after that one is ignored."""
+    for rows in tables_in(lines):
+        paid = paid_column_of(rows)
+        if paid is None:
+            continue
+        amounts = price_rows_of(rows, paid, today)
+        if amounts["input"] is not None and amounts["output"] is not None:
+            return Price(amounts["input"], amounts["output"], amounts["cache_read"], amounts["input"])
+    return None
+
+
+def gemini_prices(text: str) -> dict[str, Price]:
+    """The paid tier's prices of the Standard tab under each heading that is a model id, in force on the day the
+    clock names. A heading whose Standard tab has no paid tier column, or no input or output price, prices nothing,
+    and a model that two headings name takes the price of the first."""
+    today = datetime.fromtimestamp(clock.now(), timezone.utc).date()
+    found: dict[str, Price] = {}
+    for heading, lines in sections_by_heading(text):
+        price = first_table_price(standard_tab_in(lines), today)
+        if price is not None:
+            found.setdefault(heading.lower(), price)
+    return found
+
+
 PAGES = (Page("https://platform.claude.com/docs/en/about-claude/pricing.md", "anthropic-pricing.md",
               anthropic_prices),
-         Page("https://developers.openai.com/api/docs/pricing.md", "openai-pricing.md", openai_prices))
+         Page("https://developers.openai.com/api/docs/pricing.md", "openai-pricing.md", openai_prices),
+         Page("https://ai.google.dev/gemini-api/docs/pricing.md.txt", "google-pricing.md.txt", gemini_prices))
 
 
 def location_of(page: Page) -> str:

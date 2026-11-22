@@ -34,7 +34,6 @@ from pathlib import Path
 
 import clock
 import lap_record
-import ledger
 import processes
 import settings_reader
 import review
@@ -42,7 +41,7 @@ import routes
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, read_bead
 from lane_report import REVIEW_STAGE, Lane, LaneError, prompt_of, record, write_report
 from lap_outcomes import DONE, FAILED
-from prices import Tokens
+from prices import NO_TOKENS, Tokens, count_of
 
 CODEX = routes.CODEX_HARNESS
 OUTPUT_NAME = "last-message.txt"
@@ -109,7 +108,7 @@ def tokens_in(stdout: str) -> Tokens:
         usage = event.get("usage") if isinstance(event, dict) and event.get("type") == "turn.completed" else None
         if not isinstance(usage, dict):
             continue
-        counted = {key: ledger.count_of(usage.get(key)) for key in ("input_tokens", "cached_input_tokens",
+        counted = {key: count_of(usage.get(key)) for key in ("input_tokens", "cached_input_tokens",
                                                                     "output_tokens")}
         fresh += max(0, counted["input_tokens"] - counted["cached_input_tokens"])
         cached += counted["cached_input_tokens"]
@@ -131,10 +130,10 @@ def failure_of(ended: CodexRun, wall_seconds: int) -> str | None:
 
 def run_lane(lane: Lane, wall_seconds: int, home: Path, main_tree: Path) -> int:
     """Runs the lane and records its row. Returns the number of findings; raises LaneError for a failed run."""
-    route = routes.recorded_route(routes.SECOND_TIER, home)
+    route = routes.recorded_route_here(routes.SECOND_TIER, home)
     plugin = Path(__file__).resolve().parent.parent
     started = clock.now()
-    tokens = Tokens(0, 0, 0, 0)
+    tokens = NO_TOKENS
     outcome = FAILED
     lane.report.unlink(missing_ok=True)
     try:

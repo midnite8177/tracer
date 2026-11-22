@@ -70,7 +70,7 @@ class WatchCase(StopCase):
 
     def spawn(self, t3_path: str | None, session: str | None, path: str) -> subprocess.Popen:
         environment = {key: value for key, value in os.environ.items()
-                       if key not in ("T3CODE_CLI_PATH", "JIDOKA_SESSION_ID")}
+                       if key not in ("T3CODE_CLI_PATH", "JIDOKA_SESSION_ID", "T3CODE_THREAD_ID")}
         if t3_path is not None:
             environment["T3CODE_CLI_PATH"] = t3_path
         if session is not None:

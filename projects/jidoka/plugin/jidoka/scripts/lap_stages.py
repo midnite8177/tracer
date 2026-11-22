@@ -93,6 +93,7 @@ import spec_check
 import spec_commands
 import spec_runs
 import specs
+import t3_stage
 import targeted_tests
 from commands import HUMAN_LABEL, CommandError, capture, env_as_factory, read_bead, run
 from epic_branch import EpicBranchMoved, branch_head, checked_out_branch
@@ -142,9 +143,12 @@ def interrupt_lap(lap: Lap, because: str, afterwards: str, main_tree: Path) -> N
     run(["bd", "update", lap.task, *lap_record.resting(INTERRUPTED)], main_tree, env)
 
 
-def interrupt_for_stop(lap: Lap, main_tree: Path) -> None:
-    """Ends the lap interrupted because the factory stopped under it."""
+def interrupt_for_stop(lap: Lap, home: Path, main_tree: Path) -> None:
+    """Ends the lap interrupted because the factory stopped under it. It interrupts and archives the lap's stage
+    thread, if it has one, and only then removes the guard record of its worktree, so that no worker runs there
+    unguarded. A thread that cannot be interrupted leaves the record, which t3_stage.stop_thread says on stderr."""
     interrupt_lap(lap, f"the factory stopped during the {lap.stage}", "the factory starts again", main_tree)
+    t3_stage.release(lap.worktree, home)
 
 
 def ask(lap: Lap, epic: str, home: Path, main_tree: Path) -> list[Lap]:

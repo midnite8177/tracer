@@ -1,0 +1,92 @@
+# Gemini Developer API pricing
+
+{% callout type="note" %}
+Prices are per 1M tokens in USD, and a price with a date beside it holds from or until that day.
+{% /callout %}
+
+## gemini-4-neon
+
+Our most capable model, for the longest agentic work.
+
+{% tabs %}
+{% tab title="Standard" %}
+
+| | Free Tier | Paid Tier, per 1M tokens in USD |
+| --- | --- | --- |
+| Input price | Not available | $3.20 |
+| Output price (including thinking tokens) | Not available | $16.00 |
+| Context caching price | Not available | $0.16 |
+
+{% /tab %}
+{% tab title="Batch" %}
+
+| | Free Tier | Paid Tier, per 1M tokens in USD |
+| --- | --- | --- |
+| Input price | Not available | $1.60 |
+| Output price (including thinking tokens) | Not available | $8.00 |
+| Context caching price | Not available | $0.08 |
+
+{% /tab %}
+{% /tabs %}
+
+## gemini-4-hydrogen
+
+Our fastest model, for high-volume work.
+
+{% tabs %}
+{% tab title="Standard" %}
+
+| | Free Tier | Paid Tier, per 1M tokens in USD |
+| --- | --- | --- |
+| Input price | Free of charge | $1.60 |
+| Output price (including thinking tokens) | Free of charge | $8.00 |
+| Context caching price | Not available | $0.08 |
+
+{% /tab %}
+{% tab title="Batch" %}
+
+| | Free Tier | Paid Tier, per 1M tokens in USD |
+| --- | --- | --- |
+| Input price | Not available | $0.80 |
+| Output price (including thinking tokens) | Not available | $4.00 |
+| Context caching price | Not available | $0.04 |
+
+{% /tab %}
+{% /tabs %}
+
+## gemini-4-carbon
+
+Our balanced model. Its price changes on 2026-12-01.
+
+{% tabs %}
+{% tab title="Batch" %}
+
+| | Free Tier | Paid Tier, per 1M tokens in USD |
+| --- | --- | --- |
+| Input price | Not available | $1.10 |
+| Output price (including thinking tokens) | Not available | $5.50 |
+| Context caching price | Not available | $0.055 |
+
+{% /tab %}
+{% tab title="Standard" %}
+
+| | Free Tier | Paid Tier, per 1M tokens in USD |
+| --- | --- | --- |
+| Input price | Free of charge | $2.20, until 2026-11-30<br>$2.60, from 2026-12-01 |
+| Output price (including thinking tokens) | Free of charge | $11.00, until 2026-11-30<br>$13.00, from 2026-12-01 |
+| Context caching price | Not available | $0.11, until 2026-11-30<br>$0.13, from 2026-12-01 |
+
+{% /tab %}
+{% /tabs %}
+
+## Gemini embedding
+
+{% tabs %}
+{% tab title="Standard" %}
+
+| | Free Tier | Paid Tier, per 1M tokens in USD |
+| --- | --- | --- |
+| Input price | Free of charge | $0.15 |
+
+{% /tab %}
+{% /tabs %}
