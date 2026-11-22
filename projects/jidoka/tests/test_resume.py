@@ -15,6 +15,7 @@ import jidoka_fixture as fixture  # noqa: E402
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 sys.path.insert(0, str(PLUGIN / "scripts"))
+import heartbeat  # noqa: E402
 import lap_guard_record  # noqa: E402
 
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
@@ -29,9 +30,10 @@ ONE_SEAM = "## Seams\nThe card reader, run as a process."
 HUMAN = "Pat Human"
 LAP_LIMIT = 2
 STALE_SECONDS = 600
-FRESH_SECONDS = 5
-FRESH_FOR_SECONDS = 90
-ALMOST_STALE_SECONDS = 89
+CLOCK_SLACK_SECONDS = 10
+FRESH_AGE_SECONDS = 5
+FRESH_FOR_SECONDS = heartbeat.FRESH_SECONDS
+ALMOST_STALE_SECONDS = FRESH_FOR_SECONDS - 1
 MANAGER_SESSION = "session-of-the-manager"
 OTHER_SESSION = "session-of-an-advisor"
 LEAVES_A_SLEEPER_AND_EXITS = ("import subprocess, sys; "
@@ -115,15 +117,19 @@ class ResumeCase(unittest.TestCase):
         return json.loads(done.stdout)
 
     def beat_file(self) -> Path:
-        return self.home / "heartbeat" / f"{self.epic}.json"
+        return heartbeat.heartbeat_path(self.home, self.epic)
 
     def write_beat(self, seconds_ago: int, session: str) -> None:
-        self.beat_file().parent.mkdir(exist_ok=True)
-        self.beat_file().write_text(json.dumps({"epic": self.epic, "time": int(time.time()) - seconds_ago,
-                                                "session": session}), encoding="utf-8")
+        heartbeat.write_beat(self.home, self.epic, int(time.time()) - seconds_ago, session)
+
+    def beat(self) -> heartbeat.Heartbeat:
+        held = heartbeat.read_heartbeat(self.home, self.epic)
+        if held is None:
+            self.fail(f"{self.epic} has no readable heartbeat")
+        return held
 
     def beat_time(self) -> int:
-        return json.loads(self.beat_file().read_text(encoding="utf-8"))["time"]
+        return self.beat().time
 
     def keep_beating(self, session: str) -> None:
         """A live manager's host: the heartbeat is rewritten every fraction of a second, each time as old as it
@@ -132,16 +138,21 @@ class ResumeCase(unittest.TestCase):
         stop = threading.Event()
         self.addCleanup(stop.set)
 
-        def beat() -> None:
+        def rewrite() -> None:
             while not stop.is_set():
                 self.write_beat(ALMOST_STALE_SECONDS, session)
                 stop.wait(0.1)
 
         self.write_beat(ALMOST_STALE_SECONDS, session)
-        threading.Thread(target=beat, daemon=True).start()
+        threading.Thread(target=rewrite, daemon=True).start()
+
+    def actions_of(self, done: subprocess.CompletedProcess) -> dict[str, dict]:
+        """The actions a scheduler call printed, by the task each one is for."""
+        self.assertEqual(0, done.returncode, done.stderr)
+        return {action["task"]: action for action in json.loads(done.stdout)["actions"]}
 
     def start_a_manager(self) -> dict[str, dict]:
-        return {action["task"]: action for action in self.next_printed()["actions"]}
+        return self.actions_of(self.next_run())
 
     def stop_the_host(self) -> dict[str, dict]:
         """The state a closed host leaves: two laps at the build with no worker, and a heartbeat gone stale."""
@@ -168,7 +179,7 @@ class ResumeLapsTests(ResumeCase):
         done = self.next_run()
 
         self.assertEqual(0, done.returncode, done.stderr)
-        resumed = {action["task"]: action for action in json.loads(done.stdout)["actions"]}
+        resumed = self.actions_of(done)
         self.assertEqual(sorted(opened), sorted(resumed))
         for task, action in resumed.items():
             self.assertEqual((opened[task]["worktree"], opened[task]["branch"], 2),
@@ -208,7 +219,7 @@ class ResumeLapsTests(ResumeCase):
         done = self.next_run()
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual([other], [action["task"] for action in json.loads(done.stdout)["actions"]])
+        self.assertEqual([other], list(self.actions_of(done)))
         self.assertEqual(("build", "1"), (self.metadata(held)["lap.stage"], str(self.metadata(held)["lap.number"])))
 
     def test_a_lost_worktree_gets_a_new_folder_with_the_lap_branchs_commits(self):
@@ -219,7 +230,7 @@ class ResumeLapsTests(ResumeCase):
         fixture.git_commit_all(worktree, "Take the till")
         fixture.remove_tree(worktree)
 
-        resumed = {item["task"]: item for item in self.next_printed()["actions"]}
+        resumed = self.actions_of(self.next_run())
 
         self.assertEqual("till\n", (worktree / "till.txt").read_text(encoding="utf-8"))
         self.assertEqual(worktree, Path(resumed[action["task"]]["worktree"]))
@@ -249,21 +260,26 @@ class ResumeLapsTests(ResumeCase):
 
 
 class GitWinsTests(ResumeCase):
+    def merge_the_lap(self, task: str, worktree: Path) -> None:
+        """Commits the task's work in its lap worktree and moves the epic branch to that commit, as a merge does."""
+        (worktree / "till.txt").write_text("till\n", encoding="utf-8")
+        fixture.git_commit_all(worktree, self.shown(task)["title"])
+        head = fixture.run(["git", "rev-parse", "HEAD"], worktree).strip()
+        self.git("update-ref", f"refs/heads/{self.next_epic_branch()}", head)
+
     def test_a_lap_git_shows_merged_closes_its_task_instead_of_starting_again(self):
         opened = self.stop_the_host()
         [merged, other] = opened
         worktree = Path(opened[merged]["worktree"])
-        (worktree / "till.txt").write_text("till\n", encoding="utf-8")
-        fixture.git_commit_all(worktree, self.shown(merged)["title"])
-        head = fixture.run(["git", "rev-parse", "HEAD"], worktree).strip()
-        self.git("update-ref", f"refs/heads/{self.next_epic_branch()}", head)
+        self.merge_the_lap(merged, worktree)
 
         done = self.next_run()
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual("closed", self.shown(merged)["status"])
-        self.assertNotIn(merged, [action["task"] for action in json.loads(done.stdout)["actions"]])
-        self.assertIn(other, [action["task"] for action in json.loads(done.stdout)["actions"]])
+        started = self.actions_of(done)
+        self.assertNotIn(merged, started)
+        self.assertIn(other, started)
         self.assertFalse(worktree.exists())
         self.assertIn("git wins", done.stderr)
 
@@ -271,10 +287,7 @@ class GitWinsTests(ResumeCase):
         opened = self.stop_the_host()
         [merged, _] = opened
         [worktree, _] = self.guard_the_worktrees(opened)
-        (worktree / "till.txt").write_text("till\n", encoding="utf-8")
-        fixture.git_commit_all(worktree, self.shown(merged)["title"])
-        head = fixture.run(["git", "rev-parse", "HEAD"], worktree).strip()
-        self.git("update-ref", f"refs/heads/{self.next_epic_branch()}", head)
+        self.merge_the_lap(merged, worktree)
 
         done = self.next_run()
 
@@ -289,7 +302,7 @@ class GitWinsTests(ResumeCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertNotEqual("closed", self.shown(unbuilt)["status"])
-        self.assertIn(unbuilt, [action["task"] for action in json.loads(done.stdout)["actions"]])
+        self.assertIn(unbuilt, self.actions_of(done))
 
 
 class MergeLockTests(ResumeCase):
@@ -386,7 +399,7 @@ class SecondManagerTests(ResumeCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn(f"waits {FRESH_FOR_SECONDS - 40 + 1} seconds", done.stderr)
-        self.assertEqual(LAP_LIMIT, len(json.loads(done.stdout)["actions"]))
+        self.assertEqual(LAP_LIMIT, len(self.actions_of(done)))
         self.assertEqual(now + FRESH_FOR_SECONDS - 40 + 1, self.beat_time())
 
     def test_a_manager_that_starts_in_the_session_the_heartbeat_records_takes_the_epic_back_without_waiting(self):
@@ -397,7 +410,7 @@ class SecondManagerTests(ResumeCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertNotIn("waits", done.stderr)
-        self.assertEqual(LAP_LIMIT, len(json.loads(done.stdout)["actions"]))
+        self.assertEqual(LAP_LIMIT, len(self.actions_of(done)))
         self.assertEqual(now, self.beat_time())
 
     def test_a_manager_starts_when_the_heartbeat_is_stale(self):
@@ -406,7 +419,7 @@ class SecondManagerTests(ResumeCase):
         done = self.next_run()
 
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual(LAP_LIMIT, len(json.loads(done.stdout)["actions"]))
+        self.assertEqual(LAP_LIMIT, len(self.actions_of(done)))
 
     def test_a_manager_starts_when_the_epic_has_no_heartbeat(self):
         done = self.next_run()
@@ -423,8 +436,8 @@ class SecondManagerTests(ResumeCase):
     def test_a_managers_first_call_claims_the_epic_with_a_fresh_heartbeat(self):
         self.next_printed()
 
-        self.assertGreaterEqual(self.beat_time(), int(time.time()) - 60)
-        self.assertEqual(MANAGER_SESSION, json.loads(self.beat_file().read_text(encoding="utf-8"))["session"])
+        self.assertGreaterEqual(self.beat_time(), int(time.time()) - CLOCK_SLACK_SECONDS)
+        self.assertEqual(MANAGER_SESSION, self.beat().session)
 
     def test_a_managers_later_call_claims_the_epic_again_after_the_heartbeat_went_stale(self):
         self.next_printed()
@@ -432,7 +445,7 @@ class SecondManagerTests(ResumeCase):
 
         self.assertEqual(0, self.script(SCHEDULER, "carry-on", self.epic).returncode)
 
-        self.assertGreaterEqual(self.beat_time(), int(time.time()) - 60)
+        self.assertGreaterEqual(self.beat_time(), int(time.time()) - CLOCK_SLACK_SECONDS)
 
     def test_a_beat_does_not_bring_a_stale_heartbeat_back_to_fresh(self):
         self.stop_the_host()
@@ -472,9 +485,9 @@ class SecondManagerTests(ResumeCase):
         done = self.script_with(MANAGER_SESSION, {"JIDOKA_NOW": str(now)}, SCHEDULER, "stop", self.epic)
 
         self.assertEqual(0, done.returncode, done.stderr)
-        held = json.loads(self.beat_file().read_text(encoding="utf-8"))
-        self.assertIs(True, held["stopped"])
-        self.assertEqual(now, held["time"])
+        held = self.beat()
+        self.assertTrue(held.stopped)
+        self.assertEqual(now, held.time)
 
     def test_a_managers_next_call_clears_the_stop_from_the_heartbeat(self):
         self.start_a_manager()
@@ -482,9 +495,9 @@ class SecondManagerTests(ResumeCase):
 
         self.next_printed()
 
-        held = json.loads(self.beat_file().read_text(encoding="utf-8"))
-        self.assertIs(False, held["stopped"])
-        self.assertEqual(MANAGER_SESSION, held["session"])
+        held = self.beat()
+        self.assertFalse(held.stopped)
+        self.assertEqual(MANAGER_SESSION, held.session)
 
     def test_the_first_call_of_a_manager_lets_the_host_beat_the_epic_again(self):
         self.stop_the_host()
@@ -492,7 +505,7 @@ class SecondManagerTests(ResumeCase):
 
         self.beat_as(MANAGER_SESSION)
 
-        self.assertGreaterEqual(self.beat_time(), int(time.time()) - FRESH_SECONDS * 2)
+        self.assertGreaterEqual(self.beat_time(), int(time.time()) - CLOCK_SLACK_SECONDS)
 
     def test_a_beat_made_after_the_clock_moved_past_fresh_renews_nothing(self):
         self.next_printed()
@@ -509,7 +522,7 @@ class SecondManagerTests(ResumeCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertIn("JIDOKA_SESSION_ID is not set", done.stderr)
-        self.assertIsNone(json.loads(self.beat_file().read_text(encoding="utf-8"))["session"])
+        self.assertIsNone(self.beat().session)
 
     def test_a_beat_from_a_session_that_claimed_nothing_leaves_the_epics_heartbeat_to_go_stale(self):
         self.next_printed()
@@ -540,7 +553,7 @@ class SecondManagerTests(ResumeCase):
         self.assertEqual(0, self.script_with(OTHER_SESSION, {}, SCHEDULER, "next", self.epic).returncode)
         self.beat_as(MANAGER_SESSION)
 
-        self.assertEqual(OTHER_SESSION, json.loads(self.beat_file().read_text(encoding="utf-8"))["session"])
+        self.assertEqual(OTHER_SESSION, self.beat().session)
 
 
 class SessionStartTests(ResumeCase):
@@ -565,7 +578,7 @@ class SessionStartTests(ResumeCase):
 
     def test_the_hook_names_nothing_while_the_heartbeat_is_fresh(self):
         self.start_a_manager()
-        self.write_beat(FRESH_SECONDS, MANAGER_SESSION)
+        self.write_beat(FRESH_AGE_SECONDS, MANAGER_SESSION)
 
         self.assertEqual([], self.stopped_lines())
 
@@ -604,10 +617,6 @@ class SessionStartTests(ResumeCase):
         self.assertIn("jidoka rules for this repo", self.session())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class BeatReadsTests(ResumeCase):
     """What a beat reads from bd, in a repo that holds more epics than the one the factory runs."""
 
@@ -631,4 +640,8 @@ class BeatReadsTests(ResumeCase):
         calls = self.calls_of_a_beat(MANAGER_SESSION)
 
         self.assertEqual([["show", self.epic, "--json"]], calls)
-        self.assertGreaterEqual(self.beat_time(), int(time.time()) - FRESH_SECONDS)
+        self.assertGreaterEqual(self.beat_time(), int(time.time()) - CLOCK_SLACK_SECONDS)
+
+
+if __name__ == "__main__":
+    unittest.main()
