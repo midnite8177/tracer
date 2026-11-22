@@ -77,6 +77,18 @@ You win twice: fewer tokens, and a sharper hook for the agent to hang its thinki
 
 **Negation** is the failure mode beside this lever: steering by prohibition drags the forbidden behaviour into context and makes it _more_ available, not less. _Don't think of an elephant_, and the elephant is all there is; the negation is a weak modifier the strongly-activated concept overruns, so the ban half-reads as an instruction to do the thing. Prompt the **positive**: state the target behaviour ("write one-line comments") so the banned one is never spoken. A prohibition earns its place only as a hard guardrail you cannot phrase positively; even then, pair it with the positive target so attention lands on what to do.
 
+## Host-neutral wording
+
+A skill or agent runs under more than one host, such as Claude Code, Codex or Antigravity, and each host names its tools differently. Write the action and leave the host's tool out. Load a skill, start a subagent, ask the human. Each host maps the action to its own tool, and a tool name from one host is wrong in another.
+
+- Say "load the `jidoka:grilling` skill", not "call the Skill tool with `jidoka:grilling`".
+- Say "start a subagent", not "call the Task tool" or "spawn with the Agent tool".
+- Say "ask the human", not "call AskUserQuestion".
+- Name a jidoka skill or agent with its `jidoka:` prefix, so `jidoka:code-review` and `jidoka:comment-sicko` read the same on every host.
+- Keep a T3 tool's own name, such as `t3_thread_launch`. T3 defines that name, and it is the same under every host.
+
+A review applies this rule: a diff that puts a host tool's name in skill or agent text is a Standards finding, except where the text quotes the wrong wording as an example, as this section does.
+
 ## Pruning
 
 - Keep each meaning in a **single source of truth**: one authoritative place, so changing the behaviour is a one-place edit. **Duplication** (the same meaning in more than one place) costs maintenance and tokens, and inflates a meaning's prominence on the ladder past its real rank. (The accidental inverse of a leading word, which repeats a token on purpose, never the meaning.)

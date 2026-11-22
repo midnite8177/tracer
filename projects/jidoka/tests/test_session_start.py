@@ -18,7 +18,7 @@ HOOK = PLUGIN / "hooks" / "session_start.py"
 RULES = [
     "A jidoka skill's own subagents are authorized",
     "never a bare id",
-    'call the Skill tool with "unslop"',
+    "load the jidoka:unslop skill",
     "Beads stealth mode covers the tracker only",
     "Bead ids and requirement ids never leave the tracker or the spec",
     "Comments describe the code, never the work",
@@ -26,6 +26,7 @@ RULES = [
     "Comment cleanup is requested work",
     "Planning, Factory, Acceptance and Bench",
 ]
+ANTIGRAVITY_RULES = [rule.replace("jidoka:unslop", "jidoka-unslop") for rule in RULES]
 
 
 def init_committed_repo(repo: Path) -> None:
@@ -244,6 +245,94 @@ class SessionStartTests(unittest.TestCase):
 
                 self.assertEqual(0, done.returncode, done.stderr)
                 self.assertIn("Planning, Factory, Acceptance and Bench", done.stdout)
+
+    def antigravity_session(self, cwd: Path, env_file: Path | None) -> subprocess.CompletedProcess:
+        event = {"conversationId": "ec33ebf9", "hookEventName": "SessionStart", "cwd": str(cwd),
+                 "workspacePaths": [str(cwd)], "modelName": "auto", "lastUserInput": ""}
+        env = {"PATH": self.path, "JIDOKA_HOME": str(self.home), "HOME": str(self.home),
+               **fixture.system_variables(os.environ, fixture.WINDOWS)}
+        if env_file is not None:
+            env["CLAUDE_ENV_FILE"] = str(env_file)
+        return fixture.run_launcher(LAUNCHER, [str(HOOK), "--host", "antigravity"], json.dumps(event), env,
+                                    self.not_a_repo, None)
+
+    def injected_text(self, stdout: str) -> str:
+        answer = json.loads(stdout)
+        self.assertEqual({"injectSteps"}, set(answer))
+        self.assertEqual(1, len(answer["injectSteps"]))
+        message = answer["injectSteps"][0]
+        self.assertEqual({"systemMessage"}, set(message))
+        self.assertEqual({"systemMessage"}, set(message["systemMessage"]))
+        return message["systemMessage"]["systemMessage"]
+
+    def test_an_antigravity_session_in_a_beads_repo_gets_one_json_object_with_every_rule_in_inject_steps(self):
+        done = self.antigravity_session(self.beads_repo, None)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        text = self.injected_text(done.stdout)
+        for rule in ANTIGRAVITY_RULES:
+            self.assertIn(rule, text)
+        self.assertEqual({"tracker doc", "domain doc"}, set(self.printed_paths(text)))
+
+    def test_an_antigravity_session_names_each_skill_and_command_as_the_profile_copy_installs_it(self):
+        text = self.injected_text(self.antigravity_session(self.beads_repo, None).stdout)
+
+        self.assertIn("Run /jidoka-onboard to record them.", text)
+        self.assertIn("load the jidoka-unslop skill", text)
+        self.assertNotIn("jidoka:", text)
+
+    def test_a_claude_code_session_names_each_skill_and_command_with_the_plugin_namespace(self):
+        done = self.session(self.beads_repo)
+
+        self.assertIn("Run /jidoka:onboard to record them.", done.stdout)
+        self.assertIn("load the jidoka:unslop skill", done.stdout)
+        self.assertNotIn("jidoka-unslop", done.stdout)
+        self.assertNotIn("jidoka-onboard", done.stdout)
+
+    def test_a_session_that_sends_the_antigravity_payload_to_the_claude_code_hook_gets_plain_text(self):
+        event = {"conversationId": "ec33ebf9", "hookEventName": "SessionStart", "cwd": str(self.beads_repo)}
+
+        done = self.start(json.dumps(event), self.not_a_repo, self.path)
+
+        self.assertTrue(done.stdout.startswith("jidoka rules for this repo, which uses beads."), done.stdout)
+
+    def test_an_antigravity_session_in_a_beads_repo_gets_the_bd_prime_output_after_the_rules(self):
+        done = self.antigravity_session(self.beads_repo, None)
+
+        text = self.injected_text(done.stdout)
+        self.assertIn("The fake bd stands in for bd prime here.", text)
+        self.assertLess(text.index("Planning, Factory, Acceptance and Bench"), text.index("# Beads Workflow Context"))
+
+    def test_an_antigravity_session_in_a_worktree_of_a_stealth_beads_repo_gets_the_rules_and_bd_prime(self):
+        done = self.antigravity_session(self.worktree, None)
+
+        text = self.injected_text(done.stdout)
+        self.assertIn("Planning, Factory, Acceptance and Bench", text)
+        self.assertIn("# Beads Workflow Context", text)
+
+    def test_an_antigravity_session_outside_a_beads_repo_prints_nothing(self):
+        for folder in (self.plain_repo, self.plain_worktree, self.not_a_repo, self.repo_under_it):
+            with self.subTest(folder=folder):
+                done = self.antigravity_session(folder, None)
+
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assertEqual("", done.stdout)
+                self.assertEqual("", done.stderr)
+
+    def test_an_antigravity_session_writes_no_env_file(self):
+        env_file = Path(self.tmp.name) / "antigravity-env.sh"
+
+        done = self.antigravity_session(self.beads_repo, env_file)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertFalse(env_file.exists())
+
+    def test_a_claude_code_session_gets_plain_text_without_the_bd_prime_output(self):
+        done = self.session(self.beads_repo)
+
+        self.assertTrue(done.stdout.startswith("jidoka rules for this repo, which uses beads."), done.stdout)
+        self.assertNotIn("injectSteps", done.stdout)
+        self.assertNotIn("Beads Workflow Context", done.stdout)
 
 
 if __name__ == "__main__":

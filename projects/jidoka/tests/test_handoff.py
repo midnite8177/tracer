@@ -972,6 +972,98 @@ class HoldoutsGuardTests(HandoffCase):
 
         self.assert_goes_on(done)
 
+    def antigravity_guard(self, call: dict) -> subprocess.CompletedProcess:
+        return fixture.run_launcher(LAUNCHER, [str(HOLDOUTS_GUARD), "--host", "antigravity"], json.dumps(call),
+                                    self.caller_env(self.home), self.repo, RUN_TIMEOUT_SECONDS)
+
+    def lap_worktree(self) -> Path:
+        """A lap worktree of a main checkout that holds no git state beyond its `.git` folder, which is all the guard
+        reads to recognize one."""
+        main = self.root / "guarded-main"
+        (main / ".git").mkdir(parents=True, exist_ok=True)
+        worktree = main / ".worktrees" / "lap-t1"
+        (worktree / "src").mkdir(parents=True, exist_ok=True)
+        return worktree
+
+    def antigravity_event(self, cwd: Path, tool_call: object) -> dict:
+        return {"hookEventName": "PreToolUse", "conversationId": "c1", "stepIdx": 4, "cwd": str(cwd),
+                "toolCall": tool_call}
+
+    def antigravity_call(self, command: str, tool: str) -> dict:
+        return self.antigravity_event(self.lap_worktree(),
+                                      {"id": "t1", "name": tool, "args": {"CommandLine": command}})
+
+    def assert_antigravity_denied(self, done: subprocess.CompletedProcess) -> None:
+        self.assertEqual(0, done.returncode, done.stderr)
+        answer = json.loads(done.stdout)
+        self.assertEqual({"decision", "reason"}, set(answer))
+        self.assertEqual("deny", answer["decision"])
+        self.assertIn("holdouts", answer["reason"])
+
+    def test_an_antigravity_command_that_reads_a_holdout_is_denied_with_the_reason(self):
+        for arguments in ("read tracer-1", "read tracer-1 --task tracer-2", "brief tracer-1"):
+            command = f"{LAUNCHER} {HOLDOUTS} {arguments}"
+
+            self.assert_antigravity_denied(self.antigravity_guard(self.antigravity_call(command, "run_command")))
+
+    def test_an_antigravity_command_that_reads_no_holdout_prints_nothing(self):
+        for command in ("npm test", "python3 myholdouts.py", "cat README.md"):
+            self.assert_goes_on(self.antigravity_guard(self.antigravity_call(command, "run_command")))
+
+    def test_an_antigravity_call_of_another_tool_prints_nothing(self):
+        command = f"{LAUNCHER} {HOLDOUTS} read tracer-1"
+
+        self.assert_goes_on(self.antigravity_guard(self.antigravity_call(command, "view_file")))
+
+    def test_an_antigravity_command_that_reads_a_holdout_from_a_folder_inside_a_lap_worktree_is_denied(self):
+        call = self.antigravity_call(f"{LAUNCHER} {HOLDOUTS} read tracer-1", "run_command")
+        call["cwd"] = str(self.lap_worktree() / "src")
+
+        self.assert_antigravity_denied(self.antigravity_guard(call))
+
+    def test_an_antigravity_command_that_reads_a_holdout_outside_a_lap_worktree_prints_nothing(self):
+        command = f"{LAUNCHER} {HOLDOUTS} read tracer-1"
+        tool_call = {"id": "t1", "name": "run_command", "args": {"CommandLine": command}}
+        outside = [self.repo, self.root / "guarded-main", self.root / "guarded-main" / ".worktrees",
+                   self.root / "no-such-folder"]
+
+        for cwd in outside:
+            with self.subTest(cwd=cwd):
+                self.lap_worktree()
+                self.assert_goes_on(self.antigravity_guard(self.antigravity_event(cwd, tool_call)))
+
+    def test_an_antigravity_command_that_reads_a_holdout_with_no_folder_prints_nothing(self):
+        call = self.antigravity_call(f"{LAUNCHER} {HOLDOUTS} read tracer-1", "run_command")
+        del call["cwd"]
+
+        self.assert_goes_on(self.antigravity_guard(call))
+
+    def test_a_folder_under_a_worktrees_folder_of_no_checkout_is_no_lap_worktree(self):
+        folder = self.root / "not-a-checkout" / ".worktrees" / "lap-t1"
+        folder.mkdir(parents=True)
+        call = self.antigravity_call(f"{LAUNCHER} {HOLDOUTS} read tracer-1", "run_command")
+        call["cwd"] = str(folder)
+
+        self.assert_goes_on(self.antigravity_guard(call))
+
+    def test_an_antigravity_command_that_cannot_be_read_is_denied_inside_a_lap_worktree(self):
+        worktree = self.lap_worktree()
+        for tool_call in ({"name": "run_command"}, {"name": "run_command", "args": {}},
+                          {"name": "run_command", "args": "ls"}, {"name": "run_command", "args": {"CommandLine": 7}}):
+            with self.subTest(tool_call=tool_call):
+                self.assert_antigravity_denied(self.antigravity_guard(self.antigravity_event(worktree, tool_call)))
+
+    def test_an_antigravity_command_that_cannot_be_read_prints_nothing_outside_a_lap_worktree(self):
+        tool_call = {"name": "run_command", "args": {"CommandLine": 7}}
+
+        self.assert_goes_on(self.antigravity_guard(self.antigravity_event(self.repo, tool_call)))
+
+    def test_an_antigravity_call_that_names_no_tool_prints_nothing(self):
+        worktree = self.lap_worktree()
+        for tool_call in ("run_command", None, ["run_command"], {"args": {"CommandLine": 7}}):
+            with self.subTest(tool_call=tool_call):
+                self.assert_goes_on(self.antigravity_guard(self.antigravity_event(worktree, tool_call)))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -991,6 +991,316 @@ class RenameIntoPlaceTests(unittest.TestCase):
         self.assertFalse(self.target.exists())
 
 
+class AntigravityProfileTests(InstallerTestCase):
+    def setUp(self):
+        super().setUp()
+        self.userdata = self.root / "t3-userdata"
+        self.profile_a = self.userdata / "providers" / "antigravity" / "profile-a"
+        self.profile_b = self.userdata / "providers" / "antigravity" / "profile-b"
+
+    def make_profile(self, profile: Path, config: dict | None) -> None:
+        (profile / "config").mkdir(parents=True)
+        if config is not None:
+            (profile / "config" / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+    def install_for_t3(self) -> subprocess.CompletedProcess:
+        fixture.build_bin(self.bin, fixture.ALL_TOOLS, self.log, "", self.codex_state, "")
+        return fixture.run_script(self.repo, "install.py",
+                                  ["--jidoka-home", str(self.home), "--config-dir", str(self.config_a),
+                                   "--t3-userdata", str(self.userdata)],
+                                  fixture.script_env(self.bin, self.user_home))
+
+    def plugin_copy(self, profile: Path) -> Path:
+        return profile / "config" / "plugins" / "jidoka"
+
+    def hooks(self, profile: Path) -> dict:
+        return json.loads((self.plugin_copy(profile) / "hooks.json").read_text(encoding="utf-8"))
+
+    def commands(self, profile: Path) -> list[str]:
+        named = self.hooks(profile)["jidoka"]
+        return [named["PreToolUse"][0]["hooks"][0]["command"], named["SessionStart"][0]["command"]]
+
+    def files_of(self, folder: Path) -> dict:
+        return {str(path.relative_to(folder)): (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in sorted(folder.rglob("*")) if path.is_file()}
+
+    def test_each_of_two_profiles_gets_a_copy_with_a_root_plugin_manifest(self):
+        self.make_profile(self.profile_a, {})
+        self.make_profile(self.profile_b, {})
+
+        done = self.install_for_t3()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        for profile in [self.profile_a, self.profile_b]:
+            manifest = json.loads((self.plugin_copy(profile) / "plugin.json").read_text(encoding="utf-8"))
+            self.assertEqual("jidoka", manifest["name"])
+            self.assertEqual("0.1.0", manifest["version"])
+            self.assertFalse((self.plugin_copy(profile) / ".claude-plugin").exists())
+
+    def test_the_copy_has_the_hooks_at_the_root_in_antigravitys_form_with_no_lap_mod_and_no_session_end(self):
+        self.make_profile(self.profile_a, {})
+
+        done = self.install_for_t3()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        copy = self.plugin_copy(self.profile_a)
+        named = self.hooks(self.profile_a)["jidoka"]
+        self.assertEqual({"PreToolUse", "SessionStart"}, set(named))
+        self.assertEqual("run_command", named["PreToolUse"][0]["matcher"])
+        self.assertNotIn("matcher", named["SessionStart"][0])
+        self.assertEqual("command", named["SessionStart"][0]["type"])
+        self.assertEqual([60, 60], [named["PreToolUse"][0]["hooks"][0]["timeout"], named["SessionStart"][0]["timeout"]])
+        self.assertNotIn("modules", self.hooks(self.profile_a))
+        self.assertNotIn("modules", named)
+        self.assertEqual([], list(copy.rglob("lap_mod*")))
+        self.assertFalse((copy / "hooks" / "hooks.json").exists())
+
+    def test_every_hook_command_names_the_launcher_and_its_script_by_absolute_path_in_the_snapshot(self):
+        self.make_profile(self.profile_a, {})
+
+        self.install_for_t3()
+
+        plugin = self.snapshot("0.1.0") / "jidoka"
+        for command, script in zip(self.commands(self.profile_a), ["holdouts_guard.py", "session_start.py"]):
+            self.assertIn(str(plugin / "bin" / "jidoka-run"), command)
+            self.assertIn(str(plugin / "hooks" / script), command)
+            self.assertNotIn("CLAUDE_PLUGIN_ROOT", command)
+            self.assertTrue((plugin / "hooks" / script).is_file())
+
+    def test_skills_and_agents_are_named_jidoka_dash_in_folder_name_field_and_text(self):
+        self.make_profile(self.profile_a, {})
+
+        self.install_for_t3()
+
+        copy = self.plugin_copy(self.profile_a)
+        self.assertTrue((copy / "skills" / "jidoka-issues" / "SKILL.md").read_text(encoding="utf-8")
+                        .startswith("---\nname: jidoka-issues\n"))
+        self.assertFalse((copy / "skills" / "issues").exists())
+        self.assertIn("\nname: jidoka-validation\n",
+                      (copy / "agents" / "jidoka-validation.md").read_text(encoding="utf-8"))
+        self.assertFalse((copy / "agents" / "validation.md").exists())
+        for folder in ["skills", "agents"]:
+            for path in (copy / folder).rglob("*.md"):
+                self.assertNotRegex(path.read_text(encoding="utf-8"), r"jidoka:[a-z]", str(path))
+        self.assertIn("`subagent_type` `jidoka-app-check`",
+                      (copy / "skills" / "jidoka-factory" / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_a_skill_that_names_a_sibling_skill_folder_still_reaches_it(self):
+        self.make_profile(self.profile_a, {})
+
+        self.install_for_t3()
+
+        skills = self.plugin_copy(self.profile_a) / "skills"
+        text = (skills / "jidoka-research" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("<skill folder>/../jidoka-unslop/SKILL.md", text)
+        self.assertTrue((skills / "jidoka-research" / ".." / "jidoka-unslop" / "SKILL.md").is_file())
+
+    def test_a_skill_names_the_launcher_and_the_scripts_of_the_snapshot_and_keeps_its_own_script(self):
+        self.make_profile(self.profile_a, {})
+
+        self.install_for_t3()
+
+        copy = self.plugin_copy(self.profile_a)
+        plugin = (self.snapshot("0.1.0") / "jidoka").as_posix()
+        text = (copy / "skills" / "jidoka-handoff" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn(f'sh "{plugin}/bin/jidoka-run" "{plugin}/scripts/handoff.py"', text)
+        self.assertTrue((Path(plugin) / "bin" / "jidoka-run").is_file())
+        self.assertTrue((Path(plugin) / "scripts" / "handoff.py").is_file())
+        self.assertTrue((copy / "skills" / "jidoka-issues" / "issues.py").is_file())
+
+    def test_no_skill_or_agent_text_reaches_the_launcher_or_the_scripts_through_the_copy(self):
+        self.make_profile(self.profile_a, {})
+
+        self.install_for_t3()
+
+        copy = self.plugin_copy(self.profile_a)
+        for folder in ["skills", "agents"]:
+            for path in (copy / folder).rglob("*.md"):
+                self.assertNotRegex(path.read_text(encoding="utf-8"), r"<skill folder>/\.\./\.\./(bin|scripts|hooks)/",
+                                    str(path))
+
+    def test_the_copy_holds_no_launcher_and_no_scripts_folder(self):
+        self.make_profile(self.profile_a, {})
+
+        self.install_for_t3()
+
+        copy = self.plugin_copy(self.profile_a)
+        self.assertFalse((copy / "bin").exists())
+        self.assertFalse((copy / "scripts").exists())
+        self.assertTrue((copy / "docs" / "domain.md").is_file())
+
+    def test_a_new_version_leaves_the_scripts_of_the_old_snapshot_in_place_for_a_running_factory(self):
+        self.make_profile(self.profile_a, {})
+        self.install_for_t3()
+        self.release()
+
+        self.install_for_t3()
+
+        old = self.snapshot("0.1.0") / "jidoka"
+        self.assertTrue((old / "bin" / "jidoka-run").is_file())
+        self.assertTrue((old / "scripts" / "handoff.py").is_file())
+        text = (self.plugin_copy(self.profile_a) / "skills" / "jidoka-handoff" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn((self.snapshot("0.1.1") / "jidoka").as_posix() + "/scripts/handoff.py", text)
+        self.assertNotIn(old.as_posix(), text)
+
+    def test_the_copy_holds_files_and_no_symlink(self):
+        (self.repo / "plugin" / "jidoka" / "docs" / "alias.md").symlink_to("domain.md")
+        fixture.git_commit_all(self.repo, "Add an alias")
+        self.make_profile(self.profile_a, {})
+
+        done = self.install_for_t3()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        copy = self.plugin_copy(self.profile_a)
+        self.assertEqual([], [path for path in copy.rglob("*") if path.is_symlink()])
+        self.assertEqual((copy / "docs" / "domain.md").read_bytes(), (copy / "docs" / "alias.md").read_bytes())
+
+    def test_jidoka_is_enabled_in_the_profile_config_and_the_rest_of_the_config_stays(self):
+        self.make_profile(self.profile_a, {"plugins": {"swarm": {"enabled": True}, "jidoka": {"enabled": False}},
+                                           "userSettings": {"theme": "dark"}})
+        self.make_profile(self.profile_b, None)
+
+        self.install_for_t3()
+
+        held = json.loads((self.profile_a / "config" / "config.json").read_text(encoding="utf-8"))
+        self.assertEqual({"swarm": {"enabled": True}, "jidoka": {"enabled": True}}, held["plugins"])
+        self.assertEqual({"theme": "dark"}, held["userSettings"])
+        made = json.loads((self.profile_b / "config" / "config.json").read_text(encoding="utf-8"))
+        self.assertEqual({"plugins": {"jidoka": {"enabled": True}}}, made)
+
+    def test_a_second_install_of_the_same_version_changes_nothing(self):
+        self.make_profile(self.profile_a, {})
+        self.install_for_t3()
+        before = self.files_of(self.profile_a)
+
+        done = self.install_for_t3()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(before, self.files_of(self.profile_a))
+
+    def test_a_new_version_repoints_the_copy_at_the_new_snapshot(self):
+        self.make_profile(self.profile_a, {})
+        self.install_for_t3()
+        self.release()
+
+        done = self.install_for_t3()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        manifest = json.loads((self.plugin_copy(self.profile_a) / "plugin.json").read_text(encoding="utf-8"))
+        self.assertEqual("0.1.1", manifest["version"])
+        for command in self.commands(self.profile_a):
+            self.assertIn(str(self.snapshot("0.1.1")), command)
+            self.assertNotIn(str(self.snapshot("0.1.0")), command)
+
+    def test_a_copy_edited_on_disk_is_kept_when_the_version_is_the_same(self):
+        self.make_profile(self.profile_a, {})
+        self.install_for_t3()
+        (self.plugin_copy(self.profile_a) / "hooks.json").write_text("{}\n", encoding="utf-8")
+
+        done = self.install_for_t3()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("{}\n", (self.plugin_copy(self.profile_a) / "hooks.json").read_text(encoding="utf-8"))
+
+    def test_a_new_version_replaces_an_edited_copy_and_leaves_no_old_copy_beside_it(self):
+        self.make_profile(self.profile_a, {})
+        self.install_for_t3()
+        (self.plugin_copy(self.profile_a) / "hooks.json").write_text("{}\n", encoding="utf-8")
+        self.release()
+
+        done = self.install_for_t3()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(2, len(self.commands(self.profile_a)))
+        self.assertEqual(["jidoka"], sorted(path.name for path in self.plugin_copy(self.profile_a).parent.iterdir()))
+
+    def test_a_copy_with_no_readable_manifest_is_replaced(self):
+        self.make_profile(self.profile_a, {})
+        self.install_for_t3()
+        (self.plugin_copy(self.profile_a) / "plugin.json").write_text("{not json", encoding="utf-8")
+
+        done = self.install_for_t3()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        manifest = json.loads((self.plugin_copy(self.profile_a) / "plugin.json").read_text(encoding="utf-8"))
+        self.assertEqual("0.1.0", manifest["version"])
+
+    def test_every_hook_command_binds_the_home_the_install_recorded_and_names_the_host(self):
+        self.make_profile(self.profile_a, {})
+
+        self.install_for_t3()
+
+        for command in self.commands(self.profile_a):
+            self.assertTrue(command.startswith(f'JIDOKA_HOME="{self.home.resolve()}" '), command)
+            self.assertTrue(command.endswith(" --host antigravity"), command)
+
+    def test_a_hook_command_runs_with_the_python_of_a_redirected_home_when_the_session_sets_no_jidoka_home(self):
+        self.make_profile(self.profile_a, {})
+        self.install_for_t3()
+        event = json.dumps({"hookEventName": "PreToolUse", "cwd": str(self.root),
+                            "toolCall": {"name": "run_command", "args": {"CommandLine": "ls"}}})
+        env = {**fixture.script_env(self.bin, self.user_home)}
+        env.pop("JIDOKA_HOME", None)
+
+        for command in self.commands(self.profile_a):
+            with self.subTest(command=command):
+                done = subprocess.run([fixture.real_shell(), "-c", command], input=event, capture_output=True,
+                                      text=True, encoding="utf-8", env=env, cwd=self.root)
+
+                self.assertEqual(0, done.returncode, done.stderr)
+                self.assertNotIn("no usable Python", done.stderr)
+
+    def test_no_profile_skips_the_host_with_one_line_and_the_install_succeeds(self):
+        done = self.install_for_t3()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        skipped = [line for line in done.stdout.splitlines() if "Antigravity" in line]
+        self.assertEqual(1, len(skipped), done.stdout)
+        self.assertIn("skipped", skipped[0])
+        self.assertIn(str(self.userdata.resolve()), skipped[0])
+        self.assertIn("Installed jidoka 0.1.0 into", done.stdout)
+        self.assertFalse(self.userdata.exists())
+
+    def test_a_profile_folder_with_no_config_is_not_a_profile(self):
+        (self.profile_a / "antigravity-acp").mkdir(parents=True)
+
+        done = self.install_for_t3()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("skipped", done.stdout)
+        self.assertFalse((self.profile_a / "config").exists())
+
+    def test_the_install_says_which_profiles_it_wrote(self):
+        self.make_profile(self.profile_a, {})
+        self.make_profile(self.profile_b, {})
+
+        done = self.install_for_t3()
+
+        self.assertIn(f"Installed jidoka 0.1.0 into Antigravity profile {self.profile_a.resolve()}", done.stdout)
+        self.assertIn(f"Installed jidoka 0.1.0 into Antigravity profile {self.profile_b.resolve()}", done.stdout)
+
+    def test_a_profile_config_that_is_not_json_stops_the_run_and_names_the_file(self):
+        self.make_profile(self.profile_a, None)
+        (self.profile_a / "config" / "config.json").write_text("{not json", encoding="utf-8")
+
+        done = self.install_for_t3()
+
+        self.assertEqual(2, done.returncode)
+        self.assertIn(str(self.profile_a.resolve() / "config" / "config.json"), done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+
+    def test_claude_code_and_codex_still_get_their_installs_beside_a_profile(self):
+        self.make_profile(self.profile_a, {})
+
+        done = self.install_for_t3()
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn(["plugin", "install", "jidoka@jidoka", "--scope", "user"],
+                      [call["argv"] for call in self.calls("claude")])
+        self.assertIn(["plugin", "add", "jidoka@jidoka"], [call["argv"] for call in self.calls("codex")])
+        self.assertEqual(["./lap_mod.ts"], self.hooks_file(self.snapshot("0.1.0"))["modules"])
+
+
 class StealthWorkspaceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

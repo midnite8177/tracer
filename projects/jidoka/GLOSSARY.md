@@ -781,6 +781,17 @@ workers keep files that are not part of the work. The repo's git exclude
 file hides it from every git status.
 _Avoid_: Temp folder, tmp, workspace
 
+**Profile copy**:
+The plugin as install.py converts it for a T3 Antigravity profile, in the
+profile's `config/plugins/jidoka/`. It holds the plugin's files, a root
+plugin.json and hooks.json, and skills and agents named `jidoka-<name>`. It
+has no launcher and no scripts. Its hooks and its skills name them by
+absolute path in the version's snapshot, and its hook commands bind the
+jidoka home the install recorded and name the Antigravity host. It has no
+lap mod and no SessionEnd hook. A second install of the same version leaves
+it as it is, edits included, and an install of another version replaces it.
+_Avoid_: Antigravity install, converted plugin
+
 **Lap mod**:
 The hooks module in jidoka's plugin that decides every lap worker's tool
 call ahead of the host's rules, mode and prompt, so no lap waits on a

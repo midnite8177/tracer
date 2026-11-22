@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Opens a session in a beads repo with jidoka's standing rules.
 
-Claude Code runs this at every session start and sends the session as JSON on
-stdin. In a repo that uses beads, the script prints the rules block and the
+The host runs this at every session start and sends the session as JSON on
+stdin. `--host` names the host, `claude-code` or `antigravity`, and Claude
+Code's hooks.json passes none, so `claude-code` is the default. In a repo that
+uses beads, the script prints the rules block and the
 paths of the tracker doc and the domain doc that ship in the plugin, and a
 line saying to run onboarding when jidoka's home holds no settings for the
 repo. The commit rule says the glossary and ADRs stay uncommitted when the
@@ -14,28 +16,40 @@ them. Last it names each epic the factory stopped on with work left, one line wi
 the command that resumes it, and names none when it cannot read the epics. Anywhere else it prints nothing. A failure also prints nothing,
 because this hook must never keep a session from starting.
 
-In every repo it also appends `export JIDOKA_SESSION_ID=<the session's id>` to the env file in $CLAUDE_ENV_FILE,
-which Claude Code sources before each call the session makes, so that the scheduler can tell which session a
-manager runs in.
+Under Claude Code, in every repo, it also appends `export JIDOKA_SESSION_ID=<the session's id>` to the env file in
+$CLAUDE_ENV_FILE, which Claude Code sources before each call the session makes, so that the scheduler can tell which
+session a manager runs in.
+
+Antigravity runs the same hook from its profile copy, and install.py gives the command `--host antigravity`. The
+script then prints one JSON object whose `injectSteps` hold the same text as a system message, and it adds the output
+of `bd prime` to the text, because a hook in ~/.gemini never reaches a T3 session. It writes no env file. Outside a
+beads repo it prints nothing, as it does for Claude Code. The text names each skill and slash command as the host
+does, `jidoka:onboard` and `/jidoka:onboard` under Claude Code, `jidoka-onboard` and `/jidoka-onboard` under
+Antigravity, whose profile copy has no plugin namespace.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shlex
+import subprocess
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parents[1]
 DOCS = PLUGIN / "docs"
 GIT_TIMEOUT_SECONDS = 5
+BD_PRIME_TIMEOUT_SECONDS = 20
 
 RULES = """\
 jidoka rules for this repo, which uses beads.
 
 - A jidoka skill's own subagents are authorized. When a jidoka skill's text says to run a subagent, that is the human's standing request. Do not pause to ask.
 - Name beads by title, with the id in parentheses, never a bare id, in anything the human reads.
-- Before you write prose a human reads (a summary, a spec, an ADR, a commit message, a doc), call the Skill tool with "unslop".
+- Before you write prose a human reads (a summary, a spec, an ADR, a commit message, a doc), load the UNSLOP_SKILL skill.
 COMMIT_RULE
 - Bead ids and requirement ids never leave the tracker or the spec. Keep them out of code, comments, commit messages, docs, tests, logs and user-facing strings.
 - Comments describe the code, never the work. No dates, history, or "fixed as part of". A comment says what the code does or why it has its shape.
@@ -53,16 +67,53 @@ PRIVATE_RULE = ("- Commit the work. Beads stealth mode covers the tracker only. 
 CONFLICTS_HEADING = "This repo's rules win over jidoka's where they conflict:"
 CONFLICT_LINE = '- {written_in}: "{repo_rule}" It wins over jidoka\'s rule "{overrules}"'
 
-ONBOARDING = "jidoka has no settings for this repo on this machine. Run /jidoka:onboard to record them.\n"
+ONBOARDING = "jidoka has no settings for this repo on this machine. Run ONBOARD_COMMAND to record them.\n"
 
 
-def session_folder(raw: str) -> Path:
-    """The folder the session starts in: the cwd the input names, else the process's own."""
+@dataclass(frozen=True)
+class Host:
+    """What differs between the hosts that run this hook: the prefix of a jidoka skill's name, the form of the
+    hook's answer, whether the text carries `bd prime`, and whether the session's id is exported."""
+    skill_prefix: str
+    answer: Callable[[str], str]
+    adds_bd_prime: bool
+    exports_session: bool
+
+    def skill(self, name: str) -> str:
+        """The name the host knows a jidoka skill by."""
+        return f"{self.skill_prefix}{name}"
+
+    def slash_command(self, name: str) -> str:
+        return f"/{self.skill(name)}"
+
+
+def plain_text(text: str) -> str:
+    return text
+
+
+def injected_steps(text: str) -> str:
+    """The answer Antigravity reads from a SessionStart hook: the text as a system message in the session."""
+    return json.dumps({"injectSteps": [{"systemMessage": {"systemMessage": text}}]})
+
+
+CLAUDE_CODE = "claude-code"
+ANTIGRAVITY = "antigravity"
+HOSTS = {CLAUDE_CODE: Host("jidoka:", plain_text, adds_bd_prime=False, exports_session=True),
+         ANTIGRAVITY: Host("jidoka-", injected_steps, adds_bd_prime=True, exports_session=False)}
+
+
+def read_event(raw: str) -> dict:
+    """The session the host sent, or an empty one when the input is not a JSON object."""
     try:
         event = json.loads(raw)
     except ValueError:
-        return Path.cwd()
-    named = event.get("cwd") if isinstance(event, dict) else None
+        return {}
+    return event if isinstance(event, dict) else {}
+
+
+def session_folder(event: dict) -> Path:
+    """The folder the session starts in: the cwd the event names, else the process's own."""
+    named = event.get("cwd")
     if isinstance(named, str) and Path(named).is_dir():
         return Path(named)
     return Path.cwd()
@@ -143,16 +194,17 @@ def rule_conflicts(main_tree: Path | None) -> str:
     return "\n" + "\n".join([CONFLICTS_HEADING, *lines]) + "\n"
 
 
-def announcement(main_tree: Path | None) -> str:
-    return (f"{RULES.replace('COMMIT_RULE', commit_rule(main_tree))}{rule_conflicts(main_tree)}\n"
+def announcement(main_tree: Path | None, host: Host) -> str:
+    rules = RULES.replace("COMMIT_RULE", commit_rule(main_tree)).replace("UNSLOP_SKILL", host.skill("unslop"))
+    return (f"{rules}{rule_conflicts(main_tree)}\n"
             "Read these before you explore the code or file work.\n"
             f"tracker doc: {DOCS / 'issue-tracker.md'}\n"
             f"domain doc: {DOCS / 'domain.md'}\n")
 
 
-def stopped_factories(main_tree: Path | None) -> str:
-    """One line for each epic the factory stopped on, naming the command that resumes it, or nothing when none
-    stopped or the epics cannot be read."""
+def stopped_factories(main_tree: Path | None, host: Host) -> str:
+    """One line for each epic the factory stopped on, naming the command that resumes it as the host spells it, or
+    nothing when none stopped or the epics cannot be read."""
     if main_tree is None:
         return ""
     try:
@@ -160,12 +212,13 @@ def stopped_factories(main_tree: Path | None) -> str:
         import clock
         import resume
         stopped = resume.stopped_epics(script.jidoka_home(None), main_tree, clock.now())
+        resume_command = host.slash_command("factory")
+        return "".join(f"\n{epic.line().replace(resume.FACTORY_COMMAND, resume_command)}\n" for epic in stopped)
     except Exception:
         return ""
-    return "".join(f"\n{epic.line()}\n" for epic in stopped)
 
 
-def export_session(raw: str) -> None:
+def export_session(event: dict) -> None:
     """Exports the session's id to the calls the session makes, through the env file Claude Code names.
 
     The scheduler records the id in the heartbeat of the epic its manager claims, so that no other session beats it.
@@ -173,8 +226,7 @@ def export_session(raw: str) -> None:
     """
     try:
         env_file = os.environ.get("CLAUDE_ENV_FILE")
-        event = json.loads(raw)
-        session = event.get("session_id") if isinstance(event, dict) else None
+        session = event.get("session_id")
         if not env_file or not isinstance(session, str) or not session:
             return
         scripts_on_path()
@@ -185,32 +237,53 @@ def export_session(raw: str) -> None:
         return
 
 
-def start(raw: str) -> str:
+def bd_prime(folder: Path) -> str:
+    """What `bd prime` prints in the folder, or nothing when bd is missing, fails or runs past the timeout."""
     try:
-        folder = session_folder(raw)
+        done = subprocess.run(["bd", "prime"], cwd=folder, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=BD_PRIME_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout if done.returncode == 0 else ""
+
+
+def start(event: dict, host: Host) -> str:
+    try:
+        folder = session_folder(event)
         main_tree = main_tree_of(folder)
         if not is_beads_repo(folder, main_tree):
             return ""
-        text = announcement(main_tree)
+        text = announcement(main_tree, host)
         if main_tree is not None and not settings_file(main_tree).is_file():
-            text += ONBOARDING
-        return text + stopped_factories(main_tree)
+            text += ONBOARDING.replace("ONBOARD_COMMAND", host.slash_command("onboard"))
+        text += stopped_factories(main_tree, host)
+        if host.adds_bd_prime:
+            prime = bd_prime(folder)
+            if prime.strip():
+                text += f"\n{prime}"
+        return text
     except Exception:
         return ""
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="session_start.py")
+    parser.add_argument("--host", choices=sorted(HOSTS), default=CLAUDE_CODE,
+                        help="the host that runs the hook; Claude Code's hooks.json passes none")
+    host = HOSTS[parser.parse_args(argv).host]
     try:
         raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
     except (OSError, ValueError):
         raw = ""
-    export_session(raw)
-    text = start(raw)
+    event = read_event(raw)
+    if host.exports_session:
+        export_session(event)
+    text = start(event, host)
     if text:
-        sys.stdout.buffer.write(text.encode("utf-8"))
+        sys.stdout.buffer.write(host.answer(text).encode("utf-8"))
         sys.stdout.buffer.flush()
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

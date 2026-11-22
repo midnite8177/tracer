@@ -119,6 +119,15 @@ judgeable from this diff; report present only. A documented-standard
 breach can be hard; a catalog smell is a judgment call unless the
 severity section calls it mechanical.
 
+When the diff adds or edits a skill, an agent, an `AGENTS.md` or a
+`CLAUDE.md`, load `../writing-for-agents/SKILL.md`, relative to the folder
+that holds this SKILL.md, and check the changed text against it. A host
+tool named in skill or agent text, as in "call the Skill tool", is a
+documented-standard breach: report it under the rule's name, host-neutral
+wording, and give the neutral phrase as the fix. Paste that skill's
+"Host-neutral wording" section into the Standards brief, since the subagent
+has no other access to it.
+
 *Spec lane.* Follow steps 3 and 4 of `../spec-check/SKILL.md`, relative
 to the folder that holds this SKILL.md: missing work, including work
 built wrong, and extra work, each quoting the spec line. Report in

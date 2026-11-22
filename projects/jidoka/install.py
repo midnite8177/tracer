@@ -15,7 +15,16 @@ jidoka's source repo in <jidoka-home>, then adds the snapshot as a local marketp
 and installs the plugin at user scope into each named config dir, and into
 Codex when codex is on the PATH. Codex gets its own copy of the snapshot in <jidoka-home>/codex/<version>/,
 whose hooks/hooks.json names no modules, because Codex refuses a hooks file that has the field and loads none
-of the hooks. A snapshot is never rewritten. A version
+of the hooks. It also writes a converted copy of the plugin into each T3 Antigravity profile, the folders under
+<t3-userdata>/providers/antigravity that hold a config folder, and enables jidoka in the profile's config.json. It
+makes the copy itself, because `antigravity plugin install` writes only to ~/.gemini. The copy has a root plugin.json
+and a root hooks.json with one named hook, Bash matched as run_command, no lap mod and no SessionEnd, whose commands
+name the launcher and the scripts by absolute path in the snapshot, set JIDOKA_HOME to the home this run records, and
+end in `--host antigravity`. The copy holds no bin or scripts folder, and each `<skill folder>/../../bin`, `scripts`
+or `hooks` path in a skill's text names the snapshot instead, so that a running factory keeps its version's scripts.
+Every skill and agent is named jidoka-<name> in its folder, its name field and its text. A copy of the version being
+installed is left as it is, and a copy of any other version is replaced. With no profile, the host is
+skipped. A snapshot is never rewritten. A version
 whose snapshot came from different plugin content is refused until
 release.py gives the change a new version. The source repo is the main
 worktree of the repo this file is in, found with git, so an install from a
@@ -42,6 +51,7 @@ import getpass
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -80,6 +90,24 @@ UI_PORT = 5099
 DEFAULT_UI_URL = f"http://localhost:{UI_PORT}"
 RENAME_ATTEMPTS = 10
 RENAME_PAUSE_SECONDS = 0.5
+PLUGIN_DIR = Path("jidoka")
+PLUGIN_NAME = "jidoka"
+CLAUDE_PLUGIN_ROOT = "${CLAUDE_PLUGIN_ROOT}"
+T3_ANTIGRAVITY_PROFILES = Path("providers") / "antigravity"
+ANTIGRAVITY_CONFIG_DIR = Path("config")
+ANTIGRAVITY_CONFIG = ANTIGRAVITY_CONFIG_DIR / "config.json"
+ANTIGRAVITY_PLUGINS = ANTIGRAVITY_CONFIG_DIR / "plugins"
+ANTIGRAVITY_HOOK_TIMEOUT_SECONDS = 60
+ANTIGRAVITY_TOOLS = {"Bash": "run_command"}
+ANTIGRAVITY_GROUPED_EVENTS = {"PreToolUse"}
+ANTIGRAVITY_FLAT_EVENTS = {"SessionStart"}
+CLAUDE_ONLY_EVENTS = {"SessionEnd"}
+ANTIGRAVITY_PREFIX = "jidoka-"
+ANTIGRAVITY_HOST = "antigravity"
+JIDOKA_HOME_VARIABLE = "JIDOKA_HOME"
+SKILL_SCRIPT_FOLDERS = re.compile(r"<skill folder>/\.\./\.\./(bin|scripts|hooks)/")
+JIDOKA_TOKEN = re.compile(r"(?<![\w-])jidoka:(?=[a-z])")
+NAME_FIELD = re.compile(r"^name:[ \t]*(['\"]?)([^'\"\r\n]+?)\1[ \t]*$", re.MULTILINE)
 
 
 class InstallerError(Exception):
@@ -99,6 +127,15 @@ class Tools:
     claude: str
     codex: str | None
     dotnet: str | None
+
+
+@dataclass(frozen=True)
+class Folders:
+    """The folders a run is told about: the Claude config dirs to install into, jidoka's home, and the T3 userdata
+    folder that holds the Antigravity profiles."""
+    config_dirs: list[Path]
+    jidoka_home: Path
+    t3_userdata: Path
 
 
 @dataclass(frozen=True)
@@ -333,19 +370,58 @@ def renamed_into_place(built: Path, target: Path, rename: Callable[[Path, Path],
             pause(RENAME_PAUSE_SECONDS)
 
 
-def built_in_place(target: Path, fill: Callable[[Path], Path], appeared: str) -> None:
+@dataclass(frozen=True)
+class Refusing:
+    """The policy for a target that exists by the time its build ends: the install stops with `appeared`."""
+    appeared: str
+
+
+@dataclass(frozen=True)
+class Replacing:
+    """The policy for a target that exists by the time its build ends: it is renamed aside, the build is renamed to
+    its place, and the old one is removed. The old one comes back when the build cannot take its place."""
+
+
+def discarded(path: Path) -> None:
+    """Removes a file, link or folder, and does nothing when it is not there."""
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    else:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def replaced_in_place(built: Path, target: Path) -> None:
+    """Renames built to target, with whatever is at target renamed aside first and removed once built is in place."""
+    aside = target.with_name(f".{target.name}-replaced")
+    discarded(aside)
+    if not os.path.lexists(target):
+        renamed_into_place(built, target, Path.rename, time.sleep)
+        return
+    renamed_into_place(target, aside, Path.rename, time.sleep)
+    try:
+        renamed_into_place(built, target, Path.rename, time.sleep)
+    except InstallerError:
+        renamed_into_place(aside, target, Path.rename, time.sleep)
+        raise
+    discarded(aside)
+
+
+def built_in_place(target: Path, fill: Callable[[Path], Path], existing: Refusing | Replacing) -> None:
     """Builds target beside itself and renames it into place, so target is never half written.
 
     Fill gets a new empty folder and returns the folder inside it to move to target. The folder fill got is removed
-    whether the build succeeded or not, and appeared is the refusal when target exists by the time the build ends.
+    whether the build succeeded or not. `existing` says what happens when target is there by the time the build ends.
     """
     building = building_beside(target)
     try:
         built = fill(building)
         built.chmod(0o755)
-        if target.exists():
-            raise InstallerError(appeared)
-        renamed_into_place(built, target, Path.rename, time.sleep)
+        if isinstance(existing, Replacing):
+            replaced_in_place(built, target)
+        elif target.exists():
+            raise InstallerError(existing.appeared)
+        else:
+            renamed_into_place(built, target, Path.rename, time.sleep)
     finally:
         shutil.rmtree(building, ignore_errors=True)
 
@@ -358,7 +434,7 @@ def write_snapshot(git: str, plugin_folder: Path, tree: str, target: Path) -> No
         return building
 
     built_in_place(target, fill,
-                   f"{target} appeared while the snapshot was being built, and a snapshot is never rewritten")
+                   Refusing(f"{target} appeared while the snapshot was being built, and a snapshot is never rewritten"))
 
 
 def ensure_snapshot(git: str, plugin_folder: Path, jidoka_home: Path, version: str) -> Path:
@@ -380,14 +456,19 @@ def ensure_snapshot(git: str, plugin_folder: Path, jidoka_home: Path, version: s
     return target
 
 
+def read_json_object(file: Path) -> dict:
+    try:
+        held = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        raise InstallerError(f"{file} cannot be read as JSON: {err}") from err
+    if not isinstance(held, dict):
+        raise InstallerError(f"{file} does not hold a JSON object")
+    return held
+
+
 def without_modules(hooks_file: Path) -> None:
     """Rewrites a hooks.json without its modules list, the field that only Claude Code reads."""
-    try:
-        hooks = json.loads(hooks_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as err:
-        raise InstallerError(f"{hooks_file} cannot be read as JSON: {err}") from err
-    if not isinstance(hooks, dict):
-        raise InstallerError(f"{hooks_file} does not hold a JSON object")
+    hooks = read_json_object(hooks_file)
     hooks.pop("modules", None)
     hooks_file.write_text(json.dumps(hooks, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
 
@@ -407,7 +488,7 @@ def ensure_codex_snapshot(snapshot: Path, jidoka_home: Path, version: str) -> Pa
         without_modules(building / PLUGIN_HOOKS)
         return building
 
-    built_in_place(target, fill, f"{target} appeared while the copy for Codex was being built")
+    built_in_place(target, fill, Refusing(f"{target} appeared while the copy for Codex was being built"))
     return target
 
 
@@ -424,7 +505,7 @@ def write_published_ui(git: str, dotnet: str, ui_folder: Path, target: Path) -> 
             raise InstallerError(f"dotnet publish wrote no {UI_APP} in {output}")
         return output
 
-    built_in_place(target, fill, f"{target} appeared while jidoka-ui was being published")
+    built_in_place(target, fill, Refusing(f"{target} appeared while jidoka-ui was being published"))
 
 
 def publish_ui(git: str, dotnet: str | None, checkout: Path, jidoka_home: Path, previous: dict) -> PublishedUi:
@@ -490,6 +571,217 @@ def install_into_codex(codex: str, snapshot: Path) -> None:
     run_tool(codex, ["plugin", "add", PLUGIN_ID], env)
 
 
+def antigravity_matcher(matcher: str, hooks_file: Path) -> str:
+    """Antigravity's tool names for the Claude Code tool names in a matcher. A tool Antigravity has no name for is
+    refused, because a matcher that names no tool never fires."""
+    if not matcher:
+        return "*"
+    names = []
+    for tool in matcher.split("|"):
+        if tool not in ANTIGRAVITY_TOOLS:
+            raise InstallerError(f"{hooks_file} has a matcher for {tool}, which has no Antigravity tool name in "
+                                 "ANTIGRAVITY_TOOLS")
+        names.append(ANTIGRAVITY_TOOLS[tool])
+    return "|".join(names)
+
+
+def antigravity_command(command: str, plugin: Path, jidoka_home: Path) -> str:
+    """The hook command for Antigravity: the scripts by their path in the snapshot, the launcher looking for its
+    Python in the home this install recorded, and the host named for the script, which cannot tell it from the
+    payload."""
+    return (f'{JIDOKA_HOME_VARIABLE}="{jidoka_home}" {command.replace(CLAUDE_PLUGIN_ROOT, str(plugin))} '
+            f"--host {ANTIGRAVITY_HOST}")
+
+
+def antigravity_handlers(group: dict, plugin: Path, jidoka_home: Path, hooks_file: Path) -> list[dict]:
+    try:
+        return [{"type": handler.get("type", "command"),
+                 "command": antigravity_command(handler["command"], plugin, jidoka_home),
+                 "timeout": ANTIGRAVITY_HOOK_TIMEOUT_SECONDS} for handler in group["hooks"]]
+    except (KeyError, TypeError, AttributeError) as err:
+        raise InstallerError(f"{hooks_file} has a hook group whose handlers cannot be read: {err!r}") from err
+
+
+def antigravity_hooks(hooks_file: Path, plugin: Path, jidoka_home: Path) -> dict:
+    """The hooks of hooks_file as the one named hook Antigravity reads from a plugin's root hooks.json.
+
+    A tool event keeps its groups, each with a matcher in Antigravity's tool names. A session event is a flat list of
+    handlers, which Antigravity gives no matcher. Every command names its script by its absolute path under plugin,
+    the snapshot's copy, so a profile copy never runs scripts that the next install rewrites under it.
+    """
+    events = read_json_object(hooks_file).get("hooks")
+    if not isinstance(events, dict):
+        raise InstallerError(f"{hooks_file} has no hooks object")
+    named: dict[str, list] = {}
+    for event, groups in events.items():
+        if event in CLAUDE_ONLY_EVENTS:
+            continue
+        if not isinstance(groups, list) or not all(isinstance(group, dict) for group in groups):
+            raise InstallerError(f"{hooks_file} holds {event} hooks that are not a list of groups")
+        if event in ANTIGRAVITY_GROUPED_EVENTS:
+            named[event] = [{"matcher": antigravity_matcher(group.get("matcher", ""), hooks_file),
+                             "hooks": antigravity_handlers(group, plugin, jidoka_home, hooks_file)} for group in groups]
+        elif event in ANTIGRAVITY_FLAT_EVENTS:
+            named[event] = [handler for group in groups
+                            for handler in antigravity_handlers(group, plugin, jidoka_home, hooks_file)]
+        else:
+            raise InstallerError(f"{hooks_file} has {event} hooks, which the Antigravity copy has no form for")
+    return {PLUGIN_NAME: named}
+
+
+def antigravity_manifest(plugin: Path) -> dict:
+    """The plugin.json of the profile copy: the manifest's own fields, without the Claude Code ones."""
+    manifest = read_json_object(plugin / ".claude-plugin" / "plugin.json")
+    return {key: manifest[key] for key in ["name", "version", "description", "author"] if key in manifest}
+
+
+def sibling_skill_folders(names: list[str]) -> re.Pattern[str]:
+    """Matches `../<name>` for a skill name, where the text points at a sibling skill's folder; matches nothing when
+    there are no skills."""
+    if not names:
+        return re.compile(r"(?!)")
+    return re.compile(r"(?<![\w.])\.\./(" + "|".join(re.escape(name) for name in names) + r")(?=/)")
+
+
+def antigravity_text(text: str, siblings: re.Pattern[str], plugin: Path) -> str:
+    """The text with each `jidoka:<name>` token as `jidoka-<name>`, each `../<skill>/` as `../jidoka-<skill>/`, and
+    each `<skill folder>/../../bin/`, `scripts/` or `hooks/` as the same folder under plugin, the snapshot's copy,
+    which the profile copy does not hold."""
+    in_snapshot = SKILL_SCRIPT_FOLDERS.sub(lambda found: f"{plugin.as_posix()}/{found.group(1)}/", text)
+    return siblings.sub(lambda found: f"../{ANTIGRAVITY_PREFIX}{found.group(1)}",
+                        JIDOKA_TOKEN.sub(ANTIGRAVITY_PREFIX, in_snapshot))
+
+
+def with_prefixed_name(text: str) -> str:
+    """The text with the `name:` field of its front matter prefixed, and the text as it was when it has none."""
+    if not text.startswith("---"):
+        return text
+    end = text.find("\n---", 3)
+    if end == -1:
+        return text
+    return NAME_FIELD.sub(lambda found: f"name: {ANTIGRAVITY_PREFIX}{found.group(2)}", text[:end], count=1) + text[end:]
+
+
+def copy_converting(source: str, destination: str, siblings: re.Pattern[str], plugin: Path) -> str:
+    """Copies a file with its text converted by antigravity_text, and a file that is not UTF-8 text as it is."""
+    data = Path(source).read_bytes()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return shutil.copy2(source, destination)
+    Path(destination).write_bytes(antigravity_text(text, siblings, plugin).encode("utf-8"))
+    shutil.copymode(source, destination)
+    return destination
+
+
+def rewrite_name_field(file: Path) -> None:
+    file.write_bytes(with_prefixed_name(file.read_text(encoding="utf-8")).encode("utf-8"))
+
+
+def write_antigravity_skills_and_agents(plugin: Path, copy: Path) -> None:
+    """Writes the plugin's skills and agents into copy under names that start with `jidoka-`, since Antigravity has
+    no plugin namespace to put in front of a skill's name. Their text names plugin's own scripts, not the copy's."""
+    skills_folder = plugin / "skills"
+    skills = sorted(path for path in skills_folder.iterdir() if path.is_dir()) if skills_folder.is_dir() else []
+    siblings = sibling_skill_folders([skill.name for skill in skills])
+    for skill in skills:
+        written = copy / "skills" / f"{ANTIGRAVITY_PREFIX}{skill.name}"
+        shutil.copytree(skill, written,
+                        copy_function=lambda source, destination: copy_converting(source, destination, siblings, plugin))
+        if (written / "SKILL.md").is_file():
+            rewrite_name_field(written / "SKILL.md")
+    agents = plugin / "agents"
+    if agents.is_dir():
+        (copy / "agents").mkdir()
+        for agent in sorted(agents.iterdir()):
+            named = f"{ANTIGRAVITY_PREFIX}{agent.name}" if agent.suffix == ".md" else agent.name
+            copy_converting(str(agent), str(copy / "agents" / named), siblings, plugin)
+            if agent.suffix == ".md":
+                rewrite_name_field(copy / "agents" / named)
+
+
+def build_antigravity_copy(snapshot: Path, jidoka_home: Path, building: Path) -> Path:
+    """Builds the plugin the way `antigravity plugin install` would leave it, in a new folder inside building.
+
+    The plugin folder of the snapshot is copied as files and never links, without the launcher and the scripts, which
+    stay in the snapshot where the hooks and the skills name them, the lap mod and its helpers, the types they use,
+    Claude Code's manifest and hooks file, and the skills and agents, which are written under their `jidoka-` names.
+    The manifest and the hooks go at the root, where Antigravity reads them.
+    """
+    plugin = snapshot / PLUGIN_DIR
+    copy = building / PLUGIN_DIR
+
+    def left_out(folder: str, names: list[str]) -> set[str]:
+        relative = Path(folder).relative_to(plugin)
+        if relative == Path("."):
+            return {".claude-plugin", "skills", "agents", "types", "bin", "scripts"} & set(names)
+        if relative == Path("hooks"):
+            return {name for name in names if name == "hooks.json" or name.endswith(".ts")}
+        return set()
+
+    shutil.copytree(plugin, copy, symlinks=False, ignore=left_out)
+    write_antigravity_skills_and_agents(plugin, copy)
+    for name, content in [("plugin.json", antigravity_manifest(plugin)),
+                          ("hooks.json", antigravity_hooks(plugin / "hooks" / "hooks.json", plugin, jidoka_home))]:
+        (copy / name).write_text(json.dumps(content, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    return copy
+
+
+def antigravity_copy_version(copy: Path) -> str | None:
+    """The version in the profile copy's plugin.json, or None when the copy is missing, is a link, or has no readable
+    manifest with a version."""
+    if copy.is_symlink() or not copy.is_dir():
+        return None
+    try:
+        version = read_json_object(copy / "plugin.json").get("version")
+    except InstallerError:
+        return None
+    return version if isinstance(version, str) else None
+
+
+def ensure_antigravity_copy(snapshot: Path, jidoka_home: Path, profile: Path) -> None:
+    """Writes the plugin into the profile's plugins folder, replacing a copy of another version and leaving a copy
+    of the snapshot's version as it is, so a second run at the same version touches nothing."""
+    target = profile / ANTIGRAVITY_PLUGINS / PLUGIN_NAME
+    if antigravity_copy_version(target) == read_version(snapshot):
+        return
+    built_in_place(target, lambda building: build_antigravity_copy(snapshot, jidoka_home, building), Replacing())
+
+
+def enable_in_antigravity_config(profile: Path) -> None:
+    """Sets plugins.jidoka.enabled in the profile's config.json, keeping every other key, and writes nothing when it
+    is set already."""
+    config_file = profile / ANTIGRAVITY_CONFIG
+    held = read_json_object(config_file) if config_file.exists() else {}
+    plugins = held.get("plugins", {})
+    if not isinstance(plugins, dict):
+        raise InstallerError(f"{config_file} holds a plugins value that is not a JSON object")
+    entry = plugins.get(PLUGIN_NAME, {})
+    if not isinstance(entry, dict):
+        raise InstallerError(f"{config_file} holds a {PLUGIN_NAME} plugin entry that is not a JSON object")
+    if entry.get("enabled") is True:
+        return
+    held["plugins"] = {**plugins, PLUGIN_NAME: {**entry, "enabled": True}}
+    written = config_file.with_name(f".{config_file.name}.tmp")
+    written.write_text(json.dumps(held, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    written.chmod(0o600)
+    os.replace(written, config_file)
+
+
+def find_antigravity_profiles(t3_userdata: Path) -> list[Path]:
+    """The T3 Antigravity profiles, one folder for each T3 instance under providers/antigravity, that hold the config
+    folder Antigravity reads its plugins from."""
+    folder = t3_userdata / T3_ANTIGRAVITY_PROFILES
+    if not folder.is_dir():
+        return []
+    return sorted(path for path in folder.iterdir() if (path / ANTIGRAVITY_CONFIG_DIR).is_dir())
+
+
+def install_into_antigravity(snapshot: Path, jidoka_home: Path, profile: Path) -> None:
+    ensure_antigravity_copy(snapshot, jidoka_home, profile)
+    enable_in_antigravity_config(profile)
+
+
 def read_pushover(home: Path) -> dict:
     """The Pushover file as it stands, or an empty object when it is missing or not a JSON object."""
     try:
@@ -528,8 +820,9 @@ def ask_for_pushover(home: Path, terminal: Terminal | None) -> str:
     return f"Pushover is set up in {path}."
 
 
-def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[int, int], python: str,
-            terminal: Terminal | None, missing_on_host: Callable[[str], list[str]]) -> None:
+def install(folders: Folders, python_version: tuple[int, int], python: str, terminal: Terminal | None,
+            missing_on_host: Callable[[str], list[str]]) -> None:
+    config_dirs, jidoka_home, t3_userdata = folders.config_dirs, folders.jidoka_home, folders.t3_userdata
     missing = find_every_gap(python_version, shutil.which, missing_on_host)
     if missing:
         raise InstallerError("these are missing, and the installer installs none of them: " + ", ".join(missing))
@@ -555,6 +848,12 @@ def install(config_dirs: list[Path], jidoka_home: Path, python_version: tuple[in
     if tools.codex is not None:
         install_into_codex(tools.codex, ensure_codex_snapshot(snapshot, jidoka_home, version))
         print(f"Installed jidoka {version} into Codex")
+    profiles = find_antigravity_profiles(t3_userdata)
+    if not profiles:
+        print(f"Antigravity was skipped, because {t3_userdata} holds no T3 Antigravity profile.")
+    for profile in profiles:
+        install_into_antigravity(snapshot, jidoka_home, profile)
+        print(f"Installed jidoka {version} into Antigravity profile {profile}")
     print(ask_for_pushover(jidoka_home, terminal))
     if unnamed:
         print("These config dirs were recorded by an earlier run and not named in this one, so they still run the "
@@ -567,12 +866,15 @@ def main(argv: list[str], missing_on_host: Callable[[str], list[str]]) -> int:
     parser.add_argument("--config-dir", action="append", required=True, metavar="PATH",
                         help="a Claude config dir to install into; repeat it for each one")
     parser.add_argument("--jidoka-home", default="~/.jidoka", help="the folder that holds jidoka's per-machine state")
+    parser.add_argument("--t3-userdata", default="~/.t3/userdata", metavar="PATH",
+                        help="the T3 userdata folder whose Antigravity profiles get a copy of the plugin")
     args = parser.parse_args(argv)
     config_dirs = [Path(path).expanduser().resolve() for path in args.config_dir]
     terminal = Terminal(input, getpass.getpass) if sys.stdin.isatty() and sys.stdout.isatty() else None
     try:
-        install(config_dirs, Path(args.jidoka_home).expanduser().resolve(), sys.version_info[:2], sys.executable,
-                terminal, missing_on_host)
+        folders = Folders(config_dirs, Path(args.jidoka_home).expanduser().resolve(),
+                          Path(args.t3_userdata).expanduser().resolve())
+        install(folders, sys.version_info[:2], sys.executable, terminal, missing_on_host)
     except (InstallerError, OSError) as err:
         print(f"install.py: {err}", file=sys.stderr)
         return 2
