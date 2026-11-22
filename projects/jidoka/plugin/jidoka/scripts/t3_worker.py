@@ -137,14 +137,18 @@ def interrupt(thread: str, reason: str) -> None:
 
 
 def last_reply(thread: str) -> str:
-    """The text of the thread's newest assistant message, or an empty string when it has none."""
+    """The text of the thread's newest assistant message, or an empty string when it has none.
+
+    The messages view answers the newest page of items, each with a `position` in the thread and a `type`. The page
+    comes in ascending position, and a turn can hold progress notes before its final reply, so the reply is the
+    assistant message with the highest position."""
     result = call("t3_thread_read", {"threadId": thread, "view": "messages", "limit": READ_LIMIT,
                                      "maxCharsPerItem": READ_CHARACTERS})
-    messages = result.get("messages")
-    for message in messages if isinstance(messages, list) else []:
-        if isinstance(message, dict) and message.get("role") == "assistant" and is_text(message.get("text")):
-            return message["text"]
-    return ""
+    items = result.get("items")
+    replies = [item for item in items if isinstance(item, dict) and item.get("type") == "assistant_message"
+               and is_text(item.get("text")) and isinstance(item.get("position"), int)] \
+        if isinstance(items, list) else []
+    return max(replies, key=lambda item: item["position"])["text"] if replies else ""
 
 
 def archive(thread: str) -> None:

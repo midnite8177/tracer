@@ -435,7 +435,7 @@ class ReportingEachStageTests(T3StageCase):
         self.bd("update", self.action["task"], "--set-metadata", "lap.stage=spec-check")
         started = self.started()
         self.answer({"t3_thread_wait": {"timedOut": False},
-                     "t3_thread_read": {"messages": [{"role": "assistant", "text": '```json\n{"outcome": "pass"}\n```'}]}})
+                     "t3_thread_read": {"items": [{"position": 3, "type": "assistant_message", "text": '```json\n{"outcome": "pass"}\n```'}]}})
 
         waited = json.loads(self.wait(STARTED + 60).stdout)
         reported = self.report(STARTED + 90)
@@ -543,7 +543,7 @@ class WaitingAcrossTheDeadlineTests(T3StageCase):
     def test_the_report_after_such_a_step_says_the_stage_was_cut_off(self):
         self.start_a_stage_whose_deadline_falls_inside_the_next_wait()
         self.answer({"t3_thread_wait": {"timedOut": False, "sleep": self.WAIT_LASTS_SECONDS},
-                     "t3_thread_read": {"messages": [{"role": "assistant", "text": "Done."}]}})
+                     "t3_thread_read": {"items": [{"position": 3, "type": "assistant_message", "text": "Done."}]}})
         self.wait(None)
 
         done = self.report(None)
@@ -559,7 +559,7 @@ class PricingTheThreadWhenTheStageIsReportedTests(T3StageCase):
     """The report of a stage writes the ledger rows of its thread, and the scheduler's report of the same worker gives
     them its outcome and writes none, so no token is counted twice."""
 
-    REPLY = {"t3_thread_read": {"messages": [{"role": "assistant", "text": "Built it."}]}}
+    REPLY = {"t3_thread_read": {"items": [{"position": 3, "type": "assistant_message", "text": "Built it."}]}}
 
     def give_the_thread_a_turn(self, input_tokens: int, output_tokens: int) -> None:
         t3_state.add_next_run(self.t3_db, "run-1", WORKER_THREAD, "gemini-4-neon", "completed", "completed")
@@ -638,10 +638,10 @@ class PricingTheThreadWhenTheStageIsReportedTests(T3StageCase):
 
 
 class ReportingTheBuildTests(T3StageCase):
-    REPLIES = {"t3_thread_read": {"messages": [
-        {"role": "assistant", "text": 'Built it.\n```json\n{"outcome": "done"}\n```'},
-        {"role": "user", "text": "ignored"},
-        {"role": "assistant", "text": "older reply"}]}}
+    REPLIES = {"t3_thread_read": {"items": [
+        {"position": 0, "type": "user_message", "text": "the task"},
+        {"position": 23, "type": "assistant_message", "text": "Waiting for the targeted test run to finish."},
+        {"position": 25, "type": "assistant_message", "text": 'Built it.\n```json\n{"outcome": "done"}\n```'}]}}
 
     def test_reads_the_last_reply_then_archives_the_thread_and_prints_the_reply(self):
         self.started()
@@ -697,9 +697,20 @@ class ReportingTheBuildTests(T3StageCase):
 
         self.assertIs(True, json.loads(done.stdout)["cut_off"])
 
+    def test_the_last_reply_is_the_assistant_message_with_the_highest_position_whatever_the_order(self):
+        self.started()
+        self.answer({"t3_thread_read": {"items": [
+            {"position": 9, "type": "assistant_message", "text": "the final reply"},
+            {"position": 4, "type": "assistant_message", "text": "a progress note"},
+            {"position": 12, "type": "user_message", "text": "a later user message"}]}})
+
+        done = self.report(STARTED + 900)
+
+        self.assertEqual("the final reply", json.loads(done.stdout)["reply"])
+
     def test_a_thread_with_no_assistant_message_reports_an_empty_reply(self):
         self.started()
-        self.answer({"t3_thread_read": {"messages": [{"role": "user", "text": "the task"}]}})
+        self.answer({"t3_thread_read": {"items": [{"position": 0, "type": "user_message", "text": "the task"}]}})
 
         done = self.report(STARTED + 900)
 
