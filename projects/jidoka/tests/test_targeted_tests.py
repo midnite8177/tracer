@@ -179,6 +179,15 @@ class TargetedTestsCase(unittest.TestCase):
             {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home)}, self.root,
             RUN_TIMEOUT_SECONDS)
 
+    def targeted_tests_on_antigravity(self, bead: Bead, app: str, test_filter: str,
+                                      home: Path) -> subprocess.CompletedProcess:
+        environment = {key: value for key, value in os.environ.items() if key != "JIDOKA_SESSION_ID"}
+        environment.update({"PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home),
+                            "T3CODE_THREAD_ID": "thread-of-the-test"})
+        return fixture.run_launcher(LAUNCHER, [
+            str(TARGETED_TESTS), "--bead", bead.id, "--worktree", str(bead.worktree), "--base", "main", "--app", app,
+            "--filter", test_filter, "--jidoka-home", str(home)], None, environment, self.root, RUN_TIMEOUT_SECONDS)
+
     def metadata(self, bead: Bead) -> dict:
         shown = json.loads(fixture.run([self.bd, "show", bead.id, "--json"], self.repo))[0]
         return {key: value for key, value in (shown.get("metadata") or {}).items() if key.startswith("tests.")}
@@ -417,6 +426,14 @@ class RefusedRunTests(TargetedTestsCase):
         self.assertEqual(branch_head, git(bead.worktree, "rev-parse", "HEAD"))
         self.assertEqual({}, self.metadata(bead))
         self.assertEqual([], self.comments(bead))
+
+    def test_an_app_with_no_test_command_on_antigravity_is_sent_to_the_onboarding_skill_as_antigravity_spells_it(self):
+        bead = self.new_bead()
+
+        done = self.targeted_tests_on_antigravity(bead, "editor", "test_greeting", self.home)
+
+        self.assertEqual(1, done.returncode, done.stderr)
+        self.assertIn("then run /jidoka-onboard to record its command.", done.stderr)
 
     def test_a_test_target_without_a_placeholder_is_refused_and_nothing_runs(self):
         bead = self.new_bead()

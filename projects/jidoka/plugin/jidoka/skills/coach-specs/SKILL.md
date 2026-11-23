@@ -1,6 +1,6 @@
 ---
 name: coach-specs
-description: Coach the human through writing an epic's acceptance specs. Asks rounds of questions with examples and a recommendation, then proposes test cases in the users' words with plain readings, an interface table and the answer to the deletion question, shows them on an approval page in jidoka-ui, and writes the approved ones onto the spec task. Use in planning after to-spec and before to-tickets, alone on an existing epic, or on a holdout the human promoted at the acceptance gate.
+description: Coach the human through writing an epic's acceptance specs. Asks rounds of questions with examples and a recommendation, then proposes test cases in the users' words with plain readings, an interface table and the answer to the deletion question, shows them on an approval page in jidoka-ui, and writes the approved ones onto the spec task. Use in planning after jidoka:to-spec and before jidoka:to-tickets, alone on an existing epic, or on a holdout the human promoted at the acceptance gate.
 disable-model-invocation: true
 argument-hint: "<epic-id or promoted-holdout-bead-id>"
 ---
@@ -18,7 +18,7 @@ The scripts, run from inside the repo:
 
 The skill folder is the directory that holds this SKILL.md. Use the words
 of the project's `GLOSSARY.md`, and read the ADRs of the area the epic
-touches. Holdouts are not this skill's job. The holdouts skill already
+touches. Holdouts are not this skill's job. The `jidoka:holdouts` skill already
 drafts only what the specs leave out.
 
 ## Steps
@@ -30,7 +30,7 @@ drafts only what the specs leave out.
    task, so settle the epic first. Run `bd show` on the bead and read its
    app and scenario. The epic it came from has landed. Ask the human
    whether the specs belong to an open epic, whose id you then use, or to
-   a new epic. For a new one, call the Skill tool with "to-spec" to
+   a new epic. For a new one, load the `jidoka:to-spec` skill to
    publish an epic from the scenario, and use its id. Say which epic you
    will use and wait for the human to agree. From here on, `<epic-id>`
    means that epic and the scenario is the first answer to the rounds in
@@ -59,7 +59,7 @@ drafts only what the specs leave out.
    spec already answers. Stop when the answers settle the inputs and the
    expected values of every case you would propose, and say so before you
    propose.
-3. **Propose.** Call the Skill tool with "unslop" and apply it to the
+3. **Propose.** Load the `jidoka:unslop` skill and apply it to the
    prose below before you show it. Show one numbered list of test cases.
    Each case has:
    - its **name**, one sentence in the users' words, which becomes the
@@ -121,9 +121,9 @@ drafts only what the specs leave out.
    different list. Then run `spec_cases.py read <epic-id>` and confirm it
    matches what the human approved.
 
-   When the epic records no spec task, which is normal before to-tickets
+   When the epic records no spec task, which is normal before `jidoka:to-tickets`
    has filed the tasks, tell the human so and keep the approved list in
-   this conversation. After to-tickets files the spec task and
+   this conversation. After `jidoka:to-tickets` files the spec task and
    `specs.py spec-task <epic-id> <task-id>` records it, run this step.
    The approved names are the spec names that `specs.py makes-pass` and
    `already-true` record for the tasks.

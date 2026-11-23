@@ -37,7 +37,7 @@ ts	phase	decision	why	evidence	result
 
 ## Logging a row
 
-Write each entry the way you'd tell a teammate what you did. Plain words, concrete actions, no AI speak or abstract jargon (the **unslop** skill applies to log text too). A reviewer should understand each row without decoding it.
+Write each entry the way you'd tell a teammate what you did. Plain words, concrete actions, no AI speak or abstract jargon (the `jidoka:unslop` skill applies to log text too). A reviewer should understand each row without decoding it.
 
 Use the helper so rows stay well-formed: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/scripts/log.py" <logfile> <phase> <decision> <why> <evidence> <result>`, where the skill folder is the directory that holds this SKILL.md. It stamps `ts`, writes the header on first use, strips stray tabs/newlines, and prefixes any cell starting with `=`, `+`, `-`, or `@` with a single quote so a reviewer opening the log in a spreadsheet doesn't trigger formula execution. Appending a row by hand works too, but mind those same bytes if cells come from generated or user-supplied text.
 
@@ -57,7 +57,12 @@ Commit it only when the work is ambitious enough that a reviewer needs the trail
 
 ## Audit the log against the transcript
 
-At the end of the run, before handing back, check the log told the truth. Claude Code keeps this session's transcript under `~/.claude/projects/<encoded repo path>/` as a `.jsonl` file; read this session's only, never other projects' or other sessions' (those are private chats). If it is not readable, audit against `git log`, the bead comments, and your own record of the run instead. Walk the log against what actually happened:
+At the end of the run, before handing back, check the log told the truth. Read this session's record of the run with `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/retro.py"` from the repo. Read this session's only, never other projects' or other sessions' (those are private chats).
+
+- In a T3 session (`$T3CODE_THREAD_ID` is set and `$JIDOKA_SESSION_ID` is not), it prints this session's thread from T3's state db: its items in order, its runs with their model and tokens, and each child thread. On Antigravity it merges in the tool names, arguments, results and errors of Antigravity's own transcript. A `Note:` line says which source it fell back from; the report is then the db's alone.
+- Elsewhere it prints the path and the tail of the newest Claude Code transcript for this repo, a `.jsonl` file under `~/.claude/projects/<encoded repo path>/`. Read the file itself further back where the log's earlier rows need it.
+
+If the script exits 1, or prints nothing it can use, audit against `git log`, the bead comments, and your own record of the run instead. Walk the log against what actually happened:
 
 - Every row maps to a real action. Cut invented or aspirational entries.
 - Each row's evidence resolves and shows what the row claims.
@@ -68,14 +73,14 @@ Fix the log, not the story. If the work diverged from what a row claims, the row
 
 ## Cross-model review of the trail
 
-Before handing back, spawn a subagent to review the trail with fresh eyes. Self-review is not a substitute. Use a different model family where the harness offers one (a Codex reviewer over MCP, if configured); otherwise a fresh subagent with a different Claude model set in its `model` field. The subagent reads the audit trail and the run's transcript, then flags what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky.
+Before handing back, start a subagent to review the trail with fresh eyes. Self-review is not a substitute. Use a different model family where the host offers one (a Codex reviewer over MCP, if configured); otherwise start the subagent on a model other than your own. The subagent reads the audit trail and the run's transcript, then flags what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky.
 
 - Decisions logged with weak or absent evidence.
 - Verification steps skipped or claimed without proof in the transcript.
 - Choices that look risky in hindsight (premature, scope-creeping, papering over a symptom).
 - Gaps the user would otherwise miss on a casual skim.
 
-Every reply for a run that produced a trail ends with an "Attention" section. Lead with the reviewer's model on its own line (`reviewed by <model>`), then list each flag pointing to specific rows or moments. "No flags" is a valid value. If no reviewer could be spawned, the line reads `reviewed by: none available` and says why; never name a model that did not run.
+Every reply for a run that produced a trail ends with an "Attention" section. Lead with the reviewer's model on its own line (`reviewed by <model>`), then list each flag pointing to specific rows or moments. "No flags" is a valid value. If no reviewer could be started, the line reads `reviewed by: none available` and says why; never name a model that did not run.
 
 ## Reviewing the trail
 

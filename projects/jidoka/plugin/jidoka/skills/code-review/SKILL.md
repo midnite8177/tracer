@@ -87,10 +87,10 @@ Large Class and Feature Envy, callers for Shotgun Surgery and Message
 Chains. Sticky Note (TODO, FIXME, HACK, XXX) is reported even in
 unchanged lines the diff touches.
 
-**5. Spawn the three lanes in parallel.** Each brief carries the diff
+**5. Start the three lanes in parallel, each as its own subagent.** Each brief carries the diff
 command, the commit list, the relevant catalog part pasted in full
 (the subagent has no other access to it), the standards sources, and
-this line: "Do not invoke code-review or spawn additional agents:
+this line: "Do not load `jidoka:code-review` or start further subagents:
 perform this review directly."
 
 *Comments lane.* Part 2 of `smells.md`. Mechanical pass first, using
@@ -122,9 +122,10 @@ severity section calls it mechanical.
 When the diff adds or edits a skill, an agent, an `AGENTS.md` or a
 `CLAUDE.md`, load `../writing-for-agents/SKILL.md`, relative to the folder
 that holds this SKILL.md, and check the changed text against it. A host
-tool named in skill or agent text, as in "call the Skill tool", is a
-documented-standard breach: report it under the rule's name, host-neutral
-wording, and give the neutral phrase as the fix. Paste that skill's
+tool's name in skill or agent text, or a jidoka skill or agent named without
+its `jidoka:` prefix, is a documented-standard breach: report it under the
+rule's name, host-neutral wording, and give the neutral phrase as the fix.
+Paste that skill's
 "Host-neutral wording" section into the Standards brief, since the subagent
 has no other access to it.
 
@@ -155,5 +156,5 @@ confidence and severity and say how many were cut. End with a count
 per smell and one verdict per lane (clean, minor, needs work), never
 one verdict across lanes.
 
-Run this in a fresh session when you can: the context that wrote the
+Run this in a fresh session when you can. The context that wrote the
 code should not review it.

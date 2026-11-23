@@ -19,6 +19,7 @@ from pathlib import Path
 
 import cleanup
 import review
+import routes
 import spec_runs
 from commands import bd_comments, bd_list, bd_show, run
 from epic_reader import child_ids, shown_beads
@@ -165,5 +166,5 @@ def reach_the_gate(epic: str, branch: str, validated_head: str, figures: list[st
     lines = [f"{GATE_COMMENT_HEADING} {epic} waits for the human, on the epic branch {branch} at {validated_head}.",
              "", "Merged into the epic branch:", *(f"- {commit}" for commit in merged_commits(validated_head, main_tree)),
              "", *figures, *notes, *hand_run,
-             "", f"/jidoka:accept {epic} writes the review guide page and takes the human's choice."]
+             "", f"{routes.slash_command('accept')} {epic} writes the review guide page and takes the human's choice."]
     park_epic(epic, "\n".join(lines), {GATE_STATE_KEY: WAITING}, main_tree)

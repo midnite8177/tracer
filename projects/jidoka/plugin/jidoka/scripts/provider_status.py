@@ -325,7 +325,7 @@ def main(argv: list[str]) -> int:
         home = settings_reader.jidoka_home(args.jidoka_home)
         token = t3_token.read_token(home)
         if token is None:
-            raise NoStatus("jidoka holds no T3 token; run /jidoka:setup and confirm the token")
+            raise NoStatus(f"jidoka holds no T3 token; run {routes.slash_command('setup')} and confirm the token")
         status = read_antigravity_status(token, args.port, args.timeout)
     except (NoStatus, settings_reader.SettingsError) as error:
         print(f"provider_status: no status: {error}", file=sys.stderr)

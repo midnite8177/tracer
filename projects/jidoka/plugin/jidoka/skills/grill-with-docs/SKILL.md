@@ -8,4 +8,4 @@ metadata:
   upstream-base: "24fe0ef7737efae15c87225755e9f6f5965e4888"
 ---
 
-Call the Skill tool twice, for "grilling" and "domain-modeling".
+Load the `jidoka:grilling` and `jidoka:domain-modeling` skills.

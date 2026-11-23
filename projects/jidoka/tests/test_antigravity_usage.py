@@ -152,7 +152,7 @@ class NoReadingTests(UsageCase):
         with self.server(two_buckets(from_now(-MINUTE))) as server:
             done = self.schedule(server.port)
 
-        self.assert_no_reading_because(done, "run /jidoka:setup")
+        self.assert_no_reading_because(done, "run /jidoka-setup")
         self.assertEqual([], server.paths)
 
     def test_a_checked_at_past_ten_minutes_counts_as_no_reading(self):

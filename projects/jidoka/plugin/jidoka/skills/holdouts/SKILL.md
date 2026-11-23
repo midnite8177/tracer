@@ -31,7 +31,7 @@ command, and the holdouts guard denies it the script anyway.
    the nearby input or path that the fix could have broken or left out,
    never the bug's own reproduction, which its task tests.
 3. **Draft.** Start a fresh subagent on the standard tier's route, as the
-   bench skill does. Its prompt holds the brief's JSON, the kind from
+   `jidoka:bench` skill does. Its prompt holds the brief's JSON, the kind from
    step 2, and these rules, and nothing from this conversation:
    - Read the spec. Read no bead, and no task. If a task id or task text
      reaches you, stop and say so.

@@ -36,8 +36,9 @@ record, and the watcher does not end on it. Nothing wakes a stopped epic.
   action           `none` for a running epic, `wait` for a waiting one, `answer` for one that waits on you and
                    `restart` for a stopped one.
   text             the step in words.
-  command          `/jidoka:factory` when the step ends with running it, else null.
-  run_after        the second since the epoch before which a run of /jidoka:factory would only wait out the fresh
+  command          the factory command, `/jidoka:factory` under Claude Code and `/jidoka-factory` under Antigravity,
+                   when the step ends with running it, else null.
+  run_after        the second since the epoch before which a run of the factory command would only wait out the fresh
                    heartbeat, or null when the heartbeat is not fresh or the step runs nothing.
   wakes_at         the second the epic's pause ends when the epic is waiting on it, else null.
   wakes_on_answer  true when every bead that waits on the human wakes the factory when it is answered.
@@ -66,6 +67,7 @@ import clock
 import heartbeat
 import pause
 import park
+import routes
 import settings_reader
 import t3_turns
 import watcher_record
@@ -101,8 +103,6 @@ class Kind(Enum):
     HUMAN = "human"
 
 
-RESTART_COMMAND = "/jidoka:factory"
-ACCEPT_COMMAND = "/jidoka:accept"
 CLOCK_FORMAT = "%H:%M:%S"
 NO_REASON = "it carries the human label, and the factory posted no reason"
 GATE_REASON = "the epic waits at the acceptance gate"
@@ -146,14 +146,15 @@ class NextStep:
 
     @staticmethod
     def answer_then_run(text: str, run_after: int | None) -> NextStep:
-        """An answer that the human follows by running /jidoka:factory, after `run_after` when the heartbeat is
+        """An answer that the human follows by running the factory command, after `run_after` when the heartbeat is
         fresh."""
-        return NextStep(action=Action.ANSWER, text=text, command=RESTART_COMMAND, run_after=run_after,
+        return NextStep(action=Action.ANSWER, text=text, command=routes.slash_command("factory"), run_after=run_after,
                         wakes_at=None, wakes_on_answer=False)
 
     @staticmethod
     def restart(text: str) -> NextStep:
-        return NextStep(action=Action.RESTART, text=text, command=RESTART_COMMAND, run_after=None, wakes_at=None,
+        return NextStep(action=Action.RESTART, text=text, command=routes.slash_command("factory"), run_after=None,
+                        wakes_at=None,
                         wakes_on_answer=False)
 
 
@@ -204,7 +205,7 @@ def waiting_on(epic_shown: dict, tasks: list[dict], watched: frozenset[str], mai
 
 def request_of(item: Waiting, epic: str) -> str:
     if item.kind is Kind.ACCEPTANCE_GATE:
-        return f"Decide at the acceptance gate: run {ACCEPT_COMMAND} {epic} to merge, send back or drop the epic"
+        return f"Decide at the acceptance gate: run {routes.slash_command('accept')} {epic} to merge, send back or drop the epic"
     if item.kind is Kind.QUESTION:
         return f"Answer: {item.text}" if item.bead == epic else f"Answer {item.bead}: {item.text}"
     return f"Take the human label off {item.bead} once you have settled it: {item.text}"
@@ -213,7 +214,7 @@ def request_of(item: Waiting, epic: str) -> str:
 def step_for_you(epic: str, held: tuple[Waiting, ...], fresh_age: int | None, now: int) -> NextStep:
     """What the human does for the beads that wait on them. The step lists the requests, then ends in one of three
     ways. Beads that all wait at the acceptance gate end it with the request, which names its own command. Beads
-    whose answer wakes the factory say that it does. Any other bead tells the human to run /jidoka:factory after the
+    whose answer wakes the factory say that it does. Any other bead tells the human to run the factory command after the
     answer, once the heartbeat goes stale if it is fresh."""
     requests = "; ".join(request_of(item, epic) for item in held)
     wakes = all(item.wakes for item in held)
@@ -223,12 +224,12 @@ def step_for_you(epic: str, held: tuple[Waiting, ...], fresh_age: int | None, no
         return NextStep.answer(f"{requests}. Answering wakes the factory by itself.", True)
     run_after = None if fresh_age is None else now + heartbeat.seconds_until_stale(fresh_age)
     after = "" if run_after is None else f" after {clock_time(run_after)}"
-    return NextStep.answer_then_run(f"{requests}, then run {RESTART_COMMAND}{after}.", run_after)
+    return NextStep.answer_then_run(f"{requests}, then run {routes.slash_command('factory')}{after}.", run_after)
 
 
 def step_for_a_stopped_epic(held: tuple[Waiting, ...]) -> NextStep:
     kept = "".join(f" {item.bead} stays parked until you answer: {item.text}." for item in held)
-    return NextStep.restart(f"Run {RESTART_COMMAND} to start the manager again.{kept}")
+    return NextStep.restart(f"Run {routes.slash_command('factory')} to start the manager again.{kept}")
 
 
 def step_for_a_waiting_epic(shown: dict, now: int) -> NextStep:

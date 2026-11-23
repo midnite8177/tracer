@@ -21,7 +21,7 @@ The issue tracker and triage label vocabulary are in the tracker doc, `<skill fo
 Work from whatever is already in the conversation context. If the user passes a reference (a spec path, an issue number or URL) as an argument, fetch it and read its full body and comments.
 
 Find out whether the epic has approved acceptance specs. They are the cases
-the human approved in the coach-specs skill, either still in this
+the human approved in the `jidoka:coach-specs` skill, either still in this
 conversation or already on the epic's spec task. Run the specs script,
 `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/specs.py" show <epic-id>`,
 and read its `spec_task`. When it names a task, run `spec_cases.py read <epic-id>`
@@ -117,7 +117,7 @@ For an epic with approved specs, record them once every ticket and blocking edge
 3. `specs.py makes-pass <epic-id> <ticket-id> --app <app> "<spec name>" ...` records, for each ticket that makes specs pass, the names of its specs exactly as the human approved them, and the app they belong to, which may differ from the app of the ticket's targeted tests. The spec task makes none pass.
 4. `specs.py already-true <epic-id> <spec-task-id> --app <app> "<spec name>" ...` records the specs planning marked as already true and their app, when there are any. A ticket's two lists belong to one app.
 5. `specs.py show <epic-id>` prints the spec task and each ticket's specs. Compare it with the breakdown the user approved. Every approved spec appears under one ticket, or under already-true.
-6. When the approved cases were still in the conversation, run the store step of the coach-specs skill now, so that `spec_cases.py write <epic-id>` puts them on the spec task's description.
+6. When the approved cases were still in the conversation, run the store step of the `jidoka:coach-specs` skill now, so that `spec_cases.py write <epic-id>` puts them on the spec task's description.
 
 Exit 1 prints the reason. Show it and fix the ticket or the name it names. Do not record different specs than the human approved.
 

@@ -6,6 +6,7 @@ task's lap.
 """
 from __future__ import annotations
 
+import routes
 import settings_reader
 import target_placeholder
 
@@ -17,11 +18,12 @@ class SpecCommandError(Exception):
 def command_for_all(app: settings_reader.App) -> str:
     """The command line that runs every spec of the app; raises SpecCommandError, saying what to do, for an app with
     no acceptance folder or no spec command."""
+    onboard = routes.slash_command("onboard")
     if app.acceptance is None:
         raise SpecCommandError(f"{app.name!r} has no acceptance folder, so it has no specs to run. Run "
-                               "/jidoka:onboard to record the folder of its acceptance specs")
+                               f"{onboard} to record the folder of its acceptance specs")
     if app.spec_command is None:
-        raise SpecCommandError(f"{app.name!r} has an acceptance folder but no spec command. Run /jidoka:onboard to "
+        raise SpecCommandError(f"{app.name!r} has an acceptance folder but no spec command. Run {onboard} to "
                                "record the command that runs its specs and how to target one")
     return app.spec_command
 
@@ -33,7 +35,7 @@ def command_for_one(app: settings_reader.App, spec: str) -> str:
     target = app.spec_target
     if target is None:
         raise SpecCommandError(f"{app.name!r} has a spec command but does not say how to target a spec. "
-                               "Run /jidoka:onboard to record it")
+                               f"Run {routes.slash_command('onboard')} to record it")
     count = len(target_placeholder.PLACEHOLDER.findall(target))
     if count != 1:
         raise SpecCommandError(f"the spec_target of app {app.name!r} is {target!r}, which needs exactly one <...> "

@@ -31,6 +31,7 @@ from pathlib import Path
 
 import home_files
 import provider_status
+import routes
 import t3_token
 from rules import is_number, is_whole
 
@@ -187,7 +188,7 @@ def refresh(home: Path, port: int, timeout_seconds: float, now: int) -> Reading 
     try:
         token = t3_token.read_token(home)
         if token is None:
-            raise NoReading("jidoka holds no T3 token; run /jidoka:setup and confirm the token")
+            raise NoReading(f"jidoka holds no T3 token; run {routes.slash_command('setup')} and confirm the token")
         reading = reading_in(provider_status.read_config(token, port, timeout_seconds), now)
         (home / USAGE_FOLDER).mkdir(parents=True, exist_ok=True)
         home_files.write_in_home(home, USAGE_FILE, json.dumps(reading.fields()) + "\n")

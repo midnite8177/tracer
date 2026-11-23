@@ -60,6 +60,15 @@ class FactoryStateCase(test_status.StatusCase):
     def state_of(self, epic: str) -> dict:
         return next(item for item in self.states() if item["epic"] == epic)
 
+    def state_on_antigravity(self, epic: str) -> dict:
+        environment = {key: value for key, value in os.environ.items() if key != "JIDOKA_SESSION_ID"}
+        environment.update({"PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home), "BEADS_ACTOR": "jidoka",
+                            "T3CODE_THREAD_ID": "thread-of-the-test"})
+        done = fixture.run_launcher(test_status.LAUNCHER, [str(FACTORY_STATE), "--json"], None, environment,
+                                    self.repo, test_status.RUN_TIMEOUT_SECONDS)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return next(item for item in json.loads(done.stdout)["epics"] if item["epic"] == epic)
+
     def lines(self) -> str:
         done = self.script(FACTORY_STATE)
         self.assertEqual(0, done.returncode, done.stderr)
@@ -93,6 +102,13 @@ class ParkedEpicTests(FactoryStateCase):
         self.assertEqual(RESTART, shown["next_step"]["command"])
         self.assertIn(QUESTION, shown["next_step"]["text"])
         self.assertIn(f"then run {RESTART}", shown["next_step"]["text"])
+
+    def test_the_same_epic_on_antigravity_says_to_answer_and_then_run_the_factory_as_antigravity_spells_it(self):
+        shown = self.state_on_antigravity(self.epic)
+
+        self.assertEqual("/jidoka-factory", shown["next_step"]["command"])
+        self.assertIn("then run /jidoka-factory", shown["next_step"]["text"])
+        self.assertNotIn("/jidoka:", shown["next_step"]["text"])
 
     def test_a_record_whose_process_is_gone_counts_as_no_watcher(self):
         self.leave_record_of_a_gone_watcher(self.epic, [self.epic])
@@ -177,6 +193,15 @@ class GateAndBudgetTests(FactoryStateCase):
         self.assertEqual("acceptance-gate", shown["waiting_on"][0]["kind"])
         self.assertIn(f"{GATE_COMMAND} {epic}", shown["next_step"]["text"])
 
+    def test_an_epic_at_the_acceptance_gate_on_antigravity_names_accept_as_antigravity_spells_it(self):
+        epic = self.new_epic("Take card payments", "factory", "human")
+        self.set_metadata(epic, gate_state="waiting")
+        self.start_watcher(epic, [epic])
+
+        shown = self.state_on_antigravity(epic)
+
+        self.assertIn(f"/jidoka-accept {epic}", shown["next_step"]["text"])
+
     def test_an_epic_the_factory_parked_without_a_question_gives_the_factorys_words(self):
         epic = self.new_epic("Take card payments", "factory")
         self.post_as_factory(epic, "Parked: the epic spent $12.00 at list price, and its budget is $10.00.")
@@ -236,6 +261,15 @@ class ManagedEpicTests(FactoryStateCase):
         self.assertEqual("restart", shown["next_step"]["action"])
         self.assertEqual(RESTART, shown["next_step"]["command"])
         self.assertIn(f"Run {RESTART}", shown["next_step"]["text"])
+
+    def test_a_stopped_epic_on_antigravity_says_to_run_the_factory_as_antigravity_spells_it(self):
+        self.write_beat(self.epic, 10 * MINUTE, test_status.MANAGER_SESSION)
+
+        shown = self.state_on_antigravity(self.epic)
+
+        self.assertEqual("stopped", shown["state"])
+        self.assertEqual("/jidoka-factory", shown["next_step"]["command"])
+        self.assertIn("Run /jidoka-factory", shown["next_step"]["text"])
 
     def stop_in_session(self, session: str, epic: str) -> subprocess.CompletedProcess:
         return self.stop_in_session_from(session, epic, self.repo)

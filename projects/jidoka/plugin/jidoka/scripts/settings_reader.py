@@ -22,6 +22,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+import routes
+
 GIT_TIMEOUT_SECONDS = 30
 GLOSSARY_AND_ADRS = "glossary_and_adrs"
 COMMITTED, PRIVATE = "committed", "private"
@@ -41,7 +43,6 @@ DOCS_DEFAULTS = {"glossary": "GLOSSARY.md", "adrs": "docs/adr", GLOSSARY_AND_ADR
 RULE_CONFLICTS = "rule_conflicts"
 DEFAULTS = {**DOCS_DEFAULTS, RULE_CONFLICTS: [], LIZARD_LIMITS: DEFAULT_LIZARD_LIMITS}
 RULE_CONFLICT_KEYS = ["repo_rule", "written_in", "overrules"]
-ONBOARD = "/jidoka:onboard"
 WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 LOADING_NAMES = ("PATH", "SHELL", "HOME", "IFS", "ENV")
 LOADING_PREFIXES = ("LD_", "DYLD_", "BASH_", "PYTHON", "NODE_", "RUBY", "PERL", "JAVA", "_JAVA", "JIDOKA_")
@@ -142,7 +143,7 @@ class Settings:
         problems = self.app_problems.get(name, ())
         if problems:
             raise SettingsError(f"the repo settings for app {name!r} are incomplete: {'; '.join(problems)}. "
-                                f"Run {ONBOARD} to record them")
+                                f"Run {routes.slash_command('onboard')} to record them")
         return found
 
     def full_suite(self) -> tuple[SuiteCommand, ...]:
@@ -152,7 +153,7 @@ class Settings:
                          if (command := app.full_suite_command) is not None)
         if not commands:
             raise SettingsError(f"no app in {self.path} has a test command, so the repo has no full suite. "
-                                f"Run {ONBOARD} to record one")
+                                f"Run {routes.slash_command('onboard')} to record one")
         return commands
 
     def untested_apps(self) -> tuple[str, ...]:
@@ -223,7 +224,7 @@ def require_stored(home: Path, main_tree: Path) -> dict:
     path = settings_path(home, main_tree)
     stored = load(path)
     if not stored:
-        raise SettingsError(f"no settings for {main_tree} in {path.parent}. Run {ONBOARD} to record them")
+        raise SettingsError(f"no settings for {main_tree} in {path.parent}. Run {routes.slash_command('onboard')} to record them")
     return stored
 
 

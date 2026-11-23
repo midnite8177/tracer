@@ -680,6 +680,18 @@ class HandoffRefusalTests(HandoffCase):
                       f"/jidoka:factory {epic}", done.stderr)
         self.assertEqual([], self.comments(epic))
 
+    def test_refuses_an_epic_the_factory_already_holds_and_names_the_factory_command_of_antigravity(self):
+        epic, _ = self.new_epic()
+        self.new_task_under(epic)
+        fixture.run([self.bd, "label", "add", epic, "factory"], self.repo)
+        env = {key: value for key, value in self.caller_env(self.home).items() if key != "JIDOKA_SESSION_ID"}
+
+        done = fixture.run_launcher(LAUNCHER, [str(HANDOFF), "check", epic], None,
+                                    {**env, "T3CODE_THREAD_ID": "thread-of-the-test"}, self.repo, RUN_TIMEOUT_SECONDS)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(f"Start it with /jidoka-factory {epic}", done.stderr)
+
     def test_refuses_an_app_with_holdouts_and_no_way_in(self):
         epic, name = self.new_epic()
         task = self.new_task_under(epic)

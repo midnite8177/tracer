@@ -64,6 +64,7 @@ import pass_support
 import routes
 import rules
 import settings_reader
+import t3_profiles
 import t3_stage
 import t3_worker
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture
@@ -73,9 +74,6 @@ LAP_MOD = "./lap_mod.ts"
 JIDOKA_ID_PREFIX = "jidoka@"
 DEFAULT_CONFIG_FOLDER = ".claude"
 PLUGIN_NAME = "jidoka"
-T3_USERDATA = Path(".t3") / "userdata"
-ANTIGRAVITY_PROFILES = Path("providers") / "antigravity"
-PROFILE_COPY = Path("config") / "plugins" / PLUGIN_NAME
 HOOKS_FILE = "hooks.json"
 STAGE_ERRORS = (t3_stage.StageError, t3_worker.T3Error, CommandError, routes.RouteError, lap_record.NotALapWorktree,
                 rules.RulesError, settings_reader.SettingsError, pass_support.PassError, OSError)
@@ -107,7 +105,7 @@ def lap_mod_problem(root: Path) -> str | None:
         return None
     return (f"this session runs the jidoka plugin at {root}, whose hooks do not load the lap mod: {why}. Lap "
             "workers would wait on permission prompts. Start a new session, which loads the installed jidoka, "
-            "and run /jidoka:factory again")
+            f"and run {routes.slash_command('factory')} again")
 
 
 def config_dir() -> Path:
@@ -120,7 +118,7 @@ def enabled_problem(folder: Path) -> str | None:
     claude = shutil.which("claude")
     if claude is None:
         return (f"claude is not on the PATH, so the check cannot tell whether {folder} has jidoka enabled. Put "
-                "claude on the PATH and run /jidoka:factory again")
+                f"claude on the PATH and run {routes.slash_command('factory')} again")
     try:
         listed = capture([claude, "plugin", "list", "--json"], Path.cwd(), None)
     except CommandError as error:
@@ -139,12 +137,7 @@ def enabled_problem(folder: Path) -> str | None:
         return None
     why = "jidoka is installed there but disabled" if jidoka else "claude lists no jidoka plugin there"
     return (f"{folder} does not have jidoka enabled, because {why}. Run install.py --config-dir {folder} from "
-            "your jidoka checkout, then start a new session and run /jidoka:factory again")
-
-
-def t3_profiles() -> Path:
-    """The folder that holds the T3 Antigravity profiles, under the T3 userdata of the person running the check."""
-    return Path.home() / T3_USERDATA / ANTIGRAVITY_PROFILES
+            f"your jidoka checkout, then start a new session and run {routes.slash_command('factory')} again")
 
 
 def carries_guard(hooks_file: Path) -> bool:
@@ -158,24 +151,17 @@ def carries_guard(hooks_file: Path) -> bool:
     return isinstance(groups, list) and any(lap_guard_record.is_hook_group(group) for group in groups)
 
 
-def copies_in(profiles: Path) -> list[Path]:
-    """The profile folders under `profiles` that hold a jidoka copy, in name order."""
-    if not profiles.is_dir():
-        return []
-    return sorted(profile for profile in profiles.iterdir() if (profile / PROFILE_COPY).is_dir())
-
-
-def guard_problems(profiles: Path) -> list[str]:
+def guard_problems(copies: list[Path]) -> list[str]:
     """Why the T3 Antigravity profiles do not hold a lap worker's calls to the lap lists: no profile has a jidoka copy,
     or a copy lacks the guard. A profile with no jidoka copy runs no factory, so it needs no guard."""
-    copies = copies_in(profiles)
     if not copies:
-        return [f"no T3 Antigravity profile under {profiles} holds a jidoka copy, so nothing would hold a lap "
-                "worker's calls to the lap lists. Run install.py from your jidoka checkout, then start a new session "
-                "and run /jidoka:factory again"]
+        return [f"no T3 Antigravity profile under {t3_profiles.profiles_folder()} holds a jidoka copy, so nothing "
+                "would hold a lap worker's calls to the lap lists. Run install.py from your jidoka checkout, then "
+                f"start a new session and run {routes.slash_command('factory')} again"]
     return [f"the jidoka copy in {profile} holds no profile guard, so a lap worker there would run any command. "
-            "Run install.py from your jidoka checkout, then start a new session and run /jidoka:factory again"
-            for profile in copies if not carries_guard(profile / PROFILE_COPY / HOOKS_FILE)]
+            "Run install.py from your jidoka checkout, then start a new session and run "
+            f"{routes.slash_command('factory')} again"
+            for profile in copies if not carries_guard(t3_profiles.copy_in(profile) / HOOKS_FILE)]
 
 
 def t3_tools_problem() -> str | None:
@@ -183,7 +169,7 @@ def t3_tools_problem() -> str | None:
     if t3_worker.node_command() is not None:
         return None
     return (f"{t3_worker.NODE_VARIABLE} is not set, so jidoka cannot call T3's tools to start a lap worker. Start the "
-            "factory in a T3 thread of an Antigravity provider, which sets it, and run /jidoka:factory again")
+            f"factory in a T3 thread of an Antigravity provider, which sets it, and run {routes.slash_command('factory')} again")
 
 
 def runtime_mode_problem() -> str | None:
@@ -197,25 +183,24 @@ def runtime_mode_problem() -> str | None:
         mode = t3_worker.runtime_mode(thread)
     except t3_worker.T3Error as error:
         return f"T3 did not say which mode this thread runs in ({error}), so jidoka cannot tell that a lap worker " \
-               "will read its files without a prompt. Run /jidoka:factory again"
+               f"will read its files without a prompt. Run {routes.slash_command('factory')} again"
     if mode == t3_worker.FULL_ACCESS:
         return None
     return (f"this thread runs in {mode or 'an unnamed mode'}, and Antigravity then asks before it reads jidoka's own "
             "files, which no person answers in a lap. Start a new session, set it to Full access before its first "
-            "message, and run /jidoka:factory again")
+            f"message, and run {routes.slash_command('factory')} again")
 
 
 def check_antigravity() -> int:
-    profiles = t3_profiles()
+    copies = t3_profiles.profiles_with_a_copy()
     tools = t3_tools_problem()
-    problems = [problem for problem in (tools, *guard_problems(profiles),
+    problems = [problem for problem in (tools, *guard_problems(copies),
                                         None if tools else runtime_mode_problem()) if problem]
     if problems:
         print("factory: the factory does not start:\n" + "\n".join(f"  {problem}" for problem in problems),
               file=sys.stderr)
         return 1
-    print("factory: the profile guard is in the jidoka copy of " + ", ".join(str(profile) for profile
-                                                                                 in copies_in(profiles)))
+    print("factory: the profile guard is in the jidoka copy of " + ", ".join(str(profile) for profile in copies))
     return 0
 
 

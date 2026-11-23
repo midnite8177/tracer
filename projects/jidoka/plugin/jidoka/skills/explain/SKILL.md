@@ -124,12 +124,12 @@ links the page.
 
 The worker writes `question`, `shown`, each step of `why` and each
 option's `next` in the question report, with the keys described in the
-factory skill. On a permission question jidoka writes the question,
+`jidoka:factory` skill. On a permission question jidoka writes the question,
 `shown`, the steps and every `next` from the denial, and the worker writes
 only `why`. The gate
 worker writes `in_short`, `before`, `after`, each step of `how`, each of
 `steps` and each of `unchecked` in the guide file. Run every one of them
-through the unslop skill before the report or the guide is written. Keep
+through the `jidoka:unslop` skill before the report or the guide is written. Keep
 each step of `why` and of `how` to one short clause, and each `next` to
 one or two sentences that say what the task does after that answer. Write
 `before` and `after` as real examples with exact values, and each of

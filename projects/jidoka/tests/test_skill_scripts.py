@@ -12,6 +12,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import jidoka_fixture as fixture
+import t3_state
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
@@ -392,6 +393,154 @@ class ContextFromAnInstalledPluginInARepoWithoutOneTests(SkillScriptCase):
 
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertNotIn("tracer", done.stdout.lower())
+
+
+MANAGER = "thread-of-the-session"
+LAP = "thread-of-a-lap"
+NATIVE = "native-conversation-1"
+SESSION_VARIABLES = ("JIDOKA_SESSION_ID", "T3CODE_THREAD_ID", "CLAUDE_CONFIG_DIR", "JIDOKA_T3_STATE_DB")
+
+
+class RetroTests(SkillScriptCase):
+    """Retro's script, run as a process from inside the repo, in a fake T3 userdata folder that holds a fixture
+    `statev2.sqlite` and an Antigravity transcript, and under a fake user home that holds Claude Code's session logs."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.userdata = Path(folder.name).resolve() / "userdata"
+        self.userdata.mkdir()
+        self.state = self.userdata / "statev2.sqlite"
+        self.user_home = Path(folder.name).resolve() / "home"
+        self.user_home.mkdir()
+        t3_state.create(self.state, t3_state.THREAD_TABLES)
+        t3_state.add_thread(self.state, MANAGER, "Planning the shop", None)
+        t3_state.add_provider_thread(self.state, MANAGER, "antigravity", NATIVE)
+
+    def retro(self, extra: dict, arguments: list) -> subprocess.CompletedProcess:
+        env = {key: value for key, value in os.environ.items() if key not in SESSION_VARIABLES}
+        env.update({"PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
+                    **fixture.home_variables(self.user_home), **extra})
+        return fixture.run_launcher(LAUNCHER, [str(PLUGIN / "scripts" / "retro.py"), *arguments], None, env, self.repo,
+                                    None)
+
+    def in_t3(self, arguments: list) -> subprocess.CompletedProcess:
+        return self.retro({"T3CODE_THREAD_ID": MANAGER, "JIDOKA_T3_STATE_DB": str(self.state)}, arguments)
+
+    def write_transcript(self, lines: list) -> None:
+        logs = (self.userdata / "providers" / "antigravity" / "profile-a" / "antigravity-acp" / "brain" / NATIVE
+                / ".system_generated" / "logs")
+        logs.mkdir(parents=True)
+        (logs / "transcript_full.jsonl").write_text("\n".join(json.dumps(line) for line in lines) + "\n",
+                                                    encoding="utf-8")
+
+    def write_claude_log(self, name: str, records: list) -> Path:
+        folder = self.user_home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(self.repo))
+        folder.mkdir(parents=True, exist_ok=True)
+        log = folder / f"{name}.jsonl"
+        log.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+        return log
+
+    def test_retro_in_a_t3_session_reports_the_thread_with_its_native_steps_tokens_and_lap_threads(self):
+        t3_state.add_item(self.state, MANAGER, "run-1", 1, "user_message", {"text": "Plan the greeting."})
+        t3_state.add_item(self.state, MANAGER, "run-1", 2, "dynamic_tool", {"toolName": "tool", "input": {}})
+        t3_state.add_turn_of_run(self.state, MANAGER, "run-1", "gemini-4-neon", t3_state.usage(1_000, 400, 0, 50, 0))
+        t3_state.add_thread(self.state, LAP, "lap · tracer-1.1 build", MANAGER)
+        t3_state.add_item(self.state, LAP, "run-2", 1, "command_execution",
+                          {"input": "make test", "output": "red", "exitCode": 1})
+        self.write_transcript([
+            {"type": "PLANNER_RESPONSE", "step_index": 1, "content": "", "input_tokens": 700, "output_tokens": 30,
+             "cache_read_tokens": 200,
+             "tool_calls": [{"name": "view_file", "args": {"AbsolutePath": "/shop/a.py"}}]},
+            {"type": "VIEW_FILE", "step_index": 2, "content": "print('hi')"},
+        ])
+
+        done = self.in_t3([])
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn('Thread thread-of-the-session "Planning the shop"', done.stdout)
+        self.assertIn("1. user_message | text: Plan the greeting.", done.stdout)
+        self.assertIn("2. dynamic_tool | view_file | arguments: {\"AbsolutePath\": \"/shop/a.py\"} | result: print('hi')"
+                      " | tokens: input 700, output 30, cache read 200, cache write 0 | at: 2026-11-22T10:00:00.000Z",
+                      done.stdout)
+        self.assertIn("run-1 completed gemini-4-neon: input 600, output 50, cache read 400, cache write 0", done.stdout)
+        self.assertIn('thread-of-a-lap "lap · tracer-1.1 build" (subagent)', done.stdout)
+        self.assertIn("1. command_execution | arguments: make test | result: red | error: exit code 1", done.stdout)
+
+    def test_retro_in_a_t3_session_says_when_it_reports_from_the_db_because_the_transcript_is_missing(self):
+        t3_state.add_item(self.state, MANAGER, "run-1", 1, "user_message", {"text": "Plan the greeting."})
+
+        done = self.in_t3([])
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        [note] = [line for line in done.stdout.splitlines() if line.startswith("Note:")]
+        self.assertIn(f"transcript_full.jsonl of Antigravity conversation {NATIVE} is missing", note)
+        self.assertIn("1. user_message | text: Plan the greeting.", done.stdout)
+
+    def test_retro_in_a_t3_session_whose_db_does_not_hold_the_thread_fails_with_the_reason_on_stderr(self):
+        done = self.retro({"T3CODE_THREAD_ID": "thread-of-nobody", "JIDOKA_T3_STATE_DB": str(self.state)}, [])
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("holds no thread thread-of-nobody", done.stderr)
+
+    def test_retro_outside_t3_reads_the_newest_claude_code_log_of_the_repo(self):
+        older = self.write_claude_log("older", [
+            {"type": "user", "message": {"role": "user", "content": "An old question"}}])
+        newer = self.write_claude_log("newer", [
+            {"type": "user", "message": {"role": "user", "content": "Fix the greeting"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Looking at it."},
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/shop/a.py"}}]}},
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "print('hi')"}]}},
+        ])
+        os.utime(older, (1, 1))
+
+        done = self.retro({}, [])
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(f"Session log {newer}", done.stdout.splitlines()[0])
+        self.assertIn("user: Fix the greeting", done.stdout)
+        self.assertIn('assistant: Looking at it. tool_use Read {"file_path": "/shop/a.py"}', done.stdout)
+        self.assertIn("user: tool_result print('hi')", done.stdout)
+        self.assertNotIn("An old question", done.stdout)
+
+    def test_retro_in_a_claude_code_session_that_runs_under_t3_still_reads_the_claude_code_log(self):
+        log = self.write_claude_log("session", [{"type": "user", "message": {"role": "user", "content": "Hello"}}])
+
+        done = self.retro({"T3CODE_THREAD_ID": MANAGER, "JIDOKA_SESSION_ID": "claude-session",
+                           "JIDOKA_T3_STATE_DB": str(self.state)}, [])
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(f"Session log {log}", done.stdout.splitlines()[0])
+
+    def test_retro_finds_the_project_folder_of_a_repo_whose_path_differs_in_case_from_the_folder_name(self):
+        folder = self.user_home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(self.repo)).lower()
+        folder.mkdir(parents=True)
+        log = folder / "session.jsonl"
+        log.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "Hello"}}) + "\n",
+                       encoding="utf-8")
+
+        done = self.retro({}, [])
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(f"Session log {log}", done.stdout.splitlines()[0])
+
+    def test_retro_reads_the_claude_code_log_that_a_session_id_names(self):
+        self.write_claude_log("session-7", [{"type": "user", "message": {"role": "user", "content": "Seven"}}])
+        self.write_claude_log("session-8", [{"type": "user", "message": {"role": "user", "content": "Eight"}}])
+
+        done = self.retro({}, ["session-7"])
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("user: Seven", done.stdout)
+        self.assertNotIn("Eight", done.stdout)
+
+    def test_retro_with_no_claude_code_log_fails_with_the_folder_it_looked_in(self):
+        done = self.retro({}, [])
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn(str(self.user_home / ".claude" / "projects"), done.stderr)
 
 
 if __name__ == "__main__":

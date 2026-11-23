@@ -26,6 +26,7 @@ from pathlib import Path
 
 import cleanup
 import park
+import routes
 import tidy
 from commands import env_as_factory, metadata_of, read_bead, run, set_metadata, unset_metadata
 from pass_support import PassError, count_of
@@ -92,7 +93,7 @@ def question_of(epic: str, passes: int) -> park.Question:
     found = (f"{epic} has been through {passes} passes, the pass cap is {PASS_CAP}, and it still holds open tasks, so "
              "the factory parked it before the next pass.")
     options = (park.Option(NEXT_PASS, 60, "Take the human label off the epic to run the next pass."),
-               park.Option(LAND, 40, f"Run /jidoka:accept {epic} to land what the epic holds, which moves its open "
+               park.Option(LAND, 40, f"Run {routes.slash_command('accept')} {epic} to land what the epic holds, which moves its open "
                                      "tasks to a new epic."))
     return park.plain_question(f"Should {epic} run a pass past the pass cap?", found, options, NEXT_PASS)
 

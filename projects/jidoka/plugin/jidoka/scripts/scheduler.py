@@ -232,7 +232,7 @@ from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError,
                       NotAWholeNumber, env_as_factory, keeping_reads, labels_of, metadata_of,
                       run, set_metadata)
 from epic_branch import branch_head
-from epic_reader import (BRANCH_KEY, ONBOARD, Epic, EpicReadError, Rerun, by_priority, epic_of, is_unclaimed,
+from epic_reader import (BRANCH_KEY, Epic, EpicReadError, Rerun, by_priority, epic_of, is_unclaimed,
                          problems_while_held)
 from epics import state_of
 from lap_outcomes import BLOCKED, CANNOT_JUDGE, CUT_OFF, DONE, FAILED, PASS, QUESTION, SEND_BACK, SchedulerError
@@ -248,7 +248,6 @@ NATIVE_ROUTE = "native"
 OUTCOMES = [DONE, FAILED, CUT_OFF, QUESTION, SEND_BACK, BLOCKED, PASS, CANNOT_JUDGE]
 SECONDS_PER_MINUTE = 60
 USAGE_TIMEOUT_SECONDS = 10
-HANDOFF = "/jidoka:handoff"
 RERUN = Rerun(on_the_holding_epic="Run the scheduler on the epic that holds it")
 
 
@@ -259,19 +258,20 @@ def lacks_only_an_area(task: dict) -> bool:
 
 def scheduler_problems(epic: Epic, settings: settings_reader.Settings, main_tree: Path) -> list[str]:
     problems = problems_while_held(epic, settings)
+    handoff = routes.slash_command("handoff")
     if not settings.lap_limit:
-        problems.append(f"the repo settings hold no lap limit. Run {ONBOARD} again to record one")
+        problems.append(f"the repo settings hold no lap limit. Run {routes.slash_command('onboard')} again to record one")
     try:
         rules.of_epic(epic.shown)
     except rules.RulesError as error:
         problems.append(f"{error}. Write them again with rules.py")
     if FACTORY_LABEL not in labels_of(epic.shown):
         problems.append(f"{epic.id} does not carry the {FACTORY_LABEL} label, so the factory does not hold it. "
-                        f"Hand it off first with {HANDOFF} {epic.id}")
+                        f"Hand it off first with {handoff} {epic.id}")
     branch = epic.branch
     if not branch:
         problems.append(f"{epic.id} records no epic branch as its {BRANCH_KEY} metadata. Hand it off again "
-                        f"with {HANDOFF} {epic.id}")
+                        f"with {handoff} {epic.id}")
     elif branch_head(branch, main_tree) is None:
         problems.append(f"the epic branch {branch} that {epic.id} records does not exist. Restore it, or take "
                         f"the {FACTORY_LABEL} label off {epic.id} and hand it off again")

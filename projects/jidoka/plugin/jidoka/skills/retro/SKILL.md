@@ -14,12 +14,14 @@ The skill folder is the directory that holds this SKILL.md. jidoka's home is `${
 
 ## Steps
 
-1. Call the Skill tool with `writing-for-agents` for the writing style guide.
+1. Load the `jidoka:writing-for-agents` skill for the writing style guide.
 
 2. Read the primary sources the argument names. Read every one. A retro that skims misses the pattern.
 
-   - **No argument**: the newest session log for this repo. Claude Code keeps them as `.jsonl` files in `~/.claude/projects/<encoded path>/`, or under `$CLAUDE_CONFIG_DIR/projects/` when that is set. The encoded path is the session's working folder with every character other than a letter or digit turned into `-`, so `/Users/jeff/Projects/tracer` is `-Users-jeff-Projects-tracer`. The newest file is the current session. Read the tail, not the whole file.
-   - **A session id or a `.jsonl` path**: that log. A session id names `<id>.jsonl` in one of those folders. Read the tail first, and further back where the trouble started.
+   - **No argument**: run `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/retro.py"` from the repo.
+     - In a T3 session (`$T3CODE_THREAD_ID` is set and `$JIDOKA_SESSION_ID` is not), it prints this session's thread from T3's state db: its items in order, its runs with their model and tokens, and each child thread, the `lap · ` worker threads among them. On Antigravity it merges in the tool names, arguments, results and errors of Antigravity's own transcript. A `Note:` line says which source it fell back from; the report is then the db's alone.
+     - Elsewhere it prints the path and the tail of the newest session log for this repo. Claude Code keeps them as `.jsonl` files in `~/.claude/projects/<encoded path>/`, or under `$CLAUDE_CONFIG_DIR/projects/` when that is set. The encoded path is the session's working folder with every character other than a letter or digit turned into `-`, so `/Users/jeff/Projects/tracer` is `-Users-jeff-Projects-tracer`. Read the file itself further back where the trouble started.
+   - **A session id or a `.jsonl` path**: that log. A session id names `<id>.jsonl` in one of those folders. Pass it to the same script, which prints the tail; read the file further back where the trouble started.
    - **A bead id of an epic**: the epic and every task in it.
      - `bd show <epic> --json` for the epic's description and `close_reason`, and `bd comments <epic> --json` for its comments.
      - `bd list --parent=<epic> --all --json` lists its tasks, closed ones included.
@@ -33,7 +35,7 @@ The skill folder is the directory that holds this SKILL.md. jidoka's home is `${
 - **Navigation**: how easy was it for the agent to find the right files? Are there hidden dependencies between files? Would a **navigation pointer** make it easier? _Use when_ the agent took a long time to find a piece of information.
 - **Automated checks**: are there automated checks that could catch errors the agent made? Linting, typing, tests, filesystem linters? Read the repo's own check command first (its `package.json`/build-tool `lint`/`check` scripts, its CI workflow), so a check that already exists but sits unwired or silently broken is the finding, not a reinvention. A repo with no **guardrail** (no pre-commit hook and no CI job running its lint/typecheck/test command) is itself a finding. _Use when_ the agent made a mistake an automated check could have caught, or the repo has no guardrail at all.
 - **Rules**: should a rule be added, removed or clarified? Classify the mistake first. A **mechanical** one (a fixed syntactic pattern, a banned API, an import shape, a file-location rule) gets a deterministic check: a custom rule in the repo's own linter, a pre-commit hook or a CI job, whichever the repo's language and guardrail make cheapest. Build the check before you write the rule. Only a **judgement call** (cross-file consistency, matching the surrounding style) becomes a rule. A rule for this repo goes in its own rules files. A rule every beads repo needs goes in the session rules block. _Use when_ the agent broke a rule, or followed one that no longer fits.
-- **The Spec check**: did a Spec check pass a diff that missed work the bead asked for, or that did work it never asked for? Did it send back a diff for something the bead never said? The cause is either the bead's own text or the `spec-check` skill. _Use when_ a Spec check's outcome was wrong.
+- **The Spec check**: did a Spec check pass a diff that missed work the bead asked for, or that did work it never asked for? Did it send back a diff for something the bead never said? The cause is either the bead's own text or the `jidoka:spec-check` skill. _Use when_ a Spec check's outcome was wrong.
 - **jidoka's own steering**: did a jidoka skill, script, hook or doc send the agent the wrong way, miss a case, or word a refusal so the agent could not act on it? _Use when_ the agent worked around jidoka, or jidoka stopped it for a reason it could not see.
 - **Rules file size**: are there instructions in the repo's own rules files that belong in an automated check, in a doc a pointer leads to, or nowhere? _Use when_ the rules files are large.
 - **Tool economy**: did the agent make expensive tool calls that could be streamlined? Is there custom tooling (CLIs, MCPs) that is token-inefficient? _Use when_ the agent made an expensive tool call.
@@ -74,4 +76,4 @@ The builder has the most **context pressure**. It explores, writes code and debu
 - **The session rules block**: the rules jidoka's SessionStart hook prints at the start of every session in a beads repo, held in `RULES` in `<skill folder>/../../hooks/session_start.py`. Read it before proposing a rule, so you do not propose one it already holds. A change to it is a [jidoka] fix.
 - **jidoka's docs**: the tracker doc and the domain doc in `<skill folder>/../../docs/`. A change to them is a [jidoka] fix.
 - **Docs**: use docs as reference files, pointed to by other files. Look for existing docs before writing new ones.
-- **Skills**: use skills for docs (since their description goes into the agent's context window), or for user-invoked commands. Follow the advice in the `writing-for-agents` skill. A jidoka skill is [jidoka]; a skill the repo keeps for itself is [this repo].
+- **Skills**: use skills for docs (since their description goes into the agent's context window), or for user-invoked commands. Follow the advice in the `jidoka:writing-for-agents` skill. A jidoka skill is [jidoka]; a skill the repo keeps for itself is [this repo].

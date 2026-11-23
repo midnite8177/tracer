@@ -276,7 +276,7 @@ def problems_in(wanted: dict[str, object], ceiling: LapCeiling, held: dict[str, 
             problems.append(f"{name} must be {SETTINGS[name][1]}, not {encode(value)}")
         elif name == LAP_LIMIT and not ceiling.repo:
             problems.append("the repo settings hold no lap limit, so none can be set lower. "
-                            "Run /jidoka:onboard to record one")
+                            f"Run {routes.slash_command('onboard')} to record one")
         elif name == LAP_LIMIT and value >= ceiling.limit:
             problems.append(f"{LAP_LIMIT} must be below the {ceiling.owner} {ceiling.limit}, because an epic can "
                             f"only go lower, not {encode(value)}")

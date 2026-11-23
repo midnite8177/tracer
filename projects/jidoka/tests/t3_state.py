@@ -22,6 +22,21 @@ REQUESTS_TABLE = (
     "NOT NULL, node_id TEXT NOT NULL, provider_turn_id TEXT, kind TEXT NOT NULL, status TEXT NOT NULL, created_at "
     "TEXT NOT NULL, resolved_at TEXT, payload_json TEXT NOT NULL)")
 TOKEN_TABLES = (RUNS_TABLE, ATTEMPTS_TABLE, TURNS_TABLE)
+THREADS_TABLE = (
+    "CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT "
+    "NOT NULL, default_provider TEXT NOT NULL, provider_instance_id TEXT NOT NULL, runtime_mode TEXT NOT NULL, "
+    "interaction_mode TEXT NOT NULL, active_provider_thread_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT "
+    "NULL, archived_at TEXT, deleted_at TEXT, payload_json TEXT NOT NULL)")
+TURN_ITEMS_TABLE = (
+    "CREATE TABLE orchestration_v2_projection_turn_items (turn_item_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, "
+    "run_id TEXT, node_id TEXT NOT NULL, provider_thread_id TEXT, provider_turn_id TEXT, parent_item_id TEXT, ordinal "
+    "INTEGER NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL)")
+PROVIDER_THREADS_TABLE = (
+    "CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT PRIMARY KEY, thread_id TEXT NOT "
+    "NULL, owner_node_id TEXT NOT NULL, provider TEXT NOT NULL, driver TEXT NOT NULL, provider_instance_id TEXT NOT "
+    "NULL, provider_session_id TEXT, status TEXT NOT NULL, first_run_ordinal INTEGER, last_run_ordinal INTEGER, "
+    "updated_at TEXT NOT NULL, payload_json TEXT NOT NULL)")
+THREAD_TABLES = (THREADS_TABLE, TURN_ITEMS_TABLE, PROVIDER_THREADS_TABLE, *TOKEN_TABLES)
 
 
 class StateDbOfATest:
@@ -143,3 +158,39 @@ def add_turn_payload(path: Path, turn: str, thread: str, attempt: str | None, pa
         ordinal = db.execute("SELECT COUNT(*) FROM orchestration_v2_projection_provider_turns").fetchone()[0] + 1
         db.execute("INSERT INTO orchestration_v2_projection_provider_turns VALUES (?, ?, 'provider-thread-1', "
                    "'node-1', ?, ?, 'completed', NULL, NULL, ?)", (turn, thread, attempt, ordinal, payload_json))
+
+
+def add_thread(path: Path, thread: str, title: str, parent: str | None) -> None:
+    """A thread of the project `project-1`, made at 09:00 on 2026-11-22, whose payload holds the `lineage` T3 writes: a
+    thread with a parent is a `subagent` of it, and one without is its own root."""
+    add_thread_made_at(path, thread, title, parent, "project-1", "2026-11-22T09:00:00.000Z")
+
+
+def add_thread_made_at(path: Path, thread: str, title: str, parent: str | None, project: str, created_at: str) -> None:
+    """A thread of the project, created at the ISO 8601 time, whose payload holds the `lineage` as `add_thread` does."""
+    lineage = {"parentThreadId": parent, "relationshipToParent": "subagent" if parent else None,
+               "rootThreadId": parent or thread}
+    payload = {"id": thread, "title": title, "lineage": lineage}
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, ?, 'antigravity', 'antigravity', "
+                   "'full-access', 'default', NULL, ?, ?, NULL, NULL, ?)",
+                   (thread, project, title, created_at, created_at, json.dumps(payload)))
+
+
+def add_item(path: Path, thread: str, run: str | None, ordinal: int, kind: str, fields: dict) -> None:
+    """A turn item of the thread, of the given `type`, whose payload holds the fields as T3 encodes that kind."""
+    payload = {"id": f"item-{thread}-{ordinal}", "type": kind, "ordinal": ordinal, "status": "completed", **fields}
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute("INSERT INTO orchestration_v2_projection_turn_items VALUES (?, ?, ?, 'node-1', NULL, NULL, NULL, ?, "
+                   "?, 'completed', '2026-11-22T10:00:00.000Z', ?)",
+                   (payload["id"], thread, run, ordinal, kind, json.dumps(payload)))
+
+
+def add_provider_thread(path: Path, thread: str, provider: str, native_id: str | None) -> None:
+    """A provider thread of the thread whose payload holds the `nativeThreadRef` T3 writes."""
+    ref = {"driver": provider, "nativeId": native_id, "strength": "strong"}
+    payload = {"id": f"provider-thread-of-{thread}", "nativeThreadRef": ref}
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute("INSERT INTO orchestration_v2_projection_provider_threads VALUES (?, ?, 'node-1', ?, ?, ?, NULL, "
+                   "'active', 1, 1, '2026-11-22T10:00:00.000Z', ?)",
+                   (payload["id"], thread, provider, provider, provider, json.dumps(payload)))

@@ -61,6 +61,7 @@ import heartbeat
 import lap_record
 import park
 import pause
+import routes
 import settings_reader
 from commands import (COMMAND_TIMEOUT_SECONDS, CommandError, env_as_factory, is_labeled_for_human, metadata_of,
                       parent_of, read_bead, run)
@@ -195,7 +196,7 @@ def at_acceptance_gate(epic: str, main_tree: Path) -> Notice:
     head = validated_head(metadata_of(shown))
     return Notice(ACCEPTANCE_GATE, epic, epic, f"Ready for acceptance: {shown.get('title') or epic}",
                   "The factory has finished its work on the epic. Merge it or drop it, "
-                  "or send it back with /jidoka:accept.",
+                  f"or send it back with {routes.slash_command('accept')}.",
                   digest(WAITING, head))
 
 

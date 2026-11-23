@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import holdouts
+import routes
 import settings_reader
 from commands import UnreadableShow, bd_list, bd_show_all, is_labeled_for_human, metadata_of, read_bead
 from lap_record import area_of, open_lap
-from settings_reader import ONBOARD
 
 BRANCH_KEY = "factory.branch"
 BLOCKING = "blocks"
@@ -204,7 +204,7 @@ def nested_epic_problems(epic: Epic) -> list[str]:
 
 def settings_problems(settings: settings_reader.Settings) -> list[str]:
     problems = [f"the app {app} has no test command, so the factory cannot test its work. Build a test project "
-                f"for it at the bench, then run {ONBOARD} to record its command" for app in settings.untested_apps()]
+                f"for it at the bench, then run {routes.slash_command('onboard')} to record its command" for app in settings.untested_apps()]
     try:
         settings.full_suite()
     except settings_reader.SettingsError as error:
@@ -222,14 +222,14 @@ def holdout_problems(epic: Epic, epic_holdouts: list[holdouts.Holdout]) -> list[
 def way_in_problems(settings: settings_reader.Settings, epic_holdouts: list[holdouts.Holdout]) -> list[str]:
     apps = {app.name: app for app in settings.apps}
     held = list(dict.fromkeys(holdout.app for holdout in epic_holdouts))
-    problems = [f"a holdout reaches the app {name}, which the repo settings do not list. Run {ONBOARD} to "
+    problems = [f"a holdout reaches the app {name}, which the repo settings do not list. Run {routes.slash_command('onboard')} to "
                 "record it with its way in" for name in held if name not in apps]
     for name, app in apps.items():
         has = [kind for kind, present in (("holdouts", name in held), ("acceptance specs", app.acceptance))
                if present]
         if has and app.way_in is None:
             problems.append(f"the app {name} has {' and '.join(has)} but no way in, so no app check can reach "
-                            f"it. Run {ONBOARD} to record how a person or a program reaches it")
+                            f"it. Run {routes.slash_command('onboard')} to record how a person or a program reaches it")
     return problems
 
 

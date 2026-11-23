@@ -80,6 +80,7 @@ import handoff_page
 import holdouts
 import lap_record
 import pack_store
+import routes
 import settings_reader
 import rules
 import specs
@@ -179,7 +180,7 @@ def problems_of(epic: Epic, branch_problems: list[str], home: Path, main_tree: P
                 *out_of_scope_problems(epic)]
     if FACTORY_LABEL in labels_of(epic.shown):
         problems.append(f"{epic.id} already carries the {FACTORY_LABEL} label, so the factory holds it. Start "
-                        f"it with /jidoka:factory {epic.id}")
+                        f"it with {routes.slash_command('factory')} {epic.id}")
     if head_of(MAIN_REF, main_tree) is None:
         problems.append("the repo has no main branch to cut the epic branch from")
     return problems + branch_problems

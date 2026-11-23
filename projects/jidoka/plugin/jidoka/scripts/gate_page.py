@@ -401,16 +401,18 @@ def unchecked(page: GatePage) -> str:
 
 
 def commit_message(page: GatePage) -> str:
-    """The commit message /jidoka:accept last proposed, in a block the human can select and copy."""
+    """The commit message the accept command last proposed, in a block the human can select and copy."""
+    accept = routes.slash_command("accept")
     if not page.message:
-        return paragraph("No commit message is proposed yet. /jidoka:accept proposes one before the merge and "
+        return paragraph(f"No commit message is proposed yet. {accept} proposes one before the merge and "
                          "writes this page again.")
-    return paragraph("The last message /jidoka:accept proposed for the merge.") + f"\n<pre>{escape(page.message)}</pre>"
+    return paragraph(f"The last message {accept} proposed for the merge.") + f"\n<pre>{escape(page.message)}</pre>"
 
 
 def decide() -> str:
-    return shared.slot(DECIDE_SLOT, "Decide", "jidoka-ui draws Merge and Drop here. Send back runs in /jidoka:accept. "
-                                              "The bead holds the gate comment in plain text.")
+    return shared.slot(DECIDE_SLOT, "Decide",
+                       f"jidoka-ui draws Merge and Drop here. Send back runs in {routes.slash_command('accept')}. "
+                       "The bead holds the gate comment in plain text.")
 
 
 def body(page: GatePage) -> str:

@@ -25,11 +25,13 @@ Only this session writes to the tracker; a worker's prompt says it runs no
 
 Each stage runs in one worker on a tier. Before you start a worker, run
 `bench route <tier>`. It prints the route as JSON with `harness`, `model`,
-`version` and `effort`. When the harness is the host's own (`claude` in
-Claude Code), start the worker as a subagent with that `model` and
-`effort`. A `model` or `effort` that is null means the harness default;
-leave it out when you start the worker. Otherwise the route falls back to
-the host's harness. Start the worker with the host's own model and effort,
+`version` and `effort`, and `provider` and `driver` when the route has
+them. When the route is the host's own (the harness `claude` in Claude
+Code; the harness `t3` with the driver `antigravity` in Antigravity),
+start the worker as a subagent with that `model` and `effort`. On
+Antigravity the `effort` is the model's thought level. A `model` or
+`effort` that is null means the harness default; leave it out when you
+start the worker. Otherwise the route falls back to the host's harness. Start the worker with the host's own model and effort,
 and tell the human which tier fell back. When the script refuses, show its
 message, which says to run the installer, and go to step 11 with
 `stopped: <reason>`.
@@ -128,11 +130,11 @@ message, which says to run the installer, and go to step 11 with
      session's hands, such as an empty diff because the work was not
      committed, fix it and run the Spec check again. Otherwise go to
      step 11 with `stopped: <reason>`.
-7. **Comments and prose.** Nothing else runs no-comments or unslop on
-   bench work, so run `/jidoka:no-comments` and then `/jidoka:unslop`
-   over the diff `git diff main...HEAD` in the worktree, with the worktree
+7. **Comments and prose.** Nothing else runs the `jidoka:no-comments` or
+   `jidoka:unslop` skill on bench work, so load `jidoka:no-comments` and
+   then `jidoka:unslop` over the diff `git diff main...HEAD` in the worktree, with the worktree
    as the cwd.
-   Apply unslop's pattern list to the added prose; its "Adding soul"
+   Apply the `jidoka:unslop` skill's pattern list to the added prose; its "Adding soul"
    section does not apply to text inside code. When either changed a
    file, commit it and run step 5 again.
 8. **Show the human.** Show the diff `git diff main...HEAD`, the targeted-test

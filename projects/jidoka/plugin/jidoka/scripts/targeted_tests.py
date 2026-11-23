@@ -55,6 +55,7 @@ import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+import routes
 import settings_reader
 import target_placeholder
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, capture, head_of, run, run_test_command
@@ -144,7 +145,7 @@ class TestOutcome:
 
 def untested(app: settings_reader.App) -> TestRunError:
     return TestRunError(f"{app.name} has no test command. Build a test project for it at the bench, "
-                        "then run /jidoka:onboard to record its command.")
+                        f"then run {routes.slash_command('onboard')} to record its command.")
 
 
 def app_settings(home: Path, main_tree: Path, name: str) -> settings_reader.App:

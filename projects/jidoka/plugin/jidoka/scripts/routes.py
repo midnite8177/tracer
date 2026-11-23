@@ -30,6 +30,7 @@ DEFAULT_EFFORT_OPTION = "effort"
 CLAUDE_CODE_HOST = "claude-code"
 ANTIGRAVITY_HOST = "antigravity"
 ROUTE_TABLES = {CLAUDE_CODE_HOST: "routes", ANTIGRAVITY_HOST: "antigravity_routes"}
+SLASH_PREFIXES = {CLAUDE_CODE_HOST: "/jidoka:", ANTIGRAVITY_HOST: "/jidoka-"}
 SESSION_VARIABLE = "JIDOKA_SESSION_ID"
 THREAD_VARIABLE = "T3CODE_THREAD_ID"
 CODEX_PROGRAM = "codex"
@@ -52,6 +53,14 @@ def host_of_environment() -> str:
     names a T3 thread, which is when $T3CODE_THREAD_ID is set and $JIDOKA_SESSION_ID is not, else Claude Code. The
     routes of a host's own table follow it."""
     return ANTIGRAVITY_HOST if thread_of_environment() is not None else CLAUDE_CODE_HOST
+
+
+def slash_command(skill: str) -> str:
+    """The slash command that runs the jidoka skill, as the host of `host_of_environment` spells it: `/jidoka:<skill>`
+    under Claude Code, where the plugin namespaces its skills, and `/jidoka-<skill>` under Antigravity, whose profile
+    copy has no namespace. A message that tells the human to run a skill builds the command here, so that the human
+    can paste it as printed."""
+    return SLASH_PREFIXES[host_of_environment()] + skill
 
 
 def table_key(host: str) -> str:

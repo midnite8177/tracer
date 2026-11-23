@@ -30,6 +30,7 @@ READ_LIMIT = 20
 READ_CHARACTERS = 20_000
 TITLE_PREFIX = "lap · "
 EXISTING_WORKTREE = "existing_worktree"
+PROJECT_CHECKOUT = "root"
 FULL_ACCESS = "full-access"
 
 
@@ -111,15 +112,26 @@ def model_selection(route: routes.Route) -> dict:
     return selection
 
 
-def launch(title: str, message: str, worktree: Path, selection: dict, client_request_id: str) -> str:
-    """Starts a top-level thread in the existing worktree, with the message as its first prompt, and returns its id.
-    The thread runs in full access: Antigravity asks before it reads a file outside the worktree, jidoka's own files
-    are in the jidoka home, and no person answers a lap worker. T3 refuses a mode above the manager's, which is why
+def in_worktree(worktree: Path) -> dict:
+    """The workspace strategy that binds a thread to an existing worktree of the project."""
+    return {"type": EXISTING_WORKTREE, "worktreePath": str(worktree)}
+
+
+def in_project_checkout() -> dict:
+    """The workspace strategy that binds a thread to the project's own checkout, where the manager's session runs."""
+    return {"type": PROJECT_CHECKOUT}
+
+
+def launch(title: str, message: str, workspace: dict, selection: dict, client_request_id: str) -> str:
+    """Starts a top-level thread in the workspace that `in_worktree` or `in_project_checkout` names, with the message
+    as its first prompt, and returns its id.
+    The thread runs in full access: Antigravity asks before it reads a file outside the workspace, jidoka's own files
+    are in the jidoka home, and no person answers a worker. T3 refuses a mode above the manager's, which is why
     factory.py check refuses a manager that does not run in full access.
     A failed call is made once more with the same client request id, which T3 answers with the thread the first call
     made when that one got through."""
     arguments = {"title": title, "message": message, "modelSelection": selection,
-                 "workspaceStrategy": {"type": EXISTING_WORKTREE, "worktreePath": str(worktree)},
+                 "workspaceStrategy": workspace,
                  "runtimeMode": FULL_ACCESS, "clientRequestId": client_request_id}
     failure = T3Error("t3_thread_launch was not tried")
     for _ in range(LAUNCH_ATTEMPTS):

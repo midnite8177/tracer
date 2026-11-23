@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import routes
 from commands import HUMAN_LABEL, is_labeled_for_human
 from epics import at_the_gate, is_closed
 from pass_support import park_epic
@@ -21,4 +22,4 @@ def is_unlabeled_at_the_gate(shown: dict) -> bool:
 def park_again(epic: str, main_tree: Path) -> None:
     """Puts the human label back on the epic, with a comment that says what the human decides at the gate."""
     park_epic(epic, f"{epic} still waits at the acceptance gate: taking the {HUMAN_LABEL} label off is no decision. "
-                    "Merge it, send it back with notes, or drop it, with /jidoka:accept.", {}, main_tree)
+                    f"Merge it, send it back with notes, or drop it, with {routes.slash_command('accept')}.", {}, main_tree)

@@ -29,6 +29,7 @@ from pathlib import Path
 
 import park
 import pause
+import routes
 from commands import env_as_factory, metadata_of, run
 from epics import state_of
 import machine_settings
@@ -189,7 +190,7 @@ def question_of(epic: str, window: Window, now: int) -> park.Question:
                                      "fresh window."),
                park.Option(GO_ON, 30, "Take the human label off the epic now to go on into the reserve. The factory "
                                       "asks no more until this window resets."),
-               park.Option(LAND, 20, f"Run /jidoka:accept {epic} to land what the epic holds, which moves its open "
+               park.Option(LAND, 20, f"Run {routes.slash_command('accept')} {epic} to land what the epic holds, which moves its open "
                                      "tasks to a new epic."))
     return park.plain_question(f"Should {epic} wait for the {window.name} usage window to reset before it goes on?",
                                found, options, WAIT)

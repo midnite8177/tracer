@@ -20,7 +20,7 @@ The issue tracker and triage label vocabulary are in the tracker doc, `<skill fo
 
 Check with the user that these seams match their expectations.
 
-3. Before writing the spec body, call the Skill tool with "unslop" and apply it to the prose sections (Problem Statement, Solution, Further Notes); leave the user-story list and decision lists structural. Write the spec using the template below, then create an epic with the spec as its description per the tracker doc. Set the epic `in_progress` immediately; do not apply a `ready-for-agent` label, since readiness in beads is structural.
+3. Before writing the spec body, load the `jidoka:unslop` skill and apply it to the prose sections (Problem Statement, Solution, Further Notes); leave the user-story list and decision lists structural. Write the spec using the template below, then create an epic with the spec as its description per the tracker doc. Set the epic `in_progress` immediately; do not apply a `ready-for-agent` label, since readiness in beads is structural.
 
 <spec-template>
 

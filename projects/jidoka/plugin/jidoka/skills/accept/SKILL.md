@@ -20,6 +20,37 @@ command of its own, with no `cd` in front, no redirect, no `$( )` or
 backticks and no pipe. Pass `--jidoka-home "${JIDOKA_HOME:-$HOME/.jidoka}"`
 to each run.
 
+## A worker on an Antigravity host
+
+The review guide worker and the send-back worker start as subagents. The
+host is Antigravity when `$T3CODE_THREAD_ID` is set and
+`$JIDOKA_SESSION_ID` is not, the test `accept_worker` makes. There the
+host's own subagent asks for approval on each command and file write in
+the main checkout, even in Full access, and the prompt times out. Start
+the worker as a T3 thread instead, with this script, run from inside the
+repo:
+
+- accept worker: `sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/../../scripts/accept_worker.py"`
+
+1. Save the worker's prompt to `.scratch/<worker>-prompt.md` in the main
+   checkout, with `guide` or `send-back` for the worker.
+2. Run `accept_worker start --worker <worker> --epic <epic-id> --prompt
+   <that file> --tier standard --jidoka-home ...`. It launches the thread,
+   titled `lap · ` and the epic's title, in the main checkout and in Full
+   access, and prints `thread`, `deadline`, `wait` and `report`. On exit 1
+   show its message verbatim and stop.
+3. Run the printed `wait` call as a command of its own, then the `next`
+   that each answer prints, until the answer's `state` is `ended` or
+   `cut off`. Each call waits at most 45 seconds.
+4. Run the `report` call the last answer names. It reads the thread's last
+   reply, archives the thread and prints `thread`, `cut_off` and `reply`.
+   A `cut_off` of true is a worker that failed, with the why "ran past its
+   wall clock". Otherwise the `reply` is the worker's reply, with its
+   ending. Never delete a thread.
+
+The prompt is the one the step builds, and it holds the limits that bound
+the worker.
+
 ## Steps
 
 1. **Show the gate.** `bd show <epic-id>` and `bd comments <epic-id>`.
@@ -31,8 +62,9 @@ to each run.
    An epic parked at the pass cap has no "Acceptance gate:" comment.
    Restate the cap question, and say that landing it moves its open tasks
    to a new epic.
-2. **Write the review guide.** Start one worker with the Agent tool, on
-   the standard tier's route from `bench route standard`. It is no lap
+2. **Write the review guide.** Start one worker as a subagent, on
+   the standard tier's route from `bench route standard`; on an Antigravity
+   host, start it as the section above says, with the worker `guide`. It is no lap
    worker, so its prompt has no worktree line. Give it the epic as
    `bd show` printed it, the gate comment, the epic branch's name, the
    paths of the glossary and the house rules, and the path of
@@ -47,7 +79,7 @@ to each run.
    steps that explain how the change works), `steps` (a list of the
    actions the human takes to reach the change in the running app) and
    `unchecked` (a list of what no test or holdout checked). Only
-   `in_short` is required. Its words run through `unslop`. Its ending is
+   `in_short` is required. Its words run through the `jidoka:unslop` skill. Its ending is
    `{"outcome": "done"}` or `{"outcome": "failed", "why": "<one line>"}`;
    on failed, show the why and ask the human whether to start it again.
    Then run `gate_page --guide "<the gate-guide.json path>"` with the epic
@@ -94,8 +126,8 @@ to each run.
    nothing. When it prints one, offer that message as it is, and start
    any edit from it. When it prints nothing, read the style of the repo's
    log with `git log -15 --format=%B` on main, and write one commit
-   message in that style, about what the epic changes, with `unslop`
-   applied. It names no bead and carries no bead id. After each proposal,
+   message in that style, about what the epic changes, with the
+   `jidoka:unslop` skill applied. It names no bead and carries no bead id. After each proposal,
    and after each edit the human asks for, save it with `gate message
    <epic-id> --message "<message>" --jidoka-home ...`, then run
    `gate_page` again with the same `--guide` path, so the page's Commit
@@ -140,8 +172,9 @@ the human's own words, and may be pinned to a line of the epic's diff.
    as one note. A note pinned to a diff line is written
    `<file>:<line>: <text>`; any other note is its text. Number them from 1
    in the order given. Read them back and change them as the human says.
-2. **Start the send-back worker.** Start one worker with the Agent tool, on
-   the standard tier's route from `bench route standard`. It is no lap
+2. **Start the send-back worker.** Start one worker as a subagent, on
+   the standard tier's route from `bench route standard`; on an Antigravity
+   host, start it as the section above says, with the worker `send-back`. It is no lap
    worker, so its prompt has no worktree line. Give it the epic as
    `bd show` printed it, the title, area and track of each task already in
    the epic, the numbered notes, the paths of the glossary and the house
@@ -156,7 +189,7 @@ the human's own words, and may be pinned to a line of the epic's diff.
    already uses, or a new one when none fits) and `track` (`simple`, or
    `full` when a holdout names the task, its Seams line names more than
    one seam, or it adds a public type or a public API change). Its words
-   run through `unslop`. Its ending is `{"outcome": "done"}` or
+   run through the `jidoka:unslop` skill. Its ending is `{"outcome": "done"}` or
    `{"outcome": "failed", "why": "<one line>"}`; on failed, show the why
    and ask the human whether to start it again.
 3. **Confirm the proposals.** Show each note with its proposed title, Demo

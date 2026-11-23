@@ -320,10 +320,46 @@ def refuse_a_lane_that_shares_the_scratch(passing: PassStage | None, worktree: P
                          "the lanes share the worktree")
 
 
+def antigravity_route(tier: str, home: Path, host: str, starter: str) -> routes.Route:
+    """The route the machine records for the tier in the host's table, which must be a T3 Antigravity thread. The starter
+    names who cannot start a worker on any other route, in the refusal."""
+    route = routes.recorded_route(tier, home, host)
+    if not route.is_antigravity:
+        raise StageError(f"the {tier} tier's route is on {route.harness}, not a T3 Antigravity thread, so {starter} "
+                         "cannot start a worker on it here")
+    return route
+
+
+def prompt_in(prompt_file: Path) -> str:
+    """The text of the prompt file, which must hold some."""
+    prompt = prompt_file.read_text(encoding="utf-8")
+    if not prompt.strip():
+        raise StageError(f"{prompt_file} holds no prompt")
+    return prompt
+
+
+def launch_on_route(route: routes.Route, tier: str, scratch: Path, title: str, message: str, workspace: dict,
+                    request: str, launches: int, wall_seconds: int) -> Stage:
+    """Launches a thread on the route, which a worker of any kind starts through, and records it in the scratch folder
+    with its deadline. The thread has the title and the message as its first prompt, binds to the workspace that
+    `t3_worker.in_worktree` or `t3_worker.in_project_checkout` names, and carries the request id. A T3 failure raises
+    T3Error and records nothing."""
+    thread = t3_worker.launch(title, message, workspace, t3_worker.model_selection(route), request)
+    stage = Stage(thread, tier, clock.now() + wall_seconds, wall_seconds, False, launches, False)
+    write_state(scratch, stage)
+    return stage
+
+
+def started(stage: Stage, wait: str, report: str) -> dict:
+    """What the manager needs from a launch: the `thread`, the `deadline` in epoch seconds, the `wall_seconds`, and the
+    `wait` and `report` calls."""
+    return {"thread": stage.thread, "deadline": stage.deadline, "wall_seconds": stage.wall_seconds, "wait": wait,
+            "report": report}
+
+
 def start(worktree: Path, scratch: Path, prompt_file: Path, tier: str, home: Path, main_tree: Path, host: str,
           plugin_root: Path) -> dict:
-    """Writes the guard record, launches the stage's thread and returns what the manager needs: the `thread`, the
-    `deadline` in epoch seconds, the `wall_seconds`, and the `wait` and `report` calls. Everything that can refuse
+    """Writes the guard record, launches the stage's thread and returns what `started` holds. Everything that can refuse
     comes before the guard record, so a refusal leaves none, and a launch that fails removes it unless another
     thread of the worktree still holds it."""
     refuse_a_stray_scratch(worktree, scratch)
@@ -331,44 +367,38 @@ def start(worktree: Path, scratch: Path, prompt_file: Path, tier: str, home: Pat
     refuse_a_lane_that_shares_the_scratch(passing, worktree, scratch)
     launch = (pass_launch(passing, worktree, scratch, home, main_tree) if passing is not None
               else lap_launch(worktree, home, main_tree))
-    route = routes.recorded_route(tier, home, host)
-    if not route.is_antigravity:
-        raise StageError(f"the {tier} tier's route is on {route.harness}, not a T3 Antigravity thread, so the "
-                         "factory cannot start a worker on it here")
-    prompt = prompt_file.read_text(encoding="utf-8")
-    if not prompt.strip():
-        raise StageError(f"{prompt_file} holds no prompt")
-    message = first_message(launch.stage, prompt, plugin_root)
+    route = antigravity_route(tier, home, host, "the factory")
+    message = first_message(launch.stage, prompt_in(prompt_file), plugin_root)
     lap_guard_record.write_record(home, launch.record)
     try:
-        thread = t3_worker.launch(launch.title, message, worktree, t3_worker.model_selection(route), launch.request)
+        stage = launch_on_route(route, tier, scratch, launch.title, message, t3_worker.in_worktree(worktree),
+                                launch.request, launch.launches, lap_record.wall_clock_seconds(launch.stage))
     except t3_worker.T3Error:
         remove_record_of_a_stage_nobody_runs(home, worktree, scratch)
         raise
-    wall_seconds = lap_record.wall_clock_seconds(launch.stage)
-    deadline = clock.now() + wall_seconds
-    write_state(scratch, Stage(thread, tier, deadline, wall_seconds, False, launch.launches, False))
-    return {"thread": thread, "deadline": deadline, "wall_seconds": wall_seconds,
-            "wait": call_for("wait", worktree, scratch, home), "report": call_for("report", worktree, scratch, home)}
+    return started(stage, call_for("wait", worktree, scratch, home), call_for("report", worktree, scratch, home))
 
 
-def wait_step(worktree: Path, scratch: Path, home: Path) -> dict:
-    """One step of the manager's wait. A stage found past its deadline is stopped and recorded cut off, and says
-    `cut off`; otherwise T3 is asked to wait for the run at most one step. The deadline is read again after the wait,
-    so a run that ended or still ran past it ends cut off too, as the scheduler's report of an overdue stage does.
-    Otherwise the stage says `running` or `ended`. The `next` of the answer is the call the manager makes after it."""
+def waited(scratch: Path) -> tuple[Stage, str]:
+    """One step of the wait for the stage recorded in `scratch`, and the state it ends in. A stage found past its
+    deadline is stopped and recorded cut off, and says `cut off`; otherwise T3 is asked to wait for the run at most one
+    step. The deadline is read again after the wait, so a run that ended or still ran past it ends cut off too, as the
+    scheduler's report of an overdue stage does. Otherwise the stage says `running` or `ended`."""
     stage = read_state(scratch)
     if not stage.cut_off and clock.now() > stage.deadline:
         stage = cut_off_at_deadline(scratch, stage, True)
     if stage.cut_off:
-        state = CUT_OFF
-    else:
-        running = t3_worker.is_running_after_wait(stage.thread)
-        if clock.now() > stage.deadline:
-            stage = cut_off_at_deadline(scratch, stage, running)
-            state = CUT_OFF
-        else:
-            state = RUNNING if running else ENDED
+        return stage, CUT_OFF
+    running = t3_worker.is_running_after_wait(stage.thread)
+    if clock.now() > stage.deadline:
+        return cut_off_at_deadline(scratch, stage, running), CUT_OFF
+    return stage, RUNNING if running else ENDED
+
+
+def wait_step(worktree: Path, scratch: Path, home: Path) -> dict:
+    """One step of the manager's wait, as `waited` ends it. The `next` of the answer is the call the manager makes
+    after it."""
+    stage, state = waited(scratch)
     return {"state": state, "thread": stage.thread, "deadline": stage.deadline,
             "next": call_for("wait" if state == RUNNING else "report", worktree, scratch, home)}
 

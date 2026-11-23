@@ -356,6 +356,21 @@ class EpicEventTests(NotifyCase):
         [message] = self.sent_to_pushover()
         self.assertIn("/jidoka:accept", message["message"])
 
+    def test_the_gate_notification_on_antigravity_names_accept_as_antigravity_spells_it(self):
+        self.configure_pushover()
+        epic = self.new_epic("factory", "human")
+        self.bd("update", epic, "--set-metadata", "gate.state=waiting", "--set-metadata", "validation.head=abc123")
+        environment = {key: value for key, value in os.environ.items() if key != "JIDOKA_SESSION_ID"}
+        environment.update({"PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home), "BEADS_ACTOR": HUMAN,
+                            "T3CODE_THREAD_ID": "thread-of-the-test"})
+
+        fixture.run_launcher(LAUNCHER, [str(NOTIFY), "acceptance-gate", epic], None, environment, self.repo,
+                             RUN_TIMEOUT_SECONDS)
+
+        [message] = self.sent_to_pushover()
+        self.assertIn("/jidoka-accept", message["message"])
+        self.assertNotIn("/jidoka:accept", message["message"])
+
     def test_the_epic_at_the_acceptance_gate_is_announced_again_when_validation_checked_another_head(self):
         self.configure_pushover()
         epic = self.new_epic("factory", "human")
