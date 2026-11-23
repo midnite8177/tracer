@@ -35,7 +35,7 @@ that the workers that share the worktree each have a thread and a state of their
       <stage>`. The validation worktree's worker launches as `lap · <epic title> · holdouts` behind the validation
       agent's instructions, or as `lap · <epic title> · validation-merge`, as the epic records which is owed.
   factory.py wait --worktree <lap or pass worktree> [--scratch <folder>]
-      One step of the wait, at most 45 seconds. Prints `state`, which is `running`, `ended` or `cut off`, the
+      One wait, at most six steps of 45 seconds, which ends early when the run ends. Prints `state`, which is `running`, `ended` or `cut off`, the
       `thread`, the `deadline` and `next`, the call to make then. A stage past its deadline is interrupted, and ends
       cut off.
   factory.py report --worktree <lap or pass worktree> [--scratch <folder>]

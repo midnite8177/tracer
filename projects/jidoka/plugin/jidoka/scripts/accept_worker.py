@@ -17,7 +17,7 @@ folder, which is what the thread's full access allows.
       as its prompt, and prints one JSON object: `thread`, `deadline` (epoch seconds), `wall_seconds`, and `wait` and
       `report`, the calls that follow.
   accept_worker.py wait --worker <guide|send-back>
-      One step of the wait, at most 45 seconds. Prints `state`, which is `running`, `ended` or `cut off`, the
+      One wait, at most six steps of 45 seconds, which ends early when the run ends. Prints `state`, which is `running`, `ended` or `cut off`, the
       `thread`, the `deadline` and `next`, the call to make then. A worker past its deadline is interrupted, and ends
       cut off.
   accept_worker.py report --worker <guide|send-back>

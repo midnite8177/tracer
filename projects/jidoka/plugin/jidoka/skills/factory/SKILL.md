@@ -390,8 +390,10 @@ the printed route, native Sonnet, with the prompt of a native batch.
       Exit 1 is a refusal: show it, write the closing line and stop.
    3. Wait on what the script names. Run the printed `wait` call as a command
       of its own, then the `next` that each answer prints, until the answer's
-      `state` is `ended` or `cut off`. Each call waits at most 45 seconds, so
-      with several workers wait on each in turn. A `cut off` means the script
+      `state` is `ended` or `cut off`. Each call waits at most 4.5 minutes
+      and returns when the stage ends. Your host moves a call that long to
+      the background, so you wake when it finishes. With several workers
+      wait on each in turn. A `cut off` means the script
       found the stage past its `deadline` and stopped it.
    4. Run the `report` call that the last answer names. It reads the
       thread's last reply, archives the thread and prints `thread`, `cut_off`

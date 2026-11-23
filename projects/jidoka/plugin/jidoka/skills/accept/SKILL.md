@@ -41,7 +41,7 @@ repo:
    show its message verbatim and stop.
 3. Run the printed `wait` call as a command of its own, then the `next`
    that each answer prints, until the answer's `state` is `ended` or
-   `cut off`. Each call waits at most 45 seconds.
+   `cut off`. Each call waits a bounded while and returns when the worker ends.
 4. Run the `report` call the last answer names. It reads the thread's last
    reply, archives the thread and prints `thread`, `cut_off` and `reply`.
    A `cut_off` of true is a worker that failed, with the why "ran past its

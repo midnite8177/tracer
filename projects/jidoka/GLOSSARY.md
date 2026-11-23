@@ -862,8 +862,8 @@ state in its own scratch folder, because they share the worktree and its guard
 record. The second tier's Spec lane is no thread: it stays on codex.
 A thread has no agent type, so the app check's thread and the Spec check's
 open with the worker's instructions from the plugin's files, ahead of the
-prompt. The manager calls those as printed. Each `wait` is one T3 step of at
-most 45 seconds, and a stage found past its deadline is stopped with an
+prompt. The manager calls those as printed. Each `wait` is up to six T3 steps of 45
+seconds, ending at once when the run ends, and a stage found past its deadline is stopped with an
 interrupt and ends cut off. `report` reads the thread's last reply and
 archives the thread, and removes the guard record once the read has answered,
 whether or not the archive does; a pass's record goes with the last of its

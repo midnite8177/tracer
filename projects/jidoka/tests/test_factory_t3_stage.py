@@ -29,6 +29,7 @@ WORKER_THREAD = "thread-of-the-build"
 STARTED = 1_800_000_000
 BUILD_WALL_CLOCK_SECONDS = 60 * 60
 WAIT_STEP_MILLISECONDS = 45_000
+STEPS_IN_ONE_WAIT = 6
 NEON = {"harness": "t3", "model": "gemini-4-neon", "version": None, "effort": "high", "provider": "antigravity-main",
         "driver": "antigravity"}
 AMBIENT = ("JIDOKA_SESSION_ID", "T3CODE_THREAD_ID", "JIDOKA_NOW", "T3_ACP_MCP_NODE", "T3_ACP_MCP_ENTRYPOINT")
@@ -472,6 +473,25 @@ class WaitingForTheBuildTests(T3StageCase):
                          self.calls()[-1]["arguments"])
         self.assertNotIn("t3_thread_interrupt", self.tools_called())
 
+    def test_a_wait_of_a_run_that_goes_on_spans_several_steps_so_that_the_manager_is_woken_once_for_all_of_them(self):
+        self.started()
+        self.answer({"t3_thread_wait": {"timedOut": True}})
+
+        done = self.wait(STARTED + 120)
+
+        self.assertEqual("running", json.loads(done.stdout)["state"])
+        self.assertEqual(["t3_thread_wait"] * STEPS_IN_ONE_WAIT, self.tools_called()[-STEPS_IN_ONE_WAIT:])
+        self.assertEqual(STEPS_IN_ONE_WAIT, self.tools_called().count("t3_thread_wait"))
+
+    def test_a_wait_stops_at_the_step_in_which_the_run_ended(self):
+        started = self.started()
+        self.answer({"t3_thread_wait": {"timedOut": False}})
+
+        done = self.wait(STARTED + 120)
+
+        self.assertEqual(started["report"], json.loads(done.stdout)["next"])
+        self.assertEqual(1, self.tools_called().count("t3_thread_wait"))
+
     def test_a_run_that_finished_says_ended_and_names_the_call_that_reports_the_stage(self):
         started = self.started()
         self.answer({"t3_thread_wait": {"timedOut": False}})
@@ -628,6 +648,27 @@ class PricingTheThreadWhenTheStageIsReportedTests(T3StageCase):
         [row] = self.rows()
         self.assertEqual((WORKER_THREAD, 0, 0), (row["agent"], row["input_tokens"], row["output_tokens"]))
 
+    def test_a_stage_that_reran_on_the_native_route_is_priced_from_the_route_it_launched_on_with_no_word_from_the_manager(
+            self):
+        hydrogen = {**NEON, "model": "gemini-4-hydrogen", "effort": "medium"}
+        opencode = {"harness": "t3", "model": "qwen-local", "version": None, "effort": "high",
+                    "provider": "opencode-main", "driver": "opencode"}
+        self.write_antigravity_routes({"local": opencode, "light": hydrogen})
+        done = self.factory(STARTED, "start", "--worktree", self.worktree, "--prompt", str(self.prompt), "--tier",
+                            "local", "--native", "--jidoka-home", str(self.home), thread=MANAGER_THREAD)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.write_antigravity_routes({"local": opencode, "light": {**hydrogen, "effort": "low"}})
+        self.answer(self.REPLY)
+        self.give_the_thread_a_turn(1_000, 10)
+
+        self.report(STARTED + 900)
+
+        [row] = self.rows()
+        self.assertEqual(("local", "t3", "medium"), (row["tier"], row["harness"], row["effort"]))
+
+    def write_antigravity_routes(self, table: dict) -> None:
+        (self.home / "settings.json").write_text(json.dumps({"antigravity_routes": table}), encoding="utf-8")
+
     def test_the_report_of_a_stage_that_was_never_priced_leaves_the_schedulers_report_to_price_it(self):
         self.started()
         self.give_the_thread_a_turn(2_000, 20)
@@ -720,7 +761,7 @@ class ReportingTheBuildTests(T3StageCase):
 
     def test_no_call_of_a_whole_stage_deletes_a_thread(self):
         self.started()
-        self.answer({**self.REPLIES, "t3_thread_wait": {"timedOut": True}})
+        self.answer({**self.REPLIES, "t3_thread_wait": {"timedOut": False}})
         self.wait(STARTED + 60)
         self.wait(STARTED + BUILD_WALL_CLOCK_SECONDS + 5)
         self.report(STARTED + BUILD_WALL_CLOCK_SECONDS + 6)

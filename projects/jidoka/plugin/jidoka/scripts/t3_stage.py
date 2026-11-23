@@ -75,6 +75,7 @@ PASS_STAGES = {cleanup.STAGE.prefix: cleanup.ACTION, tidy.STAGE.prefix: tidy.ACT
 RUNNING = "running"
 ENDED = "ended"
 CUT_OFF = "cut off"
+STEPS_IN_ONE_WAIT = 6
 CUT_OFF_REASON = "jidoka: the stage ran past its wall clock"
 STOP_REASON = "jidoka: the lap ended while the stage ran"
 VALIDATION_PREFIX = validation_merge.WORKTREE_PREFIX
@@ -381,15 +382,21 @@ def start(worktree: Path, scratch: Path, prompt_file: Path, tier: str, home: Pat
 
 def waited(scratch: Path) -> tuple[Stage, str]:
     """One step of the wait for the stage recorded in `scratch`, and the state it ends in. A stage found past its
-    deadline is stopped and recorded cut off, and says `cut off`; otherwise T3 is asked to wait for the run at most one
-    step. The deadline is read again after the wait, so a run that ended or still ran past it ends cut off too, as the
+    deadline is stopped and recorded cut off, and says `cut off`; otherwise T3 is asked to wait for the run, step after
+    step, until it ends, the deadline passes or STEPS_IN_ONE_WAIT steps went by. One long wait is one call of the
+    manager, which an Antigravity host moves to the background after a few seconds and which then yields its turn
+    once, where a call per step would yield one turn per step. The deadline is read again after the wait, so a run that ended or still ran past it ends cut off too, as the
     scheduler's report of an overdue stage does. Otherwise the stage says `running` or `ended`."""
     stage = read_state(scratch)
     if not stage.cut_off and clock.now() > stage.deadline:
         stage = cut_off_at_deadline(scratch, stage, True)
     if stage.cut_off:
         return stage, CUT_OFF
-    running = t3_worker.is_running_after_wait(stage.thread)
+    running = True
+    for _ in range(STEPS_IN_ONE_WAIT):
+        running = t3_worker.is_running_after_wait(stage.thread)
+        if not running or clock.now() > stage.deadline:
+            break
     if clock.now() > stage.deadline:
         return cut_off_at_deadline(scratch, stage, running), CUT_OFF
     return stage, RUNNING if running else ENDED
