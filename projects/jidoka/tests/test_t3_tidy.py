@@ -111,6 +111,27 @@ class AT3TidyBatchStartsAsAnOpenCodeChildTaskTests(T3TidyCase):
                           "target": {"providerInstanceId": "strata", "driverKind": "opencode",
                                      "model": "qwen3-coder-next", "options": {"variant": "medium"}}}, delegate)
 
+    def test_start_sends_the_effort_under_the_option_name_the_route_records(self):
+        _, _, printed = self.finish_epic_whose_task_built_a_commented_file()
+        self.local_tier({**T3_OPENCODE, "effort_option": "reasoningEffort"})
+        try:
+            delegate = self.started(self.tidy_action_of(printed), "--wall-seconds", "1800")["delegate_task"]
+        finally:
+            self.local_tier(T3_OPENCODE)
+
+        self.assertEqual({"reasoningEffort": "medium"}, delegate["target"]["options"])
+
+    def test_a_route_whose_option_name_is_not_text_refuses_to_start(self):
+        _, _, printed = self.finish_epic_whose_task_built_a_commented_file()
+        self.local_tier({**T3_OPENCODE, "effort_option": 7})
+        try:
+            done = self.start_batch(self.tidy_action_of(printed))
+        finally:
+            self.local_tier(T3_OPENCODE)
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("effort_option", done.stderr)
+
     def test_start_prints_the_deadline_from_the_stages_wall_clock(self):
         _, _, printed = self.finish_epic_whose_task_built_a_commented_file()
 

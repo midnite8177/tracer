@@ -88,7 +88,7 @@ ROUTES_KEY = "routes"
 OWNED_KEYS = (ROUTES_KEY, "budget", "reserves", "lap_limit")
 T3_CODEX_MODEL = "gpt-6.1-sol"
 T3_CODEX_EFFORT = "high"
-T3_EFFORT_OPTIONS = ("reasoningEffort", "effort", "variant", "thinkingLevel", "thoughtLevel")
+T3_EFFORT_OPTIONS = ("reasoningEffort", "effort", "variant", "thought_level", "thinkingLevel", "thoughtLevel")
 ANTIGRAVITY_TIER_MODELS = (("light", "hydrogen", "medium"), ("local", "hydrogen", "medium"),
                            ("standard", "neon", "high"))
 ANTIGRAVITY_DEEP = (("carbon", "xhigh"), ("neon", "xhigh"))
@@ -116,6 +116,12 @@ def effort_option(model: dict) -> dict:
         if isinstance(each, dict) and each.get("id") in T3_EFFORT_OPTIONS:
             return each
     return {}
+
+
+def effort_option_name_of(model: dict) -> str | None:
+    """The name of the option that sets the model's effort, as the catalog lists it, or None when it lists none."""
+    name = effort_option(model).get("id")
+    return name if texts.is_text(name) else None
 
 
 def effort_of(model: dict, wanted: str) -> str:
@@ -160,7 +166,7 @@ def t3_codex_route(catalog: object) -> routes.Route | None:
                 and provider.get("canRunChildTask") is True and texts.is_text(provider.get("providerInstanceId"))):
             model = t3_model_of(provider)
             return routes.Route(routes.T3_HARNESS, model["id"], None, t3_effort_of(model),
-                                provider["providerInstanceId"], None)
+                                provider["providerInstanceId"], None, effort_option_name_of(model))
     return None
 
 
@@ -195,7 +201,7 @@ def antigravity_route(provider: str, models: list[dict], family: str, wanted: st
     for model in models:
         if family in model["id"].lower() and "claude" not in model["id"].lower():
             return routes.Route(routes.T3_HARNESS, model["id"], None, effort_of(model, wanted), provider,
-                                routes.ANTIGRAVITY_DRIVER)
+                                routes.ANTIGRAVITY_DRIVER, effort_option_name_of(model))
     return None
 
 

@@ -104,6 +104,29 @@ class TheSpecLaneStartsAsAT3ChildTaskTests(T3LaneCase):
                           "target": {"providerInstanceId": "codex-home", "model": "gpt-6.1-sol",
                                      "options": {"effort": "high"}}}, delegate)
 
+    def test_start_sends_the_effort_under_the_option_name_the_route_records(self):
+        epic, printed = self.finish_epic_at_the_review()
+        self.second_tier_settings({**T3_ROUTE, "effort_option": "reasoningEffort"})
+        try:
+            delegate = self.started(epic, self.spec_action_of(printed))["delegate_task"]
+        finally:
+            self.second_tier_settings(T3_ROUTE)
+
+        self.assertEqual({"reasoningEffort": "high"}, delegate["target"]["options"])
+
+    def test_a_route_whose_option_name_is_not_text_refuses_to_start(self):
+        epic, printed = self.finish_epic_at_the_review()
+        action = self.spec_action_of(printed)
+        for option in (7, ["effort"], {"id": "effort"}):
+            self.second_tier_settings({**T3_ROUTE, "effort_option": option})
+            try:
+                done = self.start_lane(epic, action)
+            finally:
+                self.second_tier_settings(T3_ROUTE)
+
+            self.assertEqual(1, done.returncode)
+            self.assertIn("effort_option", done.stderr)
+
     def test_start_prints_the_deadline_from_the_review_stages_wall_clock(self):
         epic, printed = self.finish_epic_at_the_review()
 

@@ -671,7 +671,10 @@ _Avoid_: Class, level, size, model
 How one machine runs a tier: a model and effort in the host's own
 harness, or in another harness. A t3 route is a child task that T3 runs on
 a provider, a model and an effort from its catalog, which setup reads under
-T3. A t3 route, like a codex route, may not serve a tier whose stages
+T3, and the name of the option that sets the effort on that model, as the
+catalog lists it: `reasoningEffort`, `effort`, `variant` or `thought_level`.
+A t3 route sends its effort under that name; a route recorded without one
+sends it under the name its driver implies, else under `effort`. A t3 route, like a codex route, may not serve a tier whose stages
 write: T3 starts a child in the main checkout or in a checkout of its own,
 never in a lap's worktree. The one exception is a t3 OpenCode route, which
 names `opencode` as its driver and serves the local tier, whose only writing

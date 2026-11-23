@@ -24,11 +24,11 @@ THOUGHT_LEVELS = ["low", "medium", "high"]
 
 
 def gemini(name: str, levels: list[str]) -> dict:
-    return {"id": f"gemini-4-{name}", "options": [{"id": "thinkingLevel", "values": levels}]}
+    return {"id": f"gemini-4-{name}", "options": [{"id": "thought_level", "values": levels}]}
 
 
 ANTIGRAVITY_MODELS = [gemini("hydrogen", THOUGHT_LEVELS), gemini("neon", [*THOUGHT_LEVELS, "xhigh"]),
-                      {"id": "claude-opus-4-6", "options": [{"id": "thinkingLevel", "values": THOUGHT_LEVELS}]},
+                      {"id": "claude-opus-4-6", "options": [{"id": "thought_level", "values": THOUGHT_LEVELS}]},
                       {"id": "claude-sonnet-4-6", "options": []}]
 ANTIGRAVITY_CATALOG = {"providers": [
     {"providerInstanceId": "antigravity", "driverKind": "antigravity", "models": ANTIGRAVITY_MODELS,
@@ -39,7 +39,7 @@ ANTIGRAVITY_CATALOG = {"providers": [
 
 def antigravity_route(model: str, effort: str) -> dict:
     return {"harness": "t3", "model": model, "version": None, "effort": effort, "provider": "antigravity",
-            "driver": "antigravity"}
+            "driver": "antigravity", "effort_option": "thought_level"}
 CODEX = {"harness": "codex", "model": None, "version": None, "effort": None}
 T3_CODEX = {"harness": "t3", "provider": "codex", "model": "gpt-6.1-sol", "version": None, "effort": "high"}
 T3_OPENCODE = {"harness": "t3", "driver": "opencode", "provider": "strata", "model": "qwen3-coder-next",
@@ -164,6 +164,20 @@ class ProposeTests(SetupCase):
         route = self.second_tier_given(models)
 
         self.assertEqual(("gpt-6.1-sol", "high"), (route["model"], route["effort"]))
+
+    def test_a_route_records_the_name_of_the_option_that_sets_the_effort_on_its_model(self):
+        for option in ("reasoningEffort", "effort", "variant", "thought_level"):
+            models = [{"id": "gpt-6.1-sol", "options": [{"id": "serviceTier", "values": ["fast"]},
+                                                        {"id": option, "values": ["low", "high"]}]}]
+
+            route = self.second_tier_given(models)
+
+            self.assertEqual(option, route["effort_option"])
+
+    def test_a_route_on_a_model_that_lists_no_effort_option_records_no_option_name(self):
+        route = self.second_tier_given([{"id": "gpt-6.1-sol", "options": []}])
+
+        self.assertNotIn("effort_option", route)
 
     def test_a_catalog_that_does_not_list_the_preferred_model_proposes_the_first_model_it_lists(self):
         models = [{"id": "gpt-6-luna", "options": [{"id": "reasoningEffort", "values": ["low", "high"]}]},
@@ -342,7 +356,7 @@ class ProposeUnderAntigravityTests(SetupCase):
         self.assertEqual(antigravity_route("gemini-4-neon", "high"), proposal["routes"]["standard"])
 
     def test_a_tier_whose_model_the_catalog_does_not_list_gets_no_route(self):
-        neon = {"id": "gemini-4-neon", "options": [{"id": "thinkingLevel", "values": THOUGHT_LEVELS,
+        neon = {"id": "gemini-4-neon", "options": [{"id": "thought_level", "values": THOUGHT_LEVELS,
                                                     "default": "high"}]}
 
         proposal = self.propose_from([neon])
@@ -523,6 +537,14 @@ class WriteTests(SetupCase):
             self.assertEqual(1, done.returncode)
             self.assertIn("second", done.stderr)
             self.assertIn("effort", done.stderr)
+        self.assertEqual(["python"], self.home_files())
+
+    def test_a_t3_route_whose_option_name_is_not_text_is_refused_and_nothing_is_written(self):
+        done = self.confirm({**self.CONFIRMED, "routes": {"second": {**T3_CODEX, "effort_option": 3}}})
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("second", done.stderr)
+        self.assertIn("effort_option", done.stderr)
         self.assertEqual(["python"], self.home_files())
 
     def test_a_t3_route_on_a_tier_whose_stages_write_is_refused_and_nothing_is_written(self):

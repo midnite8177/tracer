@@ -3,7 +3,8 @@
 A route is a JSON object with `harness`, `model`, `version` and `effort`. The machine settings keep one table of them
 for each host, in <jidoka-home>/settings.json: Claude Code's under `routes` and Antigravity's under
 `antigravity_routes`. A route on the harness `t3` also holds `provider`, the T3 provider instance that runs
-the child task, and may hold `driver`. `Route` parses and checks one, including the fields that a harness requires, so
+the child task, and may hold `driver` and `effort_option`, the name of the option that sets the effort on its model.
+`Route` parses and checks one, including the fields that a harness requires, so
 that every script meets the same error for a recorded route that is incomplete. Native means the host's own
 harness, `claude`. A tier's native route is the one setup
 proposes for it when no other harness is on the machine, so a stage that falls back keeps the model its tier asked
@@ -27,6 +28,7 @@ OPENCODE_DRIVER = "opencode"
 ANTIGRAVITY_DRIVER = "antigravity"
 EFFORT_OPTIONS = {OPENCODE_DRIVER: "variant", ANTIGRAVITY_DRIVER: "thought_level"}
 DEFAULT_EFFORT_OPTION = "effort"
+EFFORT_OPTION_FIELD = "effort_option"
 CLAUDE_CODE_HOST = "claude-code"
 ANTIGRAVITY_HOST = "antigravity"
 ROUTE_TABLES = {CLAUDE_CODE_HOST: "routes", ANTIGRAVITY_HOST: "antigravity_routes"}
@@ -84,13 +86,14 @@ class Route:
     effort: str | None
     provider: str | None
     driver: str | None
+    recorded_effort_option: str | None
 
     @staticmethod
     def parse(tier: str, recorded: object) -> Route:
         """The route that the JSON object holds for the tier, or a RouteError that says what it lacks."""
         if not isinstance(recorded, dict) or not is_text(recorded.get("harness")):
             raise RouteError(f"the route of the tier {tier!r} needs a harness")
-        for field in ("model", "version", "effort"):
+        for field in ("model", "version", "effort", EFFORT_OPTION_FIELD):
             if recorded.get(field) is not None and not is_text(recorded[field]):
                 raise RouteError(f"the {field} of the route of the tier {tier!r} must be text or null")
         if recorded["harness"] == T3_HARNESS:
@@ -99,13 +102,17 @@ class Route:
                     raise RouteError(f"the t3 route of the tier {tier!r} needs a {field}")
         return Route(recorded["harness"], text_or_none(recorded.get("model")), text_or_none(recorded.get("version")),
                      text_or_none(recorded.get("effort")), text_or_none(recorded.get("provider")),
-                     text_or_none(recorded.get("driver")))
+                     text_or_none(recorded.get("driver")), text_or_none(recorded.get(EFFORT_OPTION_FIELD)))
 
     @property
     def effort_option(self) -> str:
-        """The key under which a thread's or child task's model selection carries this route's effort. T3 names it for
-        the provider: OpenCode takes `variant`, Antigravity `thought_level`, and any other provider `effort`. Every
-        launcher builds its selection from it."""
+        """The key under which a thread's or child task's model selection carries this route's effort. It is the
+        option name the route records from T3's catalog, because each model names its own: Codex takes
+        `reasoningEffort`, Claude `effort`, OpenCode `variant`, Antigravity `thought_level`. A route that records none
+        falls back to the one its driver implies, and else to `effort`. Every launcher builds its selection from
+        it."""
+        if self.recorded_effort_option is not None:
+            return self.recorded_effort_option
         return EFFORT_OPTIONS.get(self.driver or "", DEFAULT_EFFORT_OPTION)
 
     @property
@@ -135,15 +142,15 @@ class Route:
         return opencode_refusal(tier) if self.is_opencode else writing_refusal(tier, self.harness, {})
 
     def as_dict(self) -> dict:
-        """The JSON object of the settings: the four fields every route holds, and `provider` and `driver` when the
-        route names them."""
-        named = {"provider": self.provider, "driver": self.driver}
+        """The JSON object of the settings: the four fields every route holds, and `provider`, `driver` and the
+        recorded effort option when the route names them."""
+        named = {"provider": self.provider, "driver": self.driver, EFFORT_OPTION_FIELD: self.recorded_effort_option}
         return {"harness": self.harness, "model": self.model, "version": self.version, "effort": self.effort,
                 **{field: value for field, value in named.items() if value is not None}}
 
 
 def native(model: str | None, version: str | None, effort: str | None) -> Route:
-    return Route(NATIVE_HARNESS, model, version, effort, None, None)
+    return Route(NATIVE_HARNESS, model, version, effort, None, None, None)
 
 
 NATIVE_ROUTES: dict[str, Route] = {
@@ -222,7 +229,7 @@ def default_routes(codex_found: bool) -> dict[str, Route]:
     and every other tier runs on its native route."""
     defaults = dict(NATIVE_ROUTES)
     if codex_found:
-        defaults[SECOND_TIER] = Route(CODEX_HARNESS, None, None, None, None, None)
+        defaults[SECOND_TIER] = Route(CODEX_HARNESS, None, None, None, None, None, None)
     return defaults
 
 
