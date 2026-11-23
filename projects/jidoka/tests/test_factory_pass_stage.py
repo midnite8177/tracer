@@ -292,5 +292,107 @@ class StartingTheTidyBatchesTests(PassStageCase):
         self.assertIsNone(self.guard_of(batches[0]))
 
 
+class EndingAPassStageThatRunsTests(PassStageCase):
+    """A stop and a resume end the threads of a pass stage that may still run, wherever the stage keeps its state: in
+    the pass worktree's scratch folder, or in the folder of a tidy batch."""
+
+    def scheduler(self, *args: str) -> subprocess.CompletedProcess:
+        return self.run_script(test_scheduler.SCHEDULER, *args, thread=None, now=None)
+
+    def stop(self, epic: str) -> subprocess.CompletedProcess:
+        done = self.scheduler("stop", epic)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return done
+
+    def resume(self, epic: str) -> subprocess.CompletedProcess:
+        beat = self.home / "heartbeat" / f"{epic}.json"
+        beat.parent.mkdir(exist_ok=True)
+        beat.write_text(json.dumps({"epic": epic, "time": 1, "session": "session-of-the-closed-host"}),
+                        encoding="utf-8")
+        done = self.scheduler("next", epic)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return done
+
+    def tools_called(self) -> list[str]:
+        return [call["tool"] for call in self.calls()]
+
+    def test_a_stop_interrupts_and_archives_the_thread_of_a_tidy_batch_and_removes_the_guard_record(self):
+        epic, batches = self.epic_at_tidy(SHELF_FILES)
+        for action in batches:
+            self.started(action, "local")
+
+        self.stop(epic)
+
+        self.assertEqual(["t3_thread_launch"] * 2 + ["t3_thread_interrupt", "t3_thread_organize"] * 2,
+                         self.tools_called())
+        interrupt = self.calls()[2]
+        self.assertEqual({"threadId": CLEANUP_THREAD, "stop": True},
+                         {key: interrupt["arguments"][key] for key in ("threadId", "stop")})
+        self.assertEqual({"threadId": CLEANUP_THREAD, "action": "archive"}, self.calls()[3]["arguments"])
+        self.assertEqual(1, len(interrupt["guards"]))
+        self.assertIsNone(self.guard_of(batches[0]))
+
+    def test_a_stop_interrupts_and_archives_the_thread_of_a_test_cleanup_kept_in_the_pass_scratch_folder(self):
+        epic, action = self.epic_at_cleanup()
+        self.started(action, "deep")
+
+        self.stop(epic)
+
+        self.assertEqual(["t3_thread_launch", "t3_thread_interrupt", "t3_thread_organize"], self.tools_called())
+        self.assertIsNone(self.guard_of(action))
+
+    def test_a_stop_leaves_a_batch_that_was_reported_alone_and_ends_the_one_that_still_runs(self):
+        epic, batches = self.epic_at_tidy(SHELF_FILES)
+        for action in batches:
+            self.started(action, "local")
+        self.stage_call("report", batches[0])
+        before = len(self.calls())
+
+        self.stop(epic)
+
+        self.assertEqual(["t3_thread_interrupt", "t3_thread_organize"],
+                         [call["tool"] for call in self.calls()[before:]])
+        self.assertIsNone(self.guard_of(batches[1]))
+
+    def test_a_stop_that_cannot_interrupt_a_batch_keeps_the_guard_record(self):
+        epic, batches = self.epic_at_tidy(SHELF_FILES)
+        self.started(batches[0], "local")
+        self.answer({"t3_thread_launch": {"threadId": CLEANUP_THREAD},
+                     "t3_thread_interrupt": {"exit": 1, "stderr": "the bridge is down"}})
+
+        done = self.stop(epic)
+
+        self.assertIn("the bridge is down", done.stderr)
+        self.assertNotIn("t3_thread_organize", self.tools_called())
+        self.assertIsNotNone(self.guard_of(batches[0]))
+
+    def test_a_stop_makes_no_t3_call_for_an_epic_whose_pass_started_no_thread(self):
+        epic, _ = self.epic_at_tidy(SHELF_FILES)
+
+        self.stop(epic)
+
+        self.assertEqual([], self.calls())
+
+    def test_a_resume_interrupts_and_archives_the_thread_of_a_tidy_batch_and_removes_the_guard_record(self):
+        epic, batches = self.epic_at_tidy(SHELF_FILES)
+        self.started(batches[0], "local")
+
+        self.resume(epic)
+
+        self.assertEqual(["t3_thread_launch", "t3_thread_interrupt", "t3_thread_organize"], self.tools_called())
+        self.assertIsNone(self.guard_of(batches[0]))
+
+    def test_a_batch_started_again_after_a_stop_is_a_new_launch_to_t3(self):
+        epic, batches = self.epic_at_tidy(SHELF_FILES)
+        self.started(batches[0], "local")
+        self.stop(epic)
+
+        self.started(batches[0], "local")
+
+        first, second = [call["arguments"]["clientRequestId"] for call in self.calls()
+                         if call["tool"] == "t3_thread_launch"]
+        self.assertNotEqual(first, second)
+
+
 if __name__ == "__main__":
     unittest.main()

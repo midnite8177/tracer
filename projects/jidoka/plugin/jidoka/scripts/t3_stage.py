@@ -36,8 +36,9 @@ The merge worker's guard record has the kind `lap` and the lap list the worktree
 merging main. Neither bars a folder. The scheduler's report of either worker prices its thread, so their `report`
 writes no ledger row. The acceptance specs that validation runs are run by the scheduler, in no thread.
 
-The stage's state is the file t3-stage.json in the stage's scratch folder, the lap's own for a lap. The calls to T3
-are t3_worker.py's.
+The stage's state is the file t3-stage.json in the stage's scratch folder, the lap's own for a lap. A stop or a
+restart of the factory ends every stage thread whose state a worktree holds, in its scratch folder or in a folder
+directly under it, and marks it reported so that a later start is a new launch. The calls to T3 are t3_worker.py's.
 """
 from __future__ import annotations
 
@@ -67,6 +68,7 @@ import t3_worker
 import tidy
 import validation_merge
 from commands import SCRATCH_FOLDER, CommandError, head_of, metadata_of, parent_of, read_bead
+from worktrees import stage_worktree
 
 STATE_NAME = "t3-stage.json"
 PASS_STAGES = {cleanup.STAGE.prefix: cleanup.ACTION, tidy.STAGE.prefix: tidy.ACTION,
@@ -441,18 +443,22 @@ def price_thread(stage: Stage, worktree: Path, home: Path, main_tree: Path) -> N
                              ledger.Worker(stage.thread, stage.tier, False), outcome, now)
 
 
+def state_folders(worktree: Path) -> list[Path]:
+    """The scratch folders of the worktree that hold a stage's state file: its own and each folder directly under it,
+    where a tidy batch or a review lane keeps its state."""
+    folder = lap_scratch(worktree)
+    return [path.parent for pattern in (STATE_NAME, f"*/{STATE_NAME}") for path in sorted(folder.glob(pattern))]
+
+
 def another_stage_runs(worktree: Path, scratch: Path) -> bool:
     """True when a stage other than the one in `scratch` has a thread in the worktree that nobody reported, or a state
-    file that cannot be read, which may name a thread that still runs. The stages of a worktree keep their state in its
-    scratch folder or in a folder directly under it."""
-    folder = lap_scratch(worktree)
-    for pattern in (STATE_NAME, f"*/{STATE_NAME}"):
-        for path in folder.glob(pattern):
-            if path.parent.resolve() == scratch.resolve():
-                continue
-            state = previous_state(path.parent)
-            if state is None or not state.reported:
-                return True
+    file that cannot be read, which may name a thread that still runs."""
+    for held in state_folders(worktree):
+        if held.resolve() == scratch.resolve():
+            continue
+        state = previous_state(held)
+        if state is None or not state.reported:
+            return True
     return False
 
 
@@ -482,23 +488,19 @@ def report(worktree: Path, scratch: Path, home: Path, main_tree: Path) -> dict:
     return {"thread": stage.thread, "cut_off": stage.cut_off, "reply": reply}
 
 
-def stop_thread(worktree: Path) -> bool:
-    """Interrupts the thread of the stage `start` recorded in the worktree and archives it, for a lap that ends while
-    its worker may still run. True means no worker of the stage can act in the worktree any longer, so the caller may
-    remove the guard record: there was no stage thread to stop, or the thread was interrupted. False means the thread
-    may still run, and the record stays to hold it. A worktree with no state file makes no call to T3.
-
-    A failed archive after a good interrupt is only a line on stderr, since an interrupted thread has stopped. Nothing
-    here raises, so a stop never fails as a whole because T3 could not be reached."""
-    scratch = lap_scratch(worktree)
-    if not state_path(scratch).is_file():
-        return True
+def stop_stage(worktree: Path, scratch: Path) -> bool:
+    """Interrupts the thread of the stage recorded in the scratch folder and archives it, and records the stage as
+    reported, so that a start of the stage after it is a new launch to T3 instead of the answer with the thread that
+    was stopped. True means the stage's worker cannot act any longer: it had no thread running, or the thread was
+    interrupted. False means the thread may still run."""
     try:
         stage = read_state(scratch)
     except StageError as error:
         print(f"jidoka: {state_path(scratch)} names no thread ({error.__cause__}), so the guard record of {worktree} "
               "stays while its thread may still run", file=sys.stderr)
         return False
+    if stage.reported:
+        return True
     try:
         t3_worker.interrupt(stage.thread, STOP_REASON)
     except t3_worker.T3Error as error:
@@ -510,11 +512,33 @@ def stop_thread(worktree: Path) -> bool:
     except t3_worker.T3Error as error:
         print(f"jidoka: thread {stage.thread} of {worktree} was interrupted and not archived: {error}",
               file=sys.stderr)
+    write_state(scratch, replace(stage, reported=True))
     return True
 
 
+def stop_thread(worktree: Path) -> bool:
+    """Interrupts the thread of every stage `start` recorded in the worktree, in its own scratch folder or in a folder
+    under it, and archives them, for a lap or a pass that ends while its workers may still run. True means no worker of
+    the worktree can act in it any longer, so the caller may remove the guard record: there was no stage thread to
+    stop, or every thread was interrupted. False means a thread may still run, and the record stays to hold it. A
+    worktree with no state file makes no call to T3.
+
+    A failed archive after a good interrupt is only a line on stderr, since an interrupted thread has stopped. Nothing
+    here raises, so a stop never fails as a whole because T3 could not be reached."""
+    stopped = [stop_stage(worktree, scratch) for scratch in state_folders(worktree)]
+    return all(stopped)
+
+
 def release(worktree: Path, home: Path) -> None:
-    """Ends the stage thread of a lap that ends while its worker may still run, and removes the worktree's guard record
-    once no worker can act in it, as `stop_thread` decides. A thread that cannot be interrupted leaves the record."""
+    """Ends the stage threads of a lap or a pass that ends while its workers may still run, and removes the worktree's
+    guard record once no worker can act in it, as `stop_thread` decides. A thread that cannot be interrupted leaves the
+    record."""
     if stop_thread(worktree):
         lap_guard_record.remove_record(home, worktree)
+
+
+def release_pass(epic: str, home: Path, main_tree: Path) -> None:
+    """Ends the stage threads in every pass worktree of the epic, which a stop or a restart of the epic's factory
+    leaves with no manager to wait for them."""
+    for prefix in (*PASS_STAGES, VALIDATION_PREFIX):
+        release(stage_worktree(prefix, epic, main_tree), home)

@@ -16,7 +16,8 @@ beater for that thread, at most one for each thread, as beater.py describes. It 
 every open lap at a worker stage for one an earlier session left with no worker, unless the human's brake holds it.
 Git wins where it disagrees with the record. A lap whose branch git shows merged into the epic branch closes its
 task as a merge does, after it interrupts and archives the lap's stage thread, if it has one, and it drops the
-records of worktrees whose folders are gone. For each other lap it stops
+records of worktrees whose folders are gone. It also interrupts and archives the stage threads that the epic's pass
+worktrees hold, as t3_stage.release_pass says. For each other lap it stops
 the orphan workers left in its worktree, abandons a rebase left half done, and ends the lap interrupted as `stop`
 does, which counts no cutoff and no try, so that the task is ready again with a new lap on the work it left. It
 removes the guard record of each worktree whose lap it ends or closes, except one whose stage thread could not be
@@ -30,7 +31,9 @@ after any outcome, with no restart and no heartbeat check.
 the epic interrupted. The task is open with no assignee, `lap.stage` is interrupted, an `Interrupted:` comment says
 so, and its worktree and branch are kept. A stop is no cutoff, no try and no park, so it changes no count and leaves
 the brake as it was, and the interrupted task is ready again with a new lap. It removes the guard record of each such
-lap's worktree, except one whose stage thread could not be interrupted. Then it sends the factory-stopped
+lap's worktree, except one whose stage thread could not be interrupted. It interrupts and archives the stage threads
+in the epic's pass worktrees too, a test cleanup, a tidy batch, a review lane, the fix worker or a validation worker, and
+removes the guard record of each worktree whose threads were all interrupted. Then it sends the factory-stopped
 notification through notify.py, which sends nothing when the epic has no open task left, and prints the host's line
 for it on stderr. It ends the epic's T3 waker, so that no released thread is woken, and records the stop in the epic's
 heartbeat, so that no beat from a host still open shows a manager. Any terminal can run it, and jidoka-ui does, for an
@@ -389,6 +392,7 @@ def resume_laps(epic: Epic, now: int, home: Path, main_tree: Path) -> set[str]:
     resume.prune_worktrees(main_tree)
     if lap_holds.is_parked(epic):
         return set()
+    t3_stage.release_pass(epic.id, home, main_tree)
     epic_branch = epic.branch
     interrupted: set[str] = set()
     labeled = epic.labeled_task_ids
@@ -785,6 +789,7 @@ def stop(bead: str, home: Path, main_tree: Path) -> dict:
     held = open_laps_of(epic)
     for lap in held:
         interrupt_for_stop(lap, home, main_tree)
+    t3_stage.release_pass(epic.id, home, main_tree)
     t3_wake.end_waker(home, epic.id)
     t3_wake.forget(home, epic.id)
     heartbeat.mark_stopped(home, epic.id, clock.now())
