@@ -372,8 +372,10 @@ the printed route, native Sonnet, with the prompt of a native batch.
    When the tier's route has the harness `t3` and the driver `antigravity`,
    this holds for every stage of a lap: a build, a merge, a research brief, an
    app check and a Spec check. No Agent tool starts the worker, and no lap mod
-   decides its calls. Build the stage's prompt as its paragraph says, then
-   make the start that `factory.py` prints:
+   decides its calls. Build the stage's prompt as its paragraph says, without
+   its first line `jidoka lap worktree: <worktree>`, which only the lap mod
+   reads, and which no Antigravity stage carries: the thread already runs in
+   the worktree. Then make the start that `factory.py` prints:
    1. Save the prompt with the Write tool to `<scratch>/<stage>-prompt.md`, the
       action's `scratch`, with `build`, `merge`, `research`, `app-check` or
       `spec-check` for the stage. That file is the one file the manager
@@ -404,7 +406,8 @@ the printed route, native Sonnet, with the prompt of a native batch.
 
    An action whose `action` is `merge` starts a merge worker instead, on the
    route of the deep tier. Its prompt is built as above, with the same first
-   line, the task, the paths, the apps and the limits, except for these:
+   line (left out on an Antigravity route), the task, the paths, the apps and
+   the limits, except for these:
    - the action's `reason` and the epic branch, the top-level `branch`, in
      place of an answer;
    - its job: newer work on the epic branch conflicts with the lap or broke
@@ -434,8 +437,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
    An action whose `action` is `research` starts a research worker on the
    route of the light tier. On an Antigravity route, make the start that
    `factory.py` prints, as above, with the light tier. Its prompt is built as
-   above, with the same first line, the task, the paths of the glossary and
-   the house rules, and the limits, except for these:
+   above, with the same first line (left out on an Antigravity route), the
+   task, the paths of the glossary and the house rules, and the limits, except
+   for these:
    - its job: write the research brief. It reads the repo and changes
      nothing in the worktree. It writes the brief, under 2,500 words, to
      `research-brief.md` in the scratch folder, with these sections: `Files
@@ -448,8 +452,8 @@ the printed route, native Sonnet, with the prompt of a native batch.
 
    An action whose `action` is `spec-check` starts a Spec check worker on the
    route of the standard tier, in the worktree. Its prompt is built as above,
-   with the same first line, the task, the paths of the repo's house rules,
-   and the limits, except for these:
+   with the same first line (left out on an Antigravity route), the task, the
+   paths of the repo's house rules, and the limits, except for these:
    - its job: read `<skill folder>/../spec-check/SKILL.md` and follow it
      with the arguments `<task> <epic branch>`, the top-level `branch`. The
      targeted tests have rebased the lap onto the epic branch, so the
@@ -596,8 +600,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
    route. Wait on each as the Antigravity steps above say and run its
    `report`, which archives the thread; the guard record goes with the last
    batch's report. Treat each printed `reply` as its worker's reply, and
-   name each batch in the tidy's report as `--worker <thread> local <ending>`
-   with the printed `thread`. A start that the script refuses, and a thread
+   name each batch in the tidy's report as `--worker <thread> local`, with the
+   printed `thread`, and the ending after it only as the tidy's report
+   paragraph says. A start that the script refuses, and a thread
    that ends failed, are a failed route: run `route.py fallback` for the batch
    as the routes paragraph says, with the same mark; an Antigravity thread is
    the host's own route, so it answers `"rerun": false` and the batch reports
@@ -736,9 +741,11 @@ the printed route, native Sonnet, with the prompt of a native batch.
    `thread`. A start that the script refuses, and a thread that ends failed,
    are a failed route: run `route.py fallback` for it as the routes paragraph
    says, which answers `"rerun": false`, since an Antigravity thread is the
-   host's own route. The `spec` lane is no thread: on an Antigravity host the
-   second tier's route is codex, and the lane runs with the codex lane script
-   as above, beside the lanes that are threads.
+   host's own route. The `spec` lane is no thread, on any host: it runs on the
+   second tier's route, which `bench.py route second` prints and whose
+   harness decides the script. The codex lane script runs a `codex` route
+   and the T3 lane script a `t3` route, as the two paragraphs below say,
+   beside the lanes that are threads.
 
    When the second tier's route has the harness `t3`, the `spec` lane is a T3
    child task, and this session has to have the `delegate_task` tool for it;
@@ -914,9 +921,13 @@ the printed route, native Sonnet, with the prompt of a native batch.
 
    Each report below of a worker of the pass also ends with
    `--worker <agent id> <tier>`: the agent id the Agent tool printed when it
-   started the worker, and the tier whose route you started it on. The report
-   of the tidy ends with one `--worker <agent id> local` for each batch, and
-   the report of the review with one `--worker` for each lane. The ledger prices
+   started the worker (on an Antigravity host, the printed `thread`), and the
+   tier whose route you started it on. A third value, `done`, `failed` or
+   `cut-off`, is the worker's ending. Leave it out when the report settles
+   the stage, and give it when the report is `--ended failed` or `--ended
+   cut-off`, as the tidy and the review say below. The report of the tidy
+   ends with one `--worker <agent id> local` for each batch, and the report
+   of the review with one `--worker` for each lane. The ledger prices
    each run from the tokens the lap mod summed under its agent id, and
    writes it with no task. A `spec` lane that ran in codex or as a T3 child
    task has no agent id, and its script wrote its row, so the review's report

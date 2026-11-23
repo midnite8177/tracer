@@ -692,7 +692,8 @@ Antigravity catalog fills: a T3 Antigravity thread, its model the catalog's
 model id and its effort that model's thought level, on Gemini 4 Hydrogen for
 the light and local tiers, on Neon for standard and on Neon, or Carbon when
 the catalog lists it, for deep. It never holds one of the catalog's Claude
-models. The second tier runs the same codex route on both hosts. A route that
+models. The second tier's route is proposed the same way on both hosts: on T3 Codex
+or in codex when either exists, else Antigravity's deep route. A route that
 cannot run falls back to the host's harness. A route that fails reruns its stage once on the native route, the
 host's own harness at the model and effort the tier asks for; a second
 failure is the stage's own failure.
@@ -859,7 +860,8 @@ epic's title and the stage, with a guard record of the kind `lap` that holds
 the list a pass worktree gets: the epic the folder names and the looks. The
 tidy runs on the local tier's route, and a batch or a review lane keeps its
 state in its own scratch folder, because they share the worktree and its guard
-record. The second tier's Spec lane is no thread: it stays on codex.
+record. The second tier's Spec lane is no thread: it runs through the codex
+lane script or the T3 lane script, as the second tier's route says.
 A thread has no agent type, so the app check's thread and the Spec check's
 open with the worker's instructions from the plugin's files, ahead of the
 prompt. The manager calls those as printed. Each `wait` is up to six T3 steps of 45

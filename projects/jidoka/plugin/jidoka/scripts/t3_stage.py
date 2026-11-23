@@ -24,8 +24,8 @@ worktree, which are the epic's looks and no merge grant. It bars no folder, as t
 refuses a change inside an acceptance folder when it settles. The workers of a pass share its worktree and so its guard
 record, which stays until every thread the worktree started was reported. Each tidy batch keeps its state in its own
 scratch folder, and each review lane in a folder of its own inside the review's scratch folder, which holds the lanes'
-reports; a lane that names none is refused. The second tier's Spec lane is no thread: it runs in codex, through
-codex_lane.py. The scheduler's report of a pass worker prices its thread, so a pass's `report` writes no ledger row.
+reports; a lane that names none is refused. The second tier's Spec lane is no thread: it runs through codex_lane.py or t3_lane.py,
+as the second tier's route says. The scheduler's report of a pass worker prices its thread, so a pass's `report` writes no ledger row.
 
 The validation worker and the validation merge worker start the same way, in the validation worktree, a folder named
 `validation-<epic>`, which both work in; the epic's record says which is owed (`validation.merge` for the merge worker,
