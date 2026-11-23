@@ -147,6 +147,30 @@ class TheSpecLaneStaysOnCodexTests(ReviewStageCase):
         self.assertEqual([], self.calls())
 
 
+class TheSpecLaneRerunsAsAThreadTests(ReviewStageCase):
+    def test_a_spec_lane_whose_codex_route_failed_reruns_as_a_thread_on_the_deep_tiers_antigravity_route(self):
+        _, _, lanes = self.lanes_at_the_review()
+        spec = self.lane_named(lanes, "spec")
+        scratch = Path(self.lane_scratch(spec))
+        scratch.mkdir(parents=True, exist_ok=True)
+        prompt = scratch / "prompt.md"
+        prompt.write_text("Review the spec lane.\n", encoding="utf-8")
+
+        refused = self.lane_call("start", spec, "--prompt", str(prompt), "--tier", "second")
+        started = self.lane_call("start", spec, "--prompt", str(prompt), "--tier", "second", "--native")
+
+        self.assertEqual(1, refused.returncode)
+        self.assertIn("not a T3 Antigravity thread", refused.stderr)
+        self.assertEqual(0, started.returncode, started.stderr)
+        [launch] = self.launches()
+        self.assertEqual({"instanceId": "antigravity-main", "model": "gemini-4-neon",
+                          "options": {"thought_level": "high"}}, launch["modelSelection"])
+        self.assertEqual({"type": "existing_worktree", "worktreePath": spec["worktree"]},
+                         launch["workspaceStrategy"])
+        self.assertEqual(LANE_THREAD, json.loads(started.stdout)["thread"])
+        self.assertTrue(Path(scratch, "t3-stage.json").is_file())
+
+
 class EndingTheReviewLanesTests(ReviewStageCase):
     def test_each_lane_is_archived_when_it_is_reported_and_the_guard_record_goes_with_the_last(self):
         _, _, lanes = self.lanes_at_the_review()

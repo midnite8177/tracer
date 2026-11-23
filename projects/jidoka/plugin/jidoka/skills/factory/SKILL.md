@@ -148,12 +148,16 @@ an agent, as the review paragraph of step 4 says. A failed codex lane is
 a failure of a route that is not the host's own: run `route.py fallback` for
 it as above, with the epic as the bead, `review` as the stage, `second` as
 the tier and the lane action's `head` as the mark, and start the lane's
-worker again on the printed route. A second tier whose route is already
+worker again on the printed route. On an Antigravity host the printed route
+is a T3 Antigravity thread, the deep tier's, so the rerun is no agent: start
+the lane as a thread, as the review paragraph of step 4 says. A second tier whose route is already
 native has nothing to fall back to, and a rerun that fails is the lane's
 own failure.
 
 The second tier's route can also be t3, which names a provider, a model and
-an effort from T3's catalog. Its one stage is the same Spec lane, which the
+an effort from T3's catalog. When its driver is `antigravity` it is the host's
+own route and the lane is a thread, as the review paragraph of step 4 says.
+Otherwise its one stage is the same Spec lane, which the
 manager runs as a T3 child task with the T3 lane script, as the review
 paragraph of step 4 says. A host with no `delegate_task` tool cannot start
 the child: start the `spec` lane as an agent on the second tier's native
@@ -395,9 +399,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
       Exit 1 is a refusal: show it, write the closing line and stop.
    3. Wait on what the script names. Run the printed `wait` call as a command
       of its own, then the `next` that each answer prints, until the answer's
-      `state` is `ended` or `cut off`. Each call waits at most 4.5 minutes
-      and returns when the stage ends. Your host moves a call that long to
-      the background, so you wake when it finishes. With several workers
+      `state` is `ended` or `cut off`. Each call waits a bounded while, a
+      fixed number of T3 steps, and returns when the stage ends. Your host
+      moves a call that long to the background, so you wake when it finishes. With several workers
       wait on each in turn. A `cut off` means the script
       found the stage past its `deadline` and stopped it.
    4. Run the `report` call that the last answer names. It reads the
@@ -657,7 +661,16 @@ the printed route, native Sonnet, with the prompt of a native batch.
       failing, a run past the deadline and a main checkout that changed
       while the child ran included. The script has put the batch's files
       back as they were: run `route.py fallback` for it as the routes paragraph
-      says, and start the batch again as an agent on the printed route.
+      says, and start the batch again once on the printed route. Under Claude
+      Code that is an agent. On an Antigravity host the printed route is a T3
+      Antigravity thread, so build the batch's prompt as for a batch of the
+      Antigravity route above, without its first line, save it to
+      `<scratch>/tidy-prompt.md`, and run `factory.py start --worktree
+      <worktree> --scratch <scratch> --prompt <scratch>/tidy-prompt.md --tier
+      local --native --jidoka-home ...`. Wait on it and run its `report` as the
+      Antigravity steps above say, treat the printed `reply` as the batch's
+      reply, and name the batch in the tidy's report as `--worker <thread>
+      local native` with the printed `thread`.
 
    An epic on the local-model trial (its rule `local_trial`) tidies twice in
    its first pass, one tidy after the other, never together. The first tidy's
@@ -720,7 +733,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
    with harness codex and codex's tokens. It exits 0 when the report is
    written. Any other exit, a usage limit included, is the route failing:
    run `route.py fallback` for it as above, and start the `spec` lane as an
-   agent on the printed route, with the prompt the other lanes get. Write the
+   agent on the printed route, with the prompt the other lanes get. On an
+   Antigravity host the printed route is a T3 Antigravity thread, and the
+   rerun is a thread, as the Antigravity paragraphs below say. Write the
    lane's event line with `codex` for the model, and a second line when the
    lane reruns, with the printed route's model.
 
@@ -753,10 +768,36 @@ the printed route, native Sonnet, with the prompt of a native batch.
    and the T3 lane script a `t3` route, as the two paragraphs below say,
    beside the lanes that are threads.
 
-   When the second tier's route has the harness `t3`, the `spec` lane is a T3
-   child task, and this session has to have the `delegate_task` tool for it;
-   without it, the lane falls back as the routes paragraph above says.
-   Otherwise:
+   A `spec` lane whose route failed reruns, on an Antigravity host, as a
+   thread on the printed route, the deep tier's. Build the lane's prompt as
+   the other lanes get it, save it to `<scratch>/lane-spec/prompt.md` and run
+   `factory.py start --worktree <worktree> --scratch <scratch>/lane-spec
+   --prompt <scratch>/lane-spec/prompt.md --tier second --native
+   --jidoka-home ...`, then wait on it and run its `report` as for the other
+   lanes. The thread writes the report file the failed lane would have
+   written. Name the lane in the review's report as `--worker <thread>
+   second native`, so that its row is priced as the thread's model and not
+   as codex. A start that the script refuses, and a thread that ends failed,
+   leave the lane failed, as `"rerun": false` does.
+
+   When the second tier's route is a T3 Antigravity thread, its `driver` being
+   `antigravity`, as setup records it when codex is not on the machine, it is
+   the host's own route and the `spec` lane is no child task. Build the lane's
+   prompt as the other lanes get it, save it to `<scratch>/lane-spec/prompt.md`
+   and run `factory.py start --worktree <worktree> --scratch
+   <scratch>/lane-spec --prompt <scratch>/lane-spec/prompt.md --tier second
+   --jidoka-home ...`, with no `--native`, since the route already is native.
+   Wait on it and run its `report` as for the other lanes, and name the lane in
+   the review's report as `--worker <thread> second` with the printed
+   `thread`. Call neither `delegate_task` nor `t3_lane.py` for it. A start that
+   the script refuses, and a thread that ends failed, leave the lane failed,
+   because `route.py fallback` answers `"rerun": false` for a route that is
+   native already.
+
+   When the second tier's route has the harness `t3` and any other driver, the
+   `spec` lane is a T3 child task, and this session has to have the
+   `delegate_task` tool for it; without it, the lane falls back as the routes
+   paragraph above says. Otherwise:
 
    1. Run `t3_lane.py start <epic-id> --worktree <worktree> --report <report>
       --base <base> --head <head> --file <file> ... --doc <path> ...
@@ -787,7 +828,8 @@ the printed route, native Sonnet, with the prompt of a native batch.
       is written. Any other exit is the route failing, a run past the
       deadline and a main checkout that changed while the child ran
       included: run `route.py fallback` for it as above, and start the `spec`
-      lane as an agent on the printed route.
+      lane as an agent on the printed route, or as a thread on an Antigravity
+      host, as the paragraph above says.
 
    Write the lane's event line with `t3` for the model, and a second line
    when the lane reruns, with the printed route's model.
@@ -926,9 +968,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
      `"cut off"`.
 
    Each report below of a worker of the pass also ends with
-   `--worker <agent id> <tier>`: the agent id the Agent tool printed when it
-   started the worker (on an Antigravity host, the printed `thread`), and the
-   tier whose route you started it on. A third value, `done`, `failed` or
+   `--worker <agent id> <tier>`: the id that starting the worker printed, which
+   is its agent id under the lap mod and its `thread` on an Antigravity host,
+   and the tier whose route you started it on. A third value, `done`, `failed` or
    `cut-off`, is the worker's ending. Leave it out when the report settles
    the stage, and give it when the report is `--ended failed` or `--ended
    cut-off`, as the tidy and the review say below. The report of the tidy
