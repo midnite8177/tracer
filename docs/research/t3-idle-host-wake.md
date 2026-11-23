@@ -165,7 +165,7 @@ and on this Mac the `claude` processes T3 starts inherit
 hard-coded path. That file is a shell launcher that runs the app's bundled CLI.
 
 The detached process needs the T3 thread id, which T3 does not put in the
-environment. The host can read it in any turn with the `t3_thread_configuration`
+environment. The host can read it in any turn with the `t3_thread_configure`
 tool and no arguments, which returns `threadId` for the calling thread
 ([mcp/toolkits/thread/tools.ts:178-190](https://github.com/pingdotgg/t3code/blob/680152e/apps/server/src/mcp/toolkits/thread/tools.ts#L178-L190)),
 and write it beside its other state.

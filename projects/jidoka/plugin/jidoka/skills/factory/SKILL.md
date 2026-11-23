@@ -204,7 +204,7 @@ the printed route, native Sonnet, with the prompt of a native batch.
    beats: the script ends the waker. A refusal because the epic
    already has a manager means its heartbeat was renewed during that wait:
    show it and stop. Under T3 (the `T3CODE_CLI_PATH` variable is set),
-   after exit 0 call the `t3_thread_configuration` tool
+   after exit 0 call the `t3_thread_configure` tool
    with no arguments and run `t3_wake.py record <epic-id> --thread <threadId>
    --jidoka-home ...`, so that T3 can wake this host after it releases it;
    write no event line for it, and go on when the tool or the script fails.
