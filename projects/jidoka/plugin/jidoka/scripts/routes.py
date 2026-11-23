@@ -8,7 +8,9 @@ the child task, and may hold `driver` and `effort_option`, the name of the optio
 that every script meets the same error for a recorded route that is incomplete. Native means the host's own
 harness, `claude`. A tier's native route is the one setup
 proposes for it when no other harness is on the machine, so a stage that falls back keeps the model its tier asked
-for. A tier with no row there falls back to the host's own model and effort, which null values stand for.
+for. A tier with no row there falls back to the host's own model and effort, which null values stand for. Under
+Antigravity a tier whose route is not a T3 Antigravity thread falls back to one the host's table holds, which
+`native_route_on` finds.
 """
 from __future__ import annotations
 
@@ -39,6 +41,7 @@ CODEX_PROGRAM = "codex"
 HARNESS_PROGRAMS = {CODEX_HARNESS: CODEX_PROGRAM}
 RERUN = "Run install.py from your jidoka checkout to record this machine's routes"
 SECOND_TIER = "second"
+ANTIGRAVITY_NATIVE_TIERS = {"local": "light", SECOND_TIER: "deep"}
 
 
 def thread_of_environment() -> str | None:
@@ -133,6 +136,12 @@ class Route:
         Antigravity thread under Antigravity."""
         return self.harness == NATIVE_HARNESS or self.is_antigravity
 
+    @property
+    def label(self) -> str:
+        """What a person reads to tell this route from another: its harness, its driver when it names one, and its
+        model when it names one."""
+        return " ".join(part for part in (self.harness, self.driver, self.model) if part)
+
     def refusal(self, tier: str) -> str | None:
         """Why this route cannot serve the tier under the factory's own stage tiers, or None when it can. A native
         Antigravity route serves every tier, a t3 OpenCode route follows `opencode_refusal`, and any other route
@@ -215,6 +224,29 @@ def opencode_refusal(tier: str) -> str | None:
 
 def native_route_of(tier: str) -> Route:
     return NATIVE_ROUTES.get(tier, HOST_OWN_ROUTE)
+
+
+def native_route_on(tier: str, home: Path, host: str) -> Route:
+    """The route a stage of the tier reruns on when its own route failed, as the host runs it. Under Claude Code it is
+    `native_route_of`. Under Antigravity it is a T3 Antigravity thread: the tier's own route when that is one, else the
+    route of the tier in ANTIGRAVITY_NATIVE_TIERS, which the host's table must hold as one."""
+    if host != ANTIGRAVITY_HOST:
+        return native_route_of(tier)
+    own = recorded_route(tier, home, host)
+    if own.is_antigravity:
+        return own
+    stands_in = ANTIGRAVITY_NATIVE_TIERS.get(tier, tier)
+    route = recorded_route(stands_in, home, host)
+    if not route.is_antigravity:
+        raise RouteError(f"the {tier} tier's route is on {own.harness}, and the {stands_in} tier, whose route it falls "
+                         f"back to on Antigravity, is not a T3 Antigravity thread either, so the {tier} tier has no "
+                         f"native route. {RERUN}")
+    return route
+
+
+def native_route_here(tier: str, home: Path) -> Route:
+    """The route a stage of the tier reruns on when its own route failed, as the host the caller runs under runs it."""
+    return native_route_on(tier, home, host_of_environment())
 
 
 def missing_program(harness: str, which: Callable[[str], str | None]) -> str | None:

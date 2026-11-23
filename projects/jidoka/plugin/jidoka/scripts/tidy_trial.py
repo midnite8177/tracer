@@ -106,10 +106,13 @@ def tidy_owed(shown: dict) -> str | None:
     return LOCAL if pass_support.count_of(shown, pass_ledger.PASSES_KEY) == 0 else None
 
 
-def route_named(which: str) -> tidy.TidyRoute:
+def route_named(which: str, home: Path) -> tidy.TidyRoute:
     if which == LOCAL:
         return tidy.TidyRoute(LOCAL, None)
-    return tidy.TidyRoute(NATIVE, routes.native_route_of(TIER))
+    try:
+        return tidy.TidyRoute(NATIVE, routes.native_route_here(TIER, home))
+    except routes.RouteError as error:
+        raise tidy.TidyError(str(error)) from error
 
 
 def started_file(scratch: Path) -> Path:
@@ -163,7 +166,7 @@ def to_run(epic: str, shown: dict, branch: str, settings: Settings, home: Path,
     if which is None:
         return tidy.to_run(epic, shown, branch, settings, home, main_tree)
     stage = tidy.LOCAL_STAGE if which == LOCAL else tidy.STAGE
-    owed = tidy.to_run_as(stage, route_named(which), epic, shown, branch, settings, home, main_tree)
+    owed = tidy.to_run_as(stage, route_named(which, home), epic, shown, branch, settings, home, main_tree)
     if owed is not None:
         note_start(owed.stage.scratch, route_ran_on(which, home))
     return owed

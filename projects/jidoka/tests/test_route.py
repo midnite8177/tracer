@@ -22,6 +22,12 @@ NATIVE_OPUS = {"harness": "claude", "model": "opus", "version": "5.5", "effort":
 NATIVE_SONNET = {"harness": "claude", "model": "sonnet", "version": "5.5", "effort": "high"}
 T3_CODEX = {"harness": "t3", "provider": "codex", "model": "gpt-6.1-sol", "version": None, "effort": "high"}
 NATIVE_LOCAL = {"harness": "claude", "model": "sonnet", "version": "5.5", "effort": "medium"}
+HYDROGEN = {"harness": "t3", "model": "gemini-4-hydrogen", "version": None, "effort": "medium",
+            "provider": "antigravity-main", "driver": "antigravity", "effort_option": "thought_level"}
+NEON = {"harness": "t3", "model": "gemini-4-neon", "version": None, "effort": "high",
+        "provider": "antigravity-main", "driver": "antigravity", "effort_option": "thought_level"}
+OPENCODE_LOCAL = {"harness": "t3", "provider": "opencode-main", "model": "qwen-local", "version": None,
+                  "effort": "high", "driver": "opencode"}
 ROUTES = {"standard": NATIVE_SONNET, "deep": NATIVE_OPUS, "second": CODEX, "local": T3_CODEX}
 
 
@@ -92,6 +98,7 @@ class FallbackTests(RouteCase):
 
         self.assertEqual({"rerun": True, "route": NATIVE_LOCAL}, printed)
         [comment] = self.comments(task)
+        self.assertIn("reruns on claude sonnet", comment["text"])
         self.assertIn("t3", comment["text"])
 
     def test_the_fallback_is_written_on_the_task_with_a_comment_that_names_the_failed_route(self):
@@ -112,6 +119,7 @@ class FallbackTests(RouteCase):
         printed = self.fall_back(task, "build", "second", "1")
 
         self.assertFalse(printed["rerun"])
+        self.assertIn("already fell back to claude opus", printed["why"])
         self.assertEqual(comments_before, self.comments(task))
 
     def test_the_next_run_of_the_stage_may_fall_back_again(self):
@@ -171,6 +179,54 @@ class FallbackTests(RouteCase):
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertFalse(json.loads(done.stdout)["rerun"])
         self.assertEqual([], self.comments(task))
+
+    def antigravity_home(self, name: str, table: dict) -> Path:
+        home = self.root / name
+        home.mkdir(exist_ok=True)
+        (home / "python").write_text(sys.executable + "\n", encoding="utf-8")
+        (home / "settings.json").write_text(json.dumps({"routes": ROUTES, "antigravity_routes": table}),
+                                            encoding="utf-8")
+        return home
+
+    def fall_back_on_antigravity(self, home: Path, task: str, stage: str, tier: str,
+                                 run: str) -> subprocess.CompletedProcess:
+        env = {key: value for key, value in os.environ.items() if key != "JIDOKA_SESSION_ID"}
+        env.update({"PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(home),
+                    "T3CODE_THREAD_ID": "thread-of-the-test"})
+        return fixture.run_launcher(LAUNCHER, [str(ROUTE), "fallback", task, stage, tier, "--run", run], None, env,
+                                    self.repo, RUN_TIMEOUT_SECONDS)
+
+    def test_a_failed_tidy_batch_on_an_antigravity_host_reruns_as_a_t3_antigravity_thread(self):
+        epic = self.new_task()
+        home = self.antigravity_home("home-antigravity-opencode",
+                                     {"light": HYDROGEN, "local": OPENCODE_LOCAL, "deep": NEON})
+
+        done = self.fall_back_on_antigravity(home, epic, "tidy", "local", "abc123-batch-1")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({"rerun": True, "route": HYDROGEN}, json.loads(done.stdout))
+        self.assertEqual("abc123-batch-1", str(self.shown(epic)["metadata"]["route.native.tidy"]))
+        [comment] = self.comments(epic)
+        self.assertIn("reruns on t3 antigravity gemini-4-hydrogen", comment["text"])
+
+    def test_a_failed_second_tier_stage_on_an_antigravity_host_reruns_on_the_deep_tiers_antigravity_thread(self):
+        epic = self.new_task()
+        home = self.antigravity_home("home-antigravity-second", {"light": HYDROGEN, "second": CODEX, "deep": NEON})
+
+        done = self.fall_back_on_antigravity(home, epic, "review", "second", "head-1")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual({"rerun": True, "route": NEON}, json.loads(done.stdout))
+
+    def test_a_failed_route_with_no_antigravity_thread_to_rerun_on_refuses_and_writes_nothing(self):
+        epic = self.new_task()
+        home = self.antigravity_home("home-antigravity-bare", {"local": OPENCODE_LOCAL, "deep": NEON})
+
+        done = self.fall_back_on_antigravity(home, epic, "tidy", "local", "abc123-batch-1")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("light", done.stderr)
+        self.assertEqual([], self.comments(epic))
 
     def test_a_home_without_settings_refuses_and_writes_nothing(self):
         task = self.new_task()

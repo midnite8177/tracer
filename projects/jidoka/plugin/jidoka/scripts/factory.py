@@ -35,9 +35,9 @@ that the workers that share the worktree each have a thread and a state of their
       <stage>`. The validation worktree's worker launches as `lap · <epic title> · holdouts` behind the validation
       agent's instructions, or as `lap · <epic title> · validation-merge`, as the epic records which is owed.
   factory.py wait --worktree <lap or pass worktree> [--scratch <folder>]
-      One wait, at most six steps of 45 seconds, which ends early when the run ends. Prints `state`, which is `running`, `ended` or `cut off`, the
-      `thread`, the `deadline` and `next`, the call to make then. A stage past its deadline is interrupted, and ends
-      cut off.
+      One wait, bounded by `t3_stage.STEPS_IN_ONE_WAIT` T3 steps, which ends early when the run ends. Prints `state`,
+      which is `running`, `ended` or `cut off`, the `thread`, the `deadline` and `next`, the call to make then. A
+      stage past its deadline is interrupted, and ends cut off.
   factory.py report --worktree <lap or pass worktree> [--scratch <folder>]
       Reads the thread's last reply, writes the ledger rows of a lap's thread tokens, archives the thread, removes the
       guard record and prints `thread`, `cut_off` and `reply`. The record is removed once the read has answered, even
@@ -227,11 +227,13 @@ def run_stage(args: argparse.Namespace) -> int:
         worktree = Path(args.worktree)
         scratch = Path(args.scratch) if args.scratch else t3_stage.lap_scratch(worktree)
         if args.mode == "wait":
-            printed = t3_stage.wait_step(worktree, scratch, home)
+            printed = t3_stage.wait(worktree, scratch, home)
         else:
             main_tree = settings_reader.main_worktree(worktree, COMMAND_TIMEOUT_SECONDS)
             if args.mode == "start":
-                printed = t3_stage.start(worktree, scratch, Path(args.prompt), args.tier, home, main_tree, host,
+                route = (routes.native_route_on(args.tier, home, host) if args.native
+                         else t3_stage.antigravity_route(args.tier, home, host, "the factory"))
+                printed = t3_stage.start(worktree, scratch, Path(args.prompt), args.tier, route, home, main_tree,
                                          PLUGIN_ROOT)
             else:
                 printed = t3_stage.report(worktree, scratch, home, main_tree)
@@ -251,7 +253,11 @@ def main(argv: list[str]) -> int:
     starting = modes.add_parser("start", help="launch the lap's stage as a T3 thread")
     starting.add_argument("--prompt", required=True, help="the file that holds the stage worker's prompt")
     starting.add_argument("--tier", required=True, help="the tier whose route the thread runs on")
-    waiting = modes.add_parser("wait", help="wait one step for the stage's run")
+    starting.add_argument("--native", action="store_true",
+                          help="run the thread on the tier's native route, as the rerun of a stage whose route "
+                               "failed, instead of on the tier's own route")
+    waiting = modes.add_parser("wait", help=f"wait for the stage's run, at most {t3_stage.LONGEST_WAIT_SECONDS} "
+                                            "seconds")
     reporting = modes.add_parser("report", help="read the stage's last reply and archive its thread")
     for sub in (starting, waiting, reporting):
         sub.add_argument("--worktree", required=True, help="the lap's worktree, or a pass's")

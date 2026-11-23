@@ -10,7 +10,7 @@ A T3 thread has no agent type, so a stage whose worker has instructions of its o
 thread's first message, from the plugin's own files: the app check's agent file, and the Spec check's skill. The
 guard record's kind is `check` for the app check, whose worker holds the check list, and `lap` for every other stage,
 whose list holds the stage's own grants, such as the merge worker's.
-`wait_step` is one step of the manager's wait: it waits at most one T3 step for the run, and a run found past the
+`wait` is one of the manager's waits: it waits up to STEPS_IN_ONE_WAIT T3 steps for the run, and a run found past the
 deadline, before or after the wait, ends cut off, stopped with an interrupt when it still runs. `report` reads the
 thread's last reply, prices the thread's provider turns in the ledger and archives the thread. A stage's thread is
 archived, never deleted, because the lap's worktree outlives it (ADR 0012). The ledger rows `report` writes name the
@@ -45,6 +45,7 @@ from __future__ import annotations
 import json
 import shlex
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -78,6 +79,8 @@ RUNNING = "running"
 ENDED = "ended"
 CUT_OFF = "cut off"
 STEPS_IN_ONE_WAIT = 6
+LONGEST_WAIT_SECONDS = STEPS_IN_ONE_WAIT * t3_worker.WAIT_STEP_MILLISECONDS // 1000
+"""The most seconds one `wait` call lasts, which a help string says without writing the figure by hand."""
 CUT_OFF_REASON = "jidoka: the stage ran past its wall clock"
 STOP_REASON = "jidoka: the lap ended while the stage ran"
 VALIDATION_PREFIX = validation_merge.WORKTREE_PREFIX
@@ -93,11 +96,14 @@ class StageError(Exception):
 
 @dataclass(frozen=True)
 class Stage:
-    """What the manager's calls share about one running stage: its thread, the tier it runs on, the second after which
-    it is cut off, whether it was, how many times the scratch folder's stage launched, and whether the thread was
-    reported."""
+    """What the manager's calls share about one running stage: its thread, the tier it runs on, the route the thread
+    launched on, the second after which it is cut off, whether it was, how many times the scratch folder's stage
+    launched, and whether the thread was reported. The route is kept as launched, so that a settings change in between
+    does not change the price of the thread, and a stage that reran on the tier's native route is priced from that
+    route."""
     thread: str
     tier: str
+    route: routes.Route
     deadline: int
     wall_seconds: int
     cut_off: bool
@@ -105,7 +111,7 @@ class Stage:
     reported: bool
 
     def to_record(self) -> dict:
-        return {"thread": self.thread, "tier": self.tier, "deadline": self.deadline,
+        return {"thread": self.thread, "tier": self.tier, "route": self.route.as_dict(), "deadline": self.deadline,
                 "wall_seconds": self.wall_seconds, "cut_off": self.cut_off, "launches": self.launches,
                 "reported": self.reported}
 
@@ -131,14 +137,16 @@ def read_state(scratch: Path) -> Stage:
     path = state_path(scratch)
     try:
         held = json.loads(path.read_text(encoding="utf-8"))
-        return Stage(str(held["thread"]), str(held["tier"]), int(held["deadline"]), int(held["wall_seconds"]),
-                     held["cut_off"] is True, int(held.get("launches", 1)), held.get("reported") is True)
-    except (OSError, ValueError, KeyError, TypeError) as error:
+        tier = str(held["tier"])
+        return Stage(str(held["thread"]), tier, routes.Route.parse(tier, held["route"]), int(held["deadline"]),
+                     int(held["wall_seconds"]), held["cut_off"] is True, int(held.get("launches", 1)),
+                     held.get("reported") is True)
+    except (OSError, ValueError, KeyError, TypeError, routes.RouteError) as error:
         raise StageError(f"{path} does not hold a started stage, so no stage started in {scratch}: {error}") from error
 
 
 def call_for(mode: str, worktree: Path, scratch: Path, home: Path) -> str:
-    """The command line that makes the manager's next call of factory.py, which `start` and `wait_step` print. A stage
+    """The command line that makes the manager's next call of factory.py, which `start` and `wait` print. A stage
     whose scratch folder is not its worktree's own names it."""
     named = "" if scratch == lap_scratch(worktree) else f" --scratch {shlex.quote(str(scratch))}"
     return (f"{launcher.command_for('factory.py')} {mode} --worktree {shlex.quote(str(worktree))}{named} "
@@ -216,12 +224,19 @@ def request_id(task_id: str, metadata: dict, stage: str) -> str:
 
 @dataclass(frozen=True)
 class Launch:
-    """What a stage's launch names besides its route and prompt: the stage, the thread's title, the launch's request
-    id, the number of times the stage's scratch folder launched it, and the record that holds its worker."""
-    stage: str
+    """What a thread's launch names besides its route, message and workspace: the thread's title, the launch's request
+    id, the number of times the scratch folder launched it, and the seconds after which the thread is cut off."""
     title: str
     request: str
     launches: int
+    wall_seconds: int
+
+
+@dataclass(frozen=True)
+class StageLaunch:
+    """A stage's launch with the stage it is and the record that holds its worker."""
+    stage: str
+    launch: Launch
     record: lap_guard_record.GuardRecord
 
 
@@ -280,7 +295,7 @@ def launches_after(previous: Stage | None) -> int:
     return previous.launches + 1 if previous.reported else previous.launches
 
 
-def pass_launch(passing: PassStage, worktree: Path, scratch: Path, home: Path, main_tree: Path) -> Launch:
+def pass_launch(passing: PassStage, worktree: Path, scratch: Path, home: Path, main_tree: Path) -> StageLaunch:
     """The launch of a pass stage. Its request id holds the epic's pass, the worktree's head and the launch's count, so
     that a pass after a red validation, or a rerun after a stage that was reported, is a new launch to T3. The
     validation worker's record is a check record, and the validation merge worker's holds the grants of merging
@@ -290,19 +305,22 @@ def pass_launch(passing: PassStage, worktree: Path, scratch: Path, home: Path, m
     launches = launches_after(previous_state(scratch))
     request = (f"jidoka-{passing.epic}-pass{pass_support.count_of(shown, pass_ledger.PASSES_KEY)}-{stage}-"
                f"{scratch.name}-{(head_of('HEAD', worktree) or '')[:12]}-n{launches}")
-    return Launch(stage, t3_worker.pass_title_of(str(shown.get("title") or ""), stage), request, launches,
-                  guard_record(worktree, stage, False, home, main_tree))
+    title = t3_worker.pass_title_of(str(shown.get("title") or ""), stage)
+    return StageLaunch(stage, Launch(title, request, launches, lap_record.wall_clock_seconds(stage)),
+                       guard_record(worktree, stage, False, home, main_tree))
 
 
-def lap_launch(worktree: Path, home: Path, main_tree: Path) -> Launch:
+def lap_launch(worktree: Path, home: Path, main_tree: Path) -> StageLaunch:
     task = lap_record.task_in_worktree(worktree, main_tree)
     metadata = metadata_of(task)
     stage = lap_record.stage_of(metadata)
     if not task or stage not in lap_record.WORKER_STAGES:
         raise StageError(f"the factory starts a worker for a lap at the {', '.join(lap_record.WORKER_STAGES)} stage, "
                          f"and {worktree} holds a lap at the {stage or 'no'} stage")
-    return Launch(stage, t3_worker.title_of(str(task.get("title") or "")), request_id(str(task["id"]), metadata, stage),
-                  1, guard_record(worktree, stage, True, home, main_tree))
+    title = t3_worker.title_of(str(task.get("title") or ""))
+    return StageLaunch(stage, Launch(title, request_id(str(task["id"]), metadata, stage), 1,
+                                     lap_record.wall_clock_seconds(stage)),
+                       guard_record(worktree, stage, True, home, main_tree))
 
 
 def refuse_a_stray_scratch(worktree: Path, scratch: Path) -> None:
@@ -341,14 +359,15 @@ def prompt_in(prompt_file: Path) -> str:
     return prompt
 
 
-def launch_on_route(route: routes.Route, tier: str, scratch: Path, title: str, message: str, workspace: dict,
-                    request: str, launches: int, wall_seconds: int) -> Stage:
+def launch_on_route(route: routes.Route, tier: str, scratch: Path, message: str, workspace: dict, launch: Launch
+                    ) -> Stage:
     """Launches a thread on the route, which a worker of any kind starts through, and records it in the scratch folder
-    with its deadline. The thread has the title and the message as its first prompt, binds to the workspace that
-    `t3_worker.in_worktree` or `t3_worker.in_project_checkout` names, and carries the request id. A T3 failure raises
-    T3Error and records nothing."""
-    thread = t3_worker.launch(title, message, workspace, t3_worker.model_selection(route), request)
-    stage = Stage(thread, tier, clock.now() + wall_seconds, wall_seconds, False, launches, False)
+    with the route and its deadline. The thread has the launch's title and the message as its first prompt, binds to the
+    workspace that `t3_worker.in_worktree` or `t3_worker.in_project_checkout` names, and carries the launch's request
+    id. A T3 failure raises T3Error and records nothing."""
+    thread = t3_worker.launch(launch.title, message, workspace, t3_worker.model_selection(route), launch.request)
+    stage = Stage(thread, tier, route, clock.now() + launch.wall_seconds, launch.wall_seconds, False, launch.launches,
+                  False)
     write_state(scratch, stage)
     return stage
 
@@ -360,35 +379,34 @@ def started(stage: Stage, wait: str, report: str) -> dict:
             "report": report}
 
 
-def start(worktree: Path, scratch: Path, prompt_file: Path, tier: str, home: Path, main_tree: Path, host: str,
-          plugin_root: Path) -> dict:
-    """Writes the guard record, launches the stage's thread and returns what `started` holds. Everything that can refuse
-    comes before the guard record, so a refusal leaves none, and a launch that fails removes it unless another
-    thread of the worktree still holds it."""
+def start(worktree: Path, scratch: Path, prompt_file: Path, tier: str, route: routes.Route, home: Path,
+          main_tree: Path, plugin_root: Path) -> dict:
+    """Writes the guard record, launches the stage's thread on the route and returns what `started` holds. The caller
+    picks the route: the tier's recorded one by `antigravity_route`, or the native one by `routes.native_route_on` for
+    the rerun of a stage whose own route failed. Everything that can refuse comes before the guard record, so a refusal
+    leaves none, and a launch that fails removes it unless another thread of the worktree still holds it."""
     refuse_a_stray_scratch(worktree, scratch)
     passing = pass_stage_in(worktree, main_tree)
     refuse_a_lane_that_shares_the_scratch(passing, worktree, scratch)
-    launch = (pass_launch(passing, worktree, scratch, home, main_tree) if passing is not None
+    staged = (pass_launch(passing, worktree, scratch, home, main_tree) if passing is not None
               else lap_launch(worktree, home, main_tree))
-    route = antigravity_route(tier, home, host, "the factory")
-    message = first_message(launch.stage, prompt_in(prompt_file), plugin_root)
-    lap_guard_record.write_record(home, launch.record)
+    message = first_message(staged.stage, prompt_in(prompt_file), plugin_root)
+    lap_guard_record.write_record(home, staged.record)
     try:
-        stage = launch_on_route(route, tier, scratch, launch.title, message, t3_worker.in_worktree(worktree),
-                                launch.request, launch.launches, lap_record.wall_clock_seconds(launch.stage))
+        stage = launch_on_route(route, tier, scratch, message, t3_worker.in_worktree(worktree), staged.launch)
     except t3_worker.T3Error:
         remove_record_of_a_stage_nobody_runs(home, worktree, scratch)
         raise
     return started(stage, call_for("wait", worktree, scratch, home), call_for("report", worktree, scratch, home))
 
 
-def waited(scratch: Path) -> tuple[Stage, str]:
-    """One step of the wait for the stage recorded in `scratch`, and the state it ends in. A stage found past its
-    deadline is stopped and recorded cut off, and says `cut off`; otherwise T3 is asked to wait for the run, step after
-    step, until it ends, the deadline passes or STEPS_IN_ONE_WAIT steps went by. One long wait is one call of the
-    manager, which an Antigravity host moves to the background after a few seconds and which then yields its turn
-    once, where a call per step would yield one turn per step. The deadline is read again after the wait, so a run that ended or still ran past it ends cut off too, as the
-    scheduler's report of an overdue stage does. Otherwise the stage says `running` or `ended`."""
+def wait_for_run(scratch: Path) -> tuple[Stage, str]:
+    """Waits for the run of the stage recorded in `scratch` to end, and returns the stage with the state the wait ends
+    in. A stage found past its deadline is stopped and recorded cut off, and says `cut off`; otherwise T3 is asked to
+    wait for the run, step after step, until it ends, the deadline passes or STEPS_IN_ONE_WAIT steps went by. The
+    steps share one call so that the host yields the manager's turn once for the whole wait. The deadline is read
+    again after the wait, so a run that ended or still ran past it ends cut off too, as the scheduler's report of an
+    overdue stage does. Otherwise the stage says `running` or `ended`."""
     stage = read_state(scratch)
     if not stage.cut_off and clock.now() > stage.deadline:
         stage = cut_off_at_deadline(scratch, stage, True)
@@ -404,12 +422,17 @@ def waited(scratch: Path) -> tuple[Stage, str]:
     return stage, RUNNING if running else ENDED
 
 
-def wait_step(worktree: Path, scratch: Path, home: Path) -> dict:
-    """One step of the manager's wait, as `waited` ends it. The `next` of the answer is the call the manager makes
-    after it."""
-    stage, state = waited(scratch)
+def wait_answer(scratch: Path, wait_call: str, report_call: str) -> dict:
+    """What a manager's `wait` prints: the `state` that `wait_for_run` ends in, the `thread`, the `deadline` and the
+    `next` call, which is `wait_call` while the run goes on and `report_call` once it ended or was cut off."""
+    stage, state = wait_for_run(scratch)
     return {"state": state, "thread": stage.thread, "deadline": stage.deadline,
-            "next": call_for("wait" if state == RUNNING else "report", worktree, scratch, home)}
+            "next": wait_call if state == RUNNING else report_call}
+
+
+def wait(worktree: Path, scratch: Path, home: Path) -> dict:
+    """The manager's wait for the stage's run, answered as `wait_answer` does with the calls of this worktree."""
+    return wait_answer(scratch, call_for("wait", worktree, scratch, home), call_for("report", worktree, scratch, home))
 
 
 def cut_off_at_deadline(scratch: Path, stage: Stage, still_running: bool) -> Stage:
@@ -439,8 +462,8 @@ def price_thread(stage: Stage, worktree: Path, home: Path, main_tree: Path) -> N
         return
     now = clock.now()
     outcome = lap_outcomes.CUT_OFF if stage.cut_off else lap_outcomes.DONE
-    ledger.record_run_or_say(home, main_tree, epic, ledger.Where.of_lap(lap, now),
-                             ledger.Worker(stage.thread, stage.tier, False), outcome, now)
+    ledger.record_route_run_or_say(home, main_tree, epic, ledger.Where.of_lap(lap, now),
+                                   ledger.Worker(stage.thread, stage.tier, False), stage.route, outcome, now)
 
 
 def state_folders(worktree: Path) -> list[Path]:
@@ -469,23 +492,37 @@ def remove_record_of_a_stage_nobody_runs(home: Path, worktree: Path, scratch: Pa
         lap_guard_record.remove_record(home, worktree)
 
 
-def report(worktree: Path, scratch: Path, home: Path, main_tree: Path) -> dict:
-    """Reads the thread's last reply, prices the thread of a lap in the ledger, archives the thread, records that it
-    was reported and removes the worktree's guard record when no other stage of the worktree still runs. The answer
-    holds the `thread`, whether the stage was `cut_off` and the `reply`, empty when the worker left none. The record
-    goes once the read has answered, whether or not the archive does, since a thread that was read has ended its run. A
-    read that fails leaves the record, because the worker may still act; a stop or a resume removes it. A pass's thread
-    is priced by the scheduler's report of its worker, which names the thread."""
+def no_step(*_: object) -> None:
+    """The step of a report that a worker has none of."""
+
+
+def report_thread(scratch: Path, before_archive: Callable[[Stage], None], after_reported: Callable[[], None]) -> dict:
+    """Reads the last reply of the stage recorded in `scratch`, runs `before_archive` on the stage, archives the
+    thread, records that it was reported and runs `after_reported`, even when the archive fails. The answer holds the
+    `thread`, whether the stage was `cut_off` and the `reply`, empty when the worker left none. A read that fails
+    records nothing, because the worker may still act."""
     stage = read_state(scratch)
     reply = t3_worker.last_reply(stage.thread)
     try:
-        if named_pass_stage(worktree, main_tree) is None:
-            price_thread(stage, worktree, home, main_tree)
+        before_archive(stage)
         t3_worker.archive(stage.thread)
     finally:
         write_state(scratch, replace(stage, reported=True))
-        remove_record_of_a_stage_nobody_runs(home, worktree, scratch)
+        after_reported()
     return {"thread": stage.thread, "cut_off": stage.cut_off, "reply": reply}
+
+
+def report(worktree: Path, scratch: Path, home: Path, main_tree: Path) -> dict:
+    """Reports the stage as `report_thread` does, pricing the thread of a lap in the ledger before the archive and
+    removing the worktree's guard record when no other stage of the worktree still runs. The record goes once the read
+    has answered, whether or not the archive does, since a thread that was read has ended its run. A read that fails
+    leaves the record, because the worker may still act; a stop or a resume removes it. A pass's thread is priced by
+    the scheduler's report of its worker, which names the thread."""
+    def price(stage: Stage) -> None:
+        if named_pass_stage(worktree, main_tree) is None:
+            price_thread(stage, worktree, home, main_tree)
+
+    return report_thread(scratch, price, lambda: remove_record_of_a_stage_nobody_runs(home, worktree, scratch))
 
 
 def stop_stage(worktree: Path, scratch: Path) -> bool:

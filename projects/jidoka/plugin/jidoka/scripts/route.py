@@ -4,7 +4,8 @@
 `fallback <bead> <stage> <tier> --run <mark>` is called by the manager when the worker of a stage on the tier's route
 failed. The bead is the task of a lap's stage, or the epic for a stage of a pass. The mark names the run of the stage:
 the lap's number, or the pass's number. It prints one JSON object. `{"rerun": true, "route": {...}}` carries the
-native route to rerun the stage on; the script has recorded that on the bead as the metadata `route.native.<stage>`,
+native route to rerun the stage on, which on an Antigravity host is a T3 Antigravity thread, as `routes.native_route_on`
+says; the script has recorded that on the bead as the metadata `route.native.<stage>`,
 holding the mark, and posted a comment. `{"rerun": false, "why": "..."}` says the stage stays failed, either because
 the tier's route already runs natively or because this run of the stage already fell back. A new mark is a new run,
 so it may fall back again. The script writes nothing when the stage does not rerun, and counts nothing against a
@@ -41,12 +42,11 @@ def fallback(bead: str, stage: str, tier: str, mark: str, home: Path, main_tree:
     if shown is None:
         raise CommandError(f"bd show printed nothing usable for {bead}")
     key = f"{KEY_PREFIX}{stage}"
+    native = routes.native_route_here(tier, home)
     if str(metadata_of(shown).get(key) or "") == mark:
-        return {"rerun": False, "why": f"the {stage} stage already fell back to {routes.NATIVE_HARNESS} in run "
-                                       f"{mark}"}
-    native = routes.native_route_of(tier)
+        return {"rerun": False, "why": f"the {stage} stage already fell back to {native.label} in run {mark}"}
     env = env_as_factory()
-    run(["bd", "comment", bead, f"{stage} reruns on {routes.NATIVE_HARNESS}: the {tier} route on "
+    run(["bd", "comment", bead, f"{stage} reruns on {native.label}: the {tier} route on "
                                f"{failed.harness} failed"], main_tree, env)
     run(["bd", "update", bead, *set_metadata((key, mark))], main_tree, env)
     return {"rerun": True, "route": native.as_dict()}

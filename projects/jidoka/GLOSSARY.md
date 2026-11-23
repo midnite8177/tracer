@@ -696,7 +696,9 @@ models. The second tier's route is proposed the same way on both hosts: on T3 Co
 or in codex when either exists, else Antigravity's deep route. A route that
 cannot run falls back to the host's harness. A route that fails reruns its stage once on the native route, the
 host's own harness at the model and effort the tier asks for; a second
-failure is the stage's own failure.
+failure is the stage's own failure. Under Antigravity that route is a T3
+Antigravity thread: the tier's own when it is one, else the light tier's for
+the local tier and the deep tier's for the second tier.
 _Avoid_: Provider, backend, adapter
 
 **Machine settings**:

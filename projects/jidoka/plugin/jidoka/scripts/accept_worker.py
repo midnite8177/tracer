@@ -17,9 +17,9 @@ folder, which is what the thread's full access allows.
       as its prompt, and prints one JSON object: `thread`, `deadline` (epoch seconds), `wall_seconds`, and `wait` and
       `report`, the calls that follow.
   accept_worker.py wait --worker <guide|send-back>
-      One wait, at most six steps of 45 seconds, which ends early when the run ends. Prints `state`, which is `running`, `ended` or `cut off`, the
-      `thread`, the `deadline` and `next`, the call to make then. A worker past its deadline is interrupted, and ends
-      cut off.
+      One wait, bounded by `t3_stage.STEPS_IN_ONE_WAIT` T3 steps, which ends early when the run ends. Prints `state`,
+      which is `running`, `ended` or `cut off`, the `thread`, the `deadline` and `next`, the call to make then. A
+      worker past its deadline is interrupted, and ends cut off.
   accept_worker.py report --worker <guide|send-back>
       Reads the thread's last reply, archives the thread and prints `thread`, `cut_off` and `reply`.
 
@@ -39,7 +39,6 @@ import hashlib
 import json
 import shlex
 import sys
-from dataclasses import replace
 from pathlib import Path
 
 import launcher
@@ -84,29 +83,21 @@ def start(worker: str, epic: str, prompt_file: Path, tier: str, home: Path, main
     scratch = stage_folder(main_tree, worker)
     launches = t3_stage.launches_after(t3_stage.previous_state(scratch))
     title = t3_worker.pass_title_of(str(read_bead(epic, main_tree).get("title") or ""), WORKERS[worker])
-    stage = t3_stage.launch_on_route(route, tier, scratch, title, prompt, t3_worker.in_project_checkout(),
-                                     request_id(epic, worker, launches, prompt), launches,
-                                     ACCEPT_WORKER_WALL_CLOCK_SECONDS)
+    launch = t3_stage.Launch(title, request_id(epic, worker, launches, prompt), launches,
+                             ACCEPT_WORKER_WALL_CLOCK_SECONDS)
+    stage = t3_stage.launch_on_route(route, tier, scratch, prompt, t3_worker.in_project_checkout(), launch)
     return t3_stage.started(stage, call_for("wait", worker, home), call_for("report", worker, home))
 
 
-def wait_step(worker: str, home: Path, main_tree: Path) -> dict:
-    """One step of the manager's wait, as t3_stage.waited ends it."""
-    stage, state = t3_stage.waited(stage_folder(main_tree, worker))
-    return {"state": state, "thread": stage.thread, "deadline": stage.deadline,
-            "next": call_for("wait" if state == t3_stage.RUNNING else "report", worker, home)}
+def wait(worker: str, home: Path, main_tree: Path) -> dict:
+    """The manager's wait for the worker's run, answered as t3_stage.wait_answer does with this script's calls."""
+    return t3_stage.wait_answer(stage_folder(main_tree, worker), call_for("wait", worker, home),
+                                call_for("report", worker, home))
 
 
 def report(worker: str, main_tree: Path) -> dict:
     """Reads the thread's last reply and archives the thread, which is marked reported even when the archive fails."""
-    scratch = stage_folder(main_tree, worker)
-    stage = t3_stage.read_state(scratch)
-    reply = t3_worker.last_reply(stage.thread)
-    try:
-        t3_worker.archive(stage.thread)
-    finally:
-        t3_stage.write_state(scratch, replace(stage, reported=True))
-    return {"thread": stage.thread, "cut_off": stage.cut_off, "reply": reply}
+    return t3_stage.report_thread(stage_folder(main_tree, worker), t3_stage.no_step, t3_stage.no_step)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -121,7 +112,7 @@ def run(args: argparse.Namespace) -> int:
         if args.mode == "start":
             printed = start(args.worker, args.epic, Path(args.prompt), args.tier, home, main_tree, host)
         elif args.mode == "wait":
-            printed = wait_step(args.worker, home, main_tree)
+            printed = wait(args.worker, home, main_tree)
         else:
             printed = report(args.worker, main_tree)
     except ERRORS as error:
@@ -139,7 +130,8 @@ def main(argv: list[str]) -> int:
     starting.add_argument("--epic", required=True, help="the epic the worker's thread is titled for")
     starting.add_argument("--prompt", required=True, help="the file that holds the worker's prompt")
     starting.add_argument("--tier", required=True, help="the tier whose route the thread runs on")
-    waiting = modes.add_parser("wait", help="wait one step for the worker's run")
+    waiting = modes.add_parser("wait", help=f"wait for the worker's run, at most {t3_stage.LONGEST_WAIT_SECONDS} "
+                                            "seconds")
     reporting = modes.add_parser("report", help="read the worker's last reply and archive its thread")
     for sub in (starting, waiting, reporting):
         sub.add_argument("--worker", required=True, choices=sorted(WORKERS), help="which accept worker")

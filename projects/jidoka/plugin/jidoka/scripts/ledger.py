@@ -209,7 +209,7 @@ def route_of(home: Path, tier: str | None, on_native: bool) -> routes.Route | No
         return None
     try:
         if on_native:
-            return routes.native_route_of(tier)
+            return routes.native_route_here(tier, home)
         return routes.recorded_route_here(tier, home)
     except (routes.RouteError, OSError):
         return None
@@ -269,17 +269,33 @@ def lap_mod_tokens(home: Path, agent: str | None) -> list[tuple[str | None, Toke
     return [(written.model, written.tokens)]
 
 
+@dataclass(frozen=True)
+class ThreadTokens:
+    """The model and tokens of each model a T3 thread ran on, and why they were not read. A thread whose turns were
+    not read has one entry with no tokens and says why in `why_not`, which is None when they were read."""
+    used: list[tuple[str | None, Tokens]]
+    why_not: str | None
+
+
+def thread_tokens(thread: str) -> ThreadTokens:
+    """The tokens of the thread's provider turns, summed for each model. T3's state db is private to T3 and can change
+    in any release, so turns that cannot be read are no failure."""
+    try:
+        return ThreadTokens([(each.model, each.tokens) for each in t3_turns.read_turns(thread)], None)
+    except (t3_turns.NoTurns, sqlite3.Error, OSError) as why:
+        return ThreadTokens([(None, NO_TOKENS)], str(why))
+
+
 def t3_tokens(home: Path, agent: str | None) -> list[tuple[str | None, Tokens]]:
     """The model and tokens of each model the T3 thread ran on, from its provider turns, as the Antigravity host keeps
     them. An agent id that is no thread, and turns that T3 cannot give, are one entry with no tokens, and the reason
     goes to stderr."""
     if not agent:
         return [(None, NO_TOKENS)]
-    try:
-        return [(each.model, each.tokens) for each in t3_turns.read_turns(agent)]
-    except t3_turns.NoTurns as why:
-        print(f"ledger: no tokens for thread {agent}: {why}", file=sys.stderr)
-        return [(None, NO_TOKENS)]
+    read = thread_tokens(agent)
+    if read.why_not is not None:
+        print(f"ledger: no tokens for thread {agent}: {read.why_not}", file=sys.stderr)
+    return read.used
 
 
 TOKEN_SOURCES = {routes.CLAUDE_CODE_HOST: lap_mod_tokens, routes.ANTIGRAVITY_HOST: t3_tokens}
@@ -291,11 +307,9 @@ def tokens_for(home: Path, worker: Worker) -> list[tuple[str | None, Tokens]]:
     return TOKEN_SOURCES[routes.host_of_environment()](home, worker.agent)
 
 
-def ran_by(home: Path, worker: Worker) -> list[Ran]:
-    """The runs of the worker, one for each model it ran on, priced on the model the tokens name, else the route's of
-    its tier."""
-    route = route_of(home, worker.tier, worker.on_native)
-    used = tokens_for(home, worker)
+def ran_on(route: routes.Route | None, used: list[tuple[str | None, Tokens]]) -> list[Ran]:
+    """The runs for the models and tokens of a worker, priced on the model the tokens name, else the route's. A worker
+    with no route has no harness and no effort."""
     if route is None:
         return [Ran(tokens, None, model, None) for model, tokens in used]
     return [Ran(tokens, route.harness, model or route.model, route.effort) for model, tokens in used]
@@ -343,10 +357,18 @@ def settle_priced(home: Path, repo: str, epic: str, agent: str, outcome: str) ->
 
 def record_run_or_say(home: Path, main_tree: Path, epic: str, where: Where, worker: Worker, outcome: str,
                       now: int) -> None:
-    """Writes the row of a worker that has ended. Under an Antigravity host the agent id is a T3 thread, which no
-    other worker shares, so a thread that already has rows in the ledger is not priced again; its rows take the
-    outcome. A ledger that cannot take the row is a line on stderr, never a failure, because the report of the worker
-    must settle whatever the ledger does."""
+    """Writes the row of a worker that has ended, priced on the route that `route_of` gives its tier. See
+    `record_route_run_or_say`."""
+    route = route_of(home, worker.tier, worker.on_native)
+    record_route_run_or_say(home, main_tree, epic, where, worker, route, outcome, now)
+
+
+def record_route_run_or_say(home: Path, main_tree: Path, epic: str, where: Where, worker: Worker,
+                            route: routes.Route | None, outcome: str, now: int) -> None:
+    """Writes the row of a worker that has ended, priced on the route it ran on. Under an Antigravity host the agent
+    id is a T3 thread, which no other worker shares, so a thread that already has rows in the ledger is not priced
+    again; its rows take the outcome. A ledger that cannot take the row is a line on stderr, never a failure, because
+    the report of the worker must settle whatever the ledger does."""
     try:
         if (worker.agent and routes.host_of_environment() == routes.ANTIGRAVITY_HOST
                 and settle_priced(home, str(main_tree), epic, worker.agent, outcome)):
@@ -354,7 +376,7 @@ def record_run_or_say(home: Path, main_tree: Path, epic: str, where: Where, work
     except (sqlite3.Error, OSError) as error:
         print(f"ledger: took no row for the {where.stage} of {where.task or epic}: {error}", file=sys.stderr)
         return
-    for ran in ran_by(home, worker):
+    for ran in ran_on(route, tokens_for(home, worker)):
         record_ran_or_say(home, main_tree, epic, where, worker, ran, outcome, now)
 
 

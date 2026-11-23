@@ -311,5 +311,37 @@ class TheGateShowsBothTidiesTests(LocalRouteOnOpenCode, TheTrialRuns, test_gate_
         self.assertEqual(0, done.returncode, done.stderr)
 
 
+class TheNativeTidyOnAntigravityTests(LocalRouteOnOpenCode, TheTrialRuns, test_tidy.TidyCase):
+    """A home whose Antigravity table routes the local tier to t3 OpenCode and the light tier to a T3 Antigravity
+    thread, under a caller that is a T3 thread."""
+
+    HYDROGEN = {"harness": "t3", "model": "gemini-4-hydrogen", "version": None, "effort": "medium",
+                "provider": "antigravity-main", "driver": "antigravity"}
+
+    def setUp(self):
+        super().setUp()
+        original = (self.home / "settings.json").read_text(encoding="utf-8")
+        (self.home / "settings.json").write_text(
+            json.dumps({"antigravity_routes": {"light": self.HYDROGEN, "local": test_t3_tidy.T3_OPENCODE}}),
+            encoding="utf-8")
+        self.addCleanup((self.home / "settings.json").write_text, original, encoding="utf-8")
+
+    def caller_env(self, home: Path) -> dict[str, str]:
+        env = {key: value for key, value in super().caller_env(home).items() if key != "JIDOKA_SESSION_ID"}
+        return {**env, "T3CODE_THREAD_ID": "thread-of-the-test"}
+
+    def test_the_native_tidy_of_the_trial_runs_on_the_local_tiers_antigravity_thread(self):
+        epic, branch, printed = self.epic_on_trial(test_tidy.BUILT_FILE, test_tidy.COMMENTED)
+        [local] = self.tidy_actions_of(printed)
+        self.leave_in(Path(local["worktree"]), test_tidy.BUILT_FILE, LOCALLY_TIDIED)
+
+        between = self.report_tidy_at(epic, LOCAL_SECONDS)
+
+        [native] = self.tidy_actions_of(between)
+        self.assertEqual("native", native["route"])
+        self.assertEqual(("gemini-4-hydrogen", "antigravity"),
+                         (native["native_route"]["model"], native["native_route"]["driver"]))
+
+
 if __name__ == "__main__":
     unittest.main()

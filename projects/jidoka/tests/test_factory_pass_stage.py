@@ -26,6 +26,8 @@ PASS_WALL_CLOCK_SECONDS = 30 * 60
 CLEANUP_THREAD = "thread-of-the-cleanup"
 HYDROGEN = {"harness": "t3", "model": "gemini-4-hydrogen", "version": None, "effort": "medium",
             "provider": "antigravity-main", "driver": "antigravity"}
+OPENCODE = {"harness": "t3", "model": "qwen3-coder-next", "version": None, "effort": "medium",
+            "provider": "strata", "driver": "opencode"}
 SHELF_FILES = 5
 REPLY = {"t3_thread_read": {"items": [{"position": 3, "type": "assistant_message",
                                        "text": 'Done.\n```json\n{"outcome": "done"}\n```'}]}}
@@ -92,6 +94,11 @@ class PassStageCase(CleanupCase):
         prompt = Path(action["scratch"]) / "prompt.md"
         prompt.write_text(f"jidoka lap worktree: {action['worktree']}\n\nDo the stage.\n", encoding="utf-8")
         return self.stage_call("start", action, "--prompt", str(prompt), "--tier", tier, thread=thread)
+
+    def start_natively(self, action: dict, tier: str) -> subprocess.CompletedProcess:
+        prompt = Path(action["scratch"]) / "prompt.md"
+        prompt.write_text(f"jidoka lap worktree: {action['worktree']}\n\nDo the stage.\n", encoding="utf-8")
+        return self.stage_call("start", action, "--prompt", str(prompt), "--tier", tier, "--native")
 
     def started(self, action: dict, tier: str) -> dict:
         done = self.start(action, tier)
@@ -258,6 +265,33 @@ class StartingTheTidyBatchesTests(PassStageCase):
             self.assertEqual({"instanceId": "antigravity-main", "model": "gemini-4-hydrogen",
                               "options": {"thought_level": "medium"}}, arguments["modelSelection"])
 
+    def test_a_batch_whose_local_route_is_t3_opencode_reruns_as_a_thread_on_the_native_antigravity_route(self):
+        self.use_routes({"deep": NEON, "light": HYDROGEN, "local": OPENCODE})
+        _, batches = self.epic_at_tidy(SHELF_FILES)
+        refused = self.start(batches[0], "local")
+
+        started = self.start_natively(batches[0], "local")
+
+        self.assertEqual(1, refused.returncode)
+        self.assertIn("not a T3 Antigravity thread", refused.stderr)
+        self.assertEqual(0, started.returncode, started.stderr)
+        [launch] = self.launches()
+        self.assertEqual({"instanceId": "antigravity-main", "model": "gemini-4-hydrogen",
+                          "options": {"thought_level": "medium"}}, launch["modelSelection"])
+        self.assertEqual({"type": "existing_worktree", "worktreePath": batches[0]["worktree"]},
+                         launch["workspaceStrategy"])
+
+    def test_a_native_start_with_no_antigravity_thread_to_rerun_on_refuses_and_launches_nothing(self):
+        self.use_routes({"deep": NEON, "local": OPENCODE})
+        _, batches = self.epic_at_tidy(SHELF_FILES)
+
+        done = self.start_natively(batches[0], "local")
+
+        self.assertEqual(1, done.returncode)
+        self.assertIn("light", done.stderr)
+        self.assertEqual([], self.calls())
+        self.assertIsNone(self.guard_of(batches[0]))
+
     def test_writes_the_lap_guard_record_of_the_pass_worktree_with_the_stage_tidy(self):
         _, batches = self.epic_at_tidy(SHELF_FILES)
 
@@ -376,6 +410,16 @@ class EndingAPassStageThatRunsTests(PassStageCase):
     def test_a_resume_interrupts_and_archives_the_thread_of_a_tidy_batch_and_removes_the_guard_record(self):
         epic, batches = self.epic_at_tidy(SHELF_FILES)
         self.started(batches[0], "local")
+
+        self.resume(epic)
+
+        self.assertEqual(["t3_thread_launch", "t3_thread_interrupt", "t3_thread_organize"], self.tools_called())
+        self.assertIsNone(self.guard_of(batches[0]))
+
+    def test_a_resume_of_an_epic_that_carries_the_human_label_still_ends_the_thread_of_a_tidy_batch(self):
+        epic, batches = self.epic_at_tidy(SHELF_FILES)
+        self.started(batches[0], "local")
+        self.bd_here("label", "add", epic, "human")
 
         self.resume(epic)
 

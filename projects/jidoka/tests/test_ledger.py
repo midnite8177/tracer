@@ -169,6 +169,31 @@ class TheLedgerPricesEveryWorkerRunTests(LedgerCase):
         [row] = self.listed(lap.epic)["rows"]
         self.assertEqual(("t3", "gemini-4-neon", "high"), (row["harness"], row["model"], row["effort"]))
 
+    def test_a_stage_that_reran_natively_under_antigravity_is_priced_as_the_antigravity_thread_it_ran_on(self):
+        lap = self.open_one_lap()
+        self.leave_tokens("agent-1", tokens("gemini-4-hydrogen", 1_000, 0, 0, 0))
+        hydrogen = {"harness": "t3", "provider": "antigravity", "model": "gemini-4-hydrogen", "version": None,
+                    "effort": "medium", "driver": "antigravity"}
+        opencode = {"harness": "t3", "provider": "strata", "model": "qwen3-coder-next", "version": None,
+                    "effort": "medium", "driver": "opencode"}
+        original = (self.home / "settings.json").read_text(encoding="utf-8")
+        (self.home / "settings.json").write_text(
+            json.dumps({**ROUTES, "antigravity_routes": {"light": hydrogen, "local": opencode}}), encoding="utf-8")
+        self.addCleanup((self.home / "settings.json").write_text, original, encoding="utf-8")
+        env = {key: value for key, value in self.caller_env(self.home).items() if key != "JIDOKA_SESSION_ID"}
+        started = int(self.metadata(lap.task)["lap.started"])
+
+        done = fixture.run_launcher(LAUNCHER, [str(PLUGIN / "scripts" / "scheduler.py"), "report", lap.epic,
+                                               lap.task, "failed", "--agent", "agent-1", "--tier", "local",
+                                               "--route", "native", "--why", "red"], None,
+                                    {**env, "T3CODE_THREAD_ID": "thread-of-the-test",
+                                     "JIDOKA_NOW": str(started + 5)}, self.repo, RUN_TIMEOUT_SECONDS)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        [row] = self.listed(lap.epic)["rows"]
+        self.assertEqual(("local", "t3", "gemini-4-hydrogen", "medium"),
+                         (row["tier"], row["harness"], row["model"], row["effort"]))
+
     def test_a_recorded_t3_route_without_a_model_names_no_harness_and_the_run_is_priced_from_its_tokens(self):
         lap = self.open_one_lap()
         self.leave_tokens("agent-1", tokens(OPUS, 0, 1_000_000, 0, 0))

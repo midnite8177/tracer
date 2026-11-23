@@ -137,7 +137,10 @@ start the stage's worker again, once, on the printed route, with the same
 prompt, and write the event line with that route's model. When it prints
 `"rerun": false`, the stage failed as it would have without the fallback;
 report it to the scheduler as the worker's outcome says. The failed route
-is no try.
+is no try. On an Antigravity host the printed route is a T3 Antigravity
+thread, so the rerun is a start of `factory.py start` with `--native` added
+to the arguments the stage's own start takes, and its report names `--route
+native` beside `--tier`.
 
 The second tier's route can be codex. Its one stage is the review's Spec
 lane, and the manager runs that lane with the codex lane script instead of
@@ -664,7 +667,10 @@ the printed route, native Sonnet, with the prompt of a native batch.
    second tidy, whose batch actions hold `route` `native` and `native_route`:
    start one lap worker for each batch on `native_route`, the local tier's
    native route, even when the local tier's route is t3 OpenCode, and call
-   the T3 tidy script for none of them. Name each of those workers in the
+   the T3 tidy script for none of them. On an Antigravity host, `native_route`
+   is a T3 Antigravity thread, so start each of those batches with
+   `factory.py start ... --tier local --native`, as the batches of the
+   Antigravity route above are started. Name each of those workers in the
    report as `--worker <agent id> local native`, so that the ledger prices it
    as the native model. Write the event lines of each tidy as above. The
    second tidy's report prints the review.
