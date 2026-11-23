@@ -11,14 +11,16 @@ The manager starts the child with T3's own tools, so this script runs on either 
       where the manager saves the child's last reply, verbatim, before `finish`; and `wall_seconds` and `deadline`,
       the stage's wall clock and the time in epoch seconds after which the manager cancels the child. It refuses
       when the second tier's route is not on t3 or lacks a provider, a model or an effort.
-  t3_lane.py finish --report <review-spec.json>
-      Reads the epic, the route and the reply path from what `start` recorded, so a change of the settings in between
-      does not change the route the row names. It writes the lane's report from the reply: a JSON list of findings,
+  t3_lane.py finish --report <review-spec.json> [--thread <childThreadId>]
+      `--thread` is the `childThreadId` that `delegate_task` and `task_status` carry for the child, which the manager
+      keeps with the `taskId`. Reads the epic, the route and the reply path from what `start` recorded, so a change
+      of the settings in between does not change the route the row names. It writes the lane's report from the reply: a JSON list of findings,
       read as the review's settle reads a native lane's report. It writes the one ledger row of the run on the epic,
       stage `review`, harness t3, the route's model and effort, the wall time from `start` and the outcome, with the
-      tokens of the child's thread, which it finds in T3's state db (t3_turns.py) because a T3 task result carries
-      none. It writes a row for each model the child's turns name, naming the thread as its agent. A child it cannot find, or
-      whose turns carry no tokens, is a row with no tokens and a line on stderr that says why.
+      tokens of that thread, which it reads from T3's state db (t3_turns.py) because a T3 task result carries no tokens.
+      It writes a row for each model the thread's turns name, naming the thread as its agent. A finish given no
+      thread, a thread that is not in the db, or turns that carry no tokens, is a row with no tokens and a line on
+      stderr that says why.
 
 T3 starts the child in the main checkout or in a checkout of its own, and the lane only reads, so `finish` fails the
 run when the main checkout differs from what `start` saw. Any failure exits 1 and leaves no report: a run past the
@@ -90,7 +92,7 @@ def start(lane: Lane, wall_seconds: int, home: Path, main_tree: Path) -> dict:
     return record_start(child, main_tree, NoOwnFields(), delegate_task_of(prompt, route))
 
 
-def finish(report: Path, home: Path, main_tree: Path) -> int:
+def finish(report: Path, home: Path, main_tree: Path, thread: str | None) -> int:
     """Writes the report from the reply and records the row. Returns the number of findings; raises LaneError for a
     failed run."""
     try:
@@ -109,7 +111,7 @@ def finish(report: Path, home: Path, main_tree: Path) -> int:
         raise LaneError(str(error)) from error
     finally:
         where = replace(ledger.Where.of_pass(REVIEW_STAGE), wall_seconds=seconds)
-        record_child_runs(home, main_tree, state, where, LANE_TIER, outcome)
+        record_child_runs(home, main_tree, state, thread, where, LANE_TIER, outcome)
         state_path(report).unlink(missing_ok=True)
 
 
@@ -129,6 +131,8 @@ def main(argv: list[str]) -> int:
     starting.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     finishing = modes.add_parser("finish", help="write the report from the child's reply and record the run")
     finishing.add_argument("--report", required=True, help="the lane's report, as given to start")
+    finishing.add_argument("--thread", help="the `childThreadId` that T3 gave for the child; left out when T3 gave "
+                                            "none, which writes the row with no tokens")
     finishing.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
 
@@ -140,7 +144,7 @@ def main(argv: list[str]) -> int:
                         args.doc or [])
             print(json.dumps(start(lane, args.wall_seconds, home, main_tree)))
         else:
-            found = finish(Path(args.report), home, main_tree)
+            found = finish(Path(args.report), home, main_tree, args.thread)
             print(json.dumps({"lane": review.SPEC, "report": args.report, "findings": found}))
     except (LaneError, CommandError, routes.RouteError, settings_reader.SettingsError, OSError) as error:
         print(f"t3_lane: {error}", file=sys.stderr)

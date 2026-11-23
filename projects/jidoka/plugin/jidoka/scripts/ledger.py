@@ -246,14 +246,6 @@ def rows_of(home: Path, repo: str, epic: str) -> list[dict]:
             for row in found]
 
 
-def agents_of(home: Path, repo: str, epic: str) -> set[str]:
-    """The agent ids that the epic's rows in the repo name."""
-    with closing(connect(home)) as connection:
-        found = connection.execute("SELECT DISTINCT agent FROM runs WHERE repo = ? AND epic = ? AND agent IS NOT NULL",
-                                   (repo, epic)).fetchall()
-    return {str(agent) for (agent,) in found}
-
-
 def keep_total(home: Path, repo: str, epic: str, main_tree: Path) -> float:
     """Puts the epic's running total into its metadata and returns it."""
     total = total_of(home, repo, epic)

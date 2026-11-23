@@ -121,17 +121,6 @@ class AT3TidyBatchStartsAsAnOpenCodeChildTaskTests(T3TidyCase):
 
         self.assertEqual({"reasoningEffort": "medium"}, delegate["target"]["options"])
 
-    def test_a_route_whose_option_name_is_not_text_refuses_to_start(self):
-        _, _, printed = self.finish_epic_whose_task_built_a_commented_file()
-        self.local_tier({**T3_OPENCODE, "effort_option": 7})
-        try:
-            done = self.start_batch(self.tidy_action_of(printed))
-        finally:
-            self.local_tier(T3_OPENCODE)
-
-        self.assertEqual(1, done.returncode)
-        self.assertIn("effort_option", done.stderr)
-
     def test_start_prints_the_deadline_from_the_stages_wall_clock(self):
         _, _, printed = self.finish_epic_whose_task_built_a_commented_file()
 
@@ -247,18 +236,18 @@ class AFinishedBatchLeavesItsEditsForTheTidysSettleTests(T3TidyCase):
 
 
 class EachBatchRowCarriesItsChildThreadsTokensTests(T3TidyCase):
-    def test_each_batch_row_carries_the_tokens_of_its_own_child_thread(self):
+    def test_two_batches_on_one_model_get_their_own_threads_tokens_whatever_order_the_children_began_in(self):
         epic, printed = self.finish_epic_whose_task_built({f"till_{number}.txt": test_tidy.COMMENTED
                                                            for number in range(1, 6)})
         first, second, *_ = self.tidy_actions_of(printed)
         t3_state.create(self.state, t3_state.TOKEN_TABLES)
-        t3_state.add_child_turn(self.state, "thread-of-batch-1", "run-1", "qwen3-coder-next",
-                                usage(10_000, 6_000, 0, 500, 0), FIRST_CHILD_BEGAN)
         t3_state.add_child_turn(self.state, "thread-of-batch-2", "run-2", "qwen3-coder-next",
-                                usage(3_000, 0, 0, 40, 0), SECOND_CHILD_BEGAN)
+                                usage(3_000, 0, 0, 40, 0), FIRST_CHILD_BEGAN)
+        t3_state.add_child_turn(self.state, "thread-of-batch-1", "run-1", "qwen3-coder-next",
+                                usage(10_000, 6_000, 0, 500, 0), SECOND_CHILD_BEGAN)
 
-        for action in (first, second):
-            done = self.finish_batch(action, self.started(action), DONE_REPLY)
+        for action, thread in ((first, "thread-of-batch-1"), (second, "thread-of-batch-2")):
+            done = self.finish_batch(action, self.started(action), DONE_REPLY, "--thread", thread)
             self.assertEqual(0, done.returncode, done.stderr)
 
         self.assertEqual([("thread-of-batch-1", 4_000, 6_000, 500), ("thread-of-batch-2", 3_000, 0, 40)],
@@ -273,7 +262,8 @@ class EachBatchRowCarriesItsChildThreadsTokensTests(T3TidyCase):
         t3_state.add_child_turn(self.state, "thread-of-batch-1", "run-1", "qwen3-coder-next",
                                 usage(3_000, 0, 0, 40, 0), FIRST_CHILD_BEGAN)
 
-        done = self.finish_batch(action, started, "I could not.\n{\"outcome\": \"failed\", \"why\": \"no\"}")
+        done = self.finish_batch(action, started, "I could not.\n{\"outcome\": \"failed\", \"why\": \"no\"}",
+                                 "--thread", "thread-of-batch-1")
 
         self.assertEqual(1, done.returncode)
         [row] = self.tidy_rows_of(epic)

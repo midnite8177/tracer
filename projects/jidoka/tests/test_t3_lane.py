@@ -20,7 +20,7 @@ T3_ROUTE = {"harness": "t3", "provider": "codex-home", "model": "gpt-6.1-sol", "
 STARTED_AT = 1_800_000_000
 FINISHED_AT = STARTED_AT + 95
 AFTER_START = "2027-01-15T08:00:10.000Z"
-BEFORE_START = "2027-01-15T07:59:00.000Z"
+AFTER_SIBLING = "2027-01-15T08:00:20.000Z"
 CHILD = "thread-of-the-spec-lane"
 
 
@@ -55,14 +55,15 @@ class T3LaneCase(t3_state.StateDbOfATest, test_ledger.LedgerBooks, test_review.R
                             *(part for each in action["files"] for part in ("--file", each)), "--doc",
                             str(self.repo / "CLAUDE.md"), *extra)
 
-    def finish_lane(self, action: dict, started: dict | None, reply: str | None) -> subprocess.CompletedProcess:
+    def finish_lane(self, action: dict, started: dict | None, reply: str | None,
+                    *extra: str) -> subprocess.CompletedProcess:
         """Finishes the lane after saving the reply where `start` said to; a lane that never started has no path."""
         if started is not None:
             reply_file = Path(started["reply"])
             reply_file.unlink(missing_ok=True)
             if reply is not None:
                 reply_file.write_text(reply, encoding="utf-8")
-        return self.lane_at(FINISHED_AT, "finish", "--report", action["report"])
+        return self.lane_at(FINISHED_AT, "finish", "--report", action["report"], *extra)
 
     def started(self, epic: str, action: dict, *extra: str) -> dict:
         done = self.start_lane(epic, action, *extra)
@@ -221,12 +222,12 @@ class TheReportIsWrittenFromTheChildsLastReplyTests(T3LaneCase):
 
 
 class TheLanesRowCarriesItsChildThreadsTokensTests(T3LaneCase):
-    def finished_row(self, before_finish) -> tuple[dict, subprocess.CompletedProcess]:
+    def finished_row(self, before_finish, *finish_extra: str) -> tuple[dict, subprocess.CompletedProcess]:
         epic, printed = self.finish_epic_at_the_review()
         action = self.spec_action_of(printed)
         started = self.started(epic, action)
         before_finish()
-        done = self.finish_lane(action, started, "[]")
+        done = self.finish_lane(action, started, "[]", *finish_extra)
         self.assertEqual(0, done.returncode, done.stderr)
         [row] = self.rows_of(epic)
         return row, done
@@ -239,37 +240,49 @@ class TheLanesRowCarriesItsChildThreadsTokensTests(T3LaneCase):
             t3_state.add_child_turn(self.state, CHILD, "run-1", "gpt-6.1-sol", usage(20_000, 15_000, 0, 700, 0),
                                     AFTER_START)
 
-        row, done = self.finished_row(child_ran)
+        row, done = self.finished_row(child_ran, "--thread", CHILD)
 
         self.assertEqual((CHILD, "t3", "gpt-6.1-sol", 9_000, 21_000, 0, 1_200),
                          (row["agent"], row["harness"], row["model"], row["input_tokens"], row["cache_read_tokens"],
                           row["cache_write_tokens"], row["output_tokens"]))
         self.assertGreater(row["dollars"], 0, done.stderr)
 
-    def test_a_thread_that_began_before_the_lane_started_is_not_its_child(self):
-        def other_thread_ran():
+    def test_the_row_carries_the_thread_it_is_given_and_not_an_earlier_one_on_the_same_model(self):
+        def two_children_ran():
             t3_state.create(self.state, t3_state.TOKEN_TABLES)
-            t3_state.add_child_turn(self.state, "thread-of-the-manager", "run-1", "gpt-6.1-sol",
-                                    usage(10_000, 0, 0, 500, 0), BEFORE_START)
+            t3_state.add_child_turn(self.state, "thread-of-a-sibling", "run-1", "gpt-6.1-sol",
+                                    usage(50_000, 0, 0, 900, 0), AFTER_START)
+            t3_state.add_child_turn(self.state, CHILD, "run-2", "gpt-6.1-sol", usage(10_000, 0, 0, 500, 0),
+                                    AFTER_SIBLING)
 
-        row, done = self.finished_row(other_thread_ran)
+        row, _ = self.finished_row(two_children_ran, "--thread", CHILD)
+
+        self.assertEqual((CHILD, 10_000, 500), (row["agent"], row["input_tokens"], row["output_tokens"]))
+
+    def test_a_finish_given_no_thread_writes_the_row_with_no_tokens_and_says_so(self):
+        def child_ran():
+            t3_state.create(self.state, t3_state.TOKEN_TABLES)
+            t3_state.add_child_turn(self.state, CHILD, "run-1", "gpt-6.1-sol", usage(10_000, 0, 0, 500, 0),
+                                    AFTER_START)
+
+        row, done = self.finished_row(child_ran)
 
         self.assertEqual((None, 0, 0), (row["agent"], row["input_tokens"], row["output_tokens"]))
-        self.assertIn("holds no thread", done.stderr)
+        self.assertIn("no thread was given", done.stderr)
 
-    def test_a_thread_on_another_model_is_not_its_child(self):
+    def test_a_thread_that_is_not_in_the_state_db_writes_the_row_with_no_tokens_and_says_why(self):
         def other_thread_ran():
             t3_state.create(self.state, t3_state.TOKEN_TABLES)
-            t3_state.add_child_turn(self.state, "thread-of-a-worker", "run-1", "gemini-4-neon",
+            t3_state.add_child_turn(self.state, "thread-of-a-worker", "run-1", "gpt-6.1-sol",
                                     usage(10_000, 0, 0, 500, 0), AFTER_START)
 
-        row, done = self.finished_row(other_thread_ran)
+        row, done = self.finished_row(other_thread_ran, "--thread", CHILD)
 
         self.assertEqual((None, 0, 0), (row["agent"], row["input_tokens"], row["output_tokens"]))
-        self.assertIn("holds no thread", done.stderr)
+        self.assertIn(f"holds no provider turn of thread {CHILD}", done.stderr)
 
     def test_a_child_that_is_not_in_the_state_db_writes_the_row_with_no_tokens_and_says_why(self):
-        row, done = self.finished_row(lambda: None)
+        row, done = self.finished_row(lambda: None, "--thread", CHILD)
 
         self.assertEqual(("t3", "gpt-6.1-sol", "done", None, 0, 0),
                          (row["harness"], row["model"], row["outcome"], row["agent"], row["input_tokens"],
@@ -281,7 +294,7 @@ class TheLanesRowCarriesItsChildThreadsTokensTests(T3LaneCase):
             t3_state.create(self.state, t3_state.TOKEN_TABLES)
             t3_state.add_child_turn(self.state, CHILD, "run-1", "gpt-6.1-sol", None, AFTER_START)
 
-        row, done = self.finished_row(child_ran)
+        row, done = self.finished_row(child_ran, "--thread", CHILD)
 
         self.assertEqual((None, 0), (row["agent"], row["input_tokens"]))
         self.assertIn("this reader can read", done.stderr)
@@ -290,7 +303,7 @@ class TheLanesRowCarriesItsChildThreadsTokensTests(T3LaneCase):
         def schema_changed():
             t3_state.create(self.state, ())
 
-        row, done = self.finished_row(schema_changed)
+        row, done = self.finished_row(schema_changed, "--thread", CHILD)
 
         self.assertEqual(("done", 0), (row["outcome"], row["input_tokens"]))
         self.assertIn("is not one this reader knows", done.stderr)

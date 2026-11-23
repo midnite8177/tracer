@@ -621,7 +621,8 @@ the printed route, native Sonnet, with the prompt of a native batch.
    2. Call `delegate_task` with the printed `delegate_task` object as its
       arguments, changed in no part. It is a wait: the call returns when the
       child ends, when the printed `timeoutMs` passes, or as soon as the child
-      asks for an approval or puts a question. Keep the `taskId`. When it
+      asks for an approval or puts a question. Keep the `taskId` and the
+      `childThreadId` of the result, which `task_status` carries too. When it
       returns before the printed `deadline`, which is in epoch seconds, with
       the child not ended, the child asked: call `task_cancel` with the
       `taskId`, save no reply, and run step 4 with `--asked-for-approval`.
@@ -633,8 +634,10 @@ the printed route, native Sonnet, with the prompt of a native batch.
       printed `reply` path. That file and the action file are the only
       files the manager writes. When the child failed, asked for an
       approval, was cancelled or left no reply, save nothing there.
-   4. Run `t3_tidy.py finish --scratch <scratch> --jidoka-home ...`, with
-      `--asked-for-approval` when step 2 cancelled the child for asking. The script
+   4. Run `t3_tidy.py finish --scratch <scratch> --thread <childThreadId>
+      --jidoka-home ...`, with `--asked-for-approval` when step 2 cancelled the
+      child for asking. Leave out `--thread` only when T3 gave no
+      `childThreadId`; the row then has no tokens. The script
       records the batch's ledger row with harness t3, the route's model and
       effort, the wall time and the outcome, with the tokens of the child's
       thread, read from T3's state db; a run past the
@@ -749,7 +752,8 @@ the printed route, native Sonnet, with the prompt of a native batch.
    2. Call `delegate_task` with the printed `delegate_task` object as its
       arguments, changed in no part. The child reads the review worktree by
       the absolute paths in its prompt and writes nothing; the worktree is
-      never its working folder. Keep the `taskId`, and read `task_status`
+      never its working folder. Keep the `taskId` and the `childThreadId` of
+      the result, which `task_status` carries too, and read `task_status`
       until the `workState` is `result_available` or the time passes the
       printed `deadline`, which is in epoch seconds. Past the deadline, call
       `task_cancel` with the `taskId` and go on to step 4 with no reply.
@@ -757,7 +761,9 @@ the printed route, native Sonnet, with the prompt of a native batch.
       printed `reply` path. That file is the one file the manager writes.
       When the child failed, was cancelled or left no reply, save nothing
       there.
-   4. Run `t3_lane.py finish --report <report> --jidoka-home ...`. The script
+   4. Run `t3_lane.py finish --report <report> --thread <childThreadId>
+      --jidoka-home ...`; leave out `--thread` only when T3 gave no
+      `childThreadId`, and the row then has no tokens. The script
       reads the epic, the route and the reply path from what `start`
       recorded, writes the lane's report from the reply and records the
       lane's ledger row with harness t3, the route's model and effort, the

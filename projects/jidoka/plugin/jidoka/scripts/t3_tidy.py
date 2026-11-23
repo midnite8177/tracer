@@ -13,13 +13,14 @@ The manager starts the child with T3's own tools, so this script runs on either 
       the path where the manager saves the child's last reply, verbatim, before `finish`; and `wall_seconds` and
       `deadline`, the stage's wall clock and the time in epoch seconds after which the manager cancels the child. It
       refuses when the local tier's route is not a t3 OpenCode route or lacks a provider, a model or an effort.
-  t3_tidy.py finish --scratch <batch scratch> [--asked-for-approval]
-      Reads the route and the reply path from what `start` recorded, so a change of the settings in between does not
-      change the route the row names. It writes the one ledger row of the run on the epic, stage `tidy`, tier `local`,
+  t3_tidy.py finish --scratch <batch scratch> [--thread <childThreadId>] [--asked-for-approval]
+      `--thread` is the `childThreadId` that `delegate_task` and `task_status` carry for the child, which the manager
+      keeps with the `taskId`. `finish` reads the route and the reply path from what `start` recorded, so a change of the
+      settings in between does not change the route the row names. It writes the one ledger row of the run on the epic, stage `tidy`, tier `local`,
       harness t3, the route's model and effort, the wall time from `start` and the outcome, with the tokens of the
-      child's thread, which it finds in T3's state db (t3_turns.py) because a T3 task result carries none: a row for
-      each model the child's turns name, naming the thread as its agent. A child it cannot find, or whose turns carry
-      no tokens, is a row with no tokens and a line on stderr that says why. It also leaves `t3-tidy-result.json` in
+      thread, which it reads from T3's state db (t3_turns.py) because a T3 task result carries no tokens: a row for
+      each model the thread's turns name, naming the thread as its agent. A finish given no thread, a thread that is
+      not in the db, or turns that carry no tokens, is a row with no tokens and a line on stderr that says why. It also leaves `t3-tidy-result.json` in
       the batch's scratch folder, holding the outcome, which the local-model trial's gate page reads to say whether
       the local model did the batch.
       `--asked-for-approval` is the manager's word that T3 ended the wait because the child asked for an approval,
@@ -234,23 +235,23 @@ def restore_files(batch: BatchStart) -> None:
         print(f"t3_tidy: the batch's files were not put back: {error}", file=sys.stderr)
 
 
-def record(home: Path, main_tree: Path, state: Started, seconds: int, outcome: str) -> None:
+def record(home: Path, main_tree: Path, state: Started, thread: str | None, seconds: int, outcome: str) -> None:
     where = replace(ledger.Where.of_pass(tidy.STAGE.name), wall_seconds=seconds)
-    record_child_runs(home, main_tree, state, where, TIER, outcome)
+    record_child_runs(home, main_tree, state, thread, where, TIER, outcome)
 
 
-def settle_up(scratch: Path, state: Started[BatchStart], home: Path, main_tree: Path, seconds: int,
-              outcome: str) -> None:
+def settle_up(scratch: Path, state: Started[BatchStart], home: Path, main_tree: Path, thread: str | None,
+              seconds: int, outcome: str) -> None:
     """What every run leaves, whatever its outcome: a failed run's files put back, the one ledger row, the result file
     and no start record. A failure of the restore never keeps the row from being written."""
     if outcome != DONE:
         restore_files(state.own)
-    record(home, main_tree, state, seconds, outcome)
+    record(home, main_tree, state, thread, seconds, outcome)
     result_path(scratch).write_text(json.dumps({"outcome": outcome}), encoding="utf-8")
     state_path(scratch).unlink(missing_ok=True)
 
 
-def finish(scratch: Path, home: Path, main_tree: Path, asked_for_approval: bool) -> None:
+def finish(scratch: Path, home: Path, main_tree: Path, thread: str | None, asked_for_approval: bool) -> None:
     """Records the row. Raises TidyChildError for a failed run, after putting the batch's files back."""
     try:
         state = started_state(state_path(scratch), BatchStart.of, "batch")
@@ -272,7 +273,7 @@ def finish(scratch: Path, home: Path, main_tree: Path, asked_for_approval: bool)
     except (CommandError, ChildError) as error:
         raise TidyChildError(str(error)) from error
     finally:
-        settle_up(scratch, state, home, main_tree, seconds, outcome)
+        settle_up(scratch, state, home, main_tree, thread, seconds, outcome)
 
 
 def batch_of_file(path: Path) -> TidyBatch:
@@ -295,6 +296,8 @@ def main(argv: list[str]) -> int:
     starting.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     finishing = modes.add_parser("finish", help="record the child's run")
     finishing.add_argument("--scratch", required=True, help="the batch's scratch folder, as given to start")
+    finishing.add_argument("--thread", help="the `childThreadId` that T3 gave for the child; left out when T3 gave "
+                                            "none, which writes the row with no tokens")
     finishing.add_argument("--asked-for-approval", action="store_true",
                            help="T3 ended the wait because the child asked for an approval, and the manager "
                                 "cancelled it")
@@ -307,7 +310,7 @@ def main(argv: list[str]) -> int:
         if args.mode == "start":
             print(json.dumps(start(batch_of_file(Path(args.action)), args.doc or [], args.wall_seconds, home, main_tree)))
         else:
-            finish(Path(args.scratch), home, main_tree, args.asked_for_approval)
+            finish(Path(args.scratch), home, main_tree, args.thread, args.asked_for_approval)
             print(json.dumps({"scratch": args.scratch, "outcome": DONE}))
     except (TidyChildError, CommandError, routes.RouteError, settings_reader.SettingsError, OSError) as error:
         print(f"t3_tidy: {error}", file=sys.stderr)
