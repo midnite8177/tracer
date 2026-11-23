@@ -90,24 +90,24 @@ def window_in(raw: object, name: str, length_seconds: int, reserve_percent: floa
     return Window(name, float(used), int(resets_at), length_seconds, reserve_percent)
 
 
-def share_in(value: object) -> float | None:
+def share_in(value: object, account: str) -> float | None:
     """The share a map of account names to shares holds for the account, or None when the map holds none for it or is
     not a map of shares."""
-    return float(value[ACCOUNT]) if is_map_of(value, is_share) and ACCOUNT in value else None
+    return float(value[account]) if is_map_of(value, is_share) and account in value else None
 
 
-def machine_share(home: Path) -> float | None:
+def machine_share(home: Path, account: str) -> float | None:
     """The default reserve of the account in the machine settings; settings that cannot be read give none, and a line
     on stderr."""
-    return machine_settings.machine_default(home, RESERVES_KEY, "reserves", share_in)
+    return machine_settings.machine_default(home, RESERVES_KEY, "reserves", lambda value: share_in(value, account))
 
 
-def reserve_percents(shown: dict, home: Path) -> tuple[float, float]:
+def reserve_percents(shown: dict, home: Path, account: str) -> tuple[float, float]:
     """The share of the five-hour and of the seven-day window left unused, in percent. The account's reserve is the
     epic's own rule, else the machine's default, and one share holds for both windows. An account with neither keeps
     10% of the five-hour window and 25% of the seven-day window."""
-    own = share_in(of_epic(shown).settings.get(RESERVES_KEY))
-    share = own if own is not None else machine_share(home)
+    own = share_in(of_epic(shown).settings.get(RESERVES_KEY), account)
+    share = own if own is not None else machine_share(home, account)
     if share is None:
         return DEFAULT_FIVE_HOUR_RESERVE_PERCENT, DEFAULT_SEVEN_DAY_RESERVE_PERCENT
     percent = round(share * 100, 6)
@@ -128,7 +128,7 @@ def read(home: Path, now: int, shown: dict) -> Reading | None:
         return None
     if not isinstance(raw, dict) or not is_whole(raw.get("read_at")) or now - raw["read_at"] > FRESH_SECONDS:
         return None
-    five_hour_percent, seven_day_percent = reserve_percents(shown, home)
+    five_hour_percent, seven_day_percent = reserve_percents(shown, home, ACCOUNT)
     return Reading(window_in(raw.get("five_hour"), "five-hour", FIVE_HOUR_SECONDS, five_hour_percent),
                    window_in(raw.get("seven_day"), "seven-day", SEVEN_DAY_SECONDS, seven_day_percent))
 
@@ -151,7 +151,7 @@ def sync_pause(epic: str, shown: dict, reading: Reading | None, now: int, main_t
         since = waiting.since if waiting is not None else now
         pause.write(epic, pause.Pause(pause.RESERVE, since, window.resets_at, 0), main_tree)
         if waiting is None:
-            run(["bd", "comment", epic, f"Paused: the account's five-hour window is {window.used_percent:g}% used, "
+            run(["bd", "comment", epic, f"Paused: the account's {window.name} window is {window.used_percent:g}% used, "
                                         f"past its reserve of {window.reserve_percent:g}%. Nothing new starts until "
                                         f"it resets in {left(window.resets_at - now)}."],
                 main_tree, env_as_factory())

@@ -17,7 +17,7 @@ row on the route's model. Turns that cannot be read write the row with no tokens
 scheduler records a run when a worker's report comes in, naming the agent
 id the manager got when it started the worker. A report that names no agent writes its row with no tokens. Under an
 Antigravity host a thread whose rows the ledger holds already is not priced again, so a T3 stage that priced its
-thread when it was reported (t3_stage.py) is not counted twice: the scheduler's report gives those rows its outcome
+thread when it was reported (t3_stage.py) is not counted twice. The scheduler's report gives those rows its outcome
 and writes none. The
 workers of an epic's pass (the test cleanup, the tidy, each review lane, the fix and the validation) belong to no task,
 so their rows have no task and the stage's name. Both go through `record_run_or_say`, which takes the worker, where the
@@ -244,6 +244,14 @@ def rows_of(home: Path, repo: str, epic: str) -> list[dict]:
         connection.close()
     return [{("try" if column == "try_number" else column): value for column, value in zip(COLUMNS, row)}
             for row in found]
+
+
+def agents_of(home: Path, repo: str, epic: str) -> set[str]:
+    """The agent ids that the epic's rows in the repo name."""
+    with closing(connect(home)) as connection:
+        found = connection.execute("SELECT DISTINCT agent FROM runs WHERE repo = ? AND epic = ? AND agent IS NOT NULL",
+                                   (repo, epic)).fetchall()
+    return {str(agent) for (agent,) in found}
 
 
 def keep_total(home: Path, repo: str, epic: str, main_tree: Path) -> float:

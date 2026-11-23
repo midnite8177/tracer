@@ -392,7 +392,8 @@ class StartingEachStageTests(T3StageCase):
         self.assertEqual(0, listed.returncode, listed.stderr)
         self.assertIsNotNone(held)
         self.assertEqual(("check", "app-check"), (held.kind, held.stage))
-        self.assertEqual(json.loads(listed.stdout), held.commands)
+        self.assertEqual([*json.loads(listed.stdout), launcher.command_for("holdouts.py"),
+                          launcher.command_for("app_process.py")], held.commands)
         self.assertEqual([], held.barred)
 
     def test_the_merge_workers_guard_record_holds_the_grants_of_its_stage(self):

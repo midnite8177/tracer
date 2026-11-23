@@ -150,6 +150,12 @@ def handed_out(scratch: Path, which: str, home: Path) -> HandedOut:
     return HandedOut(clock.now(), route_ran_on(which, home))
 
 
+def owes_a_tidy(epic: str, shown: dict, branch: str, settings: Settings, main_tree: Path) -> bool:
+    """True when `to_run` would hand out a tidy, which it decides as `to_run` does. It cuts no worktree."""
+    stage = tidy.LOCAL_STAGE if tidy_owed(shown) == LOCAL else tidy.STAGE
+    return pass_support.owed(stage, epic, shown, branch, settings, main_tree) is not None
+
+
 def to_run(epic: str, shown: dict, branch: str, settings: Settings, home: Path,
            main_tree: Path) -> tidy.TidyToRun | None:
     """The tidy this pass still owes: the next one of the trial when the epic is on trial, else the ordinary tidy."""

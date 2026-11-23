@@ -57,6 +57,71 @@ public sealed class FactoryMarkupTests : BunitContext
     }
 
     [Fact]
+    public void ShowsEachBucketOfTheAntigravityReadingWithItsFiveHourAndWeeklyUseAndItsAge()
+    {
+        var checkedAt = projects.Clock.GetUtcNow().AddMinutes(-2).ToUnixTimeSeconds();
+        var resets = projects.Clock.GetUtcNow().AddMinutes(119).ToUnixTimeSeconds();
+        projects.WritesTheAntigravityUsage(
+            $$$"""
+            {"checkedAt": {{{checkedAt}}}, "buckets": {"gemini-3-pro": {
+              "session": {"id": "gemini-3-pro-5h", "usedPercent": 42.0, "resetsAt": {{{resets}}}, "windowDurationMins": 300.0},
+              "weekly": {"id": "gemini-3-pro-weekly", "usedPercent": 18.5, "resetsAt": null, "windowDurationMins": 10080.0} } } }
+            """);
+
+        var view = TheViewWhereTheSecondProjectHoldsAnEpic();
+
+        Assert.Equal("checked 2m ago", view.Find("p.factory-usage-checked").TextContent.Trim());
+        Assert.Equal(
+            [("gemini-3-pro", "42% used, resets in 1h59m", "18.5% used")],
+            view.FindAll("tr.factory-usage-bucket").Select(row => (
+                row.QuerySelector(".factory-usage-name")?.TextContent ?? string.Empty,
+                row.QuerySelector(".factory-usage-session")?.TextContent ?? string.Empty,
+                row.QuerySelector(".factory-usage-weekly")?.TextContent ?? string.Empty)));
+        Assert.Empty(view.FindAll("p.factory-usage-none"));
+    }
+
+    [Fact]
+    public void ShowsNoneForAWindowThatAnAntigravityBucketLacks()
+    {
+        projects.WritesTheAntigravityUsage(
+            $$$"""
+            {"checkedAt": {{{projects.Clock.GetUtcNow().ToUnixTimeSeconds()}}}, "buckets": {"gemini-3-flash": {
+              "session": {"id": "gemini-3-flash-5h", "usedPercent": 7.0, "resetsAt": null, "windowDurationMins": null} } } }
+            """);
+
+        var view = TheViewWhereTheSecondProjectHoldsAnEpic();
+
+        Assert.Equal("7% used", view.Find("td.factory-usage-session").TextContent);
+        Assert.Equal("none", view.Find("td.factory-usage-weekly").TextContent);
+    }
+
+    [Fact]
+    public void ShowsNoneAndNoZeroWhenThereIsNoAntigravityReading()
+    {
+        var view = TheViewWhereTheSecondProjectHoldsAnEpic();
+
+        Assert.Equal("none", view.Find("p.factory-usage-none").TextContent);
+        Assert.Empty(view.FindAll("tr.factory-usage-bucket"));
+        Assert.DoesNotContain("0%", view.Find("section.factory-usage").TextContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ShowsTheAntigravityReadingThatTheSchedulerWroteSinceThePageLastLooked()
+    {
+        var view = TheViewWhereTheSecondProjectHoldsAnEpic();
+        Assert.Equal("none", view.Find("p.factory-usage-none").TextContent);
+        projects.WritesTheAntigravityUsage(
+            $$$"""
+            {"checkedAt": {{{projects.Clock.GetUtcNow().ToUnixTimeSeconds()}}}, "buckets": {"gemini-3-pro": {
+              "session": {"id": "gemini-3-pro-5h", "usedPercent": 42.0, "resetsAt": null, "windowDurationMins": 300.0} } } }
+            """);
+
+        projects.Clock.Advance(FactoryPage.StateRefresh);
+
+        view.WaitForAssertion(() => Assert.Equal("42% used", view.Find("td.factory-usage-session").TextContent));
+    }
+
+    [Fact]
     public void LinksTheEpicAndEachTaskToItsBeadPageInTheProjectThatHoldsIt()
     {
         var view = TheViewWhereTheSecondProjectHoldsAnEpic();

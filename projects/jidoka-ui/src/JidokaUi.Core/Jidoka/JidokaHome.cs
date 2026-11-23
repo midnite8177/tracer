@@ -27,6 +27,9 @@ public sealed record JidokaHome(string Root)
     /// <summary>The folder that holds the heartbeat file of each epic that a manager runs.</summary>
     public string HeartbeatFolder => Path.Combine(Root, "heartbeat");
 
+    /// <summary>The file that holds the Antigravity account's quota as the scheduler last read it from T3.</summary>
+    public string AntigravityUsageFile => Path.Combine(Root, "usage", "antigravity.json");
+
     /// <summary>The SQLite file that holds the runs of jidoka's workers.</summary>
     public string LedgerFile => Path.Combine(Root, "ledger.sqlite");
 

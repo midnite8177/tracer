@@ -74,10 +74,9 @@ def record(home: Path, main_tree: Path, epic: str, route: routes.Route, harness:
            outcome: str) -> None:
     """Writes the one ledger row of a lane's run on the epic: stage `review`, the second tier, the harness, the
     route's model and effort, the tokens the worker used and the wall time."""
-    ran = ledger.Ran(tokens, harness, route.model, route.effort)
     where = replace(ledger.Where.of_pass(REVIEW_STAGE), wall_seconds=seconds)
-    ledger.record_ran_or_say(home, main_tree, epic, where, ledger.Worker(None, LANE_TIER, False), ran, outcome,
-                             clock.now())
+    ledger.record_ran_or_say(home, main_tree, epic, where, ledger.Worker(None, LANE_TIER, False),
+                             ledger.Ran(tokens, harness, route.model, route.effort), outcome, clock.now())
 
 
 def findings_text(message: str, worker: str) -> str:

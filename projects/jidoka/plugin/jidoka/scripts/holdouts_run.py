@@ -43,6 +43,7 @@ from settings_reader import Settings
 from validation import FAIL, PASS, ValidationError
 from worktrees import remove_worktree
 
+ACTION = "holdouts"
 TRIES_KEY = "validation.tries"
 HOLDOUTS_REPORT = "holdouts-report.json"
 WAITING_HEADLINE = "Validation passed the full suite, and its holdouts run next."
@@ -62,7 +63,7 @@ class HoldoutsToRun:
         return self.worktree / SCRATCH_FOLDER / HOLDOUTS_REPORT
 
     def fields(self) -> dict:
-        return {"action": "holdouts", "epic": self.epic, "head": self.head, "worktree": str(self.worktree),
+        return {"action": ACTION, "epic": self.epic, "head": self.head, "worktree": str(self.worktree),
                 "scratch": str(self.report.parent), "report": str(self.report), "holdouts": self.count}
 
 

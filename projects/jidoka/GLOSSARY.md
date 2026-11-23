@@ -730,7 +730,10 @@ _Avoid_: Subscription, plan, login, seat
 The part of an Antigravity account's quota that one family of models
 draws on, such as Gemini or Claude and GPT together, with a five-hour and
 a weekly window of its own. A reserve on that account watches the bucket
-of the stage's model.
+of the stage's model. On each scheduler call under an Antigravity host a
+script reads the buckets from T3 and writes them to `usage/antigravity.json`
+in jidoka's home; a failed reading, or one T3 checked more than ten minutes
+ago, leaves no file and counts as none.
 _Avoid_: Pool, quota group
 
 **Budget**:
@@ -745,7 +748,15 @@ does, and one share holds for both windows; an account with neither keeps
 10% of the five-hour window and 25% of the seven-day window. Past the five-hour reserve
 the epic pauses until the reset; past the seven-day reserve it parks with a
 question that gives a projection and three choices. The factory reads the
-account afresh on every call of the scheduler.
+account afresh on every call of the scheduler. The Antigravity account has
+its own share, under `antigravity`, and its reserve watches the bucket of
+the model that a stage is about to start on. A bucket's session window counts
+as the five-hour one and its weekly window as the seven-day one. A model draws
+on the bucket of its family, Gemini for Neon, Flash and Hydrogen, Gemini
+Argon, or Gemini Carbon. A stage on another bucket, or on a model with
+none, runs. With no reading the reserve holds nothing back, and the epic gets
+one comment the first time a reading fails for a cause and one when readings
+return.
 _Avoid_: Headroom, buffer, threshold
 
 **Ledger**:
@@ -838,16 +849,25 @@ guard record, then launches the thread in the lap's existing worktree on the
 route's model and thought level, titled `lap · ` and the task's title with no
 bead id, and prints the thread, the deadline and the calls that wait and
 report. Every stage with a worker starts this way: research, build, app
-check, Spec check and merge. A thread has no agent type, so the app check's
-thread and the Spec check's open with the worker's instructions from the
-plugin's files, ahead of the prompt. The manager calls those as printed: each `wait` is one T3 step of at
+check, Spec check and merge. A pass's test cleanup, each of its tidy
+batches, each review lane on the host's provider, the design lane and the fix
+worker start the same way in the pass's worktree, titled `lap · `, the
+epic's title and the stage, with a guard record of the kind `lap` that holds
+the list a pass worktree gets: the epic the folder names and the looks. The
+tidy runs on the local tier's route, and a batch or a review lane keeps its
+state in its own scratch folder, because they share the worktree and its guard
+record. The second tier's Spec lane is no thread: it stays on codex.
+A thread has no agent type, so the app check's thread and the Spec check's
+open with the worker's instructions from the plugin's files, ahead of the
+prompt. The manager calls those as printed. Each `wait` is one T3 step of at
 most 45 seconds, and a stage found past its deadline is stopped with an
 interrupt and ends cut off. `report` reads the thread's last reply and
 archives the thread, and removes the guard record once the read has answered,
-whether or not the archive does. A `stop`, and a resume that ends a lap
-interrupted or finds it merged, remove the lap's guard record too. A stage thread is never deleted, because T3 offers to
-delete its worktree with it. Calls to T3 go through `acp-mcp-call`, as the
-manager's own thread.
+whether or not the archive does; a pass's record goes with the last of its
+threads reported. A `stop`, and a resume that ends a lap interrupted or finds
+it merged, remove the lap's guard record too. A stage thread is never
+deleted, because T3 offers to delete its worktree with it. Calls to T3 go
+through `acp-mcp-call`, as the manager's own thread.
 _Avoid_: Worker thread, child thread, sub-agent
 
 **Profile copy**:

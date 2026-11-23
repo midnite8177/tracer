@@ -202,7 +202,7 @@ class WebSocket:
             pass
 
     def close(self) -> None:
-        """Sends a close frame, as a polite client does, and drops the connection."""
+        """Sends a close frame and drops the connection."""
         try:
             self.send_frame(CLOSE, struct.pack("!H", NORMAL_CLOSURE))
         except OSError:
@@ -272,29 +272,42 @@ def driver_of(entry: dict) -> object:
     return None
 
 
-def antigravity_status(config: object) -> ProviderStatus:
-    """The status of the Antigravity provider in what `server.getConfig` returned. A config with no such provider,
-    and an auth state other than signed in or signed out, are no status."""
+def antigravity_entry(config: object) -> dict:
+    """The Antigravity provider's entry in what `server.getConfig` returned. A config with no such provider is no
+    status."""
     providers = config.get("providers") if isinstance(config, dict) else None
     for entry in providers if isinstance(providers, list) else []:
         if isinstance(entry, dict) and driver_of(entry) == ANTIGRAVITY:
-            auth = entry.get("auth")
-            state = auth.get("status") if isinstance(auth, dict) else None
-            if state in (SIGNED_IN, SIGNED_OUT):
-                return ProviderStatus(state == SIGNED_IN)
-            raise NoStatus("T3 reports no sign-in state for the Antigravity provider")
+            return entry
     raise NoStatus("T3 lists no Antigravity provider")
+
+
+def antigravity_status(config: object) -> ProviderStatus:
+    """The status of the Antigravity provider in what `server.getConfig` returned. A config with no such provider,
+    and an auth state other than signed in or signed out, are no status."""
+    auth = antigravity_entry(config).get("auth")
+    state = auth.get("status") if isinstance(auth, dict) else None
+    if state in (SIGNED_IN, SIGNED_OUT):
+        return ProviderStatus(state == SIGNED_IN)
+    raise NoStatus("T3 reports no sign-in state for the Antigravity provider")
+
+
+def read_config(token: str, port: int, timeout_seconds: float) -> object:
+    """What `server.getConfig` returns at the T3 server on the port, within the timeout. It raises NoStatus when T3
+    refuses the token, closes the socket, answers with anything other than a reply to the call, or runs out the
+    time."""
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        ticket = ticket_for(token, port, deadline)
+        return call(port, ticket, CONFIG_CALL, deadline)
+    except (WebSocketError, OSError) as error:
+        raise NoStatus(str(error) or type(error).__name__) from error
 
 
 def read_antigravity_status(token: str, port: int, timeout_seconds: float) -> ProviderStatus:
     """The Antigravity provider's status at the T3 server on the port, within the timeout. It raises NoStatus when T3
     refuses the token, closes the socket, answers with anything other than a config, or runs out the time."""
-    deadline = time.monotonic() + timeout_seconds
-    try:
-        ticket = ticket_for(token, port, deadline)
-        return antigravity_status(call(port, ticket, CONFIG_CALL, deadline))
-    except (WebSocketError, OSError) as error:
-        raise NoStatus(str(error) or type(error).__name__) from error
+    return antigravity_status(read_config(token, port, timeout_seconds))
 
 
 def main(argv: list[str]) -> int:

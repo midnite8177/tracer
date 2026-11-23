@@ -103,6 +103,13 @@ public sealed class TwoProjects : IDisposable
         File.WriteAllText(Path.Combine(folder, $"gate-{id}-message.txt"), message);
     }
 
+    /// <summary>Writes the Antigravity usage file, as jidoka's scheduler would, with the text a test gives.</summary>
+    public void WritesTheAntigravityUsage(string json)
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(JidokaHome, "usage")).FullName;
+        File.WriteAllText(Path.Combine(folder, "antigravity.json"), json);
+    }
+
     /// <summary>The clock that a working mark and a re-read mark read, which a test moves by hand.</summary>
     public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
 
@@ -120,6 +127,7 @@ public sealed class TwoProjects : IDisposable
         services.AddSingleton(Selection);
         services.AddSingleton(Pages);
         services.AddSingleton(JidokaAdapter);
+        services.AddSingleton(new AntigravityUsage(new JidokaHome(JidokaHome)));
         services.AddSingleton(new CopyFeedback());
         services.AddSingleton<TimeProvider>(Clock);
         services.AddScoped<BeadOpener>();

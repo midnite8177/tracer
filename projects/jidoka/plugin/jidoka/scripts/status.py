@@ -14,7 +14,9 @@ table follows with one row for each task of the epic:
          left, or over when the clock has run out.
 After the epics it lists the slots the machine's running epics hold, as slots.py records them, one line for each with
 the slot, the epic and the task that hold it. Those are the epics of every repo whose heartbeat is fresh, not only
-this repo's, and the list is left out when no slot is held.
+this repo's, and the list is left out when no slot is held. When an Antigravity host's scheduler left a fresh reading
+of the account's quota, as antigravity_usage.py describes, it ends with that reading by bucket: each bucket's five-hour
+and weekly use and the time to each window's reset.
 
 The home is --jidoka-home, else $JIDOKA_HOME, else ~/.jidoka.
 
@@ -29,6 +31,7 @@ import argparse
 import sys
 from pathlib import Path
 
+import antigravity_usage
 import caps
 import clock
 import heartbeat
@@ -121,12 +124,39 @@ def slot_lines(home: Path, now: int) -> list[str]:
     return ["slots on this machine"] + [f"  {claim.slot}  {claim.epic}  {claim.task}" for claim in claims]
 
 
+def window_text(label: str, window: antigravity_usage.Window | None, now: int) -> str:
+    """One window of a bucket: its label, the share used and the time to its reset; nothing for a window the bucket
+    lacks."""
+    if window is None:
+        return ""
+    resets = ""
+    if window.resets_at is not None:
+        resets = ", resets in " + age(window.resets_at - now) if window.resets_at > now else ", has reset"
+    return f"{label} {window.used_percent:g}% used{resets}"
+
+
+def usage_lines(home: Path, now: int) -> list[str]:
+    """The Antigravity account's quota by bucket, each with its five-hour and weekly use, as the last scheduler call
+    on an Antigravity host left it. The list is empty when there is no fresh reading."""
+    reading = antigravity_usage.read(home, now)
+    if reading is None:
+        return []
+    lines = [f"Antigravity usage, checked {age(max(0, now - reading.checked_at))} ago"]
+    for bucket in reading.buckets:
+        windows = [window_text("five-hour", bucket.session, now), window_text("weekly", bucket.weekly, now)]
+        lines.append(f"  {bucket.name}  " + "; ".join(text for text in windows if text))
+    return lines
+
+
 def status(home: Path, main_tree: Path, now: int) -> str:
     epics = [epic for epic in epics_of(main_tree) if FACTORY_LABEL in labels_of(epic) and not is_closed(epic)]
     sections = ["\n".join(epic_lines(epic, home, main_tree, now)) for epic in epics]
     held = slot_lines(home, now)
     if held:
         sections.append("\n".join(held))
+    quota = usage_lines(home, now)
+    if quota:
+        sections.append("\n".join(quota))
     return "\n\n".join(sections) if sections else "no epic is in the factory"
 
 

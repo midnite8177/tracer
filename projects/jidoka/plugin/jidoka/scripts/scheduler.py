@@ -70,7 +70,13 @@ write to a bead drops the copies it can change, so the next read sees the write.
 Every call reads the account's usage windows afresh, as reserves.py describes. A five-hour window past its reserve
 pauses the epic on the cause `reserve` until the window resets, and a reading under the reserve ends that pause. A
 seven-day window past its reserve stops the epic as a reached budget does, but the epic parks with a question that
-gives the projection of the window and three choices, once for each window.
+gives the projection of the window and three choices, once for each window. On an Antigravity host, which
+routes.host_of_environment decides, each call first reads the account's quota from T3 and writes it to the usage
+file, as antigravity_usage.py describes; a quota that cannot be read leaves no reading and a line on stderr. There the
+reserves check, before a stage starts, the bucket of the stage's model, a pass stage's included, as
+antigravity_reserves.py describes. A stage
+whose bucket is past its five-hour reserve pauses the epic, past its weekly reserve parks it, and a stage on another
+bucket runs. The epic gets one comment the first time a reading fails for a cause and one when readings return.
 
 The `human` label is also the human's brake. A stage already running finishes, and its report is taken as always, but
 no stage starts on a task that carries the label, and none starts on any task of an epic that carries it, no lap
@@ -182,9 +188,11 @@ import argparse
 import json
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+import antigravity_reserves
+import antigravity_usage
 import app_check
 import beater
 import caps
@@ -207,6 +215,7 @@ import pass_stages
 import pause
 import permission_question
 import private_docs
+import provider_status
 import settings_reader
 import slots
 import reserves
@@ -216,6 +225,7 @@ import rules
 import spec_check
 import specs
 import t3_stage
+import t3_turns
 import t3_wake
 from bench import BenchError
 from commands import (COMMAND_TIMEOUT_SECONDS, FACTORY_LABEL, CommandError,
@@ -237,6 +247,7 @@ WORKER_OUTCOMES = {"done": DONE, **PASS_OUTCOMES}
 NATIVE_ROUTE = "native"
 OUTCOMES = [DONE, FAILED, CUT_OFF, QUESTION, SEND_BACK, BLOCKED, PASS, CANNOT_JUDGE]
 SECONDS_PER_MINUTE = 60
+USAGE_TIMEOUT_SECONDS = 10
 HANDOFF = "/jidoka:handoff"
 RERUN = Rerun(on_the_holding_epic="Run the scheduler on the epic that holds it")
 
@@ -472,6 +483,35 @@ def start_beater(home: Path) -> None:
         print(f"scheduler: the beater for thread {thread} did not start: {error}", file=sys.stderr)
 
 
+def open_laps_of(epic: Epic) -> list[Lap]:
+    return [lap for lap in map(open_lap, epic.open_task_beads) if lap is not None]
+
+
+def laps_going_back(open_laps: list[Lap], rebuilds: list[Lap], restarting: bool) -> list[Lap]:
+    """The laps that go back to a worker in this call: when restarting, every open lap at a worker stage, which an
+    earlier session left, else the rebuilds of the laps a report sent back."""
+    return running_laps(open_laps) if restarting else rebuilds
+
+
+def read_reserves(epic: Epic, going_back: list[Lap], settings: settings_reader.Settings, home: Path, main_tree: Path,
+                  now: int) -> reserves.Reading | None:
+    """The windows the reserves check in this call. On an Antigravity host, which routes.host_of_environment decides,
+    it reads the account's quota from T3 first, as antigravity_usage.py says, tells the epic of a reading that failed
+    or returned, and takes the windows of the buckets that the stages about to start draw on, among them the stage a
+    finished epic's pass owes, as antigravity_reserves.py says. A reading that failed or is stale is a reading with no
+    window, which holds nothing back and ends a pause on a reserve. Elsewhere it is the lap mod's reading of the
+    account, as reserves.py says."""
+    if routes.host_of_environment() != routes.ANTIGRAVITY_HOST:
+        return reserves.read(home, now, epic.shown)
+    refreshed = antigravity_usage.refresh(home, provider_status.port_of_environment(), USAGE_TIMEOUT_SECONDS, now)
+    antigravity_reserves.announce(epic.id, epic.shown, refreshed, main_tree)
+    if not isinstance(refreshed, antigravity_usage.Reading):
+        return reserves.Reading(None, None)
+    owed_in_pass = pass_stages.stages_owed(epic, settings, main_tree) if is_finished(epic) else []
+    return antigravity_reserves.reading_for(
+        refreshed, antigravity_reserves.stages_ahead(epic, going_back, owed_in_pass, main_tree), epic.shown, home, now)
+
+
 def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], restarting: bool) -> dict:
     """Prints the laps that go back to a worker or start, after the rebuilds of laps a report sent back.
 
@@ -493,7 +533,8 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
         resumed = resume_laps(epic, the_clock.now(), home, main_tree)
         epic = checked_epic(bead, settings, main_tree)
     now = the_clock.now()
-    reading = reserves.read(home, now, epic.shown)
+    reading = read_reserves(epic, laps_going_back(open_laps_of(epic), rebuilds, restarting), settings, home, main_tree,
+                            now)
     if reserves.sync_pause(epic.id, epic.shown, reading, now, main_tree):
         epic = checked_epic(bead, settings, main_tree)
     standstill = lap_holds.Standstill(pause.waiting_at(epic.shown, now),
@@ -503,10 +544,10 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
              else settle_epic(epic, settings, home, main_tree, standing))
     epic = state.epic
     tasks = epic.open_task_beads
-    open_now = [lap for lap in map(open_lap, tasks) if lap is not None]
-    holds = lap_holds.apply_holds(epic, open_now, running_laps(open_now) if restarting else rebuilds, standstill, now,
+    open_now = open_laps_of(epic)
+    holds = lap_holds.apply_holds(epic, open_now, laps_going_back(open_now, rebuilds, restarting), standstill, now,
                                   home, main_tree)
-    limit =rules.lap_limits(epic.shown, settings, home)
+    limit = rules.lap_limits(epic.shown, settings, home)
     unplaced = unplaced_tasks(tasks)
     try:
         made_to_pass = {str(task["id"]): specs.specs_of(task) for task in tasks}
@@ -650,13 +691,26 @@ class PassWorker:
     ending: str | None
 
 
+def thread_wall_seconds(worker: ledger.Worker) -> int:
+    """The seconds the runs of the worker's T3 thread took, from T3's request to its end, which is the wall time of a
+    pass worker on an Antigravity host. Zero for a worker that is no thread there, and for a thread whose runs T3 does
+    not give."""
+    if worker.agent is None or routes.host_of_environment() != routes.ANTIGRAVITY_HOST:
+        return 0
+    try:
+        return sum(each.wall_seconds for each in t3_turns.completed_runs(worker.agent))
+    except t3_turns.NoRunState:
+        return 0
+
+
 def record_pass_in_ledger(epic: str, stage: str, outcome: str, workers: list[PassWorker], home: Path,
                           main_tree: Path) -> None:
     """Prices the runs of the workers of one pass stage in the ledger, a row for each worker, with the worker's own
-    ending or else the report's `outcome`."""
+    ending or else the report's `outcome`, and the wall time of its thread."""
     for each in workers:
         ended = outcome if each.ending is None else WORKER_OUTCOMES[each.ending]
-        ledger.record_run_or_say(home, main_tree, epic, ledger.Where.of_pass(stage), each.worker, ended, clock.now())
+        where = replace(ledger.Where.of_pass(stage), wall_seconds=thread_wall_seconds(each.worker))
+        ledger.record_run_or_say(home, main_tree, epic, where, each.worker, ended, clock.now())
 
 
 @dataclass(frozen=True)
@@ -728,7 +782,7 @@ def report_stage(mode: str, bead: str, ended: str | None, why: str | None, worke
 def stop(bead: str, home: Path, main_tree: Path) -> dict:
     """Ends every open lap of the epic interrupted and the epic's waker, then announces the stop."""
     epic = epic_of(bead, main_tree, RERUN)
-    held = [lap for lap in map(open_lap, epic.open_task_beads) if lap is not None]
+    held = open_laps_of(epic)
     for lap in held:
         interrupt_for_stop(lap, home, main_tree)
     t3_wake.end_waker(home, epic.id)

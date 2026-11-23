@@ -15,8 +15,10 @@ The manager starts the child with T3's own tools, so this script runs on either 
       Reads the epic, the route and the reply path from what `start` recorded, so a change of the settings in between
       does not change the route the row names. It writes the lane's report from the reply: a JSON list of findings,
       read as the review's settle reads a native lane's report. It writes the one ledger row of the run on the epic,
-      stage `review`, harness t3, the route's model and effort, the wall time from `start` and the outcome, with no
-      tokens, because a T3 task result carries none.
+      stage `review`, harness t3, the route's model and effort, the wall time from `start` and the outcome, with the
+      tokens of the child's thread, which it finds in T3's state db (t3_turns.py) because a T3 task result carries
+      none. It writes a row for each model the child's turns name, naming the thread as its agent. A child it cannot find, or
+      whose turns carry no tokens, is a row with no tokens and a line on stderr that says why.
 
 T3 starts the child in the main checkout or in a checkout of its own, and the lane only reads, so `finish` fails the
 run when the main checkout differs from what `start` saw. Any failure exits 1 and leaves no report: a run past the
@@ -36,17 +38,19 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import lap_record
+import ledger
 import review
 import routes
 import settings_reader
 from commands import COMMAND_TIMEOUT_SECONDS, CommandError, read_bead
-from lane_report import REVIEW_STAGE, Lane, LaneError, prompt_of, record, write_report
+from lane_report import LANE_TIER, REVIEW_STAGE, Lane, LaneError, prompt_of, write_report
 from lap_outcomes import DONE, FAILED
-from prices import NO_TOKENS
-from t3_child import CHILD, ChildError, ChildStart, NoOwnFields, check_child_run, record_start, started_state
+from t3_child import (CHILD, ChildError, ChildStart, NoOwnFields, check_child_run, record_child_runs, record_start,
+                      started_state)
 
 T3 = routes.T3_HARNESS
 STATE_NAME = "t3-spec-start.json"
@@ -104,7 +108,8 @@ def finish(report: Path, home: Path, main_tree: Path) -> int:
     except (CommandError, ChildError) as error:
         raise LaneError(str(error)) from error
     finally:
-        record(home, main_tree, state.epic, state.route, T3, NO_TOKENS, seconds, outcome)
+        where = replace(ledger.Where.of_pass(REVIEW_STAGE), wall_seconds=seconds)
+        record_child_runs(home, main_tree, state, where, LANE_TIER, outcome)
         state_path(report).unlink(missing_ok=True)
 
 

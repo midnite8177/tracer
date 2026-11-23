@@ -8,15 +8,20 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import jidoka_fixture as fixture  # noqa: E402
+import t3_state  # noqa: E402
 import test_ledger  # noqa: E402
 import test_review  # noqa: E402
 import test_scheduler  # noqa: E402
+from t3_state import usage  # noqa: E402
 from test_scheduler import LAUNCHER, PLUGIN, RUN_TIMEOUT_SECONDS  # noqa: E402
 
 T3_LANE = PLUGIN / "scripts" / "t3_lane.py"
 T3_ROUTE = {"harness": "t3", "provider": "codex-home", "model": "gpt-6.1-sol", "version": None, "effort": "high"}
 STARTED_AT = 1_800_000_000
 FINISHED_AT = STARTED_AT + 95
+AFTER_START = "2027-01-15T08:00:10.000Z"
+BEFORE_START = "2027-01-15T07:59:00.000Z"
+CHILD = "thread-of-the-spec-lane"
 
 
 def spec_finding(title: str) -> dict:
@@ -27,7 +32,7 @@ def settings_with_second_tier(second: dict) -> str:
     return json.dumps({"routes": {**test_ledger.ROUTES["routes"], "second": second}})
 
 
-class T3LaneCase(test_ledger.LedgerBooks, test_review.ReviewCase):
+class T3LaneCase(t3_state.StateDbOfATest, test_ledger.LedgerBooks, test_review.ReviewCase):
     """The review's lanes, with the second tier routed to t3 and a child's reply given as a file."""
 
     @classmethod
@@ -41,8 +46,8 @@ class T3LaneCase(test_ledger.LedgerBooks, test_review.ReviewCase):
 
     def lane_at(self, now: int, mode: str, *args: str) -> subprocess.CompletedProcess:
         return fixture.run_launcher(LAUNCHER, [str(T3_LANE), mode, *args], None,
-                                    {**self.caller_env(self.home), "JIDOKA_NOW": str(now)}, self.repo,
-                                    RUN_TIMEOUT_SECONDS)
+                                    {**self.caller_env(self.home), "JIDOKA_NOW": str(now),
+                                     "JIDOKA_T3_STATE_DB": str(self.state)}, self.repo, RUN_TIMEOUT_SECONDS)
 
     def start_lane(self, epic: str, action: dict, *extra: str) -> subprocess.CompletedProcess:
         return self.lane_at(STARTED_AT, "start", epic, "--worktree", action["worktree"], "--report", action["report"],
@@ -190,6 +195,82 @@ class TheReportIsWrittenFromTheChildsLastReplyTests(T3LaneCase):
         self.assertEqual(0, done.returncode, done.stderr)
         [row] = self.rows_of(epic)
         self.assertEqual(("gpt-6.1-sol", "high"), (row["model"], row["effort"]))
+
+
+class TheLanesRowCarriesItsChildThreadsTokensTests(T3LaneCase):
+    def finished_row(self, before_finish) -> tuple[dict, subprocess.CompletedProcess]:
+        epic, printed = self.finish_epic_at_the_review()
+        action = self.spec_action_of(printed)
+        started = self.started(epic, action)
+        before_finish()
+        done = self.finish_lane(action, started, "[]")
+        self.assertEqual(0, done.returncode, done.stderr)
+        [row] = self.rows_of(epic)
+        return row, done
+
+    def test_the_row_carries_the_tokens_of_the_child_thread_and_a_price_above_nothing(self):
+        def child_ran():
+            t3_state.create(self.state, t3_state.TOKEN_TABLES)
+            t3_state.add_child_turn(self.state, CHILD, "run-1", "gpt-6.1-sol", usage(10_000, 6_000, 0, 500, 0),
+                                    AFTER_START)
+            t3_state.add_child_turn(self.state, CHILD, "run-1", "gpt-6.1-sol", usage(20_000, 15_000, 0, 700, 0),
+                                    AFTER_START)
+
+        row, done = self.finished_row(child_ran)
+
+        self.assertEqual((CHILD, "t3", "gpt-6.1-sol", 9_000, 21_000, 0, 1_200),
+                         (row["agent"], row["harness"], row["model"], row["input_tokens"], row["cache_read_tokens"],
+                          row["cache_write_tokens"], row["output_tokens"]))
+        self.assertGreater(row["dollars"], 0, done.stderr)
+
+    def test_a_thread_that_began_before_the_lane_started_is_not_its_child(self):
+        def other_thread_ran():
+            t3_state.create(self.state, t3_state.TOKEN_TABLES)
+            t3_state.add_child_turn(self.state, "thread-of-the-manager", "run-1", "gpt-6.1-sol",
+                                    usage(10_000, 0, 0, 500, 0), BEFORE_START)
+
+        row, done = self.finished_row(other_thread_ran)
+
+        self.assertEqual((None, 0, 0), (row["agent"], row["input_tokens"], row["output_tokens"]))
+        self.assertIn("holds no thread", done.stderr)
+
+    def test_a_thread_on_another_model_is_not_its_child(self):
+        def other_thread_ran():
+            t3_state.create(self.state, t3_state.TOKEN_TABLES)
+            t3_state.add_child_turn(self.state, "thread-of-a-worker", "run-1", "gemini-4-neon",
+                                    usage(10_000, 0, 0, 500, 0), AFTER_START)
+
+        row, done = self.finished_row(other_thread_ran)
+
+        self.assertEqual((None, 0, 0), (row["agent"], row["input_tokens"], row["output_tokens"]))
+        self.assertIn("holds no thread", done.stderr)
+
+    def test_a_child_that_is_not_in_the_state_db_writes_the_row_with_no_tokens_and_says_why(self):
+        row, done = self.finished_row(lambda: None)
+
+        self.assertEqual(("t3", "gpt-6.1-sol", "done", None, 0, 0),
+                         (row["harness"], row["model"], row["outcome"], row["agent"], row["input_tokens"],
+                          row["output_tokens"]))
+        self.assertIn(f"no state db at {self.state}", done.stderr)
+
+    def test_a_child_whose_turns_carry_no_tokens_writes_the_row_with_no_tokens_and_says_why(self):
+        def child_ran():
+            t3_state.create(self.state, t3_state.TOKEN_TABLES)
+            t3_state.add_child_turn(self.state, CHILD, "run-1", "gpt-6.1-sol", None, AFTER_START)
+
+        row, done = self.finished_row(child_ran)
+
+        self.assertEqual((None, 0), (row["agent"], row["input_tokens"]))
+        self.assertIn("this reader can read", done.stderr)
+
+    def test_a_state_db_of_a_schema_the_reader_does_not_know_does_not_fail_the_lane(self):
+        def schema_changed():
+            t3_state.create(self.state, ())
+
+        row, done = self.finished_row(schema_changed)
+
+        self.assertEqual(("done", 0), (row["outcome"], row["input_tokens"]))
+        self.assertIn("is not one this reader knows", done.stderr)
 
 
 class AFailedChildRunExitsOneAndLeavesNoReportTests(T3LaneCase):

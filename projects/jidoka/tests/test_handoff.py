@@ -1064,6 +1064,62 @@ class HoldoutsGuardTests(HandoffCase):
             with self.subTest(tool_call=tool_call):
                 self.assert_goes_on(self.antigravity_guard(self.antigravity_event(worktree, tool_call)))
 
+    def checked_worktree(self, folder: str, kind: str, stage: str) -> Path:
+        """A worktree of the guarded checkout named `folder`, with a guard record of `kind` at `stage` in the home."""
+        worktree = self.lap_worktree().parent / folder
+        worktree.mkdir(parents=True, exist_ok=True)
+        fixture.lap_guard_record.write_record(self.home, fixture.lap_guard_record.GuardRecord(
+            worktree=str(worktree), kind=kind, stage=stage, commands=[], barred=[]))
+        return worktree
+
+    def antigravity_holdouts_call(self, worktree: Path, command: str) -> subprocess.CompletedProcess:
+        tool_call = {"id": "t1", "name": "run_command", "args": {"CommandLine": command}}
+        return self.antigravity_guard(self.antigravity_event(worktree, tool_call))
+
+    def test_an_antigravity_validation_worker_may_read_its_epics_holdouts(self):
+        worktree = self.checked_worktree("validation-tracer-9", "check", "holdouts")
+
+        self.assert_goes_on(self.antigravity_holdouts_call(worktree, f"sh {LAUNCHER} {HOLDOUTS} read tracer-9"))
+
+    def test_an_antigravity_validation_worker_may_not_read_another_epics_holdouts_or_do_anything_else_with_them(self):
+        worktree = self.checked_worktree("validation-tracer-9", "check", "holdouts")
+        for arguments in ("read tracer-8", "read tracer-9 --task tracer-2", "write tracer-9", "brief tracer-9"):
+            with self.subTest(arguments=arguments):
+                self.assert_antigravity_denied(
+                    self.antigravity_holdouts_call(worktree, f"{LAUNCHER} {HOLDOUTS} {arguments}"))
+
+    def test_an_antigravity_app_check_may_read_the_holdouts_that_name_its_task(self):
+        worktree = self.checked_worktree("lap-tracer-2", "check", "app-check")
+
+        self.assert_goes_on(
+            self.antigravity_holdouts_call(worktree, f"sh {LAUNCHER} {HOLDOUTS} read tracer-1 --task tracer-2"))
+
+    def test_an_antigravity_app_check_may_not_read_every_holdout_another_tasks_holdouts_or_write_any(self):
+        worktree = self.checked_worktree("lap-tracer-2", "check", "app-check")
+        for arguments in ("read tracer-1", "read tracer-1 --task tracer-3", "write tracer-1", "brief tracer-1",
+                          "read tracer-1 --task tracer-2 extra"):
+            with self.subTest(arguments=arguments):
+                self.assert_antigravity_denied(
+                    self.antigravity_holdouts_call(worktree, f"{LAUNCHER} {HOLDOUTS} {arguments}"))
+
+    def test_an_antigravity_check_worker_may_not_chain_a_forbidden_call_behind_its_read(self):
+        worktree = self.checked_worktree("validation-tracer-9", "check", "holdouts")
+
+        self.assert_antigravity_denied(self.antigravity_holdouts_call(
+            worktree, f"{LAUNCHER} {HOLDOUTS} read tracer-9 && {LAUNCHER} {HOLDOUTS} write tracer-9"))
+
+    def test_an_antigravity_lap_worker_may_not_read_holdouts_even_from_a_worktree_named_for_a_task(self):
+        worktree = self.checked_worktree("lap-tracer-2", "lap", "build")
+
+        self.assert_antigravity_denied(
+            self.antigravity_holdouts_call(worktree, f"{LAUNCHER} {HOLDOUTS} read tracer-1 --task tracer-2"))
+
+    def test_an_antigravity_check_worker_whose_record_names_another_stage_may_not_read_holdouts(self):
+        worktree = self.checked_worktree("lap-tracer-2", "check", "spec-check")
+
+        self.assert_antigravity_denied(
+            self.antigravity_holdouts_call(worktree, f"{LAUNCHER} {HOLDOUTS} read tracer-1 --task tracer-2"))
+
 
 if __name__ == "__main__":
     unittest.main()

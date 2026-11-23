@@ -10,13 +10,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Generic, Protocol, TypeVar
 
 import clock
+import ledger
 import routes
+import t3_turns
 from commands import run
+from prices import NO_TOKENS
 
 CHILD = "the T3 child"
 
@@ -144,6 +149,38 @@ def started_state(state_file: Path, own_of: Callable[[dict], Own | None], what: 
     if started is None:
         raise ChildError(f"{state_file} does not hold the start of a {what}")
     return started
+
+
+@dataclass(frozen=True)
+class ChildRuns:
+    """What a child's run is priced from: its T3 thread, None when none was found, and one run for each model its
+    turns name. A child with no thread has one run on the route's model with no tokens."""
+    thread: str | None
+    rans: list[ledger.Ran]
+
+
+def child_runs(home: Path, main_tree: Path, state: Started) -> ChildRuns:
+    """The thread of the child that `state` started, found in T3's state db, and its turns as the ledger prices them.
+    A child that is not found, or whose turns give no tokens, is a run with no tokens and a line on stderr that says
+    why, never a failure, because T3's db is private to T3 and can change in any release."""
+    route = state.route
+    try:
+        thread = t3_turns.find_child_thread(route.model, state.started, ledger.agents_of(home, str(main_tree),
+                                                                                           state.epic))
+        return ChildRuns(thread, [ledger.Ran(each.tokens, routes.T3_HARNESS, each.model or route.model, route.effort)
+                                  for each in t3_turns.read_turns(thread)])
+    except (t3_turns.NoTurns, sqlite3.Error, OSError) as why:
+        print(f"t3_child: no tokens for the child of {state.epic}: {why}", file=sys.stderr)
+        return ChildRuns(None, [ledger.Ran(NO_TOKENS, routes.T3_HARNESS, route.model, route.effort)])
+
+
+def record_child_runs(home: Path, main_tree: Path, state: Started, where: ledger.Where, tier: str, outcome: str) -> None:
+    """Writes a ledger row at `where` for each run of the child that `state` started, as child_runs prices them, on the
+    tier and with the outcome, naming the child's thread as the agent."""
+    child = child_runs(home, main_tree, state)
+    for ran in child.rans:
+        ledger.record_ran_or_say(home, main_tree, state.epic, where, ledger.Worker(child.thread, tier, False), ran,
+                                 outcome, clock.now())
 
 
 def check_child_run(state: Started, seconds: int, main_tree: Path, main_must_hold: str) -> str:

@@ -29,6 +29,16 @@ def provider(driver: str, auth_status: str) -> dict:
             "auth": {"status": auth_status}}
 
 
+def usage_window(identifier: str, kind: str, used_percent: float, resets_at: str, duration_minutes: int) -> dict:
+    return {"id": identifier, "kind": kind, "usedPercent": used_percent, "resetsAt": resets_at,
+            "windowDurationMins": duration_minutes}
+
+
+def antigravity_with_usage(checked_at: str, windows: list[dict]) -> dict:
+    """A signed-in Antigravity provider whose `usageLimits` were checked at the ISO time and hold the windows."""
+    return {**provider("antigravity", "authenticated"), "usageLimits": {"checkedAt": checked_at, "windows": windows}}
+
+
 class FakeT3Server:
     """Serves on a free port of 127.0.0.1 from a thread of the test. `token` is the one bearer token the ticket route
     accepts, `providers` is what `server.getConfig` lists, and `on_request` says what /ws does with the request:

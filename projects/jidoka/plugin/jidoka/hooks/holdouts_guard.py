@@ -19,11 +19,16 @@ in, and reads a `{"decision", "reason"}` answer. It names no worker, so the
 guard acts only when `cwd` is inside a lap worktree, a folder directly under
 the main checkout's `.worktrees`, and prints nothing elsewhere, as the
 planning session and the host's own calls need the script. Inside a lap
-worktree a `run_command` that runs `holdouts.py` is denied whoever makes it,
-and so is one whose `CommandLine` is missing or is not a string, because a
-call that cannot be read cannot be checked. An empty answer, `{}` or `null`
-would deny, so a call that goes on prints nothing at all. A crash exits
-nonzero, which fails closed.
+worktree a `run_command` that runs `holdouts.py` is denied, and so is one whose
+`CommandLine` is missing or is not a string, because a call that cannot be read
+cannot be checked. The worktree's guard record (lap_guard_record.py) names the
+worker, and it lets two reads through: the validation worker's `read <epic>`,
+where the epic is the one its `validation-<epic>` worktree is named for, and
+the app check's `read <epic> --task <task>`, where the task is the one its
+`lap-<task>` worktree is named for. Every simple command of the call that names
+the script must have that shape. An empty answer, `{}` or `null` would deny, so
+a call that goes on prints nothing at all. A crash exits nonzero, which fails
+closed.
 """
 from __future__ import annotations
 
@@ -34,6 +39,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from shell_words import simple_commands
+
 PLUGIN = Path(__file__).resolve().parents[1]
 SCRIPT = re.compile(r"(?<![\w.-])holdouts\.py(?![\w.-])")
 READS_ONE_TASKS_HOLDOUTS = re.compile(r"(?<![\w.-])holdouts\.py\s+read\s+\S+\s+--task\s+\S+")
@@ -42,11 +49,17 @@ ALLOWED_AGENT_TYPES = {APP_CHECK, "validation"}
 PLUGIN_PREFIX = "jidoka:"
 CLAUDE_CODE = "claude-code"
 ANTIGRAVITY = "antigravity"
+CHECK_KIND = "check"
+VALIDATION_STAGE = "holdouts"
+VALIDATION_FOLDER_PREFIX = "validation-"
+LAP_FOLDER_PREFIX = "lap-"
 
 REASON = ("jidoka: holdouts are hidden from builders. Only the app check and validation read them, so this "
           "worker's call of the holdouts script is denied.")
 APP_CHECK_REASON = ("jidoka: the app check reads only the holdouts that name its task. Run `holdouts.py read "
                     "<epic> --task <task>`; every other call of the holdouts script is denied.")
+VALIDATION_REASON = ("jidoka: validation reads only its epic's holdouts. Run `holdouts.py read <epic>`; every other "
+                     "call of the holdouts script is denied.")
 UNREADABLE_REASON = ("jidoka: this command could not be read, so it cannot be checked against the rule that hides "
                      "holdouts from builders, and the call is denied.")
 
@@ -117,12 +130,73 @@ def deny(reason: str) -> dict:
                                    "permissionDecisionReason": reason}}
 
 
+def antigravity_deny(reason: str) -> dict:
+    return {"decision": "deny", "reason": reason}
+
+
+def check_record_in(cwd: str):
+    """The guard record of the check worker whose worktree holds `cwd`, or None when the worktree has no record, an
+    unreadable one or one of a lap worker."""
+    sys.path.insert(0, str(PLUGIN / "scripts"))
+    import lap_guard_record
+    try:
+        record = lap_guard_record.read_record(lap_guard_record.jidoka_home(), Path(cwd))
+    except lap_guard_record.RecordError:
+        return None
+    return record if record is not None and record.kind == CHECK_KIND else None
+
+
+def holdouts_arguments(words: list[str]) -> list[str] | None:
+    """The words after the holdouts script in a simple command, or None when no word of it names the script."""
+    return next((words[index + 1:] for index, word in enumerate(words) if SCRIPT.search(word)), None)
+
+
+@dataclass(frozen=True)
+class Reading:
+    """What a check worker's worktree lets it read: the one list of arguments the holdouts script may get, as a
+    validation worker's `read <epic>` or an app check's `read <epic> --task <task>`, and the reason that denies any
+    other."""
+    epic_only: bool
+    name: str
+    reason: str
+
+    def allows(self, arguments: list[str]) -> bool:
+        if self.epic_only:
+            return arguments == ["read", self.name]
+        return len(arguments) == 4 and arguments[0] == "read" and arguments[2:] == ["--task", self.name]
+
+
+def reading_of(cwd: str) -> Reading | None:
+    """The reading that the check worker in `cwd`'s worktree may do, or None when no check worker works there."""
+    record = check_record_in(cwd)
+    if record is None:
+        return None
+    folder = Path(record.worktree).name
+    if record.stage == VALIDATION_STAGE and folder.startswith(VALIDATION_FOLDER_PREFIX):
+        return Reading(True, folder.removeprefix(VALIDATION_FOLDER_PREFIX), VALIDATION_REASON)
+    if record.stage == APP_CHECK and folder.startswith(LAP_FOLDER_PREFIX):
+        return Reading(False, folder.removeprefix(LAP_FOLDER_PREFIX), APP_CHECK_REASON)
+    return None
+
+
 def antigravity_decision(call: Call) -> dict | None:
     if not in_a_lap_worktree(call.cwd):
         return None
     if call.command is None:
-        return {"decision": "deny", "reason": UNREADABLE_REASON}
-    return {"decision": "deny", "reason": REASON} if SCRIPT.search(call.command) else None
+        return antigravity_deny(UNREADABLE_REASON)
+    if not SCRIPT.search(call.command):
+        return None
+    reading = reading_of(call.cwd)
+    parts = simple_commands(call.command)
+    if reading is None:
+        return antigravity_deny(REASON)
+    if parts is None:
+        return antigravity_deny(UNREADABLE_REASON)
+    for words in parts:
+        arguments = holdouts_arguments(words)
+        if arguments is not None and not reading.allows(arguments):
+            return antigravity_deny(reading.reason)
+    return None
 
 
 def claude_decision(call: Call) -> dict | None:

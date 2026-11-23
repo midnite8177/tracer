@@ -19,23 +19,30 @@ holds the lap workers' tool calls (ADR 0012), so the check is four: $T3_ACP_MCP_
 calls T3's tools, at least one T3 Antigravity profile under ~/.t3/userdata/providers/antigravity must hold a jidoka
 copy, and every profile that holds one must carry the guard in the copy's hooks.json, in the group that lap_guard_record.hook_group_of shapes and install.py writes. The manager's own thread must also run in T3's full-access mode, or Antigravity asks before each read of jidoka's files in the jidoka home.
 
-The three modes below run only on an Antigravity host. Each names the lap by its worktree, and a `wait` or `report`
-names the same --worktree and --jidoka-home as the `start` it follows. t3_stage.py describes them.
+The three modes below run only on an Antigravity host. Each names the lap or the pass by its worktree, and a `wait` or
+`report` names the same --worktree, --scratch and --jidoka-home as the `start` it follows. t3_stage.py describes them.
+A pass's worktree is the folder of its test cleanup, its tidy, its review or its fix; the validation worktree is the
+folder of the validation worker and of the validation merge worker. A tidy batch names its own
+scratch folder, the action's `scratch`, and a review lane a folder of its own inside the review's scratch folder, so
+that the workers that share the worktree each have a thread and a state of their own.
 
-  factory.py start --worktree <lap worktree> --prompt <file> --tier <tier>
+  factory.py start --worktree <lap or pass worktree> [--scratch <folder>] --prompt <file> --tier <tier>
       Writes the guard record, launches the lap's stage, whichever the lap is at (research, build, app-check,
       spec-check or merge), as a thread titled `lap · <task title>` on the tier's route, with the file's text as its
       prompt, behind the instructions of the app check's agent or the Spec check's skill for those stages, and prints
       one JSON object: `thread`, `deadline` (epoch seconds), `wall_seconds`, and `wait` and `report`, the calls that
-      follow.
-  factory.py wait --worktree <lap worktree>
+      follow. A pass's test cleanup, tidy batch, review lane or fix launches as a thread titled `lap · <epic title> ·
+      <stage>`. The validation worktree's worker launches as `lap · <epic title> · holdouts` behind the validation
+      agent's instructions, or as `lap · <epic title> · validation-merge`, as the epic records which is owed.
+  factory.py wait --worktree <lap or pass worktree> [--scratch <folder>]
       One step of the wait, at most 45 seconds. Prints `state`, which is `running`, `ended` or `cut off`, the
       `thread`, the `deadline` and `next`, the call to make then. A stage past its deadline is interrupted, and ends
       cut off.
-  factory.py report --worktree <lap worktree>
-      Reads the thread's last reply, writes the ledger rows of the thread's tokens, archives the thread, removes the
+  factory.py report --worktree <lap or pass worktree> [--scratch <folder>]
+      Reads the thread's last reply, writes the ledger rows of a lap's thread tokens, archives the thread, removes the
       guard record and prints `thread`, `cut_off` and `reply`. The record is removed once the read has answered, even
-      when the archive fails. The scheduler's report of the same worker prices nothing again.
+      when the archive fails, and a pass's record only once every thread of the worktree was reported. The scheduler's
+      report of the same worker prices nothing again; for a pass it prices the thread its `--worker` names.
 
 Exit codes:
   0  the checks passed, with one line on stdout; or the mode printed its object.
@@ -53,6 +60,7 @@ from pathlib import Path
 
 import lap_guard_record
 import lap_record
+import pass_support
 import routes
 import rules
 import settings_reader
@@ -70,7 +78,7 @@ ANTIGRAVITY_PROFILES = Path("providers") / "antigravity"
 PROFILE_COPY = Path("config") / "plugins" / PLUGIN_NAME
 HOOKS_FILE = "hooks.json"
 STAGE_ERRORS = (t3_stage.StageError, t3_worker.T3Error, CommandError, routes.RouteError, lap_record.NotALapWorktree,
-                rules.RulesError, settings_reader.SettingsError, OSError)
+                rules.RulesError, settings_reader.SettingsError, pass_support.PassError, OSError)
 
 
 def why_no_lap_mod(hooks_folder: Path) -> str | None:
@@ -232,14 +240,16 @@ def run_stage(args: argparse.Namespace) -> int:
     try:
         home = settings_reader.jidoka_home(args.jidoka_home)
         worktree = Path(args.worktree)
+        scratch = Path(args.scratch) if args.scratch else t3_stage.lap_scratch(worktree)
         if args.mode == "wait":
-            printed = t3_stage.wait_step(worktree, home)
+            printed = t3_stage.wait_step(worktree, scratch, home)
         else:
             main_tree = settings_reader.main_worktree(worktree, COMMAND_TIMEOUT_SECONDS)
             if args.mode == "start":
-                printed = t3_stage.start(worktree, Path(args.prompt), args.tier, home, main_tree, host, PLUGIN_ROOT)
+                printed = t3_stage.start(worktree, scratch, Path(args.prompt), args.tier, home, main_tree, host,
+                                         PLUGIN_ROOT)
             else:
-                printed = t3_stage.report(worktree, home, main_tree)
+                printed = t3_stage.report(worktree, scratch, home, main_tree)
     except STAGE_ERRORS as error:
         print(f"factory: {error}", file=sys.stderr)
         return 1
@@ -259,7 +269,9 @@ def main(argv: list[str]) -> int:
     waiting = modes.add_parser("wait", help="wait one step for the stage's run")
     reporting = modes.add_parser("report", help="read the stage's last reply and archive its thread")
     for sub in (starting, waiting, reporting):
-        sub.add_argument("--worktree", required=True, help="the lap's worktree")
+        sub.add_argument("--worktree", required=True, help="the lap's worktree, or a pass's")
+        sub.add_argument("--scratch", help="the scratch folder that holds the stage's state: a tidy batch's own; "
+                                           "the worktree's scratch folder when left out")
         sub.add_argument("--jidoka-home", help="the folder that holds jidoka's per-machine state")
     args = parser.parse_args(argv)
     if args.mode != "check":

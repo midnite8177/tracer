@@ -780,7 +780,14 @@ _Avoid_: Reply box, answer form
 
 **Factory view**:
 Every epic that jidoka's factory holds, from every project of the
-registry, in one list, each with the lap of every bead it holds.
+registry, in one list, each with the lap of every bead it holds. Above the
+list it shows the Antigravity account's reading, by bucket, as jidoka's
+scheduler left it in `usage/antigravity.json` in jidoka's home: each
+bucket's five-hour and weekly use and the time to its reset, and how long
+ago T3 checked. A missing file, one of another shape, and a reading T3
+checked more than ten minutes ago all show as none, never as a use of zero;
+so does a window that a bucket lacks. The app reads the file again every 30
+seconds with the factory states.
 _Avoid_: Dashboard, status page, pipeline view
 
 **Factory state**:

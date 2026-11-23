@@ -86,6 +86,7 @@ SPECS_REFUSING = ["--jidoka-home"]
 GIT_GREP_REFUSING = ["--open-files-in-pager", "-O"]
 GREP_PROGRAMS = ["grep", "/usr/bin/grep", "/bin/grep"]
 LOOK_PROGRAMS = ["head", "tail", "wc", "ls", "cat"]
+CHECK_SCRIPTS = ["holdouts.py", "app_process.py"]
 PASS_PREFIXES = [cleanup.STAGE.prefix, tidy.STAGE.prefix, tidy.LOCAL_STAGE.prefix, review.REVIEW_PREFIX,
                  review.FIX_PREFIX]
 PART_ERRORS = (lap_record.NotALapWorktree, rules.RulesError, CommandError, settings_reader.SettingsError, OSError)
@@ -226,6 +227,13 @@ def lap_list(worktree: Path, home: Path, main_tree: Path) -> list[str | Grant]:
     built_in = part_or("the built-in list", [], lambda: settings_reader.built_in_commands(home))
     epic = part_or("the epic's commands", NO_EPIC_PART, lambda: epic_part(worktree, main_tree))
     return [*repo, *pass_looks(worktree, main_tree), *epic.granted, *searches(), *built_in, *epic.extra]
+
+
+def check_scripts() -> list[str]:
+    """The calls a check worker may make through the launcher: the holdouts script and the script that starts and
+    stops its app, each with any words after it. The lap mod lets a check worker run them apart from the check list,
+    so `check_list` leaves them out, and a host with no lap mod puts them in the check worker's guard record."""
+    return [launcher.command_for(script) for script in CHECK_SCRIPTS]
 
 
 def check_list(settings: settings_reader.Settings) -> list[str]:

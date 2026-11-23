@@ -96,6 +96,12 @@ def title_of(task_title: str) -> str:
     return f"{TITLE_PREFIX}{task_title}"
 
 
+def pass_title_of(epic_title: str, stage: str) -> str:
+    """The title of a pass stage's thread: the epic's title and the stage behind `lap · `. A pass has no task, and the
+    title names no bead id."""
+    return f"{TITLE_PREFIX}{epic_title} · {stage}"
+
+
 def model_selection(route: routes.Route) -> dict:
     """The thread's model selection. It holds the route's provider instance, its model and, when the route has one, its
     effort under the key the route's provider takes."""

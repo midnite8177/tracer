@@ -8,8 +8,9 @@ The record is <jidoka-home>/lap-guards/<worktree name>-<digest>.json, where the 
 resolved path, so the hook finds it from a folder inside the worktree by asking for each folder above that folder.
 The file is a JSON object with `worktree` (the resolved path), `kind` (`lap` or `check`, the lap mod's kinds of
 worker), `stage` (the lap's stage, as lap_record.py names it) and `commands` (what `lap_lists.py <kind>` prints for
-the worker, whole) and `barred` (a list of the acceptance folders the worker may not write in, each as `lap_protected.py`
-prints it, or null when they could not be read). The home is $JIDOKA_HOME, else ~/.jidoka.
+the worker, whole, and for a check worker also the launcher calls of the holdouts and app scripts, which the lap mod
+lets a check worker run apart from the list) and `barred` (a list of the acceptance folders the worker may not write
+in, each as `lap_protected.py` prints it, or null when they could not be read). The home is $JIDOKA_HOME, else ~/.jidoka.
 
 The factory's launcher writes the record before it starts the worker and removes it when the stage ends. The module
 imports only the standard library, home_files.py and settings_reader.py, so a hook can load it quickly.

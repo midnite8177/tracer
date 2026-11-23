@@ -18,6 +18,8 @@ SETTINGS_FILE = "settings.json"
 CLAUDE_ACCOUNT = "claude"
 """The account that the host's own harness bills, the key of its reserve in the settings and the name of its usage
 file."""
+ANTIGRAVITY_ACCOUNT = "antigravity"
+"""The account that an Antigravity host's T3 threads draw on, the key of its reserve in the settings."""
 
 T = TypeVar("T")
 

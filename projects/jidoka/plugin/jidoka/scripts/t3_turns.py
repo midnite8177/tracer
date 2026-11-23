@@ -30,6 +30,11 @@ below so that a schema change breaks this file alone. A db that lacks a table or
 cannot be read as SQLite, a thread or run with no turn, and a thread or run whose turns carry no readable tokens all
 raise NoTurns, whose reason names what was missing; the caller writes the row with no tokens and logs the reason.
 
+A script (t3_lane.py, t3_tidy.py) finds its child task without its thread id, which T3's `delegate_task` does not
+give the script. The child is the earliest thread whose first run in `orchestration_v2_projection_runs` was requested after
+the script recorded its start and names the child's model, that no ledger row names as its agent yet
+(find_child_thread).
+
 $JIDOKA_T3_STATE_DB names the db file, else it is ~/.t3/userdata/statev2.sqlite.
 """
 from __future__ import annotations
@@ -40,7 +45,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from prices import NO_TOKENS, Tokens, count_of
@@ -168,7 +173,7 @@ def select(table: str, selected: tuple[str, ...], where: dict[str, object], orde
     if not path.is_file():
         raise StateDbError(f"T3 has no state db at {path}")
     required = tuple(dict.fromkeys((*where, *selected, *order_by)))
-    condition = " AND ".join(f"{column} = ?" for column in where)
+    condition = " WHERE " + " AND ".join(f"{column} = ?" for column in where) if where else ""
     order = ", ".join((*order_by, "rowid"))
     try:
         with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=BUSY_TIMEOUT_SECONDS)) as db:
@@ -177,7 +182,7 @@ def select(table: str, selected: tuple[str, ...], where: dict[str, object], orde
             if missing:
                 lacking = f"lacks {', '.join(missing)}" if held else "has no such table"
                 raise StateDbError(f"the schema of {path} is not one this reader knows: {table} {lacking}")
-            return db.execute(f"SELECT {', '.join(selected)} FROM {table} WHERE {condition} ORDER BY {order}",
+            return db.execute(f"SELECT {', '.join(selected)} FROM {table}{condition} ORDER BY {order}",
                               tuple(where.values())).fetchall()
     except sqlite3.Error as error:
         raise StateDbError(f"T3's state db at {path} could not be read: {error}") from error
@@ -296,3 +301,34 @@ def read_turns(thread: str) -> list[ModelTurns]:
 def read_run_turns(thread: str, run: str) -> list[ModelTurns]:
     """The turns of one run of the thread, summed as read_turns sums them."""
     return read_turns_of(thread, run)
+
+
+def began_at(requested: object) -> datetime | None:
+    """The time of a run's `requested_at`, or None when it cannot be read as an ISO 8601 time with a zone."""
+    try:
+        when = datetime.fromisoformat(str(requested).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo is not None else None
+
+
+def find_child_thread(model: str | None, since: int, taken: set[str]) -> str:
+    """The thread of a child task that a script started at `since`, in epoch seconds, on the model. T3's
+    `delegate_task` names no thread to the script, so the child is the earliest thread that is not in `taken`, whose
+    first run, by `requested_at`, began at or after `since` and names the model. It raises NoTurns when the db has no
+    such thread, or when the route names no model."""
+    if model is None:
+        raise NoTurns("the child's route names no model to find its thread by")
+    with reported_as(NoTurns):
+        runs = select(RUNS_TABLE, (RUN_THREAD_COLUMN, RUN_REQUESTED_COLUMN, RUN_PAYLOAD_COLUMN), {}, ())
+    first_runs: dict[str, tuple[datetime, str | None]] = {}
+    for thread, requested, payload in runs:
+        when = began_at(requested)
+        if when is not None and (str(thread) not in first_runs or when < first_runs[str(thread)][0]):
+            first_runs[str(thread)] = (when, model_of(payload))
+    earliest = datetime.fromtimestamp(since, timezone.utc)
+    children = sorted((when, thread) for thread, (when, ran_on) in first_runs.items()
+                      if ran_on == model and when >= earliest and thread not in taken)
+    if not children:
+        raise NoTurns(f"T3's state db holds no thread that began a run on {model} after the child started")
+    return children[0][1]

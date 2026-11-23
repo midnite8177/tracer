@@ -24,6 +24,17 @@ REQUESTS_TABLE = (
 TOKEN_TABLES = (RUNS_TABLE, ATTEMPTS_TABLE, TURNS_TABLE)
 
 
+class StateDbOfATest:
+    """The base of a test case that gives each test its own path for T3's state db. `root` is the case's temporary
+    folder, and `id` is the test's."""
+    root: Path
+
+    @property
+    def state(self) -> Path:
+        """The fixture of T3's state db for this test, which does not exist until a test makes it."""
+        return self.root / f"statev2-{self.id()}.sqlite"
+
+
 def create(path: Path, tables: tuple[str, ...]) -> None:
     with closing(sqlite3.connect(path)) as db, db:
         for table in tables:
@@ -115,6 +126,16 @@ def add_turn_of_run(path: Path, thread: str, run: str, model: str | None, token_
         add_run(path, run, thread, model)
         add_attempt(path, attempt, thread, run)
     add_turn(path, f"turn-{turns + 1}", thread, attempt, token_usage)
+
+
+def add_child_turn(path: Path, thread: str, run: str, model: str | None, token_usage: dict | None,
+                   requested_at: str) -> None:
+    """A provider turn of a child thread whose run was requested at the ISO 8601 time, as T3 writes it for a child
+    that began after a script recorded its start."""
+    add_turn_of_run(path, thread, run, model, token_usage)
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute("UPDATE orchestration_v2_projection_runs SET requested_at = ? WHERE run_id = ?",
+                   (requested_at, run))
 
 
 def add_turn_payload(path: Path, turn: str, thread: str, attempt: str | None, payload_json: str) -> None:

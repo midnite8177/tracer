@@ -11,6 +11,7 @@ sys.path.insert(0, str(HERE))
 
 import jidoka_fixture as fixture  # noqa: E402
 import lap_guard_record  # noqa: E402
+import launcher  # noqa: E402
 
 PLUGIN = fixture.PROJECT / "plugin" / "jidoka"
 LAUNCHER = PLUGIN / "bin" / "jidoka-run"
@@ -125,6 +126,21 @@ class ProfileGuardTests(unittest.TestCase):
 
         self.assert_answers({"decision": "allow"}, listed)
         self.assert_answers({"decision": "deny", "reason": OFF_THE_LISTS}, unlisted)
+
+    def test_a_check_worker_whose_record_holds_the_launcher_calls_may_run_the_holdouts_and_app_scripts_and_no_other(self):
+        folder = self.root / "check-repo" / ".worktrees" / "validation-e1"
+        folder.mkdir(parents=True)
+        calls = [launcher.command_for("holdouts.py"), launcher.command_for("app_process.py")]
+        fixture.write_guard_record_of(self.home, folder, "check", ["make", *calls], [])
+
+        for script, expected in (("holdouts.py read e1", {"decision": "allow"}),
+                                 ("app_process.py start shop", {"decision": "allow"})):
+            with self.subTest(script=script):
+                name, _, arguments = script.partition(" ")
+                self.assert_answers(expected, self.guard(
+                    self.payload(folder, f"{launcher.command_for(name)} {arguments}")))
+        refused = launcher.command_for("handoff.py") + " tracer-1"
+        self.assertEqual("deny", json.loads(self.guard(self.payload(folder, refused)).stdout)["decision"])
 
     def test_a_call_whose_workspace_path_is_a_guarded_worktree_is_judged_though_its_folder_is_not_one(self):
         done = self.guard(self.payload(self.root / "repo", "curl https://example.com",

@@ -151,8 +151,8 @@ class ReviewToRun:
         return printed
 
     def hint_findings(self) -> list[Finding]:
-        """The Design lane's findings for the hints: of low confidence, so the gate lists them and nothing fixes or
-        files them."""
+        """The Design lane's findings for the hints. They are of low confidence, so the gate lists them and nothing
+        fixes or files them."""
         return [Finding(DESIGN, each.file, each.line, f"Lizard hint: {each.name} passes the {each.metric} limit",
                         hint_note(each), MEDIUM, LOW) for each in self.hints]
 
@@ -253,10 +253,15 @@ def own_work_base(base: str, head: str, main_tree: Path) -> str:
                main_tree, None).strip()
 
 
+def lane_stage(lane: str) -> str:
+    """The name of a lane as a stage that runs on a tier of its own, which an epic's `stage_tiers` rule can name."""
+    return f"{REVIEW_ACTION}-{lane}"
+
+
 def review_owed(epic: str, shown: dict, branch: str, settings: Settings, main_tree: Path) -> ReviewToRun | None:
     """The review this pass still owes, over which lanes, base and files, or None when the epic's files hold no change
     since the fixed point or a fix is still owed. The Design lane and its hints are left out once a review that held
-    them has settled. It cuts no worktree: the path in the result is where one belongs."""
+    them has settled. It cuts no worktree. The path in the result is where one belongs."""
     if stored_findings(shown, FIXES_KEY):
         return None
     head = required_head(branch, main_tree, ReviewError)
@@ -287,7 +292,7 @@ def hint_note(hint: lizard_hints.Hint) -> str:
 
 
 def fix_owed(epic: str, shown: dict, branch: str, settings: Settings, main_tree: Path) -> FixToRun | None:
-    """The fix the last review left owed, or None when it left nothing to fix. It cuts no worktree: the path in the
+    """The fix the last review left owed, or None when it left nothing to fix. It cuts no worktree. The path in the
     result is where one belongs."""
     findings = stored_findings(shown, FIXES_KEY)
     if not findings:

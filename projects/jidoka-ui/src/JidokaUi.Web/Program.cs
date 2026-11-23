@@ -63,6 +63,7 @@ builder.Services.AddSingleton<IWriteReports>(services => new JournalCheckedWrite
     JournalCheckedWriteReports.Interval));
 builder.Services.AddSingleton<ProjectWatchers>();
 builder.Services.AddSingleton(new Heartbeats(jidokaHome));
+builder.Services.AddSingleton(new AntigravityUsage(jidokaHome));
 builder.Services.AddSingleton<FactoryWatch>();
 builder.Services.AddSingleton<IStartupFactoryWatch, StartupFactoryWatch>();
 builder.Services.AddSingleton<BeadDetailReader>();

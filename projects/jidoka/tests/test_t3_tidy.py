@@ -8,9 +8,11 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import jidoka_fixture as fixture  # noqa: E402
+import t3_state  # noqa: E402
 import test_ledger  # noqa: E402
 import test_tidy  # noqa: E402
 import test_validation  # noqa: E402
+from t3_state import usage  # noqa: E402
 from test_scheduler import LAUNCHER, PLUGIN, RUN_TIMEOUT_SECONDS  # noqa: E402
 
 T3_TIDY = PLUGIN / "scripts" / "t3_tidy.py"
@@ -19,13 +21,15 @@ T3_OPENCODE = {"harness": "t3", "driver": "opencode", "provider": "strata", "mod
 STARTED_AT = 1_800_000_000
 FINISHED_AT = STARTED_AT + 95
 DONE_REPLY = "I removed the comment.\n{\"outcome\": \"done\"}"
+FIRST_CHILD_BEGAN = "2027-01-15T08:00:05.000Z"
+SECOND_CHILD_BEGAN = "2027-01-15T08:00:06.000Z"
 
 
 def settings_with_local_tier(local: dict) -> str:
     return json.dumps({"routes": {**test_ledger.ROUTES["routes"], "local": local}})
 
 
-class T3TidyCase(test_ledger.LedgerBooks, test_tidy.TidyCase):
+class T3TidyCase(t3_state.StateDbOfATest, test_ledger.LedgerBooks, test_tidy.TidyCase):
     """The tidy, with the local tier routed to t3 OpenCode and a child's reply given as a file."""
 
     @classmethod
@@ -35,8 +39,8 @@ class T3TidyCase(test_ledger.LedgerBooks, test_tidy.TidyCase):
 
     def tidy_at(self, now: int, mode: str, *args: str) -> subprocess.CompletedProcess:
         return fixture.run_launcher(LAUNCHER, [str(T3_TIDY), mode, *args], None,
-                                    {**self.caller_env(self.home), "JIDOKA_NOW": str(now)}, self.repo,
-                                    RUN_TIMEOUT_SECONDS)
+                                    {**self.caller_env(self.home), "JIDOKA_NOW": str(now),
+                                     "JIDOKA_T3_STATE_DB": str(self.state)}, self.repo, RUN_TIMEOUT_SECONDS)
 
     def start_batch(self, action: dict, *extra: str) -> subprocess.CompletedProcess:
         """Starts the batch from its action, saved in the batch's scratch folder as the manager saves it."""
@@ -219,6 +223,40 @@ class AFinishedBatchLeavesItsEditsForTheTidysSettleTests(T3TidyCase):
         done = self.finish_batch(action, started, "Done.\n```json\n{\"outcome\": \"done\"}\n```\n")
 
         self.assertEqual(0, done.returncode, done.stderr)
+
+
+class EachBatchRowCarriesItsChildThreadsTokensTests(T3TidyCase):
+    def test_each_batch_row_carries_the_tokens_of_its_own_child_thread(self):
+        epic, printed = self.finish_epic_whose_task_built({f"till_{number}.txt": test_tidy.COMMENTED
+                                                           for number in range(1, 6)})
+        first, second, *_ = self.tidy_actions_of(printed)
+        t3_state.create(self.state, t3_state.TOKEN_TABLES)
+        t3_state.add_child_turn(self.state, "thread-of-batch-1", "run-1", "qwen3-coder-next",
+                                usage(10_000, 6_000, 0, 500, 0), FIRST_CHILD_BEGAN)
+        t3_state.add_child_turn(self.state, "thread-of-batch-2", "run-2", "qwen3-coder-next",
+                                usage(3_000, 0, 0, 40, 0), SECOND_CHILD_BEGAN)
+
+        for action in (first, second):
+            done = self.finish_batch(action, self.started(action), DONE_REPLY)
+            self.assertEqual(0, done.returncode, done.stderr)
+
+        self.assertEqual([("thread-of-batch-1", 4_000, 6_000, 500), ("thread-of-batch-2", 3_000, 0, 40)],
+                         [(row["agent"], row["input_tokens"], row["cache_read_tokens"], row["output_tokens"])
+                          for row in self.tidy_rows_of(epic)])
+
+    def test_a_failed_batch_still_carries_the_tokens_its_child_used(self):
+        epic, _, printed = self.finish_epic_whose_task_built_a_commented_file()
+        action = self.tidy_action_of(printed)
+        started = self.started(action)
+        t3_state.create(self.state, t3_state.TOKEN_TABLES)
+        t3_state.add_child_turn(self.state, "thread-of-batch-1", "run-1", "qwen3-coder-next",
+                                usage(3_000, 0, 0, 40, 0), FIRST_CHILD_BEGAN)
+
+        done = self.finish_batch(action, started, "I could not.\n{\"outcome\": \"failed\", \"why\": \"no\"}")
+
+        self.assertEqual(1, done.returncode)
+        [row] = self.tidy_rows_of(epic)
+        self.assertEqual(("failed", "thread-of-batch-1", 3_000), (row["outcome"], row["agent"], row["input_tokens"]))
 
 
 class AFailedChildRunExitsOneRestoresItsFilesAndWritesAFailedRowTests(T3TidyCase):

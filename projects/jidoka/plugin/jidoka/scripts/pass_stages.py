@@ -15,12 +15,13 @@ from typing import Protocol
 
 import cleanup
 import holdouts_run
+import pass_support
 import review
 import tidy
 import tidy_trial
 import validation_merge
 from epic_reader import Epic
-from epics import state_of
+from epics import awaits_holdouts, state_of
 from settings_reader import Settings
 
 
@@ -104,22 +105,97 @@ def holdouts_owed(epic: Epic, home: Path, main_tree: Path) -> holdouts_run.Holdo
     return holdouts_run.holdouts_to_run(epic.id, epic.shown, home, main_tree)
 
 
+@dataclass(frozen=True)
+class PassStep:
+    """A stage's place in the pass: what it owes, asked without cutting a worktree, as the names of the stages that may
+    start at it (empty when it owes none), and what it runs, the actions of the stage that starts at it, or None when
+    it owes none."""
+    owed: Callable[[Epic, Settings, Path], list[str]]
+    to_run: Callable[[Epic, Settings, Path, Path], list[dict] | None]
+
+
+def cleanup_owed(epic: Epic, settings: Settings, main_tree: Path) -> list[str]:
+    owes = pass_support.owed(cleanup.STAGE, epic.id, epic.shown, epic.branch, settings, main_tree) is not None
+    return [cleanup.ACTION] if owes else []
+
+
+def cleanup_to_run(epic: Epic, settings: Settings, home: Path, main_tree: Path) -> list[dict] | None:
+    cleaned = cleanup.to_run(epic.id, epic.shown, epic.branch, settings, home, main_tree)
+    return [cleaned.fields()] if cleaned is not None else None
+
+
+def tidy_owed(epic: Epic, settings: Settings, main_tree: Path) -> list[str]:
+    return [tidy.ACTION] if tidy_trial.owes_a_tidy(epic.id, epic.shown, epic.branch, settings, main_tree) else []
+
+
+def tidy_to_run(epic: Epic, settings: Settings, home: Path, main_tree: Path) -> list[dict] | None:
+    tidied = tidy_trial.to_run(epic.id, epic.shown, epic.branch, settings, home, main_tree)
+    return tidied.actions() if tidied is not None else None
+
+
+def fix_owed(epic: Epic, settings: Settings, main_tree: Path) -> list[str]:
+    owes = review.fix_owed(epic.id, epic.shown, epic.branch, settings, main_tree) is not None
+    return [review.FIX_ACTION] if owes else []
+
+
+def fix_to_run(epic: Epic, settings: Settings, home: Path, main_tree: Path) -> list[dict] | None:
+    fixing = review.fix_to_run(epic.id, epic.shown, epic.branch, settings, home, main_tree)
+    return [fixing.fields()] if fixing is not None else None
+
+
+def review_owed(epic: Epic, settings: Settings, main_tree: Path) -> list[str]:
+    reviewing = review.review_owed(epic.id, epic.shown, epic.branch, settings, main_tree)
+    return [review.lane_stage(lane) for lane in reviewing.lanes] if reviewing is not None else []
+
+
+def review_to_run(epic: Epic, settings: Settings, home: Path, main_tree: Path) -> list[dict] | None:
+    reviewing = review.to_run(epic.id, epic.shown, epic.branch, settings, home, main_tree)
+    return reviewing.actions() if reviewing is not None else None
+
+
+def validation_owed(epic: Epic, settings: Settings, main_tree: Path) -> list[str]:
+    """The workers validation may hand out. The merge worker is owed when the epic records one, and the validation
+    worker when it records its holdouts as pending. Before either is recorded only a merge of main tells which comes,
+    so both are named."""
+    if validation_merge.owes_merge(epic.shown):
+        return [validation_merge.STAGE]
+    if awaits_holdouts(epic.shown):
+        return [holdouts_run.ACTION]
+    return [validation_merge.STAGE, holdouts_run.ACTION]
+
+
+def validation_to_run(epic: Epic, settings: Settings, home: Path, main_tree: Path) -> list[dict] | None:
+    merging = validation_merge.to_run(epic.id, epic.shown, epic.branch, home, main_tree)
+    return [merging.fields()] if merging is not None else None
+
+
+PASS_STEPS = (
+    PassStep(cleanup_owed, cleanup_to_run),
+    PassStep(tidy_owed, tidy_to_run),
+    PassStep(fix_owed, fix_to_run),
+    PassStep(review_owed, review_to_run),
+    PassStep(validation_owed, validation_to_run),
+)
+"""The stages of the pass in their order, written once for what the pass owes and what it runs. A fix owed comes before
+a review, so the fix of one review is never reviewed as the next one's diff."""
+
+
+def stages_owed(epic: Epic, settings: Settings, main_tree: Path) -> list[str]:
+    """The names of the stages the next call of the pass may start, cutting no worktree: those of the first step in
+    PASS_STEPS that owes any. Validation owes some whenever no step before it does. The scheduler asks for them to
+    check the reserves before the stage's worktree is cut."""
+    for step in PASS_STEPS:
+        owed = step.owed(epic, settings, main_tree)
+        if owed:
+            return owed
+    return []
+
+
 def pass_stage_actions(epic: Epic, settings: Settings, home: Path, main_tree: Path) -> list[dict]:
-    """The actions of the first stage of the pass that a finished epic still owes, in the order test cleanup, tidy,
-    fix, review, the merge worker of validation; empty when only validation is left. A fix owed comes before a review,
-    so the fix of one review is never reviewed as the next one's diff."""
-    branch = epic.branch
-    cleaned = cleanup.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
-    if cleaned is not None:
-        return [cleaned.fields()]
-    tidied = tidy_trial.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
-    if tidied is not None:
-        return tidied.actions()
-    fixing = review.fix_to_run(epic.id, epic.shown, branch, settings, home, main_tree)
-    if fixing is not None:
-        return [fixing.fields()]
-    reviewing = review.to_run(epic.id, epic.shown, branch, settings, home, main_tree)
-    if reviewing is not None:
-        return reviewing.actions()
-    merging = validation_merge.to_run(epic.id, epic.shown, branch, home, main_tree)
-    return [merging.fields()] if merging is not None else []
+    """The actions of the first step in PASS_STEPS that a finished epic still owes; empty when only validation is
+    left."""
+    for step in PASS_STEPS:
+        actions = step.to_run(epic, settings, home, main_tree)
+        if actions is not None:
+            return actions
+    return []

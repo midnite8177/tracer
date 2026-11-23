@@ -520,13 +520,35 @@ the printed route, native Sonnet, with the prompt of a native batch.
    the event line `<epic-id> test-cleanup started: <tests> files on <head>`
    with the count of the action's `tests`.
 
+   On an Antigravity host the deep tier's route has the harness `t3` and the
+   driver `antigravity`, and no subagent starts the worker. Build the prompt
+   as above, without its first line, and make the start that `factory.py`
+   prints, as the lap stages do: save the prompt to
+   `<scratch>/cleanup-prompt.md`, the action's `scratch`, then run
+   `factory.py start --worktree <worktree> --prompt <scratch>/cleanup-prompt.md
+   --tier deep --jidoka-home ...`, with the action's `worktree`. It writes the
+   pass worktree's guard record, which holds the worker to the lap list of a
+   pass worktree (the epic the folder names and the looks), and launches the
+   thread titled `lap · ` with the epic's title and `test-cleanup`, in the
+   pass worktree. Wait on it and run its `report`, as the Antigravity steps
+   above say, which archives the thread. Treat the printed `reply` as the
+   worker's reply, report the stage with `scheduler.py report-cleanup`, and
+   give `--worker` the printed `thread` as its agent id, with `deep` for the
+   tier. A start that the script refuses, and a thread that ends failed, are
+   a failed route: run `route.py fallback` for it as the routes paragraph
+   says. An Antigravity thread is the host's own route, so it answers
+   `"rerun": false` and the stage reports failed.
+
    Actions whose `action` is `tidy` come together, one for each tidy batch,
    and have no task: every task has merged and the test cleanup is done. Each
    batch is a few of the epic's files, its own `files`, numbered by its
    `batch`. Each also holds `base`, the commit where the epic branch left
    main, so that a worker can see the epic's change to its `files`. Run
    `bench.py route local` once. When its harness is `t3` and its `driver` is
-   `opencode`, run every batch as the T3 tidy paragraph below says. Otherwise
+   `opencode`, run every batch as the T3 tidy paragraph below says. When its
+   harness is `t3` and its `driver` is `antigravity`, which is the route of an
+   Antigravity host, run every batch as a stage thread, as the paragraph
+   after the tidy's workers says. Otherwise
    start one lap worker for each batch, side by side, all on that route; a
    route whose harness this session has no tool to start falls back to native
    with no extra step. Each prompt's first line is
@@ -558,6 +580,26 @@ the printed route, native Sonnet, with the prompt of a native batch.
    `{"outcome": "failed", "why": "<one line>"}`. Write the event line
    `<epic-id> tidy started: batch <batch>, <files> files on <head>` for each,
    with the count of the action's `files`.
+
+   When the local tier's route is a T3 Antigravity thread, no subagent
+   starts a batch. For each batch, side by side, build the prompt as above,
+   without its first line, save it to
+   `<scratch>/tidy-prompt.md`, the batch action's own `scratch`, and make the
+   start that `factory.py` prints: `factory.py start --worktree <worktree>
+   --scratch <scratch> --prompt <scratch>/tidy-prompt.md --tier local
+   --jidoka-home ...`. The batches share the worktree and its guard record
+   and each keeps its state in its own scratch folder, so the calls the script
+   prints name that folder. Each thread is titled `lap · ` with the epic's
+   title and `tidy`, and runs in the pass worktree on the local tier's
+   route. Wait on each as the Antigravity steps above say and run its
+   `report`, which archives the thread; the guard record goes with the last
+   batch's report. Treat each printed `reply` as its worker's reply, and
+   name each batch in the tidy's report as `--worker <thread> local <ending>`
+   with the printed `thread`. A start that the script refuses, and a thread
+   that ends failed, are a failed route: run `route.py fallback` for the batch
+   as the routes paragraph says, with the same mark; an Antigravity thread is
+   the host's own route, so it answers `"rerun": false` and the batch reports
+   failed.
 
    When the local tier's route is t3 OpenCode, each batch is a T3 child task
    in T3's auto-accept-edits mode, which lets its edits through with
@@ -594,7 +636,8 @@ the printed route, native Sonnet, with the prompt of a native batch.
    4. Run `t3_tidy.py finish --scratch <scratch> --jidoka-home ...`, with
       `--asked-for-approval` when step 2 cancelled the child for asking. The script
       records the batch's ledger row with harness t3, the route's model and
-      effort, the wall time and the outcome, with no tokens; a run past the
+      effort, the wall time and the outcome, with the tokens of the child's
+      thread, read from T3's state db; a run past the
       deadline is `cut off`, any other failure, a child that asked for an
       approval included, `failed`. It exits 0 when
       the child ended `{"outcome": "done"}`. Any other exit is the route
@@ -665,6 +708,33 @@ the printed route, native Sonnet, with the prompt of a native batch.
    lane's event line with `codex` for the model, and a second line when the
    lane reruns, with the printed route's model.
 
+   On an Antigravity host the `comments` and `standards` lanes' route, the
+   standard tier's, and the `design` lane's, the deep tier's, have the harness
+   `t3` and the driver `antigravity`, and no subagent starts a lane. Build
+   each lane's prompt as above, without its first line, and make the start
+   that `factory.py` prints, as the test cleanup does. The lanes share the
+   worktree and its scratch folder, which holds their reports, so each lane
+   keeps its state in a folder of its own inside it, `<scratch>/lane-<lane>`:
+   save the prompt to `<scratch>/lane-<lane>/prompt.md`
+   and run `factory.py start --worktree <worktree> --scratch
+   <scratch>/lane-<lane> --prompt <scratch>/lane-<lane>/prompt.md --tier
+   <standard or deep> --jidoka-home ...`, with the action's `worktree` and
+   `scratch`; the script refuses a lane that names no scratch folder of its own. Each
+   thread is titled `lap · ` with the epic's title and `review`, and runs in
+   the review worktree under one guard record, which holds the worker to the
+   lap list of a pass worktree and goes with the last lane's report. Wait on
+   each lane and run its `report` with the same `--scratch`, as the
+   Antigravity steps above say, which archives the thread. The lane writes its
+   report file as on Claude Code, so `scheduler.py report-review` reads it as
+   it does there, and the printed `reply` is the lane's reply. Name each lane
+   in the review's report as `--worker <thread> <tier>` with the printed
+   `thread`. A start that the script refuses, and a thread that ends failed,
+   are a failed route: run `route.py fallback` for it as the routes paragraph
+   says, which answers `"rerun": false`, since an Antigravity thread is the
+   host's own route. The `spec` lane is no thread: on an Antigravity host the
+   second tier's route is codex, and the lane runs with the codex lane script
+   as above, beside the lanes that are threads.
+
    When the second tier's route has the harness `t3`, the `spec` lane is a T3
    child task, and this session has to have the `delegate_task` tool for it;
    without it, the lane falls back as the routes paragraph above says.
@@ -691,7 +761,8 @@ the printed route, native Sonnet, with the prompt of a native batch.
       reads the epic, the route and the reply path from what `start`
       recorded, writes the lane's report from the reply and records the
       lane's ledger row with harness t3, the route's model and effort, the
-      wall time and the outcome, with no tokens. It exits 0 when the report
+      wall time and the outcome, with the tokens of the child's thread, read
+      from T3's state db. It exits 0 when the report
       is written. Any other exit is the route failing, a run past the
       deadline and a main checkout that changed while the child ran
       included: run `route.py fallback` for it as above, and start the `spec`
@@ -715,6 +786,19 @@ the printed route, native Sonnet, with the prompt of a native batch.
    `test` command alone. Its ending is `{"outcome": "done"}` or
    `{"outcome": "failed", "why": "<one line>"}`. Write the event line
    `<epic-id> fix started: <findings> findings on <head>`.
+
+   On an Antigravity host the standard tier's route is a T3 Antigravity thread
+   and no subagent starts the worker. Build the prompt as above, without its
+   first line, save it to `<scratch>/fix-prompt.md`, the
+   action's `scratch`, and run `factory.py start --worktree <worktree>
+   --prompt <scratch>/fix-prompt.md --tier standard --jidoka-home ...`. It
+   writes the fix worktree's guard record before the thread starts, so the
+   worker writes under the profile guard, and launches the thread titled `lap
+   · ` with the epic's title and `fix`. Wait on it and run its `report`, which
+   archives the thread, treat the printed `reply` as the worker's reply, and
+   report the fix with `scheduler.py report-fix`, giving `--worker` the
+   printed `thread` with `standard`. A start that the script refuses, and a
+   thread that ends failed, are a failed route, as for the lanes.
 
    An action whose `action` is `merge` and that has no `task` is the
    validation's merge worker: validation merged main into the epic branch and
@@ -740,6 +824,20 @@ the printed route, native Sonnet, with the prompt of a native batch.
    `<epic-id> merge started: <files> conflicting files on <head>`, with the
    count of the action's `files`.
 
+   On an Antigravity host the deep tier's route is a T3 Antigravity thread
+   and no subagent starts the worker. Build the prompt as above, without
+   its first line, save it to
+   `<scratch>/merge-prompt.md`, the action's `scratch`, and run
+   `factory.py start --worktree <worktree> --prompt <scratch>/merge-prompt.md
+   --tier deep --jidoka-home ...`. It writes the validation worktree's guard
+   record, which holds the worker to the grants of merging main, and launches
+   the thread titled `lap · ` with the epic's title and `validation-merge`.
+   Wait on it and run its `report`, as the Antigravity steps above say, treat
+   the printed `reply` as the worker's reply, and report the merge with
+   `scheduler.py report-merge`, giving `--worker` the printed `thread` with
+   `deep`. A start that the script refuses is a failed worker, reported
+   `--ended failed`.
+
    An action whose `action` is `holdouts` has no task: the epic's full suite
    is green and its holdouts have not run. Start one worker with the Agent
    tool, in the background, with `subagent_type` `jidoka:validation`, on the
@@ -757,6 +855,21 @@ the printed route, native Sonnet, with the prompt of a native batch.
    through the launcher. It
    holds no task, and you read no holdout and never print one. Write the
    event line `<epic-id> holdouts started: <holdouts> holdouts on <head>`.
+
+   On an Antigravity host the standard tier's route is a T3 Antigravity
+   thread and no subagent starts the worker. Build the prompt as above,
+   without its first line, save it to
+   `<scratch>/holdouts-prompt.md`, the action's `scratch`, and run
+   `factory.py start --worktree <worktree> --prompt
+   <scratch>/holdouts-prompt.md --tier standard --jidoka-home ...`. It puts
+   the validation agent's instructions at the head of the thread's first
+   message, writes a guard record that holds the worker to the check list, and
+   launches the thread titled `lap · ` with the epic's title and `holdouts`.
+   Wait on it and run its `report`, as the Antigravity steps above say, treat
+   the printed `reply` as the worker's reply, and report the run with
+   `scheduler.py report-holdouts`, giving `--worker` the printed `thread` with
+   `standard`. A start that the script refuses is a failed worker, reported
+   `--ended failed`.
 5. **Report.** Wait for the workers' notifications, and do nothing in
    between. Report each worker as it ends, one report at a time, with
    `scheduler.py report <epic-id> <task> <outcome> --jidoka-home ...`. Every
