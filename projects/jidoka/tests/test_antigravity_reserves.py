@@ -8,7 +8,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import fake_t3_server as t3_server  # noqa: E402
-from test_antigravity_usage import MINUTE, TOKEN, UsageCase, closed_port, from_now, iso  # noqa: E402
+from test_antigravity_usage import MINUTE, THREAD, TOKEN, UsageCase, closed_port, from_now, iso  # noqa: E402
+from test_beater import SCHEDULER  # noqa: E402
 
 HOUR = timedelta(hours=1)
 NEON = {"harness": "t3", "model": "gemini-4-neon", "version": None, "effort": "high", "provider": "antigravity-main",
@@ -76,14 +77,6 @@ class TheFiveHourReserveOfABucketTests(ReserveCase):
         self.assertNotEqual([], printed["actions"])
         self.assertIsNone(printed["paused"])
 
-    def test_a_stage_on_another_bucket_runs_while_the_gemini_bucket_is_past_its_reserve(self):
-        self.use_routes({"standard": CARBON, "deep": NEON})
-
-        printed = self.printed_with(buckets(gemini=(99, 99), carbon=(10, 10)))
-
-        self.assertNotEqual([], printed["actions"])
-        self.assertIsNone(printed["paused"])
-
     def test_the_bucket_of_a_carbon_stage_pauses_the_epic_when_it_is_the_one_past_its_reserve(self):
         self.use_routes({"standard": CARBON})
 
@@ -127,6 +120,70 @@ class TheFiveHourReserveOfABucketTests(ReserveCase):
         printed = self.printed_with([t3_server.antigravity_with_usage(iso(from_now(-MINUTE)), windows)])
 
         self.assertNotEqual([], printed["actions"])
+
+
+class AStageStartsWhileAnotherBucketIsPastItsReserveTests(ReserveCase):
+    """The first task is on the full track, so it starts at the research on the light tier's Gemini Carbon model. The
+    other two start at the build on the standard tier's Gemini model."""
+
+    def setUp(self):
+        super().setUp()
+        self.use_routes({"standard": NEON, "light": CARBON})
+        self.bd("update", self.tasks[0], "--set-metadata", "lap.track=full")
+
+    def started(self, printed: dict) -> list[str]:
+        return [action["task"] for action in printed["actions"]]
+
+    def test_a_bucket_past_its_five_hour_reserve_holds_back_only_the_stages_that_draw_on_it(self):
+        printed = self.printed_with(buckets(gemini=(95, 10), carbon=(10, 10)))
+
+        self.assertEqual([self.tasks[0]], self.started(printed))
+        self.assertIsNone(printed["paused"])
+        self.assertEqual("open", self.shown(self.tasks[1])["status"])
+
+    def test_a_bucket_past_its_weekly_reserve_holds_back_only_the_stages_that_draw_on_it(self):
+        printed = self.printed_with(buckets(gemini=(10, 80), carbon=(10, 10)))
+
+        self.assertEqual([self.tasks[0]], self.started(printed))
+        self.assertNotIn("human", self.shown(self.epic)["labels"])
+        self.assertEqual([], [text for text in self.epic_comments() if text.startswith("Question: ")])
+
+    def test_the_stages_a_bucket_held_back_start_once_it_is_under_its_reserve_again(self):
+        self.printed_with(buckets(gemini=(95, 10), carbon=(10, 10)))
+
+        printed = self.printed_with(buckets(gemini=(20, 10), carbon=(10, 10)))
+
+        self.assertEqual({self.tasks[0], self.tasks[1]}, set(self.started(printed)))
+
+    def test_the_epic_pauses_when_every_stage_that_may_start_is_past_the_reserve_of_its_bucket(self):
+        printed = self.printed_with(buckets(gemini=(95, 10), carbon=(95, 10)))
+
+        self.assertEqual([], printed["actions"])
+        self.assertEqual("reserve", printed["paused"]["cause"])
+
+    def test_a_lap_that_goes_back_to_a_worker_on_a_bucket_past_its_reserve_ends_interrupted_while_another_stage_starts(
+            self):
+        self.bd("update", self.tasks[2], "--set-metadata", "lap.track=full")
+        self.printed_with(buckets(gemini=(10, 10), carbon=(10, 10)))
+
+        with self.server(buckets(gemini=(95, 10), carbon=(10, 10))) as server:
+            done = self.call({"T3CODE_THREAD_ID": THREAD, "JIDOKA_T3_PORT": str(server.port)}, SCHEDULER, "report",
+                             self.epic, self.tasks[1], "failed", "--why", "the build did not compile")
+        self.assertEqual(0, done.returncode, done.stderr)
+
+        printed = json.loads(done.stdout)
+        self.assertEqual([self.tasks[2]], self.started(printed))
+        [interrupted] = [comment["text"] for comment in self.comments(self.tasks[1])
+                         if str(comment["text"]).startswith("Interrupted: ")]
+        self.assertIn("Gemini five-hour usage window", interrupted)
+
+    def test_a_pause_on_a_reserve_ends_when_a_stage_on_another_bucket_may_start(self):
+        self.printed_with(buckets(gemini=(95, 10), carbon=(95, 10)))
+
+        printed = self.printed_with(buckets(gemini=(95, 10), carbon=(10, 10)))
+
+        self.assertIsNone(printed["paused"])
+        self.assertEqual([self.tasks[0]], self.started(printed))
 
 
 class TheWeeklyReserveOfABucketTests(ReserveCase):

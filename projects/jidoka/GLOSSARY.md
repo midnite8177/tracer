@@ -759,7 +759,9 @@ its own share, under `antigravity`, and its reserve watches the bucket of
 the model that a stage is about to start on. A bucket's session window counts
 as the five-hour one and its weekly window as the seven-day one. A model draws
 on the bucket of its family, Gemini for Neon, Flash and Hydrogen, Gemini
-Argon, or Gemini Carbon. A stage on another bucket, or on a model with
+Argon, or Gemini Carbon. The reserve applies to each stage about to start.
+One past its reserve is held back and the epic pauses or parks only when
+every stage that may start is. A stage on another bucket, or on a model with
 none, runs. With no reading the reserve holds nothing back, and the epic gets
 one comment the first time a reading fails for a cause and one when readings
 return.
@@ -862,12 +864,12 @@ epic's title and the stage, with a guard record of the kind `lap` that holds
 the list a pass worktree gets: the epic the folder names and the looks. The
 tidy runs on the local tier's route, and a batch or a review lane keeps its
 state in its own scratch folder, because they share the worktree and its guard
-record. The second tier's Spec lane is no thread: it runs through the codex
+record. The second tier's Spec lane is no thread. It runs through the codex
 lane script or the T3 lane script, as the second tier's route says.
 A thread has no agent type, so the app check's thread and the Spec check's
 open with the worker's instructions from the plugin's files, ahead of the
-prompt. The manager calls those as printed. Each `wait` is up to six T3 steps of 45
-seconds, ending at once when the run ends, and a stage found past its deadline is stopped with an
+prompt. The manager calls those as printed. Each `wait` is up to `t3_stage.STEPS_IN_ONE_WAIT` T3 steps,
+ending at once when the run ends, and a stage found past its deadline is stopped with an
 interrupt and ends cut off. `report` reads the thread's last reply and
 archives the thread, and removes the guard record once the read has answered,
 whether or not the archive does; a pass's record goes with the last of its

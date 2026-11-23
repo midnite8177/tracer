@@ -12,8 +12,10 @@ first stage of each ready task, and the stages a finished epic's pass owes, whic
 the worktree. Its tier is the epic's `stage_tiers` rule for the stage, else the tier the factory skill gives
 it, and its model is the model of that tier's route in the machine settings' `antigravity_routes`. The reserve of the
 account is the epic's `reserves` rule for `antigravity`, else the machine settings', else 10% of the five-hour window
-and 25% of the seven-day window, as reserves.py says. When a stage's bucket is past a reserve the epic pauses or parks as
-reserves.py says, and a stage on another bucket holds nothing back by itself.
+and 25% of the seven-day window, as reserves.py says. The reserve applies to each start: the stages of one task, or the
+stages a finished epic's pass owes, are one start, and a start whose bucket is past a reserve is held back while a
+start on another bucket goes on. The epic pauses or parks as reserves.py says only when every start is held back, and
+a lap that would go back to a worker on a held-back bucket ends interrupted.
 
 A call that has no reading of the quota holds nothing back. The epic's `reserve.antigravity_unread` metadata holds the
 causes of the failures that the epic got a comment for since readings last returned, as a JSON list, so that it gets one
@@ -69,9 +71,11 @@ FAMILIES = (Family("Gemini Argon", "argon"), Family("Gemini Carbon", "carbon"), 
 
 @dataclass(frozen=True)
 class Stage:
-    """A stage about to start: its name and the track of its lap, which picks the tier of a build."""
+    """A stage about to start: its name, the track of its lap, which picks the tier of a build, and the task whose lap
+    it is, or None for a stage of the pass."""
     name: str
     track: str
+    task: str | None
 
 
 def family_named(name: str) -> Family | None:
@@ -105,10 +109,10 @@ def stages_ahead(epic: Epic, going_back: list[Lap], owed_in_pass: list[str], mai
     and the stages that pass_stages.stages_owed names for a finished epic's pass, whose track is the simple one since a
     pass stage has none."""
     ready = [Stage(lap_opening.first_stage(str(task["id"]), track_of(metadata_of(task)), main_tree),
-                   track_of(metadata_of(task)))
+                   track_of(metadata_of(task)), str(task["id"]))
              for task in epic.ready_task_beads]
-    return ([Stage(lap.stage, lap.track) for lap in going_back] + ready
-            + [Stage(name, SIMPLE_TRACK) for name in owed_in_pass])
+    return ([Stage(lap.stage, lap.track, lap.task) for lap in going_back] + ready
+            + [Stage(name, SIMPLE_TRACK, None) for name in owed_in_pass])
 
 
 def families_ahead(stages: list[Stage], shown: dict, home: Path) -> list[Family]:
@@ -156,12 +160,41 @@ def reading_of(quota: antigravity_usage.Reading, families: list[Family], five_ho
                             first_past_reserve([window for window in seven_day if window is not None], now))
 
 
+def holding_back(reading: reserves.Reading | None, shown: dict, now: int) -> reserves.Window | None:
+    """The window that keeps a start from happening: its five-hour window when past its reserve, else its seven-day
+    window when it parks the epic, as reserves.seven_day_past_reserve says."""
+    if reading is None:
+        return None
+    if reading.five_hour is not None and reading.five_hour.is_past_reserve(now):
+        return reading.five_hour
+    return reserves.seven_day_past_reserve(shown, reading, now)
+
+
 def reading_for(quota: antigravity_usage.Reading, stages: list[Stage], shown: dict, home: Path,
-                now: int) -> reserves.Reading | None:
-    """The windows to check before the stages start: those of the buckets the stages' models draw on, each with the
-    account's reserve. None when no stage's model draws on a bucket the quota holds."""
+                now: int) -> reserves.Checked:
+    """The reserves applied to each start. The stages of one task, or the stages the pass owes, are one start, held
+    back when a bucket its models draw on is past its reserve.
+
+    When every start is held back, the reading holds the windows of all the buckets the stages draw on, so the epic
+    pauses or parks as reserves.py says. When another start goes on, the reading holds no window, which ends a pause
+    on a reserve, and each task whose start is held back comes with its window. The pass has no task, and it is the
+    only start of a finished epic, so it is never held back beside another."""
     five_hour_percent, seven_day_percent = reserves.reserve_percents(shown, home, ANTIGRAVITY_ACCOUNT)
-    return reading_of(quota, families_ahead(stages, shown, home), five_hour_percent, seven_day_percent, now)
+    starts: dict[str | None, list[Stage]] = {}
+    for stage in stages:
+        starts.setdefault(stage.task, []).append(stage)
+    held: dict[str | None, reserves.Window] = {}
+    for task, start in starts.items():
+        start_reading = reading_of(quota, families_ahead(start, shown, home), five_hour_percent, seven_day_percent,
+                                   now)
+        window = holding_back(start_reading, shown, now)
+        if window is not None:
+            held[task] = window
+    if len(held) == len(starts):
+        return reserves.Checked(
+            reading_of(quota, families_ahead(stages, shown, home), five_hour_percent, seven_day_percent, now), {})
+    return reserves.Checked(reserves.NO_WINDOW,
+                            {task: window for task, window in held.items() if task is not None})
 
 
 def announced_causes(shown: dict) -> list[str]:

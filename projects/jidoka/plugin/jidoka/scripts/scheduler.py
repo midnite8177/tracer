@@ -78,8 +78,8 @@ routes.host_of_environment decides, each call first reads the account's quota fr
 file, as antigravity_usage.py describes; a quota that cannot be read leaves no reading and a line on stderr. There the
 reserves check, before a stage starts, the bucket of the stage's model, a pass stage's included, as
 antigravity_reserves.py describes. A stage
-whose bucket is past its five-hour reserve pauses the epic, past its weekly reserve parks it, and a stage on another
-bucket runs. The epic gets one comment the first time a reading fails for a cause and one when readings return.
+whose bucket is past a reserve is held back, and a stage on another bucket runs. When every stage that may start is
+held back, the epic pauses for a five-hour reserve and parks for a weekly one. The epic gets one comment the first time a reading fails for a cause and one when readings return.
 
 The `human` label is also the human's brake. A stage already running finishes, and its report is taken as always, but
 no stage starts on a task that carries the label, and none starts on any task of an epic that carries it, no lap
@@ -390,9 +390,9 @@ def resume_laps(epic: Epic, now: int, home: Path, main_tree: Path) -> set[str]:
     if cleared is not None:
         print(f"scheduler: {cleared}", file=sys.stderr)
     resume.prune_worktrees(main_tree)
+    t3_stage.release_pass(epic.id, home, main_tree)
     if lap_holds.is_parked(epic):
         return set()
-    t3_stage.release_pass(epic.id, home, main_tree)
     epic_branch = epic.branch
     interrupted: set[str] = set()
     labeled = epic.labeled_task_ids
@@ -498,19 +498,19 @@ def laps_going_back(open_laps: list[Lap], rebuilds: list[Lap], restarting: bool)
 
 
 def read_reserves(epic: Epic, going_back: list[Lap], settings: settings_reader.Settings, home: Path, main_tree: Path,
-                  now: int) -> reserves.Reading | None:
-    """The windows the reserves check in this call. On an Antigravity host, which routes.host_of_environment decides,
-    it reads the account's quota from T3 first, as antigravity_usage.py says, tells the epic of a reading that failed
-    or returned, and takes the windows of the buckets that the stages about to start draw on, among them the stage a
-    finished epic's pass owes, as antigravity_reserves.py says. A reading that failed or is stale is a reading with no
-    window, which holds nothing back and ends a pause on a reserve. Elsewhere it is the lap mod's reading of the
-    account, as reserves.py says."""
+                  now: int) -> reserves.Checked:
+    """What the reserves find in this call. On an Antigravity host, which routes.host_of_environment decides, it reads
+    the account's quota from T3 first, as antigravity_usage.py says, tells the epic of a reading that failed or
+    returned, and applies the reserve to each stage about to start, among them the stage a finished epic's pass owes,
+    as antigravity_reserves.py says. A reading that failed or is stale is a reading with no window, which holds
+    nothing back and ends a pause on a reserve. Elsewhere it is the lap mod's reading of the account, as reserves.py
+    says, and it holds no task back by itself."""
     if routes.host_of_environment() != routes.ANTIGRAVITY_HOST:
-        return reserves.read(home, now, epic.shown)
+        return reserves.Checked(reserves.read(home, now, epic.shown), {})
     refreshed = antigravity_usage.refresh(home, provider_status.port_of_environment(), USAGE_TIMEOUT_SECONDS, now)
     antigravity_reserves.announce(epic.id, epic.shown, refreshed, main_tree)
     if not isinstance(refreshed, antigravity_usage.Reading):
-        return reserves.Reading(None, None)
+        return reserves.Checked(reserves.NO_WINDOW, {})
     owed_in_pass = pass_stages.stages_owed(epic, settings, main_tree) if is_finished(epic) else []
     return antigravity_reserves.reading_for(
         refreshed, antigravity_reserves.stages_ahead(epic, going_back, owed_in_pass, main_tree), epic.shown, home, now)
@@ -537,20 +537,21 @@ def next_moves(bead: str, home: Path, main_tree: Path, rebuilds: list[Lap], rest
         resumed = resume_laps(epic, the_clock.now(), home, main_tree)
         epic = checked_epic(bead, settings, main_tree)
     now = the_clock.now()
-    reading = read_reserves(epic, laps_going_back(open_laps_of(epic), rebuilds, restarting), settings, home, main_tree,
+    checked = read_reserves(epic, laps_going_back(open_laps_of(epic), rebuilds, restarting), settings, home, main_tree,
                             now)
-    if reserves.sync_pause(epic.id, epic.shown, reading, now, main_tree):
+    if reserves.sync_pause(epic.id, epic.shown, checked.reading, now, main_tree):
         epic = checked_epic(bead, settings, main_tree)
     standstill = lap_holds.Standstill(pause.waiting_at(epic.shown, now),
-                                      lap_holds.parking_of(epic, reading, now, home, main_tree))
+                                      lap_holds.parking_of(epic, checked.reading, now, home, main_tree),
+                                      checked.held_back)
     standing = slots.Standing(home, epic.id, main_tree, rules.machine_lap_limit(home), now)
     state = (PassState(epic, None, None, with_pass_slot([], standing)) if standstill.is_on
              else settle_epic(epic, settings, home, main_tree, standing))
     epic = state.epic
     tasks = epic.open_task_beads
     open_now = open_laps_of(epic)
-    holds = lap_holds.apply_holds(epic, open_now, laps_going_back(open_now, rebuilds, restarting), standstill, now,
-                                  home, main_tree)
+    holds = lap_holds.apply_holds(epic, open_now, laps_going_back(open_now, rebuilds, restarting), standstill,
+                                  now, home, main_tree)
     limit = rules.lap_limits(epic.shown, settings, home)
     unplaced = unplaced_tasks(tasks)
     try:

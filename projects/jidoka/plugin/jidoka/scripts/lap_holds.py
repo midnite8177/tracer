@@ -41,9 +41,11 @@ class Parking:
 @dataclass(frozen=True)
 class Standstill:
     """What keeps the epic from starting a stage in this call: a pause that waits, or a reached budget or a passed
-    seven-day reserve that parks it once no stage runs."""
+    seven-day reserve that parks it once no stage runs. It also holds the tasks whose next stage a window past its
+    reserve holds back while other stages go on, which keep the epic running and so are no standstill of the epic."""
     waiting: pause.Pause | None
     parking: Parking | None
+    held_back: dict[str, reserves.Window]
 
     @property
     def is_on(self) -> bool:
@@ -52,8 +54,8 @@ class Standstill:
 
 @dataclass(frozen=True)
 class Holds:
-    """What holds the epic's laps in this call: the laps that start again, the laps still open, the standstill, the
-    brake, and whether the epic carries the human label."""
+    """What holds the epic's laps in this call: the laps that start again, the laps still open, the standstill with the
+    tasks a reserve holds back, the brake, and whether the epic carries the human label."""
     rebuilds: list[Lap]
     held: list[Lap]
     standstill: Standstill
@@ -65,9 +67,10 @@ class Holds:
         return self.standstill.waiting
 
     def lets_open(self, task: str, resumed: set[str]) -> bool:
-        """Whether a ready task may get a lap: not while the epic is parked or at a standstill, and with the brake on
-        only a task whose lap this call ended, named in `resumed`."""
-        if self.epic_parked or self.standstill.is_on:
+        """Whether a ready task may get a lap: not while the epic is parked or at a standstill, nor while a reserve
+        holds its first stage back, and with the brake on only a task whose lap this call ended, named in
+        `resumed`."""
+        if self.epic_parked or self.standstill.is_on or task in self.standstill.held_back:
             return False
         return not self.brake.is_on or task in resumed
 
@@ -75,12 +78,14 @@ class Holds:
 @dataclass(frozen=True)
 class Decision:
     """What the holds do to the laps, worked out with no side effect: the laps the human label keeps from starting,
-    the laps that start again, the laps a standstill ends instead, the laps that stay open, and whether the epic parks
-    now, which it does at a standstill that parks it once no lap stays open."""
+    the laps that start again, the laps a standstill ends instead, the laps a reserve ends instead while other stages
+    go on, the laps that stay open, and whether the epic parks now, which it does at a standstill that parks it once
+    no lap stays open."""
     epic_parked: bool
     stopped: list[Lap]
     starting: list[Lap]
     interrupted: list[Lap]
+    reserve_interrupted: list[Lap]
     held: list[Lap]
     parks: bool
 
@@ -111,25 +116,34 @@ def restart_clock(lap: Lap, now: int, main_tree: Path) -> Lap:
 
 
 def decision_of(epic: Epic, held: list[Lap], rebuilds: list[Lap], standstill: Standstill) -> Decision:
-    """Which of the laps that would start again are stopped by the human label, start, or are ended by a standstill,
-    which laps stay open, and whether the epic parks. The human label, on the epic or on a task, keeps a lap from
-    starting again, and a standstill ends the laps that would start again interrupted."""
+    """Which of the laps that would start again are stopped by the human label, start, or are ended by a standstill or
+    by a reserve that holds back their task, which laps stay open, and whether the epic parks. The human label, on the
+    epic or on a task, keeps a lap from starting again, a standstill ends the laps that would start again
+    interrupted, and a reserve ends those of the tasks it holds back."""
     labeled = epic.labeled_task_ids
     epic_parked = is_parked(epic)
     stopped = [lap for lap in rebuilds if epic_parked or lap.task in labeled]
     starting = [lap for lap in rebuilds if lap not in stopped]
     interrupted = starting if standstill.is_on else []
-    starting = [] if standstill.is_on else starting
-    staying = [lap for lap in held if lap not in interrupted]
+    reserve_interrupted = [lap for lap in starting if lap not in interrupted and lap.task in standstill.held_back]
+    starting = [lap for lap in starting if lap not in interrupted and lap not in reserve_interrupted]
+    staying = [lap for lap in held if lap not in interrupted and lap not in reserve_interrupted]
     parks = standstill.parking is not None and not staying
-    return Decision(epic_parked, stopped, starting, interrupted, staying, parks)
+    return Decision(epic_parked, stopped, starting, interrupted, reserve_interrupted, staying, parks)
 
 
-def apply_holds(epic: Epic, held: list[Lap], rebuilds: list[Lap], standstill: Standstill, now: int,
-                home: Path, main_tree: Path) -> Holds:
-    """Carries out what holds the epic's laps: says why, interrupts the laps a standstill ends, starts the wall clock
-    again of the laps that go on, reads the brake, and parks the epic when the decision says it parks. The brake holds
-    only the laps that have not opened."""
+def interrupt_before_start(laps: list[Lap], because: str, resumes_when: str, main_tree: Path) -> None:
+    """Ends each lap interrupted before its stage could start again, for the reason `because`, and says when it
+    resumes."""
+    for lap in laps:
+        interrupt_lap(lap, f"{because} before the {lap.stage} could start again", resumes_when, main_tree)
+
+
+def apply_holds(epic: Epic, held: list[Lap], rebuilds: list[Lap], standstill: Standstill, now: int, home: Path,
+                main_tree: Path) -> Holds:
+    """Carries out what holds the epic's laps: says why, interrupts the laps a standstill or a reserve ends, starts the
+    wall clock again of the laps that go on, reads the brake, and parks the epic when the decision says it parks. The
+    brake holds only the laps that have not opened."""
     decision = decision_of(epic, held, rebuilds, standstill)
     if decision.epic_parked:
         print(f"scheduler: {epic.id} carries the {HUMAN_LABEL} label, so no stage starts and no lap opens until it "
@@ -147,8 +161,14 @@ def apply_holds(epic: Epic, held: list[Lap], rebuilds: list[Lap], standstill: St
         interruption = (f"{epic.id} {parking.reason}", parking.resumes_when)
     if interruption is not None:
         because, resumes_when = interruption
-        for lap in decision.interrupted:
-            interrupt_lap(lap, f"{because} before the {lap.stage} could start again", resumes_when, main_tree)
+        interrupt_before_start(decision.interrupted, because, resumes_when, main_tree)
+    for task, window in standstill.held_back.items():
+        print(f"scheduler: {task} waits for the {window.name} usage window, which is {window.used_percent:g}% used, "
+              "past its reserve, so no stage starts on it while stages on other buckets go on", file=sys.stderr)
+    for lap in decision.reserve_interrupted:
+        window = standstill.held_back[lap.task]
+        interrupt_before_start([lap], f"{epic.id} {window.reason}",
+                               f"the {window.name} usage window is under its reserve again", main_tree)
     if waiting is not None:
         notify.announce(notify.FACTORY_PAUSED, epic.id, home, main_tree, SCRIPT)
     starting = [restart_clock(lap, now, main_tree) for lap in decision.starting]

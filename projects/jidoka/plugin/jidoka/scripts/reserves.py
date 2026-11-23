@@ -82,6 +82,20 @@ class Reading:
     seven_day: Window | None
 
 
+NO_WINDOW = Reading(None, None)
+"""A reading in which no window applies: the epic neither pauses nor parks, and a pause on the five-hour reserve is
+cleared. It differs from no reading at all, which changes nothing."""
+
+
+@dataclass(frozen=True)
+class Checked:
+    """What the reserves found in one call: the windows that decide whether the epic pauses or parks, and for each task
+    whose stage a window past its reserve holds back while other stages go on, that window. A `reading` of None is no
+    reading, which leaves a pause as it is; `NO_WINDOW` is a reading that clears one."""
+    reading: Reading | None
+    held_back: dict[str, Window]
+
+
 def window_in(raw: object, name: str, length_seconds: int, reserve_percent: float) -> Window | None:
     if not isinstance(raw, dict):
         return None
