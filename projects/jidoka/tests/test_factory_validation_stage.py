@@ -10,7 +10,7 @@ import jidoka_fixture as fixture  # noqa: E402
 import launcher  # noqa: E402
 import test_scheduler  # noqa: E402
 import test_validation  # noqa: E402
-from test_factory_pass_stage import FACTORY, LAP_LISTS, REPLY, STARTED, PassStageCase  # noqa: E402
+from test_factory_pass_stage import LAP_LISTS, REPLY, STARTED, PassStageCase  # noqa: E402
 from test_factory_review_stage import HELIUM  # noqa: E402
 from test_factory_t3_stage import MANAGER_THREAD, NEON  # noqa: E402
 

@@ -334,9 +334,6 @@ class MergeLockTests(ResumeCase):
 
 
 class OrphanWorkerTests(ResumeCase):
-    def alive(self, pid: int) -> bool:
-        return fixture.process_is_running(pid)
-
     def orphan_in(self, folder: Path) -> int:
         """A process left running in the folder whose parent is gone, as a dead host leaves a worker."""
         launched = subprocess.Popen([sys.executable, "-c", LEAVES_A_SLEEPER_AND_EXITS], cwd=folder,
@@ -356,15 +353,15 @@ class OrphanWorkerTests(ResumeCase):
         opened = self.stop_the_host()
         worktree = Path(next(iter(opened.values()))["worktree"])
         orphan = self.orphan_in(worktree)
-        self.assertTrue(self.alive(orphan))
+        self.assertTrue(fixture.process_is_running(orphan))
 
         done = self.next_run()
 
         self.assertEqual(0, done.returncode, done.stderr)
         deadline = time.time() + 5
-        while self.alive(orphan) and time.time() < deadline:
+        while fixture.process_is_running(orphan) and time.time() < deadline:
             time.sleep(0.05)
-        self.assertFalse(self.alive(orphan))
+        self.assertFalse(fixture.process_is_running(orphan))
         self.assertIn(str(orphan), done.stderr)
 
     def test_a_process_with_a_live_parent_in_a_lap_worktree_is_left_alone(self):
