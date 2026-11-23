@@ -120,8 +120,59 @@ class ThreadsRunsAndChildrenTests(ThreadReaderCase):
 
         [child] = t3_thread.read_thread(THREAD).children
 
-        self.assertEqual((CHILD, "lap · Build the greeting", "worker thread, found by its title"),
+        self.assertEqual((CHILD, "lap · Build the greeting", t3_thread.UNVERIFIED_RELATIONSHIP),
                          (child.thread, child.title, child.relationship))
+
+    def launch_item(self, session: str, ordinal: int, worker: str, updated_at: str) -> None:
+        t3_state.add_item_updated_at(self.state, session, "run-1", ordinal, "command_execution",
+                                     {"input": "factory.py start", "output": json.dumps({"thread": worker}),
+                                      "exitCode": 0}, updated_at)
+
+    def test_a_worker_thread_that_the_items_of_the_thread_name_is_a_launched_child_whenever_it_began(self):
+        t3_state.add_thread_made_at(self.state, "next-session", "Plan another epic", None, "project-1",
+                                    "2026-11-22T10:00:00.000Z")
+        t3_state.add_thread_made_at(self.state, CHILD, "lap · Build the greeting", None, "project-1",
+                                    "2026-11-22T10:30:00.000Z")
+        self.launch_item(THREAD, 1, CHILD, "2026-11-22T10:30:05.000Z")
+
+        [child] = t3_thread.read_thread(THREAD).children
+
+        self.assertEqual((CHILD, t3_thread.LAUNCHED_RELATIONSHIP), (child.thread, child.relationship))
+        self.assertEqual((), t3_thread.read_thread("next-session").children)
+
+    def test_a_worker_thread_that_the_items_of_another_session_name_is_not_a_child_of_this_one(self):
+        t3_state.add_thread_made_at(self.state, "other-manager", "Plan another epic", None, "project-1",
+                                    "2026-11-22T09:10:00.000Z")
+        t3_state.add_thread_made_at(self.state, CHILD, "lap · Build the greeting", None, "project-1",
+                                    "2026-11-22T09:05:00.000Z")
+        self.launch_item("other-manager", 1, CHILD, "2026-11-22T09:05:05.000Z")
+
+        self.assertEqual((), t3_thread.read_thread(THREAD).children)
+        [owned] = t3_thread.read_thread("other-manager").children
+        self.assertEqual((CHILD, t3_thread.LAUNCHED_RELATIONSHIP), (owned.thread, owned.relationship))
+
+    def test_a_session_that_only_reads_a_worker_thread_after_its_launch_does_not_own_it(self):
+        t3_state.add_thread_made_at(self.state, "retro-session", "Retro", None, "project-1",
+                                    "2026-11-22T11:00:00.000Z")
+        t3_state.add_thread_made_at(self.state, CHILD, "lap · Build the greeting", None, "project-1",
+                                    "2026-11-22T09:30:00.000Z")
+        self.launch_item(THREAD, 1, CHILD, "2026-11-22T09:30:05.000Z")
+        self.launch_item("retro-session", 1, CHILD, "2026-11-22T11:05:00.000Z")
+
+        self.assertEqual([CHILD], [child.thread for child in t3_thread.read_thread(THREAD).children])
+        self.assertEqual((), t3_thread.read_thread("retro-session").children)
+
+    def test_a_session_whose_items_only_mention_a_worker_thread_has_not_launched_it_and_finds_it_unverified(self):
+        t3_state.add_thread_made_at(self.state, "retro-session", "Retro", None, "project-1",
+                                    "2026-11-22T09:20:00.000Z")
+        t3_state.add_thread_made_at(self.state, CHILD, "lap · Build the greeting", None, "project-1",
+                                    "2026-11-22T09:30:00.000Z")
+        t3_state.add_item_updated_at(self.state, "retro-session", "run-1", 1, "assistant_message",
+                                     {"text": f"the worker {CHILD} built it"}, "2026-11-22T09:31:00.000Z")
+
+        [child] = t3_thread.read_thread("retro-session").children
+
+        self.assertEqual((CHILD, t3_thread.UNVERIFIED_RELATIONSHIP), (child.thread, child.relationship))
 
     def test_a_worker_thread_that_began_after_the_next_session_of_the_project_is_not_a_child(self):
         t3_state.add_thread_made_at(self.state, CHILD, "lap · Build the greeting", None, "project-1",

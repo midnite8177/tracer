@@ -179,11 +179,17 @@ def add_thread_made_at(path: Path, thread: str, title: str, parent: str | None, 
 
 def add_item(path: Path, thread: str, run: str | None, ordinal: int, kind: str, fields: dict) -> None:
     """A turn item of the thread, of the given `type`, whose payload holds the fields as T3 encodes that kind."""
+    add_item_updated_at(path, thread, run, ordinal, kind, fields, "2026-11-22T10:00:00.000Z")
+
+
+def add_item_updated_at(path: Path, thread: str, run: str | None, ordinal: int, kind: str, fields: dict,
+                        updated_at: str) -> None:
+    """A turn item as `add_item` makes it, which T3 last updated at the ISO 8601 time."""
     payload = {"id": f"item-{thread}-{ordinal}", "type": kind, "ordinal": ordinal, "status": "completed", **fields}
     with closing(sqlite3.connect(path)) as db, db:
         db.execute("INSERT INTO orchestration_v2_projection_turn_items VALUES (?, ?, ?, 'node-1', NULL, NULL, NULL, ?, "
-                   "?, 'completed', '2026-11-22T10:00:00.000Z', ?)",
-                   (payload["id"], thread, run, ordinal, kind, json.dumps(payload)))
+                   "?, 'completed', ?, ?)",
+                   (payload["id"], thread, run, ordinal, kind, updated_at, json.dumps(payload)))
 
 
 def add_provider_thread(path: Path, thread: str, provider: str, native_id: str | None) -> None:

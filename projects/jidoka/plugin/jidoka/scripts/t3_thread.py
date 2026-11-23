@@ -10,11 +10,14 @@ The items of a thread are the rows of `orchestration_v2_projection_turn_items`, 
 `type` T3 gives it and its payload. A thread's child threads are the threads of `orchestration_v2_projection_threads`
 whose payload `lineage.parentThreadId` names it. ADR 0012 has the manager launch each worker as a top-level thread, so
 T3 may give a worker thread no lineage. The reader therefore also lists, as a child, each thread with no parent whose
-title starts with `lap · ` (t3_worker.TITLE_PREFIX), that is in the same project as the read thread, was created at or
-after it and was created before the next session of the project, which is the next thread with no parent and no such
-title that was created after it. The workers of a lap and the workers of the accept skill share that title, and T3's
-projection keeps no field that names the manager that launched a thread, so the title, the project and that window are
-what tie a worker thread to its session. A thread that is itself a worker lists no such child.
+title starts with `lap · ` (t3_worker.TITLE_PREFIX) and that is in the same project as the read thread. T3's projection
+keeps no field that names the manager that launched a thread, but a manager's launch prints the id of the thread it
+made, so the session whose items name a worker thread first is the manager that launched it. The worker thread is a
+child of that session whenever it began, and of no other. A worker thread that no session of the project names is
+listed, marked as unverified, as a child of the read thread when it was created at or after it and before the next
+session of the project, which is the next thread with no parent and no such title that was created after it. The
+workers of a lap and the workers of the accept skill share that title. A thread that is itself a worker lists no such
+child.
 
 An Antigravity thread keeps the real record of its steps in Antigravity's own transcript. The thread's provider thread,
 a row of `orchestration_v2_projection_provider_threads` whose `provider` is `antigravity`, holds in the payload a
@@ -56,7 +59,8 @@ THREAD_PAYLOAD_COLUMN = "payload_json"
 LINEAGE_KEY = "lineage"
 PARENT_KEY = "parentThreadId"
 RELATIONSHIP_KEY = "relationshipToParent"
-WORKER_THREAD_RELATIONSHIP = "worker thread, found by its title"
+LAUNCHED_RELATIONSHIP = "worker thread, launched by this thread"
+UNVERIFIED_RELATIONSHIP = "worker thread, found by its title and not confirmed as launched by this thread"
 ITEMS_TABLE = "orchestration_v2_projection_turn_items"
 ITEM_THREAD_COLUMN = "thread_id"
 ITEM_RUN_COLUMN = "run_id"
@@ -151,7 +155,8 @@ class ThreadRun:
 class ChildThread:
     """A thread of the read thread's session and how it relates to it: a thread whose lineage names the read thread as
     its parent, with the relationship the lineage gives, or a worker thread that T3 gave no lineage, with
-    WORKER_THREAD_RELATIONSHIP."""
+    LAUNCHED_RELATIONSHIP when the read thread's own items name it and UNVERIFIED_RELATIONSHIP when only its title, its
+    project and its creation time tie it to the read thread."""
     thread: str
     title: str
     relationship: str | None
@@ -288,29 +293,85 @@ def next_session_began(session: ThreadRow, threads: list[ThreadRow]) -> datetime
     return min(later, default=None)
 
 
+def is_unowned_worker_in(row: ThreadRow, project: str) -> bool:
+    """Whether the row is a worker thread of the project that names no parent. ADR 0012 has the manager launch a worker
+    as a top-level thread, so T3 may give it no `lineage.parentThreadId`, and the `lap · ` title the launch gives it is
+    what marks it. A thread that names a parent of its own belongs to that parent."""
+    return is_worker_thread(row) and not parent_of(row) and row.project == project
+
+
 def is_worker_thread_of(row: ThreadRow, session: ThreadRow, ends: datetime | None) -> bool:
-    """Whether the row is a worker thread that began in the session's project at or after the session and before `ends`,
-    the start of the next session, which is None when there is none. ADR 0012 has the manager launch a worker as a
-    top-level thread, so T3 may give it no `lineage.parentThreadId`, and the `lap · ` title the launch gives it is what
-    marks it. A thread that names a parent of its own belongs to that parent."""
+    """Whether the row is an unowned worker thread that began in the session's project at or after the session and
+    before `ends`, the start of the next session, which is None when there is none. A worker thread's own session
+    launches no worker."""
     began, session_began = t3_turns.began_at(row.created), t3_turns.began_at(session.created)
-    return (is_worker_thread(row) and not parent_of(row) and row.project == session.project
+    return (not is_worker_thread(session) and is_unowned_worker_in(row, session.project)
             and began is not None and session_began is not None and began >= session_began
             and (ends is None or began < ends))
 
 
+def launched_thread_of(kind: object, payload: object) -> str | None:
+    """The thread that the item records the launch of, or None when the item is no launch result. A launch is a command
+    or tool call whose output is a JSON object with the `thread` it made, as `factory.py start` prints it. An item
+    that only holds the id, such as a later reader's, names no launch."""
+    if kind not in (COMMAND_KIND, DYNAMIC_TOOL_KIND):
+        return None
+    printed = json_object(text_of(json_object(payload).get(OUTPUT_KEY)))
+    named = printed.get("thread")
+    return named if isinstance(named, str) else None
+
+
+def first_launches(session: str, workers: list[str]) -> dict[str, datetime]:
+    """For each of the worker thread ids whose launch an item of the session records, when T3 last updated the first
+    such item."""
+    launches: dict[str, datetime] = {}
+    with reported_as(NoThread):
+        rows = select(ITEMS_TABLE, (ITEM_TYPE_COLUMN, ITEM_PAYLOAD_COLUMN, ITEM_UPDATED_COLUMN),
+                      {ITEM_THREAD_COLUMN: session}, ())
+    for kind, payload, updated in rows:
+        at = t3_turns.began_at(updated)
+        launched = launched_thread_of(kind, payload)
+        if at is not None and launched in workers and (launched not in launches or at < launches[launched]):
+            launches[launched] = at
+    return launches
+
+
+def launchers_of(session: ThreadRow, threads: list[ThreadRow]) -> dict[str, str]:
+    """For each worker thread of the session's project whose launch the items of some session of the project record,
+    the session whose items record it first, which is the manager that launched it. A session that only reads the
+    worker thread later, as a retro does, records no launch. A worker thread no session launched has no entry, and a
+    worker thread's own session launched none."""
+    workers = [row.thread for row in threads if is_unowned_worker_in(row, session.project)]
+    if is_worker_thread(session) or not workers:
+        return {}
+    sessions = [row for row in threads if row.project == session.project and not is_worker_thread(row)
+                and (row.thread == session.thread or not parent_of(row))]
+    firsts: dict[str, tuple[datetime, str]] = {}
+    for candidate in sessions:
+        for worker, at in first_launches(candidate.thread, workers).items():
+            if worker not in firsts or at < firsts[worker][0]:
+                firsts[worker] = (at, candidate.thread)
+    return {worker: launcher for worker, (_, launcher) in firsts.items()}
+
+
 def children_of(session: ThreadRow, threads: list[ThreadRow]) -> list[ChildThread]:
     """The threads whose lineage names the session as their parent and, unless the session is itself a worker's thread,
-    the worker threads that began in its project after it and before its project's next session."""
+    its worker threads. A worker thread whose launch the session's items record is one, whenever it began. A worker
+    thread whose launch another session's items record is not. A worker thread whose launch no session records is one,
+    marked as unverified, when it began in the session's project after the session and before the project's next
+    session."""
     found = []
+    launchers = launchers_of(session, threads)
     ends = next_session_began(session, threads)
     for row in threads:
         lineage = row.payload.get(LINEAGE_KEY)
         if isinstance(lineage, dict) and lineage.get(PARENT_KEY) == session.thread:
             relationship = lineage.get(RELATIONSHIP_KEY)
             found.append(ChildThread(row.thread, row.title, relationship if isinstance(relationship, str) else None))
-        elif not is_worker_thread(session) and is_worker_thread_of(row, session, ends):
-            found.append(ChildThread(row.thread, row.title, WORKER_THREAD_RELATIONSHIP))
+        elif launchers.get(row.thread) == session.thread:
+            found.append(ChildThread(row.thread, row.title, LAUNCHED_RELATIONSHIP))
+        elif row.thread not in launchers and is_worker_thread_of(row, session, ends):
+            found.append(ChildThread(row.thread, row.title, UNVERIFIED_RELATIONSHIP))
     return found
 
 
