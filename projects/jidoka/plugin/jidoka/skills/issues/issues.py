@@ -14,14 +14,29 @@ Usage:
   issues.py --limit N       how many ready beads to list on the board (default 8)
   issues.py --demo          include each bead's Demo text (default: a ✓ marks that one exists)
   issues.py --doctor        print the raw JSON keys bd returns, for field mapping
+  issues.py --scripts <folder>   the plugin's scripts folder, which holds routes.py; the plugin's own when left out
 
 Field names differ between bd versions. The FIELD table below lists the
 names this script tries, in order; --doctor shows what your bd emits.
 """
 import json, re, signal, subprocess, sys
+from pathlib import Path
 if hasattr(signal, "SIGPIPE"): signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # quiet exit when piped; absent on Windows
 try: sys.stdout.reconfigure(encoding="utf-8", errors="replace")            # Windows consoles default to cp1252
 except Exception: pass
+
+def take_scripts_folder(argv):
+    """Takes `--scripts <folder>` out of argv and returns the plugin's scripts folder, which holds routes.py: the one
+    the option names, else the folder of the plugin this file sits in. A skill's copy in a T3 profile holds no scripts,
+    so its SKILL.md names the folder. The option with no folder after it exits with a usage error."""
+    if "--scripts" not in argv:
+        return str(Path(__file__).resolve().parents[2] / "scripts")
+    i = argv.index("--scripts")
+    if i + 1 >= len(argv):
+        sys.exit("issues.py: --scripts needs the plugin's scripts folder")
+    folder = argv[i + 1]
+    del argv[i:i + 2]
+    return folder
 
 FIELD = {
     "id":       ["id"],
@@ -197,11 +212,12 @@ def page(bid):
 def next_step(b, p, st, bl):
     lb = labels(b)
     # A map bead has no Demo line, so the Demo check would send it to grilling.
-    if any(l.startswith("wayfinder:") for l in lb): return f"/jidoka:wayfinder {p or f(b, 'id')}"
-    if not demo_line(b) and f(b, "type") != "epic": return "no Demo line — /jidoka:grill-with-docs or /jidoka:to-tickets before implementing"
+    if any(l.startswith("wayfinder:") for l in lb): return f"{routes.slash_command('wayfinder')} {p or f(b, 'id')}"
+    if not demo_line(b) and f(b, "type") != "epic":
+        return f"no Demo line — {routes.slash_command('grill-with-docs')} or {routes.slash_command('to-tickets')} before implementing"
     if "human" in lb: return "needs you — see description"
-    if "bench" in lb: return f"needs you at the bench, /jidoka:bench {f(b, 'id')}"
-    if st == "ready": return f"ready to build with /jidoka:bench {f(b, 'id')}"
+    if "bench" in lb: return f"needs you at the bench, {routes.slash_command('bench')} {f(b, 'id')}"
+    if st == "ready": return f"ready to build with {routes.slash_command('bench')} {f(b, 'id')}"
     if st.startswith("blocked"): return f"look at the blocker first ({bl[0] if bl else '?'})"
     if st.startswith("in progress"): return "a session claimed this; finish or release it"
     return None
@@ -226,6 +242,8 @@ ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(\.[0-9]+)*$")
 
 if __name__ == "__main__":
     a = sys.argv[1:]; limit = 8
+    sys.path.append(take_scripts_folder(a))
+    import routes
     if "--limit" in a:
         i = a.index("--limit"); limit = int(a[i + 1]); del a[i:i + 2]
     if "--demo" in a: SHOW_DEMO = True; a.remove("--demo")

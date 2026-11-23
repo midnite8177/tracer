@@ -5,7 +5,7 @@ argument-hint: "[bead-id | epic-id | label:<name> | --labels | human | bench | s
 ---
 
 Translate `$ARGUMENTS` into script arguments, then run
-`sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/issues.py" <args>`,
+`sh "<skill folder>/../../bin/jidoka-run" "<skill folder>/issues.py" --scripts "<skill folder>/../../scripts/" <args>`,
 where the skill folder is the directory that holds this SKILL.md, and
 show its output to the user **verbatim**, in a code block. Translation:
 a bead or epic id, `human`, `bench`, `--all`, `--labels`, `--demo`, `--limit N`

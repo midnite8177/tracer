@@ -20,6 +20,8 @@ SKILLS = PLUGIN / "skills"
 ISSUES = SKILLS / "issues" / "issues.py"
 LOG = SKILLS / "show-me-your-work" / "scripts" / "log.py"
 CONTEXT = Path("skills") / "context" / "context.py"
+THREAD_VARIABLE = "T3CODE_THREAD_ID"
+SESSION_VARIABLE = "JIDOKA_SESSION_ID"
 
 WITH_DEMO = "## What\nPrint a greeting.\n\n## Demo\nThe shop prints hello at startup.\n\n## Seams\nThe command line."
 WITHOUT_DEMO = "## What\nPrint a farewell."
@@ -66,6 +68,7 @@ class SkillScriptCase(unittest.TestCase):
     def run_script(self, script: Path, args: list, home: str, cwd: Path) -> subprocess.CompletedProcess:
         env = {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
                **fixture.home_variables(home)}
+        env.pop(THREAD_VARIABLE, None)
         return fixture.run_launcher(LAUNCHER, [str(script), *args], None, env, cwd, None)
 
 
@@ -152,6 +155,66 @@ class ShopIssuesTests(SkillScriptCase):
 
                 self.assertEqual(0, done.returncode, done.stderr)
                 self.assertNotIn("/tracer:", done.stdout)
+
+
+class AntigravityIssuesTests(SkillScriptCase):
+    """issues.py as the skill's copy in a T3 Antigravity profile runs it: alone in a folder with no scripts beside it,
+    in a T3 thread that exports no jidoka session, with --scripts naming the plugin's scripts folder."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.greeting = cls.create_bead(cls.repo, "Print the greeting", WITH_DEMO, ["--type=task"])
+        cls.farewell = cls.create_bead(cls.repo, "Print the farewell", WITHOUT_DEMO, ["--type=task"])
+        cls.profile_copy = cls.root / "profile" / "jidoka-issues"
+        cls.profile_copy.mkdir(parents=True)
+        shutil.copy2(ISSUES, cls.profile_copy / "issues.py")
+
+    def run_issues(self, args: list, thread: str | None) -> subprocess.CompletedProcess:
+        env = {key: value for key, value in os.environ.items() if key not in (THREAD_VARIABLE, SESSION_VARIABLE)}
+        env.update({"PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home),
+                    **fixture.home_variables(Path.home())})
+        if thread is not None:
+            env[THREAD_VARIABLE] = thread
+        scripts = (PLUGIN / "scripts").as_posix() + "/"
+        return fixture.run_launcher(LAUNCHER, [str(self.profile_copy / "issues.py"), *args, "--scripts", scripts],
+                                    None, env, self.repo, None)
+
+    def test_issues_names_the_bench_the_way_antigravity_spells_a_skill(self):
+        done = self.run_issues([self.greeting], "a-t3-thread")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn(f"next: ready to build with /jidoka-bench {self.greeting}", done.stdout)
+        self.assertNotIn("/jidoka:", done.stdout)
+
+    def test_issues_names_the_planning_skills_the_way_antigravity_spells_a_skill(self):
+        done = self.run_issues([self.farewell], "a-t3-thread")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("next: no Demo line — /jidoka-grill-with-docs or /jidoka-to-tickets before implementing",
+                      done.stdout)
+
+    def test_issues_still_names_the_bench_the_way_claude_code_spells_a_skill_when_no_t3_thread_is_set(self):
+        done = self.run_issues([self.greeting], None)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn(f"next: ready to build with /jidoka:bench {self.greeting}", done.stdout)
+
+    def test_issues_exits_with_a_usage_error_when_the_scripts_option_names_no_folder(self):
+        env = {**os.environ, "PATH": fixture.path_with(self.bin), "JIDOKA_HOME": str(self.home)}
+
+        done = fixture.run_launcher(LAUNCHER, [str(self.profile_copy / "issues.py"), "--scripts"], None, env,
+                                    self.repo, None)
+
+        self.assertNotEqual(0, done.returncode)
+        self.assertIn("--scripts needs", done.stderr)
+        self.assertNotIn("IndexError", done.stderr)
+
+    def test_issues_lists_the_board_when_it_is_given_the_scripts_folder(self):
+        done = self.run_issues([], "a-t3-thread")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn(f"Print the greeting ({self.greeting}) · ready ✓", done.stdout)
 
 
 class AtlasIssuesTests(SkillScriptCase):
